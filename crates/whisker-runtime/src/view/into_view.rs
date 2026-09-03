@@ -19,6 +19,39 @@ pub trait IntoView {
     fn into_view(self) -> View;
 }
 
+/// Collector used by public builder `body` methods.
+///
+/// The compose macros only call [`push`](Self::push); the concrete parent
+/// builder decides whether to attach the collected views immediately or keep
+/// a closure for later component remounts.
+#[derive(Default)]
+pub struct ChildrenBuilder {
+    children: Vec<View>,
+}
+
+impl ChildrenBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, child: impl IntoView) {
+        self.children.push(child.into_view());
+    }
+
+    pub fn extend(&mut self, children: impl IntoIterator<Item = impl IntoView>) {
+        self.children
+            .extend(children.into_iter().map(IntoView::into_view));
+    }
+
+    pub fn finish(self) -> View {
+        match self.children.len() {
+            0 => View::Empty,
+            1 => self.children.into_iter().next().unwrap_or(View::Empty),
+            _ => View::Fragment(self.children),
+        }
+    }
+}
+
 /// Type used by `#[component]` for the conventional `children` prop.
 /// The `render!` macro routes a component invocation's non-kwarg
 /// children into a `move || View::Fragment(…)` closure of this type;
@@ -30,12 +63,34 @@ pub trait IntoView {
 /// `#[component]` re-clones every prop on every body invocation.
 pub type Children = ::std::rc::Rc<dyn ::std::ops::Fn() -> View + 'static>;
 
+/// Authoring children whose rendered value must contain only plain-text
+/// fragments.
+///
+/// This wrapper lets an element declaration distinguish text content from
+/// ordinary scene children without changing the React-like `View` value built
+/// by `render!`. The Rust renderer validates and normalizes the materialized
+/// raw-text nodes before a Host sees the resulting `SetText` operation.
+#[derive(Clone)]
+pub struct TextChildren(pub Children);
+
+impl TextChildren {
+    /// Wraps the children closure emitted by `render!`.
+    pub fn new(children: Children) -> Self {
+        Self(children)
+    }
+
+    /// Materializes the wrapped authoring children.
+    pub fn render(&self) -> View {
+        (self.0)()
+    }
+}
+
 /// Mount a `Children` prop at the current position in the tree.
 ///
 /// Returns a phantom element (no on-screen footprint — `is_phantom`
 /// is true) with the children's view attached. The caller (typically
-/// the `render!` macro lowering for the `children()` special node)
-/// hands this back to the parent's `.child(...)` chain so the parent
+/// framework-level control flow projecting a [`Children`] handle)
+/// hands this back to the parent so the parent
 /// sees a single Element handle, exactly like any other child node.
 ///
 /// Takes `&Children` so nothing moves out of the surrounding
@@ -48,6 +103,19 @@ pub fn mount_children(children: &Children) -> Element {
     let view = children();
     view.attach_to(ph);
     ph
+}
+
+/// Mounts one dynamically typed `IntoView` value behind a phantom slot.
+#[doc(hidden)]
+pub fn mount_view(view: impl IntoView) -> Element {
+    let ph = super::create_phantom_element();
+    view.into_view().attach_to(ph);
+    ph
+}
+
+/// Mount plain-text authoring children at their declared element.
+pub fn mount_text_children(children: &TextChildren, parent: Element) -> Vec<Element> {
+    children.render().attach_to(parent)
 }
 
 // Function-shaped prop types for control-flow components. These
@@ -96,13 +164,6 @@ impl<T: 'static, K: 'static, F: Fn(&T) -> K + 'static> From<F> for KeyFn<T, K> {
         KeyFn(::std::rc::Rc::new(f))
     }
 }
-
-/// The `list` `meta:` prop's function shape: identity + per-item
-/// layout metadata derived from the data (see
-/// [`ItemMeta`](super::virtualizer::ItemMeta)). Structurally a
-/// [`KeyFn`] whose output is the full `ItemMeta` rather than a bare
-/// key.
-pub type MetaFn<T, K> = KeyFn<T, super::virtualizer::ItemMeta<K>>;
 
 impl<T: 'static, K: 'static> KeyFn<T, K> {
     /// Invoke the wrapped closure on `item`.

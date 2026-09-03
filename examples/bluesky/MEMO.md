@@ -127,7 +127,7 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
     リサイクル対象から外す」hook があれば本家どおり書ける（要望）。ユーザー判断で「固定ヘッダー +
     仮想化 list」を選択（潰れない・仮想化ありを優先）。
   - **追加調査（「これは whisker のバグか？」の切り分け）**:
-    - **コード**: `list` ビルダー（`crates/whisker/src/lib.rs` `__h()`）は全アイテムを実体としてツリーに
+    - **コード**: `List` ビルダーの `build()` は全アイテムを実体としてツリーに
       materialize し、各 `<list-item>` に **位置ベースの `item-key="w_{index}"`** を振り、`count` だけを
       `set_update_list_info` で Lynx に渡す。**`reuse-identifier`/item-type も per-item 高さも sticky/header
       スロットも露出していない**。リサイクル・レイアウトは完全に Lynx の decoupled native list 側。

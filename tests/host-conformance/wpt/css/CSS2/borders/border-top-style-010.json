@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "wpt.css2.borders.border-top-style-010",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/CSS2/borders/border-top-style-010.xht",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "An outset top border is lighter than its border color to make the box appear raised from the canvas.",
+    "adaptation": "The WPT manual visual assertion is represented by semantic style projection and a relative luminance assertion comparing the shaded top border with the unchanged green box background. Exact shade colors remain Host-defined."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 24.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [0.0, 0.0, 100.0, 24.0],
+        "background": { "kind": "named", "value": "green" },
+        "border": {
+          "widths": [12.0, 0.0, 0.0, 0.0],
+          "colors": [
+            { "kind": "named", "value": "green" },
+            { "kind": "named", "value": "transparent" },
+            { "kind": "named", "value": "transparent" },
+            { "kind": "named", "value": "transparent" }
+          ],
+          "styles": ["outset", "none", "none", "none"],
+          "radii": [0.0, 0.0, 0.0, 0.0]
+        }
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [50.0, 18.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 }
+        ],
+        "relations": [
+          { "first": [50.0, 6.0], "second": [50.0, 18.0], "relation": "lighter", "minimum_difference": 10 }
+        ]
+      }
+    ]
+  }
+}

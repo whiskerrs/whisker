@@ -13,7 +13,7 @@
 //! per-frame transforms for *both* timing strategies (forward/reverse,
 //! idle when done).
 
-use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent};
+use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent, TransformFn};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker::{AnimConfig, animated};
@@ -36,7 +36,7 @@ fn root() -> Element {
     let forward = signal(false);
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
@@ -46,7 +46,7 @@ fn root() -> Element {
             background_color: Color::hex(0x0B0B0F),
         )) {
             // Row 1 — curve box.
-            view(style: css!(
+            View(style: css!(
                 width: px(300),
                 height: px(64),
                 border_radius: px(12),
@@ -54,18 +54,18 @@ fn root() -> Element {
                 display: Display::Flex,
                 align_items: AlignItems::Center,
             )) {
-                view(style: computed(move || css!(
+                View(style: computed(move || css!(
                     width: px(56),
                     height: px(56),
                     margin_left: px(4),
                     border_radius: px(10),
                     background_color: Color::hex(0x7C5CFF),
-                )
-                .raw("transform", format!("translateX({}px)", curve_x.get()))))
+                    transform: TransformFn::TranslateX(px(curve_x.get()).into()),
+                )))
             }
 
             // Row 2 — spring box.
-            view(style: css!(
+            View(style: css!(
                 width: px(300),
                 height: px(64),
                 border_radius: px(12),
@@ -73,18 +73,18 @@ fn root() -> Element {
                 display: Display::Flex,
                 align_items: AlignItems::Center,
             )) {
-                view(style: computed(move || css!(
+                View(style: computed(move || css!(
                     width: px(56),
                     height: px(56),
                     margin_left: px(4),
                     border_radius: px(10),
                     background_color: Color::hex(0x29D6C5),
-                )
-                .raw("transform", format!("translateX({}px)", spring_x.get()))))
+                    transform: TransformFn::TranslateX(px(spring_x.get()).into()),
+                )))
             }
 
             // Toggle button: flip direction and drive BOTH controllers.
-            view(
+            View(
                 style: css!(
                     padding: (px(12), px(28)),
                     border_radius: px(12),
@@ -102,7 +102,7 @@ fn root() -> Element {
                     }
                 },
             ) {
-                text(
+                Text(
                     value: "Toggle",
                     style: css!(color: Color::hex(0xFFFFFF), font_size: px(18)),
                 )

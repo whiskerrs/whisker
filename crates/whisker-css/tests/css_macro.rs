@@ -21,6 +21,18 @@ fn empty_macro_is_equivalent_to_new() {
 }
 
 #[test]
+fn public_builder_is_equivalent_to_macro_sugar() {
+    let direct = Css::builder()
+        .background_color(Color::hex(0xFF0000))
+        .padding(px(8));
+    let composed = css!(
+        background_color: Color::hex(0xFF0000),
+        padding: px(8),
+    );
+    assert_eq!(direct, composed);
+}
+
+#[test]
 fn single_property() {
     let s = css!(background_color: Color::hex(0xFF0000));
     assert_eq!(s.to_css_string(), "background-color: rgb(255, 0, 0);");
@@ -109,7 +121,7 @@ fn array_value_for_transform() {
     let s = css!(
         transform: [
             TransformFn::TranslateX(px(10).into()),
-            TransformFn::Rotate(45.deg()),
+            TransformFn::Rotate(45.deg().into()),
         ],
     );
     assert_eq!(

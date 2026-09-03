@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting a WKWebView behind a unified Whisker interface.
+// Whisker module view hosting a WKWebView behind a unified interface.
 // Registration is driven by `WebViewModule`'s `definition()` — no
 // annotations required here.
 //
@@ -11,7 +11,7 @@
 //
 // WKWebView retains its `WKUserContentController`, which retains every
 // registered `WKScriptMessageHandler`. Registering `WhiskerWebViewView`
-// directly would therefore form a retain cycle and the Lynx-owned view
+// directly would therefore form a retain cycle and the Host-owned view
 // would never deallocate. `WeakScriptMessageProxy` breaks it: it holds
 // `self` weakly, so once the view is gone the bridge callback silently
 // drops incoming messages.
@@ -20,15 +20,15 @@
 //
 // Every `WhiskerCustomEvent.dispatch(...)` fires SYNCHRONOUSLY.
 // Navigation-delegate / KVO / script-message callbacks can fire during
-// Lynx teardown while a renderer op is on the Rust stack, which is only
+// native teardown while a renderer op is on the Rust stack, which is only
 // safe because the Rust renderer is re-entrancy-safe (whisker #3: shared
 // `with_renderer` borrow, `&self` `DynRenderer` methods, FFI-scoped
-// per-field `RefCell`s in `BridgeRenderer`).
+// narrowly scoped interior mutability in the Host renderer).
 //
 // ## Event payload shape
 //
 // Params are passed DIRECTLY (e.g. `["url": urlString]`). Do NOT wrap in a
-// `detail` key — the iOS bridge's `LynxCustomEvent.params` normalisation
+// `detail` key — the iOS Host event normalisation
 // already places the dispatched params under `detail` in the event body, so
 // the Rust structs (`NavEvent { detail: { url } }`, etc.) read the correct
 // shape. Double-wrapping produces `detail: { detail: { url } }` and every
@@ -70,7 +70,7 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
 
     // MARK: - Hosted views
 
-    /// Transparent container that fills the LynxUI frame; holds the
+    /// Transparent container that fills the WhiskerUI frame; holds the
     /// `WKWebView` as a subview pinned to its bounds.
     private lazy var containerView: UIView = {
         let v = UIView()
@@ -99,7 +99,7 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     /// observation alive; clearing it cancels the observation.
     private var progressObservation: NSKeyValueObservation?
 
-    // MARK: - LynxUI lifecycle
+    // MARK: - WhiskerUI lifecycle
 
     @objc public override func createView() -> UIView {
         let config = WKWebViewConfiguration()
@@ -143,6 +143,8 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
             self.emitProgress(progress)
         }
 
+        wv.frame = containerView.bounds
+        wv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         containerView.addSubview(wv)
 
         // `setUrl` / `setHtml` optional-chain on `webView` and silently
@@ -160,16 +162,11 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
         return containerView
     }
 
-    @objc public override func frameDidChange() {
-        super.frameDidChange()
-        webView?.frame = self.view().bounds
-    }
-
-    /// `WhiskerUI` / `LynxUI` exposes no teardown override, so cleanup has
+    /// `WhiskerUI` / `WhiskerUI` exposes no teardown override, so cleanup has
     /// to happen in `deinit`. That works because nothing retains this
     /// object back: `WeakScriptMessageProxy` stands in for us on the
     /// `WKUserContentController` and `navigationDelegate` is weak, so
-    /// `deinit` does fire — on the main thread — when Lynx releases the
+    /// `deinit` does fire — on the main thread — when the Host releases the
     /// view, and the web process is freed promptly.
     deinit {
         progressObservation = nil
@@ -187,7 +184,13 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     /// re-renders that don't touch the value from reloading the page.
     public func setUrl(_ urlString: String) {
         cachedUrl = urlString
-        guard !urlString.isEmpty else { return }
+        if urlString.isEmpty {
+            if !lastLoadedUrl.isEmpty {
+                lastLoadedUrl = ""
+                loadInlineContent()
+            }
+            return
+        }
         guard urlString != lastLoadedUrl else { return }
         lastLoadedUrl = urlString
         guard let url = URL(string: urlString) else { return }
@@ -199,7 +202,7 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     public func setHtml(_ html: String) {
         cachedHtml = html
         guard cachedUrl.isEmpty else { return }
-        webView?.loadHTMLString(html, baseURL: nil)
+        loadInlineContent()
     }
 
     // ---- Browser behaviour -----------------------------------------------
@@ -208,53 +211,36 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
         webView?.customUserAgent = ua.isEmpty ? nil : ua
     }
 
-    public func setJavascriptEnabled(_ s: String) {
-        guard #available(iOS 14.0, *) else { return }
-        webView?.configuration.defaultWebpagePreferences.allowsContentJavaScript = (s != "false")
+    public func setJavascriptEnabled(_ enabled: Bool) {
+        if #available(iOS 14.0, *) {
+            webView?.configuration.defaultWebpagePreferences.allowsContentJavaScript = enabled
+        } else {
+            webView?.configuration.preferences.javaScriptEnabled = enabled
+        }
     }
 
-    public func setScrollEnabled(_ s: String) {
-        webView?.scrollView.isScrollEnabled = (s != "false")
+    public func setScrollEnabled(_ enabled: Bool) {
+        webView?.scrollView.isScrollEnabled = enabled
     }
 
     /// Parses a JSON-array string like `["https://*","http://*"]` into the
     /// local `originWhitelist` used by `decidePolicyFor`.
     public func setOriginWhitelist(_ json: String) {
-        guard !json.isEmpty else { return }
-        // Hand-rolled quoted-token scan rather than JSONSerialization: the
-        // only legal input is a JSON string array from the Rust
-        // `origin_whitelist_json` helper.
-        var patterns: [String] = []
-        var idx = json.startIndex
-        while idx < json.endIndex {
-            guard let open = json[idx...].firstIndex(of: "\"") else { break }
-            let afterOpen = json.index(after: open)
-            guard afterOpen < json.endIndex else { break }
-            // Scan to the closing quote, honouring `\"` escapes.
-            var end = afterOpen
-            while end < json.endIndex {
-                if json[end] == "\\" {
-                    let next = json.index(after: end)
-                    if next < json.endIndex { end = json.index(after: next) } else { end = next }
-                } else if json[end] == "\"" {
-                    break
-                } else {
-                    end = json.index(after: end)
-                }
-            }
-            let raw = String(json[afterOpen..<end])
-            let unescaped = raw
-                .replacingOccurrences(of: "\\\"", with: "\"")
-                .replacingOccurrences(of: "\\\\", with: "\\")
-            patterns.append(unescaped)
-            idx = end < json.endIndex ? json.index(after: end) : json.endIndex
+        guard !json.isEmpty else {
+            originWhitelist = ["https://*", "http://*"]
+            return
         }
-        if !patterns.isEmpty {
-            originWhitelist = patterns
-        }
+        guard let data = json.data(using: .utf8),
+              let patterns = try? JSONSerialization.jsonObject(with: data) as? [String]
+        else { return }
+        originWhitelist = patterns
     }
 
     // MARK: - Imperative method targets (called by WebViewModule's Function closures)
+
+    private func loadInlineContent() {
+        webView?.loadHTMLString(cachedHtml, baseURL: nil)
+    }
 
     public func reloadPage() {
         webView?.reload()
@@ -281,62 +267,9 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
         webView?.evaluateJavaScript("window.whisker._receive(\(jsString))", completionHandler: nil)
     }
 
-    /// Evaluate arbitrary JavaScript for its side effects. The returned
-    /// `value` is always the empty string — the completion fires after
-    /// this synchronous dispatch returns; use
-    /// [`evaluateJavaScript(_:resolving:)`] for the result.
-    public func evaluateJavaScript(_ script: String) -> WhiskerValue {
-        guard let wv = webView else {
-            return .map(["value": .string("")])
-        }
-        wv.evaluateJavaScript(script, completionHandler: nil)
-        return .map(["value": .string("")])
-    }
-
-    /// Evaluate JavaScript and settle `promise` from the completion:
-    /// the result as a JSON-encoded string (`"null"` when the script
-    /// yields no value), matching Android's `evaluateJavascript`
-    /// callback convention; a JS exception rejects.
-    public func evaluateJavaScript(_ script: String, resolving promise: WhiskerPromise) {
-        guard let wv = webView else {
-            promise.resolve(.string("null"))
-            return
-        }
-        wv.evaluateJavaScript(script) { value, error in
-            if let error = error {
-                // The JS exception text rides in userInfo, not
-                // localizedDescription.
-                let ns = error as NSError
-                let detail = ns.userInfo["WKJavaScriptExceptionMessage"] as? String
-                    ?? error.localizedDescription
-                promise.reject("evaluateJavaScript failed: \(detail)")
-                return
-            }
-            guard let value = value else {
-                promise.resolve(.string("null"))
-                return
-            }
-            // The precheck matters: `JSONSerialization.data` raises an
-            // (uncatchable) NSException for non-JSON top-level objects.
-            guard JSONSerialization.isValidJSONObject(value)
-                || value is NSString || value is NSNumber || value is NSNull,
-                let data = try? JSONSerialization.data(
-                    withJSONObject: value, options: .fragmentsAllowed),
-                let json = String(data: data, encoding: .utf8)
-            else {
-                promise.reject("evaluateJavaScript: result is not JSON-encodable")
-                return
-            }
-            promise.resolve(.string(json))
-        }
-    }
-
-    public func canGoBackResult() -> WhiskerValue {
-        return .bool(webView?.canGoBack ?? false)
-    }
-
-    public func canGoForwardResult() -> WhiskerValue {
-        return .bool(webView?.canGoForward ?? false)
+    /// Evaluate arbitrary JavaScript for its side effects.
+    public func evaluateJavaScript(_ script: String) {
+        webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
     // MARK: - Script-message handler (called by the proxy)
@@ -351,11 +284,10 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     // MARK: - Event emission helpers
 
     // These dispatch SYNCHRONOUSLY, which is only safe because the Rust
-    // renderer is re-entrancy-safe: `DynRenderer` methods take `&self`,
-    // `BridgeRenderer` keeps its state behind per-field `RefCell`s with
-    // FFI-scoped borrows, and `with_renderer` takes a SHARED borrow
-    // (whisker #3). Navigation-delegate / KVO / script-message callbacks can
-    // fire during Lynx teardown while `remove_child` is on the Rust stack,
+    // renderer is re-entrancy-safe: methods take `&self` and mutable Host
+    // state uses narrowly scoped interior mutability. Navigation-delegate /
+    // KVO / script-message callbacks can fire during native teardown while
+    // `remove_child` is on the Rust stack,
     // so a re-entrant dispatch is granted rather than aborting. Deferring a
     // runloop tick instead would cost every webview event a tick of latency.
 

@@ -39,10 +39,13 @@ import android.content.Context
 import android.view.inputmethod.InputMethodManager
 import androidx.core.view.WindowInsetsCompat
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerInsetsDispatcher
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 public class KeyboardModule : Module() {
 
     /**
@@ -69,7 +72,7 @@ public class KeyboardModule : Module() {
             insetsRegistration = null
         }
 
-        // Marshalled to the UI thread: this body may run on the Lynx TASM
+        // Marshalled to the UI thread: this body may run on the Rust runtime
         // thread, and clearFocus / IMM are View work.
         Function("dismiss") {
             val activity = appContext.currentActivity

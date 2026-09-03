@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "id": "wpt.css2.z-index-stack-001",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/CSS2/zindex/z-index-stack-001.xht",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "Sibling boxes with greater stacking levels paint in front of boxes with lower stacking levels.",
+    "adaptation": "The WPT's three overlapping boxes are reduced to 60 logical pixels and use the fixture palette while preserving z-index values 2, 3, and 1. Pixel samples verify every exposed stacking band."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 110.0, "height": 110.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [10.0, 10.0, 90.0, 90.0],
+            "background": { "kind": "named", "value": "transparent" }
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [20.0, 20.0, 60.0, 60.0],
+            "background": { "kind": "named", "value": "red" },
+            "z_order": 2
+          },
+          {
+            "id": 3,
+            "parent": 1,
+            "rect": [40.0, 40.0, 60.0, 60.0],
+            "background": { "kind": "named", "value": "green" },
+            "z_order": 3
+          },
+          {
+            "id": 4,
+            "parent": 1,
+            "rect": [0.0, 0.0, 60.0, 60.0],
+            "background": { "kind": "named", "value": "blue" },
+            "z_order": 1
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [20.0, 20.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 16 },
+          { "point": [40.0, 40.0], "color": { "kind": "named", "value": "red" }, "tolerance": 16 },
+          { "point": [60.0, 60.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

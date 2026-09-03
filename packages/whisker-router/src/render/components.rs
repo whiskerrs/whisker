@@ -11,7 +11,7 @@
 //! All stand on the recursive [`mount_node`](crate::render::node) engine;
 //! they differ only in *which* [`NodePath`] they hand it.
 
-use whisker::css::{Display, FlexDirection};
+use whisker::css::{Display, FlexDirection, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker::{Children, component, provide_context, render, use_context};
@@ -21,15 +21,8 @@ use crate::render::handle::{RouterHandle, use_navigator};
 use crate::render::node::mount_node;
 use crate::render::registry::RouteSet;
 
-/// The router's screen-spanning root element. [`Router`] publishes it so
-/// the [`SwipeBack`](crate::render::SwipeBack) gesture can bind its touch
-/// handlers to an element that actually covers the viewport (a phantom
-/// slot has no extent and would never be hit).
-#[derive(Clone)]
-pub struct RouterRoot(pub Element);
-
 /// The container path an [`Outlet`] renders. Published by [`Router`] (the
-/// root) and overridden by a [`Layout`] / [`Tabs`] so a nested `Outlet`
+/// root) and overridden by a [`Layout`] so a nested `Outlet`
 /// renders that layout's container.
 #[derive(Clone)]
 pub struct OutletAnchor(pub NodePath);
@@ -40,9 +33,10 @@ pub struct OutletAnchor(pub NodePath);
 /// # Responsibility split (one draw path)
 ///
 /// `Router` deliberately **does not draw the route tree itself**. Its job
-/// is exactly: publish the context (handle, root [`OutletAnchor`],
-/// [`RouterRoot`]), create the positioned root `view`, and render its
-/// `children` into it. The tree is drawn **once** by an `Outlet`-family
+/// is exactly: publish the context (handle and root [`OutletAnchor`]),
+/// create the positioned root `View`, install the Host navigation driver,
+/// and render its `children` into it. The tree is drawn **once** by an
+/// `Outlet`-family
 /// component you place as a child — a bare [`Outlet`] (anchored at root),
 /// a [`Stack`] / [`Switch`] at an explicit path, or a [`Tabs`] /
 /// [`Layout`] that draws a container with chrome. This keeps every node on
@@ -53,49 +47,39 @@ pub struct OutletAnchor(pub NodePath);
 /// render! {
 ///     Router(routes: routes! { Stack { ... } }) {
 ///         Outlet {}
-///         SwipeBack {}
 ///     }
 /// }
 /// ```
 #[component]
 pub fn router(routes: RouteSet, children: Children) -> Element {
     let handle = RouterHandle::new(routes.clone());
-    provide_context(handle);
+    provide_context(handle.clone());
     provide_context(OutletAnchor(NodePath::root()));
 
     // A real, screen-spanning root so transitions have a positioned
     // container (wrappers are `position: absolute`) and the swipe-back
     // gesture has something to bind to.
     //
-    // The `children()` slot is bundled behind a phantom, and appending that
-    // phantom directly would hoist the children into a style-less container,
-    // which Lynx defaults to `flex-direction: row` (memory
-    // `lynx_view_flex_direction_default`) — collapsing them horizontally. So
+    // The projected children are bundled behind a phantom, and appending that
+    // phantom directly would hoist the children into a style-less container
+    // with the default row direction, collapsing them horizontally. So
     // `root` itself is the `flex-direction: column` container they mount into.
     //
-    // Build `root` EMPTY, publish the `RouterRoot` context, and only THEN
-    // mount the children: `children()` mounts where it is rendered, so a
-    // `SwipeBack` reading `RouterRoot` must run after the context exists or
-    // it silently never installs its gesture.
+    // Build `root` empty so the platform navigation driver can bind to the
+    // real viewport-filling element before projected route content mounts.
     let root = render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
-        ).raw("position", "relative")) {}
+            position: PositionKind::Relative,
+        )) {}
     };
-    provide_context(RouterRoot(root));
+    crate::render::platform_navigation::install(root, handle);
     // The tree is drawn by `children` (an Outlet / Tabs / Stack), NOT here —
     // drawing root ourselves *and* letting a child draw the same subtree
     // would double-mount it.
     whisker::runtime::view::append_child(root, whisker::runtime::view::mount_children(&children));
-
-    // Prime the device screen corner radius at router init (it feeds the
-    // constant per-screen clip). Run in `on_mount` so the host Activity has
-    // a chance to attach; if it isn't resolvable yet the call falls back to
-    // the default and the first back gesture retries (idempotent once a
-    // value is installed).
-    whisker::on_mount(crate::render::gesture::try_fetch_device_corner_radius);
 
     root
 }
@@ -143,8 +127,8 @@ pub fn switch(path: NodePath) -> Element {
 /// ```ignore
 /// render! {
 ///     Layout(path: switch_path) {
-///         view(..) {
-///             view(style: css!(flex_grow: 1.0)) { Outlet {} }
+///         View(..) {
+///             View(style: css!(flex_grow: 1.0)) { Outlet {} }
 ///             MyCustomTabBar {}
 ///         }
 ///     }
@@ -153,5 +137,6 @@ pub fn switch(path: NodePath) -> Element {
 #[component]
 pub fn layout(path: NodePath, children: Children) -> Element {
     provide_context(OutletAnchor(path.clone()));
-    render! { children() }
+    let projected = children.clone();
+    render! { Fragment { { projected() } } }
 }

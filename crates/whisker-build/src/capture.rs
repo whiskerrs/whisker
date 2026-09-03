@@ -3,8 +3,8 @@
 //! When the dev-server runs a full reload for hot-reload, it
 //! transparently elevates that build into a **fat build**: cargo
 //! still produces the same artifact, but the rustc and linker
-//! invocations get intercepted by [`whisker-rustc-shim`] and
-//! [`whisker-linker-shim`] respectively, which dump their argv to
+//! invocations get intercepted by the `whisker-rustc-shim` and
+//! `whisker-linker-shim` binaries respectively, which dump their argv to
 //! JSON files under the configured cache dirs. The hot reload thin
 //! rebuild later replays those argvs to produce a patch dylib.
 //!
@@ -54,6 +54,25 @@ pub struct CaptureShims {
 /// `RUSTFLAGS` in the dev-server's env are preserved.
 pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
     capture_env_vars_for_triple(c, c.target_triple.as_deref())
+}
+
+/// Capture a generated Host project and all of its path dependencies.
+///
+/// Cargo's `RUSTC_WORKSPACE_WRAPPER` only sees members of the generated
+/// workspace. Desktop applications keep user code as a normal path
+/// dependency, so their fat build uses `RUSTC_WRAPPER` while retaining the
+/// same linker and codegen flags.
+pub fn capture_env_vars_all_crates(c: &CaptureShims) -> Vec<(String, String)> {
+    capture_env_vars(c)
+        .into_iter()
+        .map(|(key, value)| {
+            if key == "RUSTC_WORKSPACE_WRAPPER" {
+                ("RUSTC_WRAPPER".to_string(), value)
+            } else {
+                (key, value)
+            }
+        })
+        .collect()
 }
 
 /// Like [`capture_env_vars`] but applies the linker shim + rustflags
@@ -117,7 +136,19 @@ pub fn capture_env_vars_for_triple(
     // closure, so the `HotFunction::call_it` / `call_as_ptr` symbol the
     // JumpTable is keyed on is missing or mangled differently from the
     // patch's — lookups miss and the component keeps running old code.
-    let save_temps = format!("-Csave-temps=y -Cdebug-assertions=on -Copt-level=0 {export_dynamic}");
+    let save_temps = if triple_override.is_some_and(|triple| triple.starts_with("wasm32-")) {
+        // Keep the raw symbol/linking sections and make every callable
+        // function reachable through an extensible indirect table. The Web
+        // patch transformer consumes these before wasm-bindgen strips them.
+        "-Csave-temps=y -Cdebug-assertions=on -Copt-level=0 \
+         -Clink-arg=--no-gc-sections -Clink-arg=--growable-table \
+         -Clink-arg=--export-table -Clink-arg=--export-memory \
+         -Clink-arg=--emit-relocs -Clink-arg=--export=__stack_pointer \
+         -Clink-arg=--export=__heap_base -Clink-arg=--export=__data_end"
+            .to_string()
+    } else {
+        format!("-Csave-temps=y -Cdebug-assertions=on -Copt-level=0 {export_dynamic}")
+    };
     let save_temps = save_temps.as_str();
     match triple_override {
         Some(triple) => {
@@ -224,6 +255,16 @@ mod tests {
         assert!(names.contains("WHISKER_REAL_LINKER"));
         assert!(names.contains("CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"));
         assert!(names.contains("CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS"));
+    }
+
+    #[test]
+    fn all_crates_capture_replaces_only_the_workspace_wrapper() {
+        let vars = capture_env_vars_all_crates(&shim_for_triple(Some("aarch64-apple-darwin")));
+        let names: std::collections::HashSet<&str> = vars.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(names.contains("RUSTC_WRAPPER"));
+        assert!(!names.contains("RUSTC_WORKSPACE_WRAPPER"));
+        assert!(names.contains("WHISKER_RUSTC_CACHE_DIR"));
+        assert!(names.contains("CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER"));
     }
 
     #[test]

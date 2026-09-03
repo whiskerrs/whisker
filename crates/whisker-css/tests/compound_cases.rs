@@ -13,11 +13,11 @@
 //! - Pathological edge cases (empty builds, repeated overrides).
 
 use whisker_css::ext::*;
-use whisker_css::keyword::{AlignItems, Display, Overflow};
+use whisker_css::keyword::{AlignItems, Overflow};
 use whisker_css::{
     Animation, Background, BackgroundLayer, Border, BorderRadius, Color, ColorStop, Css, CssString,
-    EasingFunction, Flex, FlexBasis, FlexDirection, Gradient, GridLine, GridTemplate, ImageRef,
-    JustifyContent, LengthPercentage, LinearOrientation, NamedColor, PositionKind, Size, ToCss,
+    EasingFunction, Flex, FlexBasis, FlexDirection, Gradient, GridLine, GridTemplate, GridTrack,
+    ImageRef, JustifyContent, LengthPercentage, NamedColor, Number, PositionKind, Size, ToCss,
     TransformFn, Transition, TransitionPropertyKind, Visibility,
 };
 
@@ -163,16 +163,6 @@ fn empty_style_is_empty_string() {
 }
 
 #[test]
-fn raw_escape_hatch_coexists_with_typed() {
-    let s = Css::new()
-        .padding(px(8))
-        .raw("-webkit-tap-highlight-color", "transparent");
-    let css = s.to_string();
-    assert!(css.contains("padding-top: 8px"));
-    assert!(css.contains("-webkit-tap-highlight-color: transparent"));
-}
-
-#[test]
 fn merge_overlays_other_onto_self() {
     let base = Css::new().padding(px(4)).color(Color::hex(0x000000));
     let overlay = Css::new().color(Color::hex(0xFFFFFF));
@@ -202,8 +192,8 @@ fn complete_animation_chain() {
 fn transform_layered() {
     let s = Css::new().transform([
         TransformFn::TranslateX(px(10).into()),
-        TransformFn::Scale(1.5, 1.5),
-        TransformFn::Rotate(45.deg()),
+        TransformFn::Scale(Number::new(1.5).into(), Number::new(1.5).into()),
+        TransformFn::Rotate(45.deg().into()),
     ]);
     assert_eq!(
         s.to_string(),
@@ -232,8 +222,8 @@ fn background_full_shorthand() {
     let s = Css::new().background(
         Background::new()
             .layer(BackgroundLayer::new(Gradient::linear_to_bottom([
-                ColorStop::new(NamedColor::Red.into()),
-                ColorStop::new(NamedColor::Blue.into()),
+                ColorStop::new(Color::Named(NamedColor::Red)),
+                ColorStop::new(Color::Named(NamedColor::Blue)),
             ])))
             .color(Color::Named(NamedColor::White)),
     );
@@ -244,23 +234,15 @@ fn background_full_shorthand() {
 }
 
 #[test]
-fn linear_extension_block() {
-    let s = Css::new()
-        .display(Display::Linear)
-        .linear_orientation(LinearOrientation::Vertical)
-        .linear_weight(1.0);
-    assert_eq!(
-        s.to_string(),
-        "display: linear; linear-orientation: vertical; linear-weight: 1;"
-    );
-}
-
-#[test]
 fn grid_definition_block() {
     let s = Css::new()
         .display_grid()
-        .grid_template_columns(GridTemplate::tracks(["1fr", "auto", "1fr"]))
-        .grid_template_rows(GridTemplate::tracks(["auto"]))
+        .grid_template_columns(GridTemplate::tracks([
+            GridTrack::fraction(1.0),
+            GridTrack::auto(),
+            GridTrack::fraction(1.0),
+        ]))
+        .grid_template_rows(GridTemplate::tracks([GridTrack::auto()]))
         .grid_row_start(GridLine::Number(1))
         .grid_column_end(GridLine::Span(2));
     let css = s.to_string();
@@ -284,7 +266,7 @@ fn visibility_then_opacity() {
 }
 
 #[test]
-fn border_radius_full_elliptical_stays_shorthand() {
+fn border_radius_full_elliptical_expands_to_semantic_corner_longhands() {
     let h = [
         LengthPercentage::Length(px(2)),
         LengthPercentage::Length(px(4)),
@@ -300,8 +282,19 @@ fn border_radius_full_elliptical_stays_shorthand() {
     let s = Css::new().border_radius_full(BorderRadius::elliptical(h, v));
     assert_eq!(
         s.to_string(),
-        "border-radius: 2px 4px 6px 8px / 20px 40px 60px 80px;"
+        "border-top-left-radius: 2px 20px; border-top-right-radius: 4px 40px; border-bottom-right-radius: 6px 60px; border-bottom-left-radius: 8px 80px;"
     );
+    assert!(s.resolved().into_iter().all(|declaration| matches!(
+        declaration.style_value(),
+        whisker_style::StyleValue::BorderRadius(_)
+    )));
+    let specified = s.to_specified_style();
+    let resolved =
+        whisker_style::resolve_style(&specified, None, whisker_style::StyleEnvironment::default())
+            .unwrap();
+    let radius = resolved.computed().paint().border_radii.top_left;
+    assert_eq!(radius.horizontal.length(), 2.0);
+    assert_eq!(radius.vertical.length(), 20.0);
 }
 
 #[test]
@@ -395,7 +388,7 @@ fn color_conversion_named_to_hex_round_trip_shape() {
 fn transform_then_secondary_transform_replaces() {
     let s = Css::new()
         .transform([TransformFn::TranslateX(px(10).into())])
-        .transform([TransformFn::Rotate(45.deg())]);
+        .transform([TransformFn::Rotate(45.deg().into())]);
     assert_eq!(s.to_string(), "transform: rotate(45deg);");
 }
 

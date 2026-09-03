@@ -1,19 +1,17 @@
-//! Integration tests for the `children()` slot in `render!`.
+//! Integration tests for projecting a component's [`Children`] prop.
 //!
-//! `children()` lowers to
-//! `whisker::runtime::view::mount_children(&children)` and mounts the
-//! surrounding `#[component]`'s `children: Children` prop at the
-//! current position via a phantom element. These tests verify:
+//! Projection is ordinary Rust: clone the `Children` handle and place
+//! `{ projected() }` inside a `Fragment`. These tests verify:
 //!
 //! 1. The basic mount: children land at the slot position with
 //!    siblings before / after preserved in order.
-//! 2. Multi-projection: writing `children()` twice mounts the same
+//! 2. Multi-projection: invoking the handle twice mounts the same
 //!    children twice (the Rc is borrowed, not moved).
 //! 3. Fragment children: a multi-element children block from the
 //!    caller flattens correctly into the slot.
 //! 4. FnMut re-invocation: the body can be invoked more than once
 //!    (per-component remount / hot-reload) without `cannot move out
-//!    of` errors — `mount_children` takes `&Children`, never moves.
+//!    of` errors — each projection closure owns only its cloned handle.
 //!
 
 use std::cell::RefCell;
@@ -65,7 +63,6 @@ impl DynRenderer for Recorder {
             value: v.into(),
         });
     }
-    fn set_inline_styles(&self, _h: Element, _css: &str) {}
     fn append_child(&self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
             parent: p.id(),
@@ -107,35 +104,38 @@ fn with_test_env<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 /// footer text. Used to verify sibling-ordering around the slot.
 #[component]
 fn card_with_slot(children: Children) -> Element {
+    let projected = children.clone();
     render! {
-        view() {
-            text(value: "header")
-            children()
-            text(value: "footer")
+        View() {
+            Text(value: "header")
+            Fragment { { projected() } }
+            Text(value: "footer")
         }
     }
 }
 
 /// Mounts the same children twice. Verifies multi-projection works
-/// — the Rc is borrowed, not moved, so the second `children()`
-/// also resolves.
+/// — the Rc is cloned, so the second projection also resolves.
 #[component]
 fn double_mount(children: Children) -> Element {
+    let projected_first = children.clone();
+    let projected_second = children.clone();
     render! {
-        view() {
-            children()
-            children()
+        View() {
+            Fragment { { projected_first() } }
+            Fragment { { projected_second() } }
         }
     }
 }
 
-/// `children()` at the very top — no sibling. The slot must still
+/// A projection at the very top — no sibling. The slot must still
 /// mount the children inside the outer view.
 #[component]
 fn bare_slot(children: Children) -> Element {
+    let projected = children.clone();
     render! {
-        view() {
-            children()
+        View() {
+            Fragment { { projected() } }
         }
     }
 }
@@ -147,7 +147,7 @@ fn slot_mounts_children_between_siblings_in_order() {
     with_test_env(|log| {
         let _h = render! {
             CardWithSlot() {
-                text(value: "slot-content")
+                Text(value: "slot-content")
             }
         };
 
@@ -175,8 +175,8 @@ fn slot_mounts_multi_element_children_as_fragment() {
         // at the slot position.
         let _h = render! {
             CardWithSlot() {
-                text(value: "first")
-                text(value: "second")
+                Text(value: "first")
+                Text(value: "second")
             }
         };
 
@@ -204,7 +204,7 @@ fn slot_can_be_used_more_than_once() {
         // ordering.
         let _h = render! {
             DoubleMount() {
-                text(value: "echo")
+                Text(value: "echo")
             }
         };
 
@@ -213,7 +213,7 @@ fn slot_can_be_used_more_than_once() {
             .iter()
             .filter(|op| matches!(op, Op::SetAttr { key, value, .. } if key == "text" && value == "echo"))
             .count();
-        assert_eq!(echoes, 2, "children() called twice → two text creations");
+        assert_eq!(echoes, 2, "children projected twice → two text creations");
     });
 }
 
@@ -251,14 +251,11 @@ fn slot_body_can_be_reinvoked() {
     // Simulated here by building the Props once and calling the inner
     // fn twice; nothing moves, because `mount_children` borrows.
     with_test_env(|log| {
-        use whisker::runtime::view::{Children, View};
-        let children: Children = Rc::new(|| View::Text("echo".to_string()));
+        use whisker::runtime::view::{Children, View as RuntimeView};
+        let children: Children = Rc::new(|| RuntimeView::Text("echo".to_string()));
 
-        let props1 = BareSlotProps::builder().children(children.clone()).build();
-        let _h1 = BareSlot(props1);
-
-        let props2 = BareSlotProps::builder().children(children.clone()).build();
-        let _h2 = BareSlot(props2);
+        let _h1 = BareSlot::builder().children(children.clone()).build();
+        let _h2 = BareSlot::builder().children(children.clone()).build();
 
         let echoes = log
             .borrow()

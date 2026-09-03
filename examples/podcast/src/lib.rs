@@ -13,7 +13,7 @@
 //!                                depends on: domain, ureq, serde
 //! podcast-ui-kit              ← reusable atomic widgets
 //!                                depends on: whisker, theme, domain
-//! podcast-feature-browse      ← Browse screen (sections + cards)
+//! podcast-feature-browse      ← Browse Screen (sections + cards)
 //!                                depends on: whisker, theme, domain,
 //!                                            data, ui-kit
 //! podcast-feature-detail      ← Show detail screen
@@ -47,7 +47,7 @@ use whisker::css::{Display, FlexDirection, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_audio::Player;
-use whisker_router::{AndroidPredictiveBack, Outlet, Router, SwipeBack, routes, use_navigator};
+use whisker_router::{Outlet, Router, routes, use_navigator};
 
 /// Process-wide table mapping a podcast `id` to its full [`Podcast`]
 /// value. `Browse` populates it from the resource result as soon as
@@ -67,7 +67,7 @@ pub type PodcastIndex = Rc<RefCell<HashMap<u64, Podcast>>>;
 /// an episode); `Some` while the mini-player is showing a track.
 ///
 /// Exposed as a type alias — same TypeId across crates — so the
-/// detail screen (writes on tap) and the mini-player (reads to
+/// detail Screen (writes on tap) and the mini-player (reads to
 /// render) match on `use_context<NowPlayingSignal>()` without
 /// importing it from this shell crate.
 pub type NowPlayingSignal = ArcRwSignal<Option<NowPlaying>>;
@@ -105,7 +105,7 @@ fn app() -> Element {
     provide_context(now_playing);
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             width: vw(100),
             height: vh(100),
@@ -123,8 +123,6 @@ fn app() -> Element {
             }) {
                 PodcastRouter {
                     Outlet {}
-                    SwipeBack {}
-                    AndroidPredictiveBack {}
                 }
             }
             MiniPlayer()
@@ -135,5 +133,6 @@ fn app() -> Element {
 #[component]
 fn podcast_router(children: Children) -> Element {
     provide_context(build_navigator());
-    render! { children() }
+    let projected = children.clone();
+    render! { Fragment { { projected() } } }
 }

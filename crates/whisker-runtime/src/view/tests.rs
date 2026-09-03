@@ -21,10 +21,6 @@ enum Op {
         key: String,
         value: String,
     },
-    SetStyles {
-        id: u32,
-        css: String,
-    },
     Append {
         parent: u32,
         child: u32,
@@ -106,12 +102,6 @@ impl DynRenderer for RecordingRenderer {
             value: value.into(),
         });
     }
-    fn set_inline_styles(&self, h: Element, css: &str) {
-        self.ops.borrow_mut().push(Op::SetStyles {
-            id: h.id(),
-            css: css.into(),
-        });
-    }
     fn append_child(&self, parent: Element, child: Element) {
         self.ops.borrow_mut().push(Op::Append {
             parent: parent.id(),
@@ -146,8 +136,8 @@ impl DynRenderer for RecordingRenderer {
             name: name.into(),
         });
     }
-    fn set_root(&self, page: Element) {
-        self.ops.borrow_mut().push(Op::SetRoot { id: page.id() });
+    fn set_root(&self, root: Element) {
+        self.ops.borrow_mut().push(Op::SetRoot { id: root.id() });
     }
     fn flush(&self) {
         self.ops.borrow_mut().push(Op::Flush);
@@ -340,9 +330,9 @@ fn multi_child_fragment_through_phantom_slot_hoists_all_children() {
 }
 
 /// Same multi-child phantom hoist, but against a renderer that supports
-/// positioned insert (the production Lynx path). Every `insert_before`
+/// positioned insert (the production Host path). Every `insert_before`
 /// reference must be a sibling that is ALREADY in the real tree at the
-/// time of the insert — Lynx's `InsertNodeBefore` needs the reference to
+/// time of the insert — Host's `InsertNodeBefore` needs the reference to
 /// be a live child of the parent. A reference pointing at a batch-mate
 /// that hasn't been inserted yet silently fails on-device, dropping all
 /// but one child.
@@ -366,7 +356,7 @@ fn multi_child_hoist_insert_support_references_already_present() {
     });
 
     let ops = log.borrow();
-    // Replay the ops as Lynx would, tracking the real child list. Every
+    // Replay the ops as Host would, tracking the real child list. Every
     // insert reference must already be present, and the final order must
     // be c1, c2, c3.
     let mut present: Vec<u32> = Vec::new();
@@ -476,7 +466,7 @@ fn insert_child_at_non_tail_uses_positioned_insert_not_rotate() {
 }
 
 // ===========================================================================
-// Re-entrancy — a native event that fires *synchronously during* a renderer
+// Re-entrancy — a Host event that fires *synchronously during* a renderer
 // operation must be able to re-enter the dispatch path without aborting on
 // "RefCell already borrowed". That rests on three things: `DynRenderer`
 // methods take `&self`, renderers own their state behind interior
@@ -494,7 +484,7 @@ mod reentrancy {
     /// `BridgeRenderer`: it keeps `parent_sign` and `listeners` behind
     /// per-field `RefCell`s and plans event dispatch from them. Its
     /// `remove_child` runs a caller-supplied **re-entrancy hook**
-    /// *while simulating native teardown* — standing in for Lynx
+    /// *while simulating native teardown* — standing in for Host
     /// synchronously dispatching a UIKit event during `remove_child`.
     ///
     /// Crucially `remove_child` holds **no field borrow** across the
@@ -541,15 +531,11 @@ mod reentrancy {
             Element::from_raw(self.alloc_id())
         }
         fn release_element(&self, _h: Element) {}
-        fn element_sign(&self, h: Element) -> i32 {
-            h.id() as i32
-        }
         fn set_attribute(&self, h: Element, key: &str, value: &str) {
             self.log
                 .borrow_mut()
                 .push(format!("set_attr {} {}={}", h.id(), key, value));
         }
-        fn set_inline_styles(&self, _h: Element, _css: &str) {}
         fn append_child(&self, parent: Element, child: Element) {
             // Scope the `parent_sign` borrow — never spanning anything
             // re-entrant (matches the renderer contract).
@@ -568,7 +554,7 @@ mod reentrancy {
                 ps.remove(&(child.id() as i32));
             }
             // …THEN run the synchronous "native callback" with NO field
-            // borrow held. This is exactly the spot where Lynx would
+            // borrow held. This is exactly the spot where Host would
             // re-enter Whisker during teardown. If any field borrow
             // leaked into here, the re-entrant op below would panic.
             self.log

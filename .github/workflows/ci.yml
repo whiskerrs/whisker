@@ -23,7 +23,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install software Vulkan renderer
+        run: sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
       - run: cargo test --workspace --all-targets
+        env:
+          RUST_TEST_THREADS: 1
+          WGPU_BACKEND: vulkan
       - run: cargo test --workspace --doc
 
   fmt:
@@ -41,22 +46,101 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep lint results reproducible and aligned with the supported compiler. Tracking
+      # `stable` here makes newly-added Clippy lints fail unrelated pull requests.
+      - uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # These two style-only lints create repository-wide churn when Clippy changes its
+      # preferred spelling. Correctness and all other warnings remain denied.
+      - run: >-
+          cargo +1.88.0 clippy --workspace --all-targets --
+          -D warnings
+          -A clippy::collapsible-if
+          -A clippy::uninlined-format-args
+
+  rustdoc:
+    name: cargo doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build workspace library documentation
+        run: cargo doc --workspace --no-deps --lib
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  mobile-abi:
+    name: Mobile ABI source of truth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask mobile-abi check
+      - name: Compile generated C and C++ interfaces
+        run: |
+          clang -std=c11 -pedantic-errors -fsyntax-only \
+            -include crates/whisker-driver-sys/bridge/include/whisker_mobile.h \
+            -x c /dev/null
+          clang++ -std=c++17 -pedantic-errors -fsyntax-only \
+            -include crates/whisker-driver-sys/bridge/include/whisker_mobile.h \
+            -x c++ /dev/null
+      - run: cargo test -p whisker-driver-sys -p whisker-driver
+
+  mobile-link-test-android:
+    name: Mobile consumer link (Android)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - uses: gradle/actions/setup-gradle@v6
+      - uses: android-actions/setup-android@v3
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.1.12297006"
+      - name: Build and inspect generated Android consumer
+        run: cargo xtask mobile-link-test android
+        # Cross-target feature flags can emit rustc's own compatibility
+        # warnings. The regular clippy job remains the source warning gate.
+        env:
+          RUSTFLAGS: ""
+
+  mobile-link-test-ios:
+    name: Mobile consumer link (iOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim,x86_64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and inspect generated iOS consumer
+        run: cargo xtask mobile-link-test ios
+        # Cross-target feature flags can emit rustc's own compatibility
+        # warnings. The regular clippy job remains the source warning gate.
+        env:
+          RUSTFLAGS: ""
 
   msrv:
-    name: MSRV (rust 1.85)
+    name: MSRV (rust 1.88)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # The version here must match `rust-version` in the root
       # Cargo.toml's `[workspace.package]`. If you bump one, bump both.
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets
+      # `+version` takes precedence over the repository's stable toolchain file.
+      - run: cargo +1.88.0 check --workspace --all-targets
 
   deny:
     name: cargo deny (advisories / bans / sources)
@@ -70,48 +154,71 @@ jobs:
           # other three are the security-relevant gates.
           command: check advisories bans sources
 
-  cross-build-ios:
-    name: cross build (aarch64-apple-ios-sim)
-    runs-on: macos-latest
+  host-conformance-desktop:
+    name: Host conformance (Desktop / wgpu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install software Vulkan renderer
+        run: sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+      - run: cargo xtask host-conformance desktop
+        env:
+          WGPU_BACKEND: vulkan
+
+  host-conformance-web:
+    name: Host conformance (Web / Chrome)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios-sim
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      # Check the user-facing umbrella crate (pulls in runtime + driver
-      # + driver-sys) for the iOS device target. `whisker-driver-sys`'s
-      # build.rs compiles the C++ bridge with `cc`, which finds the iOS
-      # SDK clang from Xcode on the macOS runner — no extra toolchain
-      # setup needed. Catches Rust-level regressions in the device build
-      # (cfg gates, FFI signatures). The Rust source is shared across
-      # iOS/Android, so this covers the bulk of the device-build surface.
-      #
-      # An Android cross-check (aarch64-linux-android) is NOT included
-      # yet: `cargo check` still runs build.rs, which cross-compiles the
-      # C++ bridge and therefore needs the Android NDK clang on PATH.
-      # Add it via `cargo-ndk` / an NDK setup step when wiring Android CI.
-      - run: cargo check -p whisker --target aarch64-apple-ios-sim
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - run: cargo xtask host-conformance web
+      - run: cargo xtask rust-host-link-test web
 
-  build-ios-runtime:
-    name: swift build (WhiskerRuntime)
+  rust-host-link-test-desktop:
+    name: Rust Host module link (Desktop)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      # The iOS runtime is Swift, and nothing else in this workflow
-      # compiles Swift: `cross build` above builds the Rust half for an
-      # iOS target and stops there. A Swift-only break therefore reached
-      # a tagged SwiftPM release and only surfaced when an app built
-      # against it (a property read against a Lynx header the shipped
-      # framework doesn't surface). This scheme pulls the Lynx binary
-      # target the same way an app does, so it catches that class of
-      # break here instead.
-      - run: |
-          xcodebuild -scheme WhiskerRuntime \
-            -destination 'generic/platform=iOS Simulator' \
-            -skipPackagePluginValidation \
-            build
-        working-directory: platforms/ios
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask rust-host-link-test desktop
+
+  host-conformance-android:
+    name: Host conformance (Android)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          profile: pixel_7_pro
+          script: cargo xtask host-conformance android
+
+  host-conformance-ios:
+    name: Host conformance (iOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo xtask host-conformance ios
 
   coverage:
     name: coverage (cargo-llvm-cov)
@@ -134,6 +241,8 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install software Vulkan renderer
+        run: sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
 
       - name: Generate coverage
         # `--doctests` is nightly-only; stable runs doctest-free coverage.
@@ -142,6 +251,21 @@ jobs:
         run: |
           cargo llvm-cov --workspace --lcov --output-path lcov.info
           cargo llvm-cov report --summary-only | tee coverage-summary.txt
+        env:
+          RUST_TEST_THREADS: 1
+          WGPU_BACKEND: vulkan
+
+      - name: Enforce coverage for the new Rust renderer foundation
+        # Legacy crates are raised incrementally as they move onto the new
+        # engine. New Host-independent foundation crates start at the strict
+        # gate and must keep line, function, and region coverage at 100%.
+        run: |
+          for package in whisker-protocol whisker-engine whisker-style whisker-layout; do
+            cargo llvm-cov -p "$package" --summary-only \
+              --fail-under-lines 100 \
+              --fail-under-functions 100 \
+              --fail-under-regions 100
+          done
 
       - name: Render Markdown summary
         # cargo-llvm-cov's summary is a wide fixed-width table; wrap it

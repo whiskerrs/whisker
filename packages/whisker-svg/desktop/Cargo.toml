@@ -1,0 +1,15 @@
+[package]
+name = "whisker-svg-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Desktop Host implementation for whisker-svg."
+
+[dependencies]
+base64 = { workspace = true }
+csscolorparser = "0.7.2"
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+whisker-desktop = { workspace = true }
+whisker-svg = { workspace = true }

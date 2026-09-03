@@ -48,8 +48,8 @@ ksp {
 }
 
 dependencies {
-    implementation("rs.whisker:whisker-module-android:0.1.19")
-    ksp("rs.whisker:ksp:0.1.19")
+    implementation("rs.whisker:whisker-module-android:0.1.20")
+    ksp("rs.whisker:ksp:0.1.20")
 
     // AndroidX WebKit compat — provides WebViewCompat.addDocumentStartJavaScript
     // (API 24+) for reliable document-start JS injection without a race against

@@ -1,6 +1,5 @@
 // `whisker-module-codegen` — Swift executable that scans .swift
-// source files for concrete subclasses of `Module` (the
-// ModuleDefinition DSL base class from `WhiskerModule`) and emits
+// source files for class declarations marked `@WhiskerModule` and emits
 // `<TargetName>+Generated.swift` containing the matching DSL-module
 // registration calls.
 //
@@ -10,15 +9,8 @@
 //   --output <path>             ← target for the generated .swift
 //   <input1.swift> <input2.swift> …
 //
-// Apple's SwiftSyntax parses each input file into an AST; we walk
-// it to find any class declaration whose inheritance clause names
-// `Module` (or `WhiskerModule.Module`) and produce one registration
-// block per match.
-//
-// Discovery is **inheritance-based**: a Whisker module is defined by
-// exactly one signal, `extends WhiskerModule.Module`. Same shape as
-// Android's KSP processor, just over SwiftSyntax instead of KSP's
-// `Resolver`.
+// Apple's SwiftSyntax parses each input file into an AST; we walk it to find
+// the explicit marker, matching Rust and Android module discovery.
 //
 // Output is per-module: each module's SwiftPM target owns its
 // registration code (`_whiskerRegisterModules_<TargetName>`), and the
@@ -35,8 +27,8 @@ struct Args {
     let targetName: String
     /// Cargo crate name (e.g. "whisker-hello-element"), passed from
     /// the SwiftPM plugin via `context.package.displayName`. Used as
-    /// the element tag namespace so two modules' identical local
-    /// tag names don't collide in Lynx's behaviour registry.
+    /// the element namespace so two modules' identical local names
+    /// don't collide in the Whisker registry.
     let crateName: String
     let outputPath: String
     let inputs: [String]
@@ -68,19 +60,20 @@ func parseArgs(_ argv: [String]) -> Args? {
         }
     }
     guard let target, let crate, let output else { return nil }
-    return Args(targetName: target, crateName: crate, outputPath: output, inputs: inputs)
+    return Args(
+        targetName: target,
+        crateName: crate,
+        outputPath: output,
+        inputs: inputs
+    )
 }
 
 // ---- AST walker --------------------------------------------------------------
 
-/// One discovered concrete subclass of `WhiskerModule.Module`.
-/// The codegen emits a registration block that instantiates the
-/// class, reads its `definitionLazy`, and — for view-bearing
-/// modules — registers a Lynx behavior using the view class from
-/// the `View(...)` block, then calls `module.registerWithLynx()`
-/// so the DSL's Prop / Function dispatchers install via the
-/// Obj-C-runtime path. View-less modules register their
-/// `Function`s through `whisker_bridge_register_module_dispatch`.
+/// One discovered `@WhiskerModule` declaration.
+/// The codegen emits a registration block that instantiates the class,
+/// assigns its fully-qualified name, and calls `WhiskerModuleKernel.install()`.
+/// The shared registrar handles both native-View and view-less modules.
 struct DSLModuleHit {
     let className: String
 }
@@ -89,28 +82,18 @@ final class WhiskerAnnotationCollector: SyntaxVisitor {
     var dslModules: [DSLModuleHit] = []
 
     override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
-        // Discovery is purely syntactic — SwiftSyntax has no semantic
-        // resolver, so we match the inheritance clause's first
-        // identifier against the unqualified base name. `Module` is
-        // the convention; `WhiskerModule.Module` is also accepted when
-        // a user fully-qualifies to disambiguate.
-        //
-        // Protocols come after the base class in `inheritanceClause`,
-        // so only the first inherited type needs inspecting.
-        if let inheritance = node.inheritanceClause,
-           let first = inheritance.inheritedTypes.first?.type
-        {
-            let inheritedName: String?
-            if let id = first.as(IdentifierTypeSyntax.self) {
-                inheritedName = id.name.text
-            } else if let member = first.as(MemberTypeSyntax.self) {
-                inheritedName = member.name.text
-            } else {
-                inheritedName = nil
+        let marked = node.attributes.contains { element in
+            guard let attribute = element.as(AttributeSyntax.self) else { return false }
+            if let identifier = attribute.attributeName.as(IdentifierTypeSyntax.self) {
+                return identifier.name.text == "WhiskerModule"
             }
-            if inheritedName == "Module" {
-                dslModules.append(DSLModuleHit(className: node.name.text))
+            if let member = attribute.attributeName.as(MemberTypeSyntax.self) {
+                return member.name.text == "WhiskerModule"
             }
+            return false
+        }
+        if marked {
+            dslModules.append(DSLModuleHit(className: node.name.text))
         }
         return .skipChildren
     }
@@ -134,13 +117,10 @@ func render(
         // AUTO-GENERATED by `whisker-module-codegen` (SwiftPM build plugin).
         // DO NOT EDIT — re-runs automatically on next `swift build`.
         //
-        // Sourced from `Module` subclasses in the `\(targetName)`
-        // SwiftPM target's source set. Each view-bearing module
-        // registers against Lynx with the fully-qualified tag
-        // `\(crateName):<Name>`; the cargo crate name (this package's
-        // SwiftPM `displayName`) is the namespace, so two unrelated
-        // module packages can both declare a `Hello` element without
-        // colliding. Each module package owns its own copy of this
+        // Sourced from `@WhiskerModule` declarations in the `\(targetName)`
+        // SwiftPM target's source set. Each view-bearing module registers
+        // its generated RFC0004 name with the lightweight native View
+        // registry. Each module package owns its own copy of this
         // generated file; the whisker-build-generated aggregator
         // imports every module and calls each per-target register fn
         // from a top-level `WhiskerModuleBehaviors.registerAll()`.
@@ -150,15 +130,6 @@ func render(
         // DSL Module registrations: \(sortedDSLModules.count)
 
         import Foundation
-        import Lynx
-        // WhiskerRuntime re-exports WhiskerDriver, which carries the
-        // C ABI declarations (`whisker_bridge_register_module_dispatch`,
-        // `WhiskerValueRaw`, …) the module registration touches.
-        import WhiskerRuntime
-        // Phase L-3 — the DSL discovery path emits
-        // `MyModule().registerWithLynx()` calls; `registerWithLynx`
-        // lives in `WhiskerModule` (`WhiskerModuleRegistrar.swift`)
-        // as an extension on `WhiskerModule`.
         import WhiskerModule
 
         /// Per-target registration entry point. The aggregator
@@ -175,61 +146,30 @@ func render(
         """
 
     if sortedDSLModules.isEmpty {
-        out += "    // (no Module subclass found)\n"
+        out += "    // (no @WhiskerModule declaration found)\n"
     }
-    // For each `Module` subclass found in this target's sources,
-    // the registration block reads its `definitionLazy` (via a
-    // top-level instance referenced directly — same SwiftPM target,
-    // so no `NSClassFromString` / `@objc` pinning needed), then
-    // branches at runtime:
-    //
-    //   - **View-bearing** (`def.view != nil`): register a Lynx
-    //     behavior bound to `def.view!.viewClass`, then
-    //     `module.registerWithLynx()` to install Prop / Function
-    //     dispatch via the Obj-C runtime.
-    //   - **View-less** (module-level `Function`s): register the
-    //     `@_cdecl` dispatch shim (emitted as a top-level decl
-    //     below) with the C bridge via
-    //     `whisker_bridge_register_module_dispatch(name, shim)`.
-    //
-    // The `@_cdecl` shim + the top-level module instance it
-    // dispatches against are emitted *after* the register fn (a
-    // forward reference within the same file is legal).
+    // Every `@WhiskerModule` declaration uses the same explicit Host
+    // registration entry point. Element definitions remain string-declared;
+    // generated code only performs discovery and registration.
     if !sortedDSLModules.isEmpty {
         out += "        // ---- DSL modules (Phase L-3) ----\n"
     }
     let tagPrefix = "\(crateName):"
     for hit in sortedDSLModules {
         let instance = "_whiskerDSLInstance_\(hit.className)"
-        let shim = "_whiskerDSLDispatch_\(hit.className)"
-        let asyncShim = "_whiskerDSLDispatchAsync_\(hit.className)"
         out += """
                 do {
                     let module = \(instance)
                     let def = module.definitionLazy
-                    if let name = def.name {
+                    guard let name = def.name else {
+                        preconditionFailure("ModuleDefinition requires Name")
+                    }
                         // Phase L-2c — every DSL module records its
                         // fully-qualified name so `sendEvent` /
                         // observer-hook routing can find it.
-                        let qname = "\(tagPrefix)" + name
+                        let qname = name.contains("/") ? name : "\(tagPrefix)" + name
                         module.qualifiedName = qname
-                        WhiskerModuleEventCenter.register(module)
-
-                        if let view = def.view {
-                            LynxComponentRegistry.registerUI(view.viewClass, withName: qname)
-                            module.registerWithLynx()
-                        } else {
-                            // Namespace the dispatch key with the crate
-                            // (`<crate>:Name`) so two crates can ship
-                            // same-named function-only modules — matches
-                            // the Rust `module!("Name")` prefix.
-                            whisker_bridge_register_module_dispatch(qname, \(shim))
-                            // Async parallel: consulted first by
-                            // `invoke_async`, falls back to the sync
-                            // dispatch above for non-async methods.
-                            whisker_bridge_register_module_dispatch_async(qname, \(asyncShim))
-                        }
-                    }
+                    WhiskerModuleKernel.install(module)
                 }
 
             """
@@ -241,44 +181,15 @@ func render(
 
         """
 
-    // One @_cdecl shim per DSL module. Always emitted (codegen can't know at
-    // build time whether a module is view-less); only registered at
-    // runtime when `def.view == nil`. The shim forwards the C-ABI
-    // call straight into `WhiskerModule.dispatchModuleFunctionRaw`.
+    // A stable top-level instance keeps the module alive for the lifetime of
+    // the process. Dispatch is installed by WhiskerView/runtime integration,
+    // not through a generated platform-specific C entry point.
     for hit in sortedDSLModules {
         let instance = "_whiskerDSLInstance_\(hit.className)"
-        let shim = "_whiskerDSLDispatch_\(hit.className)"
-        let asyncShim = "_whiskerDSLDispatchAsync_\(hit.className)"
         out += """
-            // Top-level instance + C-ABI dispatch shim for the DSL
-            // module `\(hit.className)`. The `let` is lazily
-            // initialised on first reference (Swift global semantics).
+            // Top-level instance for `\(hit.className)`. Swift globals are
+            // lazily initialised when the registration function first uses it.
             private let \(instance) = \(hit.className)()
-
-            @_cdecl("\(shim)")
-            public func \(shim)(
-                _ methodName: UnsafePointer<CChar>?,
-                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
-                _ argCount: Int
-            ) -> WhiskerValueRaw {
-                return \(instance).dispatchModuleFunctionRaw(methodName, argsPtr, argCount)
-            }
-
-            // Async C-ABI shim (matches `WhiskerModuleAsyncDispatchFn`).
-            // Returns true if `\(hit.className)` has an `AsyncFunction`
-            // with the given name (it then owns `callback`); false lets
-            // the bridge sync-forward.
-            @_cdecl("\(asyncShim)")
-            public func \(asyncShim)(
-                _ methodName: UnsafePointer<CChar>?,
-                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
-                _ argCount: Int,
-                _ callback: WhiskerModuleCallback?,
-                _ userData: UnsafeMutableRawPointer?
-            ) -> Bool {
-                return \(instance).dispatchModuleFunctionRawAsync(
-                    methodName, argsPtr, argCount, callback, userData)
-            }
 
         """
     }

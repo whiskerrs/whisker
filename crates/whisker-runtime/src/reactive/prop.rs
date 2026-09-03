@@ -1,16 +1,16 @@
 //! [`Signal<T>`] — the unified prop-value type used by built-in tags,
-//! `#[component]`, and `#[whisker::module_component]` builders.
+//! `#[component]`, and `#[whisker::module_element]` builders.
 //!
 //! ## Why this type exists
 //!
 //! Whisker's three "component" surfaces — built-in tags (`view`,
-//! `text`, …), user `#[component]`s, and `#[whisker::module_component]`
+//! `text`, …), user `#[component]`s, and `#[whisker::module_element]`
 //! — share a single calling convention for props:
 //!
 //! ```ignore
 //! Component(prop: value)              // static — set once
 //! Component(prop: signal)             // dynamic — tracked, reactively updated
-//! Component(prop: computed(…))        // dynamic — memo-style derivation
+//! Component(prop: computed(move || value())) // dynamic — memo-style derivation
 //! ```
 //!
 //! `Signal<T>` encodes this in two variants:
@@ -31,10 +31,10 @@
 //!
 //! ```ignore
 //! // user writes:
-//! text(value: my_signal)
+//! Text(value: my_signal)
 //!
 //! // render! macro emits (no auto move-closure wrapping):
-//! __tags::__text_ctor().value(my_signal).__h()
+//! Text::builder().value(my_signal).build()
 //!
 //! // .value() does:
 //! fn value(self, v: impl Into<Signal<String>>) -> Self {
@@ -62,14 +62,14 @@
 //! ## Why not a closure variant?
 //!
 //! A `Closure(Box<dyn Fn() -> T>)` variant would let callers write
-//! `text(value: || format!(…))` and get reactivity without naming an
+//! `Text(value: || format!(…))` and get reactivity without naming an
 //! intermediate, but the "closure ⇒ dynamic" rule is hard to
 //! internalise, and the explicit `computed(move || …)` both names the
 //! derivation and memoises it.
 //!
-//! [`computed`]: super::computed
-//! [`effect`]: super::effect
-//! [`Memo<T>`]: super::computed
+//! [`computed`]: super::computed()
+//! [`effect`]: super::effect()
+//! [`Memo<T>`]: super::computed()
 
 use super::signal::{ReadSignal, RwSignal};
 use super::stored::StoredValue;
@@ -77,7 +77,7 @@ use super::stored::StoredValue;
 /// Prop value: either a static `T` or a reactive [`ReadSignal<T>`].
 ///
 /// Built-in tag builders / `#[component]` generated builders /
-/// `#[whisker::module_component]` generated builders all accept
+/// `#[whisker::module_element]` generated builders all accept
 /// `impl Into<Signal<T>>`. The variant determines whether the
 /// builder sets the attribute once ([`Stored`]) or wraps the read
 /// in an `effect` ([`Dynamic`]).
@@ -100,19 +100,19 @@ use super::stored::StoredValue;
 // any `T: 'static` — `Signal<String>` included.
 pub enum Signal<T: 'static> {
     /// Plain value, held in an owner-bound [`StoredValue<T>`] arena
-    /// slot. The builder method that consumes this calls
-    /// `set_attribute` / `set_inline_styles` / etc. exactly once
+    /// slot. The builder method that consumes this applies the
+    /// corresponding renderer operation exactly once
     /// with the value. No reactive subscription is set up; reading
     /// the `StoredValue` does not tick the dependency graph.
     Stored(StoredValue<T>),
     /// Reactive handle. The builder wraps its read in
-    /// [`super::effect`] — each read inside that effect registers
+    /// [`super::effect()`] — each read inside that effect registers
     /// the underlying signal as a dependency, so subsequent
     /// `.set` / `.update` calls trigger an attribute re-write.
     ///
     /// Constructed via the [`From`] impls below — users typically
     /// pass `ReadSignal<T>`, `RwSignal<T>`, or the
-    /// `ReadSignal<T>` returned by [`super::computed`].
+    /// `ReadSignal<T>` returned by [`super::computed()`].
     Dynamic(ReadSignal<T>),
 }
 
@@ -134,19 +134,19 @@ impl<T: 'static + Clone> Signal<T> {
     ///   stack. Outside any tracking scope this is just a value
     ///   read.
     ///
-    /// User-facing `#[component]` / `#[whisker::module_component]`
+    /// User-facing `#[component]` / `#[whisker::module_element]`
     /// bodies use this to read a `Signal<T>` prop:
     ///
     /// ```ignore
     /// #[component]
     /// fn dynamic_tile(color: Signal<String>) -> Element {
-    ///     let style = computed(move || format!("color: {};", color.get()));
+    ///     let style = computed(move || Css::new().color(Color::Named(color.get())));
     ///     //                                                  ^^^^^^^^^^^^
     ///     //                                                  registers sig
     ///     //                                                  with the
     ///     //                                                  enclosing
     ///     //                                                  computed.
-    ///     render! { view(style: style) { … } }
+    ///     render! { View(style: style) { /* children */ } }
     /// }
     /// ```
     pub fn get(&self) -> T {
@@ -173,7 +173,7 @@ impl<T: 'static> From<T> for Signal<T> {
 }
 
 // A prop the caller omits falls back to `unwrap_or_default()` in
-// `#[whisker::module_component]`'s builder, which needs to produce a
+// `#[whisker::module_element]`'s builder, which needs to produce a
 // reasonable "attribute not set" value (`""` for `Signal<String>`,
 // `false` for `Signal<bool>`).
 impl<T: 'static + Default> Default for Signal<T> {
@@ -195,8 +195,8 @@ impl<T: 'static + Clone> From<RwSignal<T>> for Signal<T> {
 }
 
 // Without this impl a `&str` literal only reaches
-// `Into<Signal<&str>>` through the blanket `From<T>`, forcing callers
-// to write `.style("foo".to_string())`.
+// `Into<Signal<&str>>` through the blanket `From<T>`, forcing ordinary
+// string-valued props to allocate explicitly at call sites.
 impl From<&str> for Signal<String> {
     fn from(s: &str) -> Self {
         Signal::Stored(StoredValue::new(s.to_string()))

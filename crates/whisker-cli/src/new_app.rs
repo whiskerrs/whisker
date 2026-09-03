@@ -12,10 +12,10 @@
 //! ## Why a single-crate workspace?
 //!
 //! `whisker run` walks up from the crate's `Cargo.toml` looking for a
-//! `[workspace]` table — the workspace root anchors the shim cache
+//! a `[workspace]` table — the workspace root anchors the shim cache
 //! dirs, the gen tree and cargo's `target/`. A standalone app crate
 //! must therefore declare both `[package]` and `[workspace]`, or
-//! `whisker run` errors with "no [workspace] Cargo.toml at or above …".
+//! `whisker run` reports that it cannot find a workspace manifest.
 //!
 //! ## Naming
 //!
@@ -177,13 +177,16 @@ fn lib_rs(v: &Vars) -> String {
     format!(
         r##"//! {display} — a Whisker app.
 
-use whisker::css::{{AlignItems, Color, Display, FlexDirection, FontWeight, JustifyContent}};
+use whisker::css::{{
+    AlignItems, Color, ColorStop, Display, FlexDirection, FontWeight, Gradient,
+    JustifyContent, LinearDirection,
+}};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
 // `#[whisker::main]` is the app entry point. Keep it thin — it just
 // mounts the root component. Whisker provides the root `page` element
-// for you, so `app()` (and your components) just return a `view`.
+// for you, so `app()` (and your components) just return an `Element`.
 //
 // Splitting your UI into `#[component]`s (rather than writing everything
 // here) is what lets `whisker run` hot-reload your edits in well under a
@@ -208,10 +211,8 @@ fn root() -> Element {{
 
     render! {{
         // Styles use the typed `css!` macro: field names map to CSS
-        // properties and values are checked at compile time. Reach for
-        // `.raw("prop", "value")` for anything the typed builder doesn't
-        // cover yet (here: `gap` and the gradient `background`).
-        view(style: css!(
+        // properties and values are checked at compile time.
+        View(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
@@ -221,30 +222,36 @@ fn root() -> Element {{
             background_color: Color::hex(0x0b0b0f),
         )) {{
             // A card: column layout, padding, rounded corners, plus a
-            // `gap` and a linear-gradient background via `.raw(...)`.
-            view(style: css!(
+            // gap and a typed linear-gradient background.
+            View(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 padding: px(32),
                 border_radius: px(20),
-            )
-            .raw("gap", "6px")
-            .raw("background", "linear-gradient(135deg, #7c5cff 0%, #4e9bff 100%)")) {{
-                text(
+                gap: px(6),
+                background_image: Gradient::Linear {{
+                    direction: LinearDirection::Angle(135.deg().into()),
+                    stops: vec![
+                        ColorStop::at(Color::hex(0x7c5cff), percent(0)),
+                        ColorStop::at(Color::hex(0x4e9bff), percent(100)),
+                    ],
+                }},
+            )) {{
+                Text(
                     value: "{display}",
                     style: css!(
                         color: Color::hex(0xffffff),
                         font_size: px(22),
                         font_weight: FontWeight::Bold,
-                    )
-                    .raw("letter-spacing", "0.5px"),
+                        letter_spacing: px(0.5),
+                    ),
                 )
-                text(
+                Text(
                     value: "Edit `Root` and save — hot reload in under a second",
                     style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(13)),
                 )
-                text(
+                Text(
                     value: computed(move || format!("{{}}", count.get())),
                     style: css!(
                         color: Color::hex(0xffffff),
@@ -254,12 +261,12 @@ fn root() -> Element {{
                     ),
                 )
                 // A horizontal row; `gap` separates the two buttons.
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Row,
                     margin_top: px(16),
-                )
-                .raw("gap", "12px")) {{
+                    gap: px(12),
+                )) {{
                     Button(label: "-1", delta: -1, count: count)
                     Button(label: "+1", delta: 1, count: count)
                 }}
@@ -274,15 +281,15 @@ fn root() -> Element {{
 #[component]
 fn button(label: &'static str, delta: i32, count: RwSignal<i32>) -> Element {{
     render! {{
-        view(
+        View(
             style: css!(
                 border_radius: px(12),
                 background_color: Color::rgba(255, 255, 255, 0.18),
-            )
-            .raw("padding", "12px 22px"),
+                padding: (px(12), px(22)),
+            ),
             on_tap: move |_| count.set(count.get() + delta),
         ) {{
-            text(
+            Text(
                 value: label,
                 style: css!(
                     color: Color::hex(0xffffff),
@@ -299,7 +306,7 @@ fn button(label: &'static str, delta: i32, count: RwSignal<i32>) -> Element {{
 
 fn whisker_rs(v: &Vars) -> String {
     format!(
-        r#"// `whisker.rs` — Whisker app configuration.
+        r##"// `whisker.rs` — Whisker app configuration.
 //
 // `whisker run` compiles this file as a tiny probe binary that
 // serializes the resulting `Config` to JSON; the CLI reads that
@@ -308,6 +315,7 @@ fn whisker_rs(v: &Vars) -> String {
 pub fn configure(app: &mut whisker_config::Config) {{
     app.name("{display}")
         .bundle_id("{bundle_id}")
+        .background("#FFFFFF")
         .version("0.1.0")
         .build_number(1);
 
@@ -325,7 +333,7 @@ pub fn configure(app: &mut whisker_config::Config) {{
             .deployment_target("13.0");
     }});
 }}
-"#,
+"##,
         display = v.display_name,
         bundle_id = v.bundle_id,
     )
@@ -583,6 +591,7 @@ mod tests {
         // Default display name + bundle id are derived.
         assert!(whisker_rs.contains("Demo App"));
         assert!(whisker_rs.contains("rs.example.demo_app"));
+        assert!(whisker_rs.contains(".background(\"#FFFFFF\")"));
 
         let gitignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
         // Sanity-check the load-bearing entries — losing either of

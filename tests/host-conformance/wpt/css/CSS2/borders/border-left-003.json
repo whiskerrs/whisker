@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "id": "wpt.css2.borders.border-left-003",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/CSS2/borders/border-left-003.xht",
+    "reference_path": "css/CSS2/borders/border-left-003-ref.xht",
+    "license": "BSD-3-Clause",
+    "assertion": "The border-left shorthand sets the color of a solid left border, producing a short vertical blue line.",
+    "adaptation": "The 5px by 1in left border and the reference's 5px by 1in blue background are represented as 5 by 96 logical-pixel boxes; instructional document content and margins are omitted."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 5.0, "height": 96.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [0.0, 0.0, 5.0, 96.0],
+        "background": { "kind": "named", "value": "transparent" },
+        "border": {
+          "widths": [0.0, 0.0, 0.0, 5.0],
+          "colors": [
+            { "kind": "named", "value": "transparent" },
+            { "kind": "named", "value": "transparent" },
+            { "kind": "named", "value": "transparent" },
+            { "kind": "named", "value": "blue" }
+          ],
+          "styles": ["none", "none", "none", "solid"],
+          "radii": [0.0, 0.0, 0.0, 0.0]
+        }
+      },
+      { "type": "checkpoint", "name": "paint.box" }
+    ]
+  },
+  "reference": {
+    "commands": [
+      { "type": "attach_surface", "width": 5.0, "height": 96.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [0.0, 0.0, 5.0, 96.0],
+        "background": { "kind": "named", "value": "blue" }
+      },
+      { "type": "checkpoint", "name": "paint.box" }
+    ]
+  }
+}

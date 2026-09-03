@@ -9,19 +9,13 @@
 //!   for URL fetching, in-memory `NSCache`, and on-disk cache.
 //! - **Android**: `ImageView` + [Coil](https://coil-kt.github.io/coil/)
 //!   for URL fetching, `LruCache`, and disk cache.
+//! - **Web**: a native `<img>` element and the browser HTTP cache.
+//! - **Desktop**: background URL/file decoding into a GPU-uploaded raster,
+//!   backed by a shared bounded decoded-image cache.
 //!
-//! ## Why a separate module instead of Lynx's `<image>`?
-//!
-//! Lynx ships a `LynxServiceImageProtocol` interface that's expected
-//! to be implemented + registered by the host app (Lynx's own
-//! `LynxImageService` uses SDWebImage on iOS / Fresco on Android,
-//! but it's a separate subspec that consumers wire themselves). The
-//! Whisker iOS / Android distribution doesn't include any
-//! implementation, so a bare `<image src="…">` mounts a `UIImageView`
-//! whose `image` property never gets assigned. `whisker-image` skips
-//! the Lynx image stack entirely and drives the URL load from the
-//! native module directly — same idea as `whisker-video` for media
-//! playback.
+//! URL loading and caching live in this module rather than the renderer
+//! kernel, keeping the built-in Host surface small and making image policy
+//! replaceable by applications.
 //!
 //! ## Usage
 //!
@@ -35,7 +29,7 @@
 //!         Image(
 //!             src: "https://example.com/cover.jpg",
 //!             mode: ImageMode::AspectFill,
-//!             style: "width: 240px; height: 240px; border-radius: 8px;",
+//!             style: css!(width: px(240), height: px(240), border_radius: px(8)),
 //!         )
 //!     }
 //! }
@@ -49,8 +43,10 @@
 //!   defaults to [`ImageMode::AspectFill`].
 //! - `headers` — extra request headers for remote sources, as a JSON
 //!   object. Hot-link protection is what this is for: those hosts 403
-//!   without the `Referer` their own pages send.
-//! - `style` — standard Whisker style string. Width / height must be
+//!   without the `Referer` their own pages send. Android, iOS, and Desktop
+//!   apply these headers; the initial Web Host supports ordinary browser image
+//!   requests but reports an error for non-empty custom headers.
+//! - `style` — structured Whisker CSS declarations. Width / height must be
 //!   set on the element (or via flex sizing) — Kingfisher / Coil
 //!   target-size the fetched bitmap against the rendered size, so an
 //!   element with `width: 0; height: 0;` would never paint.
@@ -167,13 +163,16 @@ impl<F: Fn(ImageEvent) + 'static> From<F> for ImageCallback {
 }
 
 // The `whisker-image:Image` element itself. Crate-internal — only the
-// outer `image` component mounts it, because a `module_component`'s
+// outer `image` component mounts it, because a `module_element`'s
 // event props are all required and these two must not be.
 #[doc(hidden)]
-#[whisker::module_component("Image")]
+#[whisker::module_element(
+    name = "whisker-image:Image",
+    measurement = None,
+)]
 pub fn native_image(
     src: Signal<String>,
-    mode: Signal<ImageMode>,
+    mode: Signal<String>,
     headers: Signal<String>,
     style: whisker::Style,
     on_load: ImageEvent,
@@ -181,18 +180,25 @@ pub fn native_image(
 ) {
 }
 
+/// Element schema exported for generated Host bootstrap.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        [native_image_schema::element_provider()],
+    )
+}
+
 /// `whisker-image:Image` — a networked image.
 ///
 /// All props are reactive: the platform-side setters re-apply whenever
 /// the bound signals change, so a `src` swap re-fetches and a `mode`
 /// swap re-lays-out without a remount. Corners follow the standard CSS
-/// `border-radius` in the `style:` cascade (iOS clips via
-/// `UIView.layer.cornerRadius` + `clipsToBounds`; Android extracts the
-/// parsed radius from Lynx's `onBorderRadiusUpdated` callback and feeds
-/// it to Coil's `RoundedCornersTransformation`).
+/// `border-radius` in the `style:` cascade. The common Host presentation
+/// wrapper applies corner clipping independently of the image loader.
 ///
 /// A wrapper around the element rather than the element itself so that
-/// `on_load` / `on_error` can be optional: a `module_component`'s event
+/// `on_load` / `on_error` can be optional: a `module_element`'s event
 /// props are required, and most callers just want a picture.
 #[component]
 pub fn image(
@@ -220,7 +226,7 @@ pub fn image(
     /// that isn't a JSON object of strings is ignored.
     #[prop(default = String::new().into())]
     headers: Signal<String>,
-    /// Standard Whisker style string. Width / height must be set on the
+    /// Structured Whisker CSS declarations. Width / height must be set on the
     /// element (or via flex sizing) — the platform image loaders
     /// target-size the fetched bitmap against the rendered size.
     style: Option<whisker::Style>,
@@ -232,31 +238,30 @@ pub fn image(
     on_error: Option<ImageCallback>,
 ) -> Element {
     let style_prop: whisker::Style = style.clone().unwrap_or_default();
+    let mode_prop = computed(move || mode.get().as_str().to_owned());
     let load = on_load.clone();
     let error = on_error.clone();
-    NativeImage(
-        NativeImageProps::builder()
-            .src(src)
-            .mode(mode)
-            .headers(headers)
-            .style(style_prop)
-            .on_load(move |event: ImageEvent| {
-                if let Some(cb) = &load {
-                    cb.call(event);
-                }
-            })
-            .on_error(move |event: ImageEvent| {
-                if let Some(cb) = &error {
-                    cb.call(event);
-                }
-            })
-            .build(),
-    )
+    NativeImage::builder()
+        .src(src)
+        .mode(mode_prop)
+        .headers(headers)
+        .style(style_prop)
+        .on_load(move |event: ImageEvent| {
+            if let Some(cb) = &load {
+                cb.call(event);
+            }
+        })
+        .on_error(move |event: ImageEvent| {
+            if let Some(cb) = &error {
+                cb.call(event);
+            }
+        })
+        .build()
 }
 
 /// Warm the cache for `urls` without showing them.
 ///
-/// The next [`image`] pointing at one of these paints from cache
+/// The next `Image` pointing at one of these paints from cache
 /// instead of the network — what a reader does with the pages after
 /// the one being read. Fire-and-forget: failures are the next real
 /// load's problem, not this call's.
@@ -285,14 +290,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exports_the_native_image_element_schema() {
+        let definition = __whisker_element_module_definition();
+
+        assert_eq!(definition.module_name, "whisker-image");
+        assert_eq!(definition.elements.len(), 1);
+        assert_eq!(definition.elements[0].schema.name, "whisker-image:Image");
+    }
+
+    #[test]
     fn an_image_needs_only_a_src() {
         // That this builds at all is most of the assertion: the element's
         // own event props are required, the wrapper's are not.
-        let props = ImageProps::builder()
-            .src("https://example.com/a.png")
-            .build();
-        assert!(props.on_load.is_none());
-        assert!(props.on_error.is_none());
+        let _builder = Image::builder().src("https://example.com/a.png");
     }
 
     #[test]

@@ -13,7 +13,8 @@ use whisker_css::ext::*;
 use whisker_css::shorthand::padding_margin::MarginValue;
 use whisker_css::shorthand::{Animation, Background, BackgroundLayer, Border, Transition};
 use whisker_css::value::{
-    BorderRadius, FlexBasis, GridLine, GridTemplate, ImageRef, LineHeight, Repeated, Size,
+    BorderRadius, FlexBasis, GridLine, GridTemplate, GridTrack, ImageRef, LineHeight, Repeated,
+    Size,
 };
 use whisker_css::{Css, ToCss};
 
@@ -61,7 +62,7 @@ fn debug_and_clone_pass_through() {
         stop.clone(),
         easing,
         stop_pos,
-        lin,
+        lin.clone(),
         radial.clone(),
     );
 
@@ -176,7 +177,7 @@ fn position_keyword_each_variant() {
 fn image_ref_url_then_gradient_then_none() {
     let url = ImageRef::Url(CssString::new("a.png"));
     let gradient: ImageRef =
-        Gradient::linear_to_bottom([ColorStop::new(NamedColor::Red.into())]).into();
+        Gradient::linear_to_bottom([ColorStop::new(Color::Named(NamedColor::Red))]).into();
     let none = ImageRef::None;
     assert!(url.to_css_string().contains("url"));
     assert!(gradient.to_css_string().contains("linear-gradient"));
@@ -244,10 +245,10 @@ fn grid_line_all_variants() {
 
 #[test]
 fn grid_template_empty_then_extend() {
-    let tracks: Vec<String> = Vec::new();
+    let tracks: Vec<GridTrack> = Vec::new();
     let t1 = GridTemplate::tracks(tracks);
     assert!(t1.to_css_string().is_empty());
-    let t2 = GridTemplate::tracks(["1fr".to_string(), "2fr".to_string()]);
+    let t2 = GridTemplate::tracks([GridTrack::fraction(1.0), GridTrack::fraction(2.0)]);
     assert_eq!(t2.to_css_string(), "1fr 2fr");
 }
 
@@ -325,7 +326,7 @@ fn linear_direction_keyword_directions_in_gradient() {
         assert!(g.to_css_string().contains("linear-gradient"));
     }
     let g = Gradient::Linear {
-        direction: LinearDirection::Angle(45.deg()),
+        direction: LinearDirection::Angle(45.deg().into()),
         stops: vec![ColorStop::new(Color::Named(NamedColor::Red))],
     };
     assert!(g.to_css_string().contains("45deg"));
@@ -340,8 +341,6 @@ fn fit_content_keyword_path() {
 #[test]
 fn length_each_unit_zero_path() {
     assert!(Length::Px(0.0).is_zero());
-    assert!(Length::Rpx(0.0).is_zero());
-    assert!(Length::Ppx(0.0).is_zero());
     assert!(Length::Em(0.0).is_zero());
     assert!(Length::Rem(0.0).is_zero());
     assert!(Length::Vh(0.0).is_zero());

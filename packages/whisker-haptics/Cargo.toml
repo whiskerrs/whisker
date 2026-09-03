@@ -30,10 +30,11 @@ include = [
 [lib]
 crate-type = ["rlib"]
 
-# Module-system opt-in marker: identifies this cargo crate as a Whisker
-# module so `whisker-build` wires the Android Gradle subproject + iOS
-# SwiftPM package into the host build.
-[package.metadata.whisker]
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { manifest = "Package.swift" }
+web = { manifest = "web/Cargo.toml" }
+desktop = { kind = "common" }
 
 # Plugin registration — Whisker builds the `whisker-haptics-plugin`
 # binary below and runs it during every gen-tree sync. It appends the
@@ -55,7 +56,7 @@ doc = false
 # `whisker` (the umbrella runtime crate) is gated behind the `runtime`
 # feature so the config probe — which only needs the `plugin` module —
 # can pull this crate with `default-features = false` and skip the
-# multi-minute Lynx-bridge/driver build. Default-on so normal app deps
+# full runtime and Host protocol build. Default-on so normal app deps
 # "just work".
 whisker = { workspace = true, optional = true }
 

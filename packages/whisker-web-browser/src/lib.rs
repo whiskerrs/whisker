@@ -2,6 +2,10 @@
 //! `open_auth_session_async` (`ASWebAuthenticationSession` /
 //! Chrome Custom Tabs) for in-app OAuth, plus a plain
 //! `open_browser_async` (`SFSafariViewController` / Custom Tabs).
+//! Web uses a popup and observes its same-origin redirect/close state.
+//! Desktop hands plain browser URLs to the system browser; auth-session
+//! redirect interception is reported as unsupported until a loopback/deep-link
+//! receiver is part of the Desktop Host.
 //!
 //! ## OAuth redirect
 //!
@@ -34,6 +38,15 @@ use std::sync::{Arc, Mutex};
 
 use whisker::WhiskerValue;
 use whisker::module;
+
+/// Empty visual schema paired with the service-only Web/Desktop browser module.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        std::iter::empty::<whisker::ElementProviderMetadata>(),
+    )
+}
 
 /// Outcome of [`open_auth_session_async`].
 #[derive(Debug, Clone, PartialEq)]

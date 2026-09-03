@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{app_name_html}}</title>
+    <style>
+      html, body, #whisker-root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: {{background_css}};
+      }
+    </style>
+  </head>
+  <body>
+    <div id="whisker-root"></div>
+    <pre id="whisker-dev-error" hidden></pre>
+    <script type="module">
+      import init, * as whisker from "/whisker_app.js";
+      const reportDevelopmentError = (error) => {
+        const output = document.getElementById("whisker-dev-error");
+        output.hidden = false;
+        output.textContent = `Whisker Web: ${error}`;
+      };
+      window.addEventListener("error", (event) => reportDevelopmentError(event.error));
+      window.addEventListener("unhandledrejection", (event) => reportDevelopmentError(event.reason));
+      try {
+        await init();
+      } catch (error) {
+        const root = document.getElementById("whisker-root");
+        root.textContent = `Whisker Web failed to start: ${error}`;
+        throw error;
+      }
+
+      // __WHISKER_DEVELOPMENT_BOOTSTRAP__
+    </script>
+  </body>
+</html>

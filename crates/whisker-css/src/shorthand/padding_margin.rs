@@ -191,10 +191,10 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/margin>
     pub fn margin(self, v: impl Into<Margin>) -> Self {
         let Margin { trbl: [t, r, b, l] } = v.into();
-        self.push("margin-top", t)
-            .push("margin-right", r)
-            .push("margin-bottom", b)
-            .push("margin-left", l)
+        self.push_typed(crate::StyleProperty::MarginTop, t)
+            .push_typed(crate::StyleProperty::MarginRight, r)
+            .push_typed(crate::StyleProperty::MarginBottom, b)
+            .push_typed(crate::StyleProperty::MarginLeft, l)
     }
 }
 

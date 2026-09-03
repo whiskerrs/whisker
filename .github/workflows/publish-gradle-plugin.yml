@@ -69,7 +69,7 @@ jobs:
           # `github.event.inputs.version` is only meaningful on
           # workflow_dispatch — referenced via `event.inputs` so the
           # expression also evaluates cleanly (to empty string) on
-          # tag-push events. Modelled on the lynx fork's
+          # tag-push events. This follows the repository's
           # `build-whisker-tarballs.yml` "Resolve release version"
           # step.
           INPUT_VERSION: ${{ github.event.inputs.version }}
@@ -149,7 +149,7 @@ jobs:
         #
         # `keep_files: true` preserves prior plugin versions so the
         # repo accumulates rather than being clobbered — same
-        # pattern as the lynx fork's gh-pages publish step.
+        # pattern as the repository's other gh-pages publish steps.
         if: ${{ startsWith(github.ref, 'refs/tags/gradle-plugin-v') }}
         uses: peaceiris/actions-gh-pages@v3
         with:

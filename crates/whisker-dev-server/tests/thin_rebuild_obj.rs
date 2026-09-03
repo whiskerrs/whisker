@@ -20,8 +20,8 @@
 use std::path::{Path, PathBuf};
 
 use whisker_dev_server::hotpatch::{
-    CapturedRustcInvocation, build_link_plan, build_obj_plan, library_filename, linker_os_for_host,
-    parse_symbol_table, run_link_plan, run_obj_plan,
+    CapturedRustcInvocation, build_link_plan, build_obj_plan, library_filename,
+    linker_os_for_current_platform, parse_symbol_table, run_link_plan, run_obj_plan,
 };
 
 const FIXTURE_CRATE_NAME: &str = "thin_build_fixture";
@@ -162,7 +162,7 @@ async fn thin_rebuild_obj_plus_dynamic_lookup_link_preserves_mangled_symbols() {
         &host_sdk_args(),
         &object,
         &dylib,
-        linker_os_for_host(),
+        linker_os_for_current_platform(),
         &[], // host fixture has no separate stub object — the test
         // process already satisfies the patch's refs via
         // -Wl,-undefined,dynamic_lookup (macOS) /

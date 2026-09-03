@@ -4,12 +4,10 @@
 //!
 //! The same `replay` function powers Rust-side unit tests
 //! (`TraceVisitor` records every call and assertions compare the
-//! trace to a golden file) and will, in the future, power any
-//! Rust-side rasteriser. The per-platform replayers in
-//! `packages/whisker-svg/{ios,android}/` are independent
-//! reimplementations of this logic against the same SPEC; the
-//! cross-platform tests in `tests/` verify that all three agree
-//! by feeding them identical fixture bytes.
+//! trace to a golden file), the Web SVG-DOM renderer, and the
+//! Desktop rasterizer. The Swift and Kotlin replayers are independent
+//! implementations of this logic against the same SPEC. All hosts
+//! consume the same fixture-generated display-list bytes.
 
 use crate::builder::{Color, Transform};
 use crate::format::*;

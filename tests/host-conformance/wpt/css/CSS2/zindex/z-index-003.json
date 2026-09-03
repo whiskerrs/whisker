@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "id": "wpt.css2.z-index-003",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/CSS2/zindex/z-index-003.xht",
+    "reference_path": "css/CSS2/reference/ref-filled-green-100px-square.xht",
+    "license": "BSD-3-Clause",
+    "assertion": "A positioned element with z-index -100 paints above a later positioned sibling with z-index -2147483647.",
+    "adaptation": "The WPT's two overlapping children and signed 32-bit z-index values are retained at a smaller logical size. The green sample verifies that SetZOrder takes precedence over insertion order."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 70.0, "height": 70.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [10.0, 10.0, 50.0, 50.0],
+            "background": { "kind": "named", "value": "transparent" }
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [0.0, 0.0, 50.0, 50.0],
+            "background": { "kind": "named", "value": "green" },
+            "z_order": -100
+          },
+          {
+            "id": 3,
+            "parent": 1,
+            "rect": [0.0, 0.0, 50.0, 50.0],
+            "background": { "kind": "named", "value": "red" },
+            "z_order": -2147483647
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [35.0, 35.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

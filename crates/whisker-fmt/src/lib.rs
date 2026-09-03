@@ -1,5 +1,6 @@
 //! `whisker-fmt` — a rustfmt drop-in that also formats Whisker's
-//! `render!` and `css!` macro bodies.
+//! builder-composition macro bodies (`compose!`, `render!`, `css!`, and
+//! `routes!`).
 //!
 //! # Architecture (mirrors yew-fmt)
 //!
@@ -7,9 +8,9 @@
 //!
 //! 1. Shell out to the real **rustfmt binary** (`--emit stdout`),
 //!    letting it read the project's `rustfmt.toml` itself. This is the
-//!    base Rust formatting. ([`run_rustfmt`])
+//!    base Rust formatting. (the private `run_rustfmt` helper)
 //! 2. Parse that output with `syn` + `proc-macro2` (`span-locations`),
-//!    walk for `render!` / `css!` invocations, re-parse each body with
+//!    walk for composition macro invocations, re-parse each body with
 //!    [`whisker_macro_syntax`], pretty-print it, and splice the result
 //!    back over the original body token range. ([`reformat_macros`])
 //!
@@ -26,10 +27,10 @@
 //! # Comments inside macros
 //!
 //! `syn` drops comments and `proc-macro2` exposes them only as
-//! whitespace between tokens, so reprinting a `render!` / `css!` body
+//! whitespace between tokens, so reprinting a composition macro body
 //! from the parsed AST would lose them. They are recovered from the
-//! body source text ([`comments`]) and reattached while pretty-printing
-//! ([`printer`]): own-line comments go on their own line at the block's
+//! body source text (the private `comments` module) and reattached while
+//! pretty-printing (the private `printer` module): own-line comments go on their own line at the block's
 //! indent, trailing comments are appended to the end of the preceding
 //! line. Comments INSIDE an embedded expr value are excluded — they
 //! ride along with the verbatim / rustfmt-formatted expr source.
@@ -37,7 +38,7 @@
 //! A **fail-safe** guards the result: if any recovered comment would be
 //! dropped, or the output is not idempotent (`f(f(x)) != f(x)`), the
 //! body is left **untouched** — so a comment can never be silently
-//! lost. See [`macro_body_edit`].
+//! lost. See the private `macro_body_edit` helper.
 
 mod comments;
 mod expr_fmt;
@@ -56,7 +57,7 @@ use std::path::Path;
 use std::process::Command;
 
 /// Run the full pipeline: rustfmt the source, then reformat every
-/// `render!` / `css!` body found in the rustfmt output.
+/// composition macro body found in the rustfmt output.
 ///
 /// `opts` supplies the layout values the macro pretty-printer needs.
 /// The rustfmt binary independently reads `rustfmt.toml`; pass
@@ -144,17 +145,17 @@ pub fn unified_diff(before: &str, after: &str) -> String {
 /// Locate the rustfmt binary: `$RUSTFMT`, else `rustup which rustfmt`,
 /// else `rustfmt` on `PATH`.
 pub fn rustfmt_path() -> String {
-    if let Ok(p) = std::env::var("RUSTFMT") {
+    if let Ok(p) = std::env::var("RUSTFMT")
+        && !p.is_empty()
+    {
+        return p;
+    }
+    if let Ok(out) = Command::new("rustup").args(["which", "rustfmt"]).output()
+        && out.status.success()
+    {
+        let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if !p.is_empty() {
             return p;
-        }
-    }
-    if let Ok(out) = Command::new("rustup").args(["which", "rustfmt"]).output() {
-        if out.status.success() {
-            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !p.is_empty() {
-                return p;
-            }
         }
     }
     "rustfmt".to_string()
@@ -302,7 +303,7 @@ fn edition_from_cargo_value(value: &toml::Value) -> Option<String> {
 /// 1. The nearest `rustfmt.toml`'s `edition` key, if present (wins).
 /// 2. else the nearest `Cargo.toml`'s edition (`[package]` or
 ///    `[workspace.package]`), searching upward from `dir`.
-/// 3. else [`DEFAULT_EDITION`].
+/// 3. else the crate's default edition.
 ///
 /// The non-edition layout keys (`max_width`, `tab_spaces`, `hard_tabs`)
 /// come from the same `rustfmt.toml`. The returned `edition` is ALWAYS
@@ -326,17 +327,16 @@ pub fn resolve_options(dir: &Path) -> FmtOptions {
 
 // ---- macro reformatting pass --------------------------------------------
 
-/// Reformat every `render!` / `css!` macro body found in `rust_src`
+/// Reformat every supported composition macro body found in `rust_src`
 /// (which must already be valid, rustfmt-formatted Rust).
 ///
 /// This is the testable core that does NOT need the rustfmt binary.
 ///
 /// ## Comments
 ///
-/// Comments inside a `render!` / `css!` body ARE preserved: they're
-/// recovered from the body source ([`comments::collect_grammar_comments`])
-/// and reattached during pretty-printing. A fail-safe in
-/// [`macro_body_edit`] falls back to leaving the body untouched if any
+/// Comments inside a composition macro body are preserved: they're
+/// recovered from the body source and reattached during pretty-printing. A
+/// fail-safe in the private `macro_body_edit` helper falls back to leaving the body untouched if any
 /// comment would be dropped or the result is not idempotent, so comments
 /// are never lost.
 pub fn reformat_macros(rust_src: &str, opts: &FmtOptions) -> Result<String> {
@@ -401,9 +401,8 @@ struct MacroEdit {
     replacement: String,
 }
 
-/// Recursively walk a token stream, finding `render! { … }` /
-/// `css! { … }` (or `(…)` / `[…]`) invocations and queueing an edit for
-/// each body.
+/// Recursively walk a token stream, finding supported composition macro
+/// invocations and queueing an edit for each body.
 #[allow(clippy::too_many_arguments)]
 fn collect_macro_edits(
     tokens: TokenStream,
@@ -417,26 +416,25 @@ fn collect_macro_edits(
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
     let mut i = 0;
     while i < trees.len() {
-        // Look for `IDENT ! GROUP` where IDENT is render/css.
+        // Look for `IDENT ! GROUP` where IDENT is a supported macro.
         if let TokenTree::Ident(ident) = &trees[i] {
             let name = ident.to_string();
-            if (name == "render" || name == "css" || name == "routes")
+            if matches!(name.as_str(), "compose" | "render" | "css" | "routes")
                 && i + 2 < trees.len()
                 && matches!(&trees[i + 1], TokenTree::Punct(p) if p.as_char() == '!')
+                && let TokenTree::Group(group) = &trees[i + 2]
             {
-                if let TokenTree::Group(group) = &trees[i + 2] {
-                    if let Some(edit) =
-                        macro_body_edit(&name, group, file_map, rust_src, opts, exprfmt, verify)?
-                    {
-                        edits.push(edit);
-                    }
-                    // Never recurse into a macro body: nested
-                    // `render!`/`css!` are re-printed by the body's own
-                    // printer, so an inner edit would splice into byte
-                    // ranges the outer edit already owns.
-                    i += 3;
-                    continue;
+                if let Some(edit) =
+                    macro_body_edit(&name, group, file_map, rust_src, opts, exprfmt, verify)?
+                {
+                    edits.push(edit);
                 }
+                // Never recurse into a macro body: nested
+                // Nested composition macros are re-printed by the body's own
+                // printer, so an inner edit would splice into byte
+                // ranges the outer edit already owns.
+                i += 3;
+                continue;
             }
         }
         if let TokenTree::Group(group) = &trees[i] {
@@ -502,9 +500,10 @@ fn macro_body_edit(
     // comments so only GRAMMAR comments get reattached (expr-internal
     // ones ride along with the expr's own source).
     let (formatted, grammar_comments) = match macro_name {
-        "render" => match whisker_macro_syntax::render::parse_root(body_ts.clone()) {
-            Ok(root) => {
-                let ir_root = ir::adapt_render_root(&root);
+        "compose" | "render" => match whisker_macro_syntax::compose::parse_input(body_ts.clone()) {
+            Ok(input) if input.nodes.len() == 1 => {
+                let mut roots = ir::adapt_compose_input(&input);
+                let ir_root = roots.remove(0);
                 let mut spans = Vec::new();
                 ir::collect_ir_expr_spans(&ir_root, &mut spans);
                 let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
@@ -522,14 +521,14 @@ fn macro_body_edit(
                 (s, comments)
             }
             // Not a well-formed body (e.g. mid-edit) — leave it.
-            Err(_) => return Ok(None),
+            Ok(_) | Err(_) => return Ok(None),
         },
-        "routes" => match whisker_macro_syntax::routes::parse_input(body_ts.clone()) {
+        "routes" => match whisker_macro_syntax::compose::parse_input(body_ts.clone()) {
             Ok(input) => {
-                if input.roots.is_empty() {
+                if input.nodes.is_empty() {
                     return Ok(None);
                 }
-                let ir_roots = ir::adapt_routes_roots(&input);
+                let ir_roots = ir::adapt_compose_input(&input);
                 let mut spans = Vec::new();
                 for root in &ir_roots {
                     ir::collect_ir_expr_spans(root, &mut spans);
@@ -550,42 +549,44 @@ fn macro_body_edit(
             }
             Err(_) => return Ok(None),
         },
-        "css" => match whisker_macro_syntax::css::parse_input(body_ts.clone()) {
-            Ok(input) => {
-                if input.kwargs.is_empty() {
-                    return Ok(None);
-                }
-                let mut spans = Vec::new();
-                for kw in &input.kwargs {
-                    if let Some(expr) = &kw.value {
-                        spans.push(span_of_expr(expr));
+        "css" => {
+            match syn::parse2::<whisker_macro_syntax::compose::ComposeArguments>(body_ts.clone()) {
+                Ok(input) => {
+                    if input.arguments.is_empty() {
+                        return Ok(None);
                     }
+                    let mut spans = Vec::new();
+                    for kw in &input.arguments {
+                        if !kw.partial {
+                            spans.push(span_of_expr(&kw.value));
+                        }
+                    }
+                    let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
+                    let expr_map = build_expr_map(&spans, &body_map, exprfmt);
+                    let inline_budget = inline_body_budget(
+                        group.delimiter(),
+                        rust_src,
+                        line_start,
+                        group_start,
+                        close_byte,
+                        opts,
+                    );
+                    let s = printer::print_css(
+                        &input,
+                        &body_map,
+                        opts,
+                        base_indent,
+                        &expr_map,
+                        exprfmt,
+                        &comments,
+                        body_len,
+                        inline_budget,
+                    );
+                    (s, comments)
                 }
-                let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
-                let expr_map = build_expr_map(&spans, &body_map, exprfmt);
-                let inline_budget = inline_body_budget(
-                    group.delimiter(),
-                    rust_src,
-                    line_start,
-                    group_start,
-                    close_byte,
-                    opts,
-                );
-                let s = printer::print_css(
-                    &input,
-                    &body_map,
-                    opts,
-                    base_indent,
-                    &expr_map,
-                    exprfmt,
-                    &comments,
-                    body_len,
-                    inline_budget,
-                );
-                (s, comments)
+                Err(_) => return Ok(None),
             }
-            Err(_) => return Ok(None),
-        },
+        }
         _ => return Ok(None),
     };
 
@@ -807,1329 +808,5 @@ fn indent_level_of(line_prefix: &str, opts: &FmtOptions) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn opts(tab: usize, width: usize) -> FmtOptions {
-        FmtOptions {
-            max_width: width,
-            tab_spaces: tab,
-            hard_tabs: false,
-            edition: None,
-            single_line_if_else_max_width: None,
-        }
-    }
-
-    // Every test below feeds already-rust-formatted input to
-    // `reformat_macros`, so none require the rustfmt binary.
-
-    #[test]
-    fn reformats_messy_render_body() {
-        let input = "fn ui() -> Element {\n    render! { view(style:\"x\",class:\"y\"){text(value:\"hi\")} }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        let expected = "fn ui() -> Element {\n    render! {\n        view(style: \"x\", class: \"y\") {\n            text(value: \"hi\")\n        }\n    }\n}\n";
-        assert_eq!(out, expected, "got:\n{out}");
-    }
-
-    #[test]
-    fn idempotent() {
-        let input =
-            "fn ui() -> Element {\n    render! { view(style:\"x\"){text(value:\"hi\")} }\n}\n";
-        let once = reformat_macros(input, &opts(4, 100)).unwrap();
-        let twice = reformat_macros(&once, &opts(4, 100)).unwrap();
-        assert_eq!(
-            once, twice,
-            "not idempotent:\nonce:\n{once}\ntwice:\n{twice}"
-        );
-    }
-
-    #[test]
-    fn honors_tab_spaces_from_options() {
-        let input =
-            "fn ui() -> Element {\n    render! { view(style:\"x\"){text(value:\"hi\")} }\n}\n";
-        let four = reformat_macros(input, &opts(4, 100)).unwrap();
-        let two = reformat_macros(input, &opts(2, 100)).unwrap();
-        assert_ne!(four, two, "tab_spaces must change indentation");
-        // 4-space variant indents the inner text 12 cols; 2-space, 6.
-        assert!(
-            four.contains("            text(value: \"hi\")"),
-            "4-space:\n{four}"
-        );
-        assert!(two.contains("      text(value: \"hi\")"), "2-space:\n{two}");
-    }
-
-    #[test]
-    fn wraps_kwargs_over_max_width() {
-        let input = "fn ui() -> Element {\n    render! { view(style: \"a-long-value\", class: \"another-long-value\") }\n}\n";
-        let out = reformat_macros(input, &opts(4, 40)).unwrap();
-        assert!(out.contains("view(\n"), "expected broken kwargs:\n{out}");
-        assert!(
-            out.contains("class: \"another-long-value\",\n"),
-            "trailing comma expected:\n{out}"
-        );
-    }
-
-    #[test]
-    fn preserves_user_expression_source() {
-        let input =
-            "fn ui() -> Element {\n    render! { view(on_tap: move |_| do_thing(a, b)) }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(
-            out.contains("on_tap: move |_| do_thing(a, b)"),
-            "expression must be preserved verbatim:\n{out}"
-        );
-    }
-
-    #[test]
-    fn formats_css_body() {
-        let input = "fn s() -> Css {\n    css! { color:red,padding:px(8) }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(
-            out.contains("color: red, padding: px(8)"),
-            "css inline:\n{out}"
-        );
-    }
-
-    #[test]
-    fn trailing_block_comment_preserved_and_reflowed() {
-        let input = "fn ui() -> Element {\n    render! { view(style:\"x\") /* keep me */ }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        let expected =
-            "fn ui() -> Element {\n    render! { view(style: \"x\") /* keep me */ }\n}\n";
-        assert_eq!(out, expected, "got:\n{out}");
-    }
-
-    #[test]
-    fn children_slot_preserved() {
-        let input = "fn ui() -> Element {\n    render! { view(style:\"x\"){children()} }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(
-            out.contains("children()"),
-            "children() slot must survive:\n{out}"
-        );
-    }
-
-    #[test]
-    fn non_render_macro_untouched() {
-        let input = "fn x() {\n    println!(\"hi {}\", v);\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert_eq!(out, input);
-    }
-
-    // ---- routes! ----------------------------------------------------------
-
-    #[test]
-    fn formats_routes_simple_stack() {
-        let input = "fn r() -> Routes {\n    routes! { Stack{Route(path:\"a\",component:A)Route(path:\"b\",component:B)} }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        let expected = "fn r() -> Routes {\n    routes! {\n        Stack {\n            Route(path: \"a\", component: A)\n            Route(path: \"b\", component: B)\n        }\n    }\n}\n";
-        assert_eq!(out, expected, "got:\n{out}");
-    }
-
-    #[test]
-    fn formats_routes_nested_switch() {
-        let input = "fn r() -> Routes {\n    routes! { Switch{Route(path:\"(home)\"){Stack{Route(path:\"\",component:Home)Route(path:\"detail/:id\",component:Detail)}}Route(path:\"(search)\"){Stack{Route(path:\"list\",component:List)}}} }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(
-            out.contains("Switch {\n"),
-            "Switch should have newline:\n{out}"
-        );
-        assert!(
-            out.contains("Route(path: \"(home)\") {\n"),
-            "group route:\n{out}"
-        );
-        assert!(
-            out.contains("Route(path: \"\", component: Home)\n"),
-            "leaf route:\n{out}"
-        );
-    }
-
-    #[test]
-    fn formats_routes_with_spread() {
-        let input =
-            "fn r() -> Routes {\n    routes! { Stack{Route(path:\"a\",component:A)..frag} }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(out.contains("..frag"), "spread preserved:\n{out}");
-    }
-
-    #[test]
-    fn routes_idempotent() {
-        let input = "fn r() -> Routes {\n    routes! { Stack{Route(path:\"a\",component:A)Route(path:\"b\",component:B)} }\n}\n";
-        let once = reformat_macros(input, &opts(4, 100)).unwrap();
-        let twice = reformat_macros(&once, &opts(4, 100)).unwrap();
-        assert_eq!(
-            once, twice,
-            "not idempotent:\nonce:\n{once}\ntwice:\n{twice}"
-        );
-    }
-
-    #[test]
-    fn routes_leaf_route_no_braces() {
-        let input = "fn r() -> Routes {\n    routes! { Route(path:\"x\",component:X) }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(
-            !out.contains("Route(path: \"x\", component: X) {"),
-            "leaf should not get braces:\n{out}"
-        );
-        assert!(
-            out.contains("Route(path: \"x\", component: X)"),
-            "leaf format:\n{out}"
-        );
-    }
-
-    // ---- nested css!/routes! (embedded in render! kwarg values) ----------
-
-    #[test]
-    fn nested_css_in_render_kwarg_reformats() {
-        let input =
-            "fn ui() -> Element {\n    render! { view(style: css!(color:red,padding:px(8))) }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(
-            out.contains("css!(color: red, padding: px(8))"),
-            "nested css! must be reformatted:\n{out}"
-        );
-    }
-
-    #[test]
-    fn nested_css_in_render_kwarg_wraps_over_max_width() {
-        let input = "fn ui() -> Element {\n    render! { view(style: css!(flex_grow: 1.0, background_color: \"a-fairly-long-color-value\")) }\n}\n";
-        let out = reformat_macros(input, &opts(4, 40)).unwrap();
-        assert!(
-            out.contains("css!(\n"),
-            "nested css! must wrap when it doesn't fit:\n{out}"
-        );
-        assert!(
-            out.contains("background_color: \"a-fairly-long-color-value\",\n"),
-            "trailing comma on wrapped nested kwarg:\n{out}"
-        );
-    }
-
-    #[test]
-    fn nested_routes_in_render_kwarg_reformats() {
-        let input = "fn ui() -> Element {\n    render! { Router(routes: routes!{Stack{Route(path:\"a\",component:A)}}) }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(
-            out.contains("routes! {\n"),
-            "nested routes! must reflow into a block:\n{out}"
-        );
-        assert!(
-            out.contains("Stack {\n"),
-            "nested Stack must get its own line:\n{out}"
-        );
-    }
-
-    #[test]
-    fn nested_render_in_render_kwarg_reformats() {
-        // The OUTER render! is load-bearing: it routes the inner call
-        // through `nested_macro_src`, whereas a bare top-level
-        // `render!{...}` hits `macro_body_edit`'s own "render" arm.
-        let input = "fn ui() -> Element {\n    render! { view(child: render!{text(value:\"nested\")}) }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(
-            out.contains("render! { text(value: \"nested\") }"),
-            "nested render! must be reformatted:\n{out}"
-        );
-    }
-
-    #[test]
-    fn nested_css_in_render_kwarg_idempotent() {
-        let input = "fn ui() -> Element {\n    render! { view(style: css!(flex_grow: 1.0, background_color: BG)) }\n}\n";
-        let once = reformat_macros(input, &opts(4, 100)).unwrap();
-        let twice = reformat_macros(&once, &opts(4, 100)).unwrap();
-        assert_eq!(
-            once, twice,
-            "not idempotent:\nonce:\n{once}\ntwice:\n{twice}"
-        );
-    }
-
-    #[test]
-    fn nested_css_with_comment_left_untouched() {
-        // A nested macro carrying a comment is left to the verbatim expr
-        // path — grammar-comment recovery doesn't reach inside it.
-        let input = "fn ui() -> Element {\n    render! { view(style: css!(\n        // keep me\n        flex_grow: 1.0,\n    )) }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(out.contains("// keep me"), "comment must survive:\n{out}");
-    }
-
-    #[test]
-    fn nested_css_wraps_using_its_real_depth_not_a_fixed_shallow_one() {
-        // A nested `css!`'s inline-vs-wrap fit check must use the depth
-        // it will ACTUALLY print at — one deeper than its kwarg line once
-        // a wide sibling forces the enclosing tag to break.
-        let input = "fn ui() -> Element {\n    render! { text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) }\n}\n";
-        let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert!(
-            out.contains("style: css!(\n"),
-            "nested css! must wrap once placed at its real (deeper) column:\n{out}"
-        );
-        for line in out.lines() {
-            assert!(
-                line.chars().count() <= 100,
-                "line exceeds max_width:\n{line}\nfull output:\n{out}"
-            );
-        }
-    }
-
-    // ---- edition resolution ----------------------------------------------
-
-    /// Create a unique temp dir for an edition-resolution test, isolated
-    /// from the repo's own `Cargo.toml` / `rustfmt.toml` (those live well
-    /// above `temp_dir()` so the upward walk never reaches them).
-    fn unique_tmp(tag: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "whisker-fmt-ed-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&p).unwrap();
-        p
-    }
-
-    #[test]
-    fn rustfmt_toml_edition_wins_over_cargo_toml() {
-        let tmp = unique_tmp("rustfmt-wins");
-        std::fs::write(tmp.join("rustfmt.toml"), "edition = \"2018\"\n").unwrap();
-        std::fs::write(
-            tmp.join("Cargo.toml"),
-            "[package]\nname = \"x\"\nedition = \"2021\"\n",
-        )
-        .unwrap();
-        let o = resolve_options(&tmp);
-        assert_eq!(o.edition.as_deref(), Some("2018"));
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    #[test]
-    fn cargo_toml_package_edition_used_without_rustfmt_edition() {
-        let tmp = unique_tmp("cargo-pkg");
-        let sub = tmp.join("src");
-        std::fs::create_dir_all(&sub).unwrap();
-        std::fs::write(
-            tmp.join("Cargo.toml"),
-            "[package]\nname = \"x\"\nedition = \"2018\"\n",
-        )
-        .unwrap();
-        let o = resolve_options(&sub);
-        assert_eq!(o.edition.as_deref(), Some("2018"));
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    #[test]
-    fn workspace_package_edition_detected() {
-        let tmp = unique_tmp("ws-pkg");
-        std::fs::write(
-            tmp.join("Cargo.toml"),
-            "[workspace]\nmembers = []\n[workspace.package]\nedition = \"2021\"\n",
-        )
-        .unwrap();
-        let o = resolve_options(&tmp);
-        assert_eq!(o.edition.as_deref(), Some("2021"));
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    #[test]
-    fn defaults_to_2021_without_any_config() {
-        let tmp = unique_tmp("none");
-        let o = resolve_options(&tmp);
-        assert_eq!(o.edition.as_deref(), Some("2021"));
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    #[test]
-    fn resolved_edition_is_always_some() {
-        let tmp = unique_tmp("always-some");
-        // rustfmt.toml without an edition key must still resolve.
-        std::fs::write(tmp.join("rustfmt.toml"), "tab_spaces = 2\n").unwrap();
-        let o = resolve_options(&tmp);
-        assert_eq!(o.tab_spaces, 2);
-        assert!(o.edition.is_some(), "edition must never resolve to None");
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    /// An `async move { … }` snippet — which rustfmt rejects under its
-    /// 2015 default — must format when the edition comes from a
-    /// `Cargo.toml` and no rustfmt.toml is present. Needs a real rustfmt.
-    #[test]
-    fn async_move_formats_with_cargo_edition_no_rustfmt_toml() {
-        if !rustfmt_available() {
-            return;
-        }
-        let tmp = unique_tmp("async-move");
-        std::fs::write(
-            tmp.join("Cargo.toml"),
-            "[package]\nname = \"x\"\nedition = \"2021\"\n",
-        )
-        .unwrap();
-        let opts = resolve_options(&tmp);
-        assert_eq!(opts.edition.as_deref(), Some("2021"));
-        let src = "fn f() {\n    let x = async move { 1 };\n}\n";
-        let out = format_source_in_dir(src, &opts, &tmp)
-            .expect("async move must format under the resolved 2021 edition");
-        assert!(out.contains("async move"), "got:\n{out}");
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    /// A `rustfmt.toml` at the project ROOT must govern even when
-    /// formatting from a NESTED subdir that has none of its own.
-    #[test]
-    fn root_rustfmt_toml_governs_nested_subdir() {
-        if !rustfmt_available() {
-            return;
-        }
-        let root = unique_tmp("nested-config");
-        std::fs::write(root.join("rustfmt.toml"), "tab_spaces = 2\n").unwrap();
-        let nested = root.join("src").join("screens");
-        std::fs::create_dir_all(&nested).unwrap();
-
-        let opts = resolve_options(&nested);
-        assert_eq!(opts.tab_spaces, 2);
-
-        let src = "fn f() {\nlet x = 1;\n}\n";
-        let out = format_source_in_dir(src, &opts, &nested)
-            .expect("root rustfmt.toml must govern a nested subdir");
-        assert!(out.contains("\n  let x = 1;"), "got:\n{out}");
-        std::fs::remove_dir_all(&root).unwrap();
-    }
-}
-
-// ---- comment-preservation tests -----------------------------------------
-//
-// These assert EXACT output, so a silent fall-back to the untouched body
-// fails them rather than passing.
-#[cfg(test)]
-mod comment_tests {
-    use super::*;
-
-    fn o() -> FmtOptions {
-        FmtOptions {
-            max_width: 100,
-            tab_spaces: 4,
-            hard_tabs: false,
-            edition: None,
-            single_line_if_else_max_width: None,
-        }
-    }
-
-    fn fmt(input: &str) -> String {
-        reformat_macros(input, &o()).unwrap()
-    }
-
-    #[test]
-    fn own_line_before_top_element() {
-        let input = "fn d() -> Element {\n    render! {\n        // header\n        view(style: \"x\") { text(value: \"hi\") }\n    }\n}\n";
-        let expected = "fn d() -> Element {\n    render! {\n        // header\n        view(style: \"x\") {\n            text(value: \"hi\")\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), expected);
-    }
-
-    #[test]
-    fn own_line_between_siblings() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // mid\n            text(value: \"b\")\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    #[test]
-    fn own_line_first_child() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            // first\n            text(value: \"a\")\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    #[test]
-    fn own_line_after_last_child() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // last\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    #[test]
-    fn trailing_line_comment_on_child() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\") // tail\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    #[test]
-    fn trailing_comment_after_css_field() {
-        let input = "fn s() -> Css {\n    css! {\n        color: red, // c\n        padding: px(8),\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    #[test]
-    fn own_line_between_css_fields() {
-        let input = "fn s() -> Css {\n    css! {\n        color: red,\n        // gap\n        padding: px(8),\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    #[test]
-    fn block_comment_single_line() {
-        let input = "fn d() -> Element {\n    render! {\n        /* b */\n        view(style: \"x\")\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    #[test]
-    fn block_comment_multiline_verbatim() {
-        let input = "fn d() -> Element {\n    render! {\n        /* line1\n           line2 */\n        view(style: \"x\")\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    #[test]
-    fn two_consecutive_comments() {
-        let input = "fn d() -> Element {\n    render! {\n        // one\n        // two\n        view(style: \"x\")\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    // A comment INSIDE an embedded expr survives via the expr path, not
-    // via reattachment.
-    #[test]
-    fn comment_inside_embedded_expr_survives() {
-        let input = "fn d() -> Element {\n    render! {\n        view(on_tap: move |_| { /* keep */ go() })\n    }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("/* keep */"), "got:\n{out}");
-        assert_eq!(out.matches("/* keep */").count(), 1, "got:\n{out}");
-    }
-
-    #[test]
-    fn nested_inner_child_indent() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            scroll_view {\n                // inner\n                text(value: \"a\")\n            }\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    #[test]
-    fn mixed_leading_and_trailing() {
-        let input = "fn d() -> Element {\n    render! {\n        // lead\n        view {\n            text(value: \"a\") // tail\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    #[test]
-    fn idempotent_with_comments() {
-        let inputs = [
-            "fn d() -> Element {\n    render! {\n        // header\n        view(style: \"x\") { text(value: \"hi\") }\n    }\n}\n",
-            "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // mid\n            text(value: \"b\")\n        }\n    }\n}\n",
-            "fn s() -> Css {\n    css! {\n        color: red, // c\n        padding: px(8),\n    }\n}\n",
-            "fn d() -> Element {\n    render! {\n        /* line1\n           line2 */\n        view(style: \"x\")\n    }\n}\n",
-        ];
-        for input in inputs {
-            let once = fmt(input);
-            let twice = fmt(&once);
-            assert_eq!(once, twice, "not idempotent for:\n{input}\nonce:\n{once}");
-        }
-    }
-
-    // Exercises the `all_comments_present` guard directly: a dropped
-    // duplicate must make it report "not present".
-    #[test]
-    fn fallback_guard_detects_dropped_comment() {
-        let comments = vec![
-            crate::comments::GrammarComment {
-                start: 0,
-                end: 5,
-                text: "// hi".to_string(),
-                own_line: true,
-            },
-            crate::comments::GrammarComment {
-                start: 6,
-                end: 11,
-                text: "// hi".to_string(),
-                own_line: true,
-            },
-        ];
-        assert!(!all_comments_present("only one // hi here", &comments));
-        assert!(all_comments_present("// hi and // hi", &comments));
-    }
-
-    // A comment in an awkward spot (between a tag and its parens) is
-    // never lost — reflowed or left untouched, but always present.
-    #[test]
-    fn fallback_keeps_comment_when_in_doubt() {
-        let input =
-            "fn d() -> Element {\n    render! {\n        view /* odd */ (style: \"x\")\n    }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("/* odd */"), "comment must survive:\n{out}");
-    }
-
-    #[test]
-    fn wallet_style_section_comments() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            // \u{2500}\u{2500} Header \u{2500}\u{2500}\n            text(value: \"hi\")\n            // \u{2500}\u{2500} Body \u{2500}\u{2500}\n            text(value: \"yo\")\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-    }
-
-    // A `render!` combining section comments, irregular over-indentation
-    // and a stray closing paren: it must reflow (not fall back), keep the
-    // comments at the corrected indent, and be idempotent.
-    #[test]
-    fn wallet_faithful_reduction_formats_and_preserves_comments() {
-        let input = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n        view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false\n    )\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n        }\n        }\n    }\n}\n";
-        // The css!'s trailing comma keeps IT vertical, and last-argument
-        // overflow keeps it combined on the view's own line.
-        let expected = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
-        let out = fmt(input);
-        assert_ne!(out, input, "must not fall back:\n{out}");
-        assert_eq!(out, expected, "got:\n{out}");
-        assert_eq!(fmt(&out), out, "not idempotent");
-    }
-
-    // A multi-line embedded-expr value must be dedented before
-    // re-indenting, or its continuation lines gain a level per pass and
-    // the body never reaches a fixed point.
-    #[test]
-    fn multiline_expr_value_is_idempotent() {
-        let input = "fn s() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n            display: Display::Flex,\n        ))\n    }\n}\n";
-        let once = fmt(input);
-        let twice = fmt(&once);
-        assert_eq!(
-            once, twice,
-            "not idempotent:\nonce:\n{once}\ntwice:\n{twice}"
-        );
-        assert!(once.contains("flex_grow: 1.0,"), "got:\n{once}");
-        assert!(once.contains("background_color: BG,"), "got:\n{once}");
-    }
-}
-
-// ---- broad grammar coverage ----------------------------------------------
-//
-// A wide sweep of render!/css!/routes! shapes and nesting combinations.
-// All feed already-rust-formatted input (no rustfmt binary needed).
-#[cfg(test)]
-mod coverage_tests {
-    use super::*;
-
-    fn opts(tab: usize, width: usize) -> FmtOptions {
-        FmtOptions {
-            max_width: width,
-            tab_spaces: tab,
-            hard_tabs: false,
-            edition: None,
-            single_line_if_else_max_width: None,
-        }
-    }
-
-    fn fmt(input: &str) -> String {
-        reformat_macros(input, &opts(4, 100)).unwrap()
-    }
-
-    fn assert_idempotent(input: &str) {
-        let once = fmt(input);
-        let twice = fmt(&once);
-        assert_eq!(
-            once, twice,
-            "not idempotent:\nonce:\n{once}\ntwice:\n{twice}"
-        );
-    }
-
-    fn assert_no_line_over(out: &str, max_width: usize) {
-        for line in out.lines() {
-            assert!(
-                line.chars().count() <= max_width,
-                "line exceeds max_width {max_width}:\n{line}\nfull output:\n{out}"
-            );
-        }
-    }
-
-    // ---- render! ------------------------------------------------------
-
-    #[test]
-    fn render_three_levels_deep_indents_cascade() {
-        let input = "fn ui() -> Element {\n    render! { view { scroll_view { text(value: \"deep\") } } }\n}\n";
-        let out = fmt(input);
-        let expected = "fn ui() -> Element {\n    render! {\n        view {\n            scroll_view {\n                text(value: \"deep\")\n            }\n        }\n    }\n}\n";
-        assert_eq!(out, expected, "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn render_snake_case_user_component_gets_pascal_alias() {
-        // A snake_case tag outside the built-in whitelist is a user
-        // component: it prints under its derived PascalCase alias.
-        let input = "fn ui() -> Element {\n    render! { my_card(title: \"hi\") }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("MyCard(title: \"hi\")"),
-            "snake_case component must print its PascalCase alias:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn render_pascal_case_user_component_unchanged() {
-        let input = "fn ui() -> Element {\n    render! { MyCard(title: \"hi\") }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("MyCard(title: \"hi\")"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn render_partial_kwarg_mid_typing_preserved() {
-        // No `:` yet — mid-typing.
-        let input = "fn ui() -> Element {\n    render! { view(style) }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("view(style)"), "got:\n{out}");
-    }
-
-    #[test]
-    fn render_children_slot_among_siblings() {
-        let input = "fn ui() -> Element {\n    render! { view { text(value: \"a\") children() text(value: \"b\") } }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("children()"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn render_builtin_tags_recognized() {
-        for tag in [
-            "view",
-            "text",
-            "raw_text",
-            "scroll_view",
-            "list",
-            "fragment",
-        ] {
-            let input = format!("fn ui() -> Element {{\n    render! {{ {tag}(key: 1) }}\n}}\n");
-            let out = fmt(&input);
-            assert!(
-                out.contains(&format!("{tag}(key: 1)")),
-                "builtin tag {tag} mis-formatted:\n{out}"
-            );
-        }
-    }
-
-    #[test]
-    fn render_bare_tag_no_parens_no_children() {
-        // A bare tag stays bare (no parens invented) and a body this
-        // short stays on the macro's own line.
-        let input = "fn ui() -> Element {\n    render! { view }\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn render_empty_parens_preserved() {
-        let input = "fn ui() -> Element {\n    render! { FreeQuotaBanner() }\n}\n";
-        assert_eq!(fmt(input), input, "authored empty () must survive");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn render_deeply_nested_with_kwargs_idempotent() {
-        let input = "fn ui() -> Element {\n    render! { view(style: \"a\") { scroll_view(style: \"b\") { text(value: \"c\") text(value: \"d\") } } }\n}\n";
-        assert_idempotent(input);
-    }
-
-    // ---- css! -----------------------------------------------------------
-
-    #[test]
-    fn css_single_kwarg_inline() {
-        let input = "fn s() -> Css {\n    css! { color: red }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("color: red"), "got:\n{out}");
-    }
-
-    #[test]
-    fn css_many_kwargs_wrap_with_trailing_commas() {
-        let input = "fn s() -> Css {\n    css! { flex_grow: 1.0, width: vw(100), height: vh(100), background_color: BG, display: Display::Flex, flex_direction: FlexDirection::Column }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("css! {\n"), "must wrap into a block:\n{out}");
-        assert!(
-            out.contains("flex_direction: FlexDirection::Column,\n"),
-            "trailing comma on last field:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn css_kwarg_value_function_call() {
-        let input = "fn s() -> Css {\n    css! { padding: px(8) }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("padding: px(8)"), "got:\n{out}");
-    }
-
-    #[test]
-    fn css_kwarg_value_nested_path_expr() {
-        let input = "fn s() -> Css {\n    css! { color: Color::Named(NamedColor::Black) }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("color: Color::Named(NamedColor::Black)"),
-            "got:\n{out}"
-        );
-    }
-
-    // ---- routes! --------------------------------------------------------
-
-    #[test]
-    fn routes_switch_with_multiple_stacks() {
-        let input = "fn r() -> Routes {\n    routes! { Switch{Stack{Route(path:\"a\",component:A)}Stack{Route(path:\"b\",component:B)}} }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("Switch {\n"), "got:\n{out}");
-        assert_eq!(
-            out.matches("Stack {\n").count(),
-            2,
-            "both stacks should get block form:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn routes_three_levels_deep() {
-        let input = "fn r() -> Routes {\n    routes! { Switch{Route(path:\"(a)\"){Stack{Route(path:\"\",component:A)}}} }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("Switch {\n"), "got:\n{out}");
-        assert!(out.contains("Route(path: \"(a)\") {\n"), "got:\n{out}");
-        assert!(out.contains("Stack {\n"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn routes_multiple_top_level_roots() {
-        let input = "fn r() -> Routes {\n    routes! { Route(path:\"a\",component:A) Route(path:\"b\",component:B) }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("Route(path: \"a\", component: A)"),
-            "got:\n{out}"
-        );
-        assert!(
-            out.contains("Route(path: \"b\", component: B)"),
-            "got:\n{out}"
-        );
-    }
-
-    #[test]
-    fn routes_spread_among_siblings() {
-        let input = "fn r() -> Routes {\n    routes! { Stack{Route(path:\"a\",component:A)..sub_routes Route(path:\"b\",component:B)} }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("..sub_routes"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn routes_unknown_bare_ident() {
-        let input = "fn r() -> Routes {\n    routes! { Stack{SharedRoutes} }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("SharedRoutes"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn routes_route_path_only() {
-        let input = "fn r() -> Routes {\n    routes! { Route(path:\"a\") }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("Route(path: \"a\")"), "got:\n{out}");
-    }
-
-    #[test]
-    fn routes_route_no_kwargs_only_children() {
-        let input =
-            "fn r() -> Routes {\n    routes! { Route{Stack{Route(path:\"a\",component:A)}} }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("Route {\n"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn routes_empty_stack_keeps_mandatory_braces() {
-        // Switch/Stack's `{ … }` is mandatory even when empty, unlike
-        // every other tag's optional block.
-        let input = "fn r() -> Routes {\n    routes! { Stack {} }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("Stack {\n") || out.contains("Stack {}"),
-            "got:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    // ---- nested macro combinations --------------------------------------
-
-    #[test]
-    fn css_nested_two_levels_deep_in_render() {
-        let input = "fn ui() -> Element {\n    render! { view { text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) } }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("style: css!(\n"), "got:\n{out}");
-        assert_no_line_over(&out, 100);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn routes_nested_two_levels_deep_in_render() {
-        let input = "fn ui() -> Element {\n    render! { view { Router(routes: routes!{Switch{Route(path:\"a\",component:A)Route(path:\"b\",component:B)}}) } }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("routes! {\n"), "got:\n{out}");
-        assert!(out.contains("Switch {\n"), "got:\n{out}");
-        assert_no_line_over(&out, 100);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn css_and_routes_nested_as_sibling_kwargs() {
-        let input = "fn ui() -> Element {\n    render! { view(style: css!(flex_grow: 1.0)) { Router(routes: routes!{Route(path:\"a\",component:A)}) } }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("css!(flex_grow: 1.0)"), "got:\n{out}");
-        assert!(out.contains("routes!"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn render_nested_inside_render_two_levels() {
-        let input = "fn ui() -> Element {\n    render! { view(child: render!{view(child: render!{text(value:\"deep\")})}) }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("text(value: \"deep\")"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn multiple_nested_css_calls_as_sibling_kwargs() {
-        let input = "fn ui() -> Element {\n    render! { view(a: css!(x: 1), b: css!(y: 2)) }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("a: css!(x: 1)"), "got:\n{out}");
-        assert!(out.contains("b: css!(y: 2)"), "got:\n{out}");
-    }
-
-    // ---- closure-body unblocking ------------------------------------------
-
-    #[test]
-    fn blockified_closure_macro_body_unblocks() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(child: move || {\n            render! { text(value: \"hi\") }\n        })\n    }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("child: move || render! { text(value: \"hi\") }"),
-            "sole-macro closure body must unblock:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn closure_with_extra_statement_keeps_block() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(child: move || {\n            log_render();\n            render! { text(value: \"hi\") }\n        })\n    }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("move || {"),
-            "multi-statement closure body must keep its block:\n{out}"
-        );
-        assert!(out.contains("log_render();"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn closure_with_leading_comment_keeps_block() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(child: move || {\n            // c\n            render! { text(value: \"hi\") }\n        })\n    }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("// c"), "comment must survive:\n{out}");
-        assert!(
-            out.contains("move || {"),
-            "comment-bearing closure body must keep its block:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    // ---- last-argument overflow (combine) ---------------------------------
-
-    #[test]
-    fn multiline_last_kwarg_combines_on_open_line() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            text(value: \"hi\")\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn single_line_kwargs_before_multiline_last_stay_on_open_line() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(key: 1, style: css!(\n            flex_grow: 1.0,\n        ))\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn outer_trailing_comma_beats_combine() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n            ),\n        )\n    }\n}\n";
-        assert_eq!(
-            fmt(input),
-            input,
-            "authored outer trailing comma pins the wrap"
-        );
-        assert_idempotent(input);
-    }
-
-    // ---- comments anchored to kwargs --------------------------------------
-
-    #[test]
-    fn own_line_comment_between_kwargs_stays_on_its_kwarg() {
-        let input = "fn ui() -> Element {\n    render! {\n        ConnectionTab(\n            icon: home_icon,\n            active: home_active,\n            // Only Home's own root switches connections.\n            at_root: home_at_root,\n        )\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn trailing_comment_on_kwarg_line_stays_there() {
-        let input = "fn ui() -> Element {\n    render! {\n        TabButton(\n            icon: home_icon,\n            active: home_active, // updated per nav\n            label: home_label,\n        )\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn comments_before_first_and_after_last_kwarg_stay_inside_parens() {
-        let input = "fn ui() -> Element {\n    render! {\n        TabButton(\n            // leading\n            icon: home_icon,\n            active: home_active,\n            // last\n        )\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn kwarg_comments_reflow_from_messy_input() {
-        let input = "fn ui() -> Element {\n    render! {\n        TabButton(icon: home_icon,\n            // anchor\n            active: home_active) { text(value: \"x\") }\n    }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("            // anchor\n            active: home_active,\n"),
-            "comment must stay anchored to its kwarg:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    // ---- blank-line preservation ------------------------------------------
-
-    #[test]
-    fn blank_line_between_siblings_preserved() {
-        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            text(value: \"b\")\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn multiple_blank_lines_collapse_to_one() {
-        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n\n\n            text(value: \"b\")\n        }\n    }\n}\n";
-        let expected = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            text(value: \"b\")\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), expected);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn blank_line_before_section_comment_preserved() {
-        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            // section\n            text(value: \"b\")\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn blank_lines_at_block_edges_dropped() {
-        let input = "fn ui() -> Element {\n    render! {\n        view {\n\n            text(value: \"a\")\n\n        }\n    }\n}\n";
-        let expected = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), expected);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn blank_line_between_css_field_groups_preserved() {
-        let input = "fn s() -> Css {\n    css! {\n        color: red,\n        padding: px(8),\n\n        margin_top: px(4),\n    }\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    // ---- inline-when-fits statement macros --------------------------------
-
-    #[test]
-    fn statement_css_stays_inline_when_it_fits() {
-        let input = "fn s() {\n    let a = css!(color: red, padding: px(8));\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn statement_css_trailing_comma_stays_vertical() {
-        let input = "fn s() {\n    let a = css!(\n        color: red,\n        padding: px(8),\n    );\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn over_budget_statement_css_goes_one_field_per_line() {
-        // Whole line doesn't fit → each field on its own line; never the
-        // broken-delimiter + one-joined-line middle form.
-        let input = "fn s() {\n    let label_column_style = css!(\n        flex_direction: FlexDirection::Column, flex_grow: 1.0, margin_right: px(16.0)\n    );\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains(
-                "css!(\n        flex_direction: FlexDirection::Column,\n        flex_grow: 1.0,\n        margin_right: px(16.0),\n    );"
-            ),
-            "must go one field per line:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn paren_broken_single_line_css_body_reinlines() {
-        // Delimiters broken around one joined line that fits: collapses
-        // back to a single line.
-        let input = "fn s() {\n    let a = css!(\n        color: red, padding: px(8)\n    );\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("let a = css!(color: red, padding: px(8));"),
-            "fits on one line, must re-inline:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn tiny_render_body_stays_on_one_line() {
-        let input = "fn ui() -> Element {\n    return render! { view() };\n}\n";
-        assert_eq!(fmt(input), input);
-        assert_idempotent(input);
-    }
-
-    // ---- trailing-comma keep-vertical hint --------------------------------
-
-    #[test]
-    fn trailing_comma_keeps_kwargs_vertical() {
-        let input = "fn ui() -> Element {\n    render! {\n        LabeledField(\n            label: \"Name\",\n            value: v,\n        )\n    }\n}\n";
-        assert_eq!(
-            fmt(input),
-            input,
-            "trailing comma must keep the list vertical"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn no_trailing_comma_joins_kwargs_when_they_fit() {
-        let input = "fn ui() -> Element {\n    render! {\n        LabeledField(\n            label: \"Name\",\n            value: v\n        )\n    }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("LabeledField(label: \"Name\", value: v)"),
-            "no hint, fits → joined:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn trailing_comma_keeps_css_fields_vertical() {
-        let input =
-            "fn s() -> Css {\n    css! {\n        color: red,\n        padding: px(8),\n    }\n}\n";
-        assert_eq!(fmt(input), input, "trailing comma must keep css! vertical");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn trailing_comma_keeps_nested_css_vertical() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n                background_color: BG,\n            ),\n        )\n    }\n}\n";
-        assert_eq!(fmt(input), input, "nested css! trailing comma must hold");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn comma_inside_string_is_not_a_keep_vertical_hint() {
-        let input = "fn ui() -> Element {\n    render! {\n        text(\n            value: \"a, b,\"\n        )\n    }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("text(value: \"a, b,\")"),
-            "a comma inside a string is no hint:\n{out}"
-        );
-    }
-
-    // ---- macros nested inside closures / arbitrary exprs ------------------
-
-    #[test]
-    fn closure_wrapped_render_in_kwarg_reformats() {
-        let input = "fn ui() -> Element {\n    render! { view(child: move || render! { text(value:\"hi\") }) }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("child: move || render! { text(value: \"hi\") }"),
-            "closure-wrapped render! body must be reformatted:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn closure_wrapped_render_in_kwarg_wraps_when_too_wide() {
-        let input = "fn ui() -> Element {\n    render! { view(child: move || render! { text(value:\"a-value-plenty-wide-enough-to-overflow-the-line-budget-here\") }) }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("child: move || render! {\n"),
-            "over-budget closure-wrapped render! must break:\n{out}"
-        );
-        assert!(
-            out.contains(
-                "text(value: \"a-value-plenty-wide-enough-to-overflow-the-line-budget-here\")"
-            ),
-            "inner body must be reformatted:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn closure_wrapped_render_with_comment_survives_and_reformats() {
-        let input = "fn ui() -> Element {\n    render! { view(child: move || render! {\n        // note\n        text(value:\"hi\")\n    }) }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("// note"), "comment must survive:\n{out}");
-        assert!(
-            out.contains("text(value: \"hi\")"),
-            "body around the comment must still reformat:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn comment_bearing_routes_kwarg_value_reformats() {
-        let input = "fn ui() -> Element {\n    render! {\n        Router(routes: routes! {\n            // home\n            Stack { Route(path: \"a\", component: A) }\n        })\n    }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("// home"), "comment must survive:\n{out}");
-        assert!(
-            out.contains("Stack {\n"),
-            "comment-bearing routes! must still reformat:\n{out}"
-        );
-        assert!(
-            out.contains("Route(path: \"a\", component: A)\n"),
-            "route must land on its own line:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn url_string_in_nested_css_not_frozen() {
-        let input = "fn ui() -> Element {\n    render! { view(style: css!(background_image:\"https://x.com/a.png\",flex_grow:1.0)) }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("css!(background_image: \"https://x.com/a.png\", flex_grow: 1.0)"),
-            "a // inside a string must not freeze the nested css!:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn closure_wrapped_render_respects_max_width_at_real_depth() {
-        let input = "fn ui() -> Element {\n    render! { view { Show(fallback: move || render! { text(value: \"a-quite-long-fallback-value-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold)) }) } }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("text(\n"),
-            "inner kwargs must wrap at their real depth:\n{out}"
-        );
-        assert_no_line_over(&out, 100);
-        assert_idempotent(input);
-    }
-
-    // ---- width boundary ---------------------------------------------------
-
-    #[test]
-    fn exactly_at_max_width_stays_inline() {
-        // Engineered to land exactly at width 60.
-        let value = "1".repeat(37);
-        let input =
-            format!("fn ui() -> Element {{\n    render! {{ view(style: \"{value}\") }}\n}}\n");
-        let out = reformat_macros(&input, &opts(4, 60)).unwrap();
-        let line = out
-            .lines()
-            .find(|l| l.contains("view("))
-            .expect("view line present");
-        assert_eq!(line.chars().count(), 60, "line:\n{line}");
-        assert!(!line.trim_end().ends_with('('), "must stay inline:\n{out}");
-    }
-
-    #[test]
-    fn one_over_max_width_wraps() {
-        let value = "1".repeat(38);
-        let input =
-            format!("fn ui() -> Element {{\n    render! {{ view(style: \"{value}\") }}\n}}\n");
-        let out = reformat_macros(&input, &opts(4, 60)).unwrap();
-        assert!(
-            out.contains("view(\n"),
-            "must wrap once over budget:\n{out}"
-        );
-        assert_no_line_over(&out, 60);
-    }
-
-    // ---- composite stress ---------------------------------------------
-
-    #[test]
-    fn composite_wide_tree_is_idempotent_and_within_width() {
-        let input = "fn app() -> Element {\n    render! { view(style: css!(flex_grow: 1.0, width: vw(100), height: vh(100), background_color: podcast_theme::BG, display: Display::Flex, flex_direction: FlexDirection::Column, position: PositionKind::Relative)) { Router(routes: routes!{Stack{Route(path:\"\",component:BrowseScreen)Route(path:\"podcast/:id\",component:DetailScreen)Route(path:\"search\",component:SearchScreen)}}) { PodcastRouter { Outlet {} SwipeBack {} AndroidPredictiveBack {} } } MiniPlayer() } }\n}\n";
-        let out = fmt(input);
-        assert_no_line_over(&out, 100);
-        assert_idempotent(input);
-    }
-
-    // ---- empty / minimal bodies ------------------------------------------
-
-    #[test]
-    fn css_empty_body_left_untouched() {
-        let input = "fn s() -> Css {\n    css! {}\n}\n";
-        let out = fmt(input);
-        assert_eq!(out, input, "empty css! body must be left as-is:\n{out}");
-    }
-
-    #[test]
-    fn routes_empty_body_left_untouched() {
-        let input = "fn r() -> Routes {\n    routes! {}\n}\n";
-        let out = fmt(input);
-        assert_eq!(out, input, "empty routes! body must be left as-is:\n{out}");
-    }
-
-    #[test]
-    fn nested_css_empty_parens_left_as_opaque_expr() {
-        // `css!()` has no kwargs to parse, so it falls back to being an
-        // opaque expr rather than vanishing.
-        let input = "fn ui() -> Element {\n    render! { view(style: css!()) }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("css!()"), "got:\n{out}");
-    }
-
-    // ---- comments in nested / tricky positions --------------------------
-
-    #[test]
-    fn comment_before_nested_css_kwarg_value_survives() {
-        // The comment sits INSIDE the nested css! call, so
-        // `nested_macro_src`'s own fail-safe leaves that call untouched.
-        let input = "fn ui() -> Element {\n    render! { view(style: css!(\n        // keep\n        flex_grow: 1.0,\n    )) }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("// keep"), "comment must survive:\n{out}");
-    }
-
-    #[test]
-    fn comment_between_routes_siblings_survives() {
-        let input = "fn r() -> Routes {\n    routes! {\n        Stack {\n            Route(path: \"a\", component: A)\n            // mid\n            Route(path: \"b\", component: B)\n        }\n    }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("// mid"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    #[test]
-    fn comment_after_last_render_child_survives() {
-        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // trailing\n        }\n    }\n}\n";
-        let out = fmt(input);
-        assert!(out.contains("// trailing"), "got:\n{out}");
-        assert_idempotent(input);
-    }
-
-    // ---- event-handler / multi-line closures -----------------------------
-
-    #[test]
-    fn event_handler_closure_preserved_verbatim_when_nested() {
-        let input = "fn ui() -> Element {\n    render! { view { scroll_view(on_tap: move |_| { do_a(); do_b(); }) } }\n}\n";
-        let out = fmt(input);
-        assert!(
-            out.contains("on_tap: move |_| { do_a(); do_b(); }"),
-            "got:\n{out}"
-        );
-        assert_idempotent(input);
-    }
-
-    // ---- routes! Route with all kwargs wrapping ---------------------------
-
-    #[test]
-    fn routes_route_all_kwargs_wrap_over_max_width() {
-        let input = "fn r() -> Routes {\n    routes! { Route(path: \"a-fairly-long-path-segment\", component: SomeVeryLongComponentNameHere, transition: some_transition_expr) }\n}\n";
-        let out = reformat_macros(input, &opts(4, 60)).unwrap();
-        assert!(out.contains("Route(\n"), "must wrap:\n{out}");
-        assert!(
-            out.contains("transition: some_transition_expr,\n"),
-            "trailing comma on last kwarg:\n{out}"
-        );
-        assert_no_line_over(&out, 60);
-    }
-
-    // ---- tab width variants ------------------------------------------------
-
-    #[test]
-    fn two_space_tabs_nested_css_indent() {
-        let input = "fn ui() -> Element {\n  render! { view { text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) } }\n}\n";
-        let out = reformat_macros(input, &opts(2, 100)).unwrap();
-        assert!(out.contains("style: css!(\n"), "got:\n{out}");
-        assert!(
-            out.contains("  font_size: 24.0.px(),\n") || out.contains("      font_size:"),
-            "got:\n{out}"
-        );
-        assert_no_line_over(&out, 100);
-    }
-}
+#[path = "lib/tests.rs"]
+mod tests;

@@ -10,8 +10,11 @@
 //! Backed by:
 //!   - **iOS**: `UserDefaults.standard`
 //!   - **Android**: `SharedPreferences` (named `"WhiskerLocalStore"`)
+//!   - **Web**: origin-scoped `localStorage`
+//!   - **Desktop**: a small JSON file in the OS user-data directory,
+//!     scoped by the executable name
 //!
-//! Both platforms persist across app launches but don't sync across
+//! All platforms persist across app launches but don't sync across
 //! devices. For app-level preferences, small state, and similar
 //! data — not for large blobs (use a real file API or database for
 //! anything > ~1 MB per entry).
@@ -72,6 +75,15 @@
 //!   (storage: `LocalStore.kt`)
 
 use whisker::platform_module::{WhiskerModuleError, WhiskerValue};
+
+/// Empty visual schema paired with the service-only Web/Desktop store module.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        std::iter::empty::<whisker::ElementProviderMetadata>(),
+    )
+}
 
 /// Typed Rust API for the `WhiskerLocalStore` platform module.
 ///

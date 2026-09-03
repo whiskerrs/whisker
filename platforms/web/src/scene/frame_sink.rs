@@ -1,0 +1,1008 @@
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
+
+use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
+use whisker_engine::FrameSink;
+use whisker_protocol::{
+    ApplyResult, ElementRegistration, ElementTypeId, FrameMode, FramePacket, NodeId, Operation,
+    PointerId, SceneProjection, SurfaceId,
+};
+
+use crate::application::{request_frame, request_urgent_frame};
+use crate::scene::element_registry::DomElementRegistry;
+use crate::scene::resource_store::WebResourceStore;
+use crate::{
+    WebElementFactory, WebElementFactoryKind, WebError, WebEventEmitter, WebNativeElement,
+    WebNativeEvent, WhiskerValue, isolates_element_failures, js_error, paint, px, set_style,
+};
+
+type ScrollListener = Closure<dyn FnMut(web_sys::Event)>;
+
+pub(crate) struct DomFrameSink {
+    capabilities: whisker_protocol::RenderCapabilities,
+    document: web_sys::Document,
+    root: web_sys::Element,
+    projection: SceneProjection,
+    elements: DomElementRegistry,
+    nodes: HashMap<NodeId, web_sys::Element>,
+    node_types: HashMap<NodeId, ElementTypeId>,
+    parents: HashMap<NodeId, NodeId>,
+    layouts: HashMap<NodeId, whisker_protocol::LayoutGeometry>,
+    box_paints: HashMap<NodeId, whisker_protocol::BoxPaint>,
+    resources: WebResourceStore,
+    text_nodes: HashMap<NodeId, web_sys::Element>,
+    native_nodes: HashMap<NodeId, WebNativeNode>,
+    presentation_pool: HashMap<ElementTypeId, Vec<PooledWebPresentation>>,
+    event_masks: HashMap<NodeId, Rc<Cell<u64>>>,
+    scroll_listeners: HashMap<NodeId, Vec<ScrollListener>>,
+    pointer_captures: HashMap<PointerId, NodeId>,
+    pending_events: Rc<RefCell<VecDeque<WebProviderEvent>>>,
+    dirty_scroll_offsets: Rc<RefCell<HashMap<NodeId, whisker_protocol::InputPoint>>>,
+}
+
+struct PooledWebPresentation {
+    element: web_sys::Element,
+    native: Option<Box<dyn WebNativeElement>>,
+}
+
+enum WebNativeNode {
+    Active(Box<dyn WebNativeElement>),
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WebProviderEvent {
+    pub(crate) target: NodeId,
+    pub(crate) name: String,
+    pub(crate) detail: WhiskerValue,
+}
+
+impl DomFrameSink {
+    pub(crate) fn new_with_resources(
+        document: web_sys::Document,
+        mount: web_sys::Element,
+        surface: SurfaceId,
+        registrations: &[ElementRegistration],
+        factories: &[WebElementFactory],
+        resources: WebResourceStore,
+        capabilities: whisker_protocol::RenderCapabilities,
+    ) -> Result<Self, WebError> {
+        let shadow = if let Some(shadow) = mount.shadow_root() {
+            shadow.set_inner_html("");
+            shadow
+        } else {
+            mount
+                .attach_shadow(&web_sys::ShadowRootInit::new(web_sys::ShadowRootMode::Open))
+                .map_err(|error| js_error("attach Whisker shadow root", error))?
+        };
+        let root = document
+            .create_element("div")
+            .map_err(|error| js_error("create Whisker Web surface root", error))?;
+        root.set_attribute("data-whisker-surface", "")
+            .map_err(|error| js_error("mark Whisker Web surface root", error))?;
+        set_style(&root, "all", "initial")?;
+        set_style(&root, "display", "block")?;
+        set_style(&root, "position", "relative")?;
+        set_style(&root, "width", "100%")?;
+        set_style(&root, "height", "100%")?;
+        set_style(&root, "overflow", "hidden")?;
+        shadow
+            .append_child(&root)
+            .map_err(|error| js_error("attach Whisker Web surface root", error))?;
+        Ok(Self {
+            capabilities,
+            document,
+            root,
+            projection: SceneProjection::new(surface),
+            elements: DomElementRegistry::bind(registrations, factories)?,
+            nodes: HashMap::new(),
+            node_types: HashMap::new(),
+            parents: HashMap::new(),
+            layouts: HashMap::new(),
+            box_paints: HashMap::new(),
+            resources,
+            text_nodes: HashMap::new(),
+            native_nodes: HashMap::new(),
+            presentation_pool: HashMap::new(),
+            event_masks: HashMap::new(),
+            scroll_listeners: HashMap::new(),
+            pointer_captures: HashMap::new(),
+            pending_events: Rc::new(RefCell::new(VecDeque::new())),
+            dirty_scroll_offsets: Rc::new(RefCell::new(HashMap::new())),
+        })
+    }
+
+    pub(crate) fn take_events(&self) -> Vec<WebProviderEvent> {
+        self.pending_events.borrow_mut().drain(..).collect()
+    }
+
+    pub(crate) fn take_presentation_updates(
+        &self,
+    ) -> Vec<whisker_protocol::HostPresentationUpdate> {
+        self.dirty_scroll_offsets
+            .borrow_mut()
+            .drain()
+            .map(
+                |(node, offset)| whisker_protocol::HostPresentationUpdate::ScrollOffset {
+                    node,
+                    offset,
+                },
+            )
+            .collect()
+    }
+
+    pub(crate) fn register_resource_url(
+        &self,
+        resource: whisker_protocol::ResourceId,
+        url: impl Into<String>,
+    ) -> Result<(), WebError> {
+        self.resources.register_url(resource, url)
+    }
+
+    fn validate_frame(&self, packet: &FramePacket) -> Result<(), WebError> {
+        if let Some(feature) = packet
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                Operation::SetBackgroundLayers { layers, .. }
+                    if !paint::background_layers::supports(layers) =>
+                {
+                    Some("background-layers payload")
+                }
+                Operation::SetVisualEffects { effects, .. }
+                    if !paint::visual_effects::supports(effects) =>
+                {
+                    Some("visual-effects payload")
+                }
+                _ => None,
+            })
+        {
+            return Err(WebError(format!(
+                "DOM Host does not implement protocol feature {feature}"
+            )));
+        }
+        if let Some(resource) = packet.operations.iter().find_map(|operation| {
+            let Operation::SetBackgroundLayers { layers, .. } = operation else {
+                return None;
+            };
+            layers.iter().find_map(|layer| match &layer.image {
+                whisker_protocol::PaintImage::Resource(resource)
+                    if !self.resources.contains(*resource) =>
+                {
+                    Some(*resource)
+                }
+                _ => None,
+            })
+        }) {
+            return Err(WebError(format!(
+                "DOM Host background resource {} is not registered",
+                resource.get()
+            )));
+        }
+        if let Some(resource) = packet.operations.iter().find_map(|operation| {
+            let Operation::SetCursor { cursor, .. } = operation else {
+                return None;
+            };
+            cursor
+                .resources
+                .iter()
+                .find(|candidate| !self.resources.contains(candidate.resource))
+                .map(|candidate| candidate.resource)
+        }) {
+            return Err(WebError(format!(
+                "DOM Host cursor resource {} is not registered",
+                resource.get()
+            )));
+        }
+        Ok(())
+    }
+
+    fn apply(&mut self, packet: &FramePacket) -> Result<(), WebError> {
+        if packet.header.mode == FrameMode::Snapshot {
+            self.reset_presentation();
+        }
+        for operation in &packet.operations {
+            self.apply_operation(operation)?;
+        }
+        Ok(())
+    }
+
+    fn reset_presentation(&mut self) {
+        self.release_all_pointer_captures();
+        self.root.set_inner_html("");
+        self.nodes.clear();
+        self.node_types.clear();
+        self.parents.clear();
+        self.layouts.clear();
+        self.box_paints.clear();
+        self.text_nodes.clear();
+        self.native_nodes.clear();
+        self.event_masks.clear();
+        self.scroll_listeners.clear();
+        self.pointer_captures.clear();
+        self.pending_events.borrow_mut().clear();
+        self.dirty_scroll_offsets.borrow_mut().clear();
+    }
+
+    fn apply_operation(&mut self, operation: &Operation) -> Result<(), WebError> {
+        match operation {
+            Operation::CreateNode { node, element_type } => {
+                let binding = self.elements.binding(*element_type)?.clone();
+                let event_mask = Rc::new(Cell::new(0));
+                let emitter = WebEventEmitter({
+                    let registration = binding.registration.clone();
+                    let event_mask = Rc::clone(&event_mask);
+                    let pending = Rc::clone(&self.pending_events);
+                    let node = *node;
+                    Rc::new(move |event: WebNativeEvent, urgent: bool| {
+                        let Some(schema) = registration.event_named(&event.event) else {
+                            web_sys::console::error_1(
+                                &format!(
+                                    "DOM element {} emitted unknown event {}",
+                                    registration.name, event.event
+                                )
+                                .into(),
+                            );
+                            return;
+                        };
+                        if !schema.accepts_detail(&event.detail) {
+                            web_sys::console::error_1(
+                                &format!(
+                                    "DOM element {} emitted invalid detail for {}",
+                                    registration.name, schema.name
+                                )
+                                .into(),
+                            );
+                            return;
+                        }
+                        let mask = schema
+                            .mask()
+                            .expect("registration validation checked event ID");
+                        if event_mask.get() & mask == 0 {
+                            return;
+                        }
+                        pending.borrow_mut().push_back(WebProviderEvent {
+                            target: node,
+                            name: schema.name.clone(),
+                            detail: event.detail,
+                        });
+                        if urgent {
+                            request_urgent_frame();
+                        } else {
+                            request_frame();
+                        }
+                    })
+                });
+                let pooled = self
+                    .presentation_pool
+                    .get_mut(element_type)
+                    .and_then(Vec::pop);
+                let mut native_failed = false;
+                let (element, native) = if let Some(pooled) = pooled {
+                    reset_pooled_element(&pooled.element)?;
+                    (pooled.element, pooled.native)
+                } else {
+                    match &binding.factory {
+                        WebElementFactoryKind::Tag(tag_name) => (
+                            self.document
+                                .create_element(tag_name)
+                                .map_err(|error| js_error("create Whisker DOM node", error))?,
+                            None,
+                        ),
+                        WebElementFactoryKind::Native(create) => {
+                            match create(&self.document, emitter.clone()) {
+                                Ok(native) => (native.element(), Some(native)),
+                                Err(error) => {
+                                    if !isolates_element_failures(&binding.registration.name) {
+                                        return Err(js_error(
+                                            "create built-in Whisker DOM element",
+                                            error,
+                                        ));
+                                    }
+                                    Self::log_native_failure(
+                                        &binding.registration.name,
+                                        "create element",
+                                        &error,
+                                    );
+                                    native_failed = true;
+                                    (
+                                        self.document.create_element("div").map_err(|error| {
+                                            js_error("create failed-element placeholder", error)
+                                        })?,
+                                        None,
+                                    )
+                                }
+                            }
+                        }
+                        WebElementFactoryKind::Declared(_) => {
+                            unreachable!("DOM declared factory was not bound at bootstrap")
+                        }
+                    }
+                };
+                element
+                    .set_attribute("data-whisker-node", &node.get().to_string())
+                    .map_err(|error| js_error("mark Whisker DOM node", error))?;
+                element
+                    .set_attribute("data-whisker-content", binding.factory.name())
+                    .map_err(|error| js_error("mark Whisker DOM element content", error))?;
+                set_style(&element, "position", "absolute")?;
+                set_style(&element, "box-sizing", "border-box")?;
+                if binding.scroll_content {
+                    set_style(&element, "overflow-x", "hidden")?;
+                    set_style(&element, "overflow-y", "auto")?;
+                    let emitter = emitter.clone();
+                    let scroll_element = element.clone();
+                    let dirty_scroll_offsets = Rc::clone(&self.dirty_scroll_offsets);
+                    let scroll_node = *node;
+                    let listener = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                        let Some(html) = scroll_element.dyn_ref::<web_sys::HtmlElement>() else {
+                            return;
+                        };
+                        dirty_scroll_offsets.borrow_mut().insert(
+                            scroll_node,
+                            whisker_protocol::InputPoint {
+                                x: html.scroll_left() as f32,
+                                y: html.scroll_top() as f32,
+                            },
+                        );
+                        emitter.emit_urgent(WebNativeEvent {
+                            event: "scroll".to_owned(),
+                            detail: WhiskerValue::map([
+                                (
+                                    "scrollLeft",
+                                    WhiskerValue::Int(i64::from(html.scroll_left())),
+                                ),
+                                ("scrollTop", WhiskerValue::Int(i64::from(html.scroll_top()))),
+                                (
+                                    "scrollWidth",
+                                    WhiskerValue::Int(i64::from(html.scroll_width())),
+                                ),
+                                (
+                                    "scrollHeight",
+                                    WhiskerValue::Int(i64::from(html.scroll_height())),
+                                ),
+                                (
+                                    "viewportWidth",
+                                    WhiskerValue::Int(i64::from(html.client_width())),
+                                ),
+                                (
+                                    "viewportHeight",
+                                    WhiskerValue::Int(i64::from(html.client_height())),
+                                ),
+                            ]),
+                        });
+                    });
+                    element
+                        .add_event_listener_with_callback(
+                            "scroll",
+                            listener.as_ref().unchecked_ref(),
+                        )
+                        .map_err(|error| js_error("register Whisker scroll listener", error))?;
+                    let snap_element = element.clone();
+                    let snap_listener = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                        settle_scroll_snap(&snap_element);
+                    });
+                    element
+                        .add_event_listener_with_callback(
+                            "scrollend",
+                            snap_listener.as_ref().unchecked_ref(),
+                        )
+                        .map_err(|error| js_error("register Whisker scrollend listener", error))?;
+                    self.scroll_listeners
+                        .insert(*node, vec![listener, snap_listener]);
+                }
+                self.root
+                    .append_child(&element)
+                    .map_err(|error| js_error("attach Whisker DOM node", error))?;
+                self.nodes.insert(*node, element);
+                self.node_types.insert(*node, *element_type);
+                self.event_masks.insert(*node, event_mask);
+                if let Some(native) = native {
+                    self.native_nodes
+                        .insert(*node, WebNativeNode::Active(native));
+                } else if native_failed {
+                    self.native_nodes.insert(*node, WebNativeNode::Failed);
+                }
+            }
+            Operation::DeleteNode { node } => self.delete_subtree(*node),
+            Operation::InsertChild {
+                parent,
+                child,
+                index,
+            } => {
+                let parent_element = self.node(*parent)?;
+                let child_element = self.node(*child)?;
+                let reference = parent_element.children().item(*index);
+                parent_element
+                    .insert_before(&child_element, reference.as_ref().map(AsRef::as_ref))
+                    .map_err(|error| js_error("insert Whisker DOM child", error))?;
+                sync_scroll_snap_child(&parent_element, &child_element)?;
+                self.parents.insert(*child, *parent);
+                self.sync_layout(*child)?;
+            }
+            Operation::MoveChild {
+                parent,
+                child,
+                index,
+            } => {
+                let parent_element = self.node(*parent)?;
+                let child_element = self.node(*child)?;
+                child_element.remove();
+                let reference = parent_element.children().item(*index);
+                parent_element
+                    .insert_before(&child_element, reference.as_ref().map(AsRef::as_ref))
+                    .map_err(|error| js_error("insert Whisker DOM child", error))?;
+                sync_scroll_snap_child(&parent_element, &child_element)?;
+                self.parents.insert(*child, *parent);
+                self.sync_layout(*child)?;
+            }
+            Operation::RemoveChild { parent: _, child } => {
+                if let Some(element) = self.nodes.get(child) {
+                    element.remove();
+                }
+                self.parents.remove(child);
+            }
+            Operation::SetLayout { node, geometry } => {
+                self.layouts.insert(*node, *geometry);
+                self.sync_border_widths(*node)?;
+                self.sync_layout(*node)?;
+                self.sync_content_box(*node)?;
+                self.sync_child_layouts(*node)?;
+                self.sync_text(*node)?;
+            }
+            Operation::SetBoxPaint { node, paint } => {
+                let element = self.node(*node)?;
+                let border_widths = self.resolve_border_widths(*node, paint);
+                paint::box_paint::apply(&element, paint, border_widths)?;
+                self.box_paints.insert(*node, paint.clone());
+                self.sync_content_box(*node)?;
+                self.sync_child_layouts(*node)?;
+                self.sync_text(*node)?;
+            }
+            Operation::SetBackgroundLayers { node, layers } => {
+                paint::background_layers::apply(&self.node(*node)?, layers, |resource| {
+                    self.resources.url(resource)
+                })?;
+            }
+            Operation::SetVisualEffects { node, effects } => {
+                paint::visual_effects::apply(&self.node(*node)?, effects)?;
+            }
+            Operation::SetClip { node, clip } => {
+                let element = self.node(*node)?;
+                let element_type = *self
+                    .node_types
+                    .get(node)
+                    .ok_or_else(|| WebError(format!("missing DOM element type for {node:?}")))?;
+                let scroll_content = self.elements.binding(element_type)?.scroll_content;
+                paint::clip::apply(&element, *clip, scroll_content)?;
+            }
+            Operation::SetTransform { node, transform } => {
+                paint::transform::apply(&self.node(*node)?, *transform)?;
+            }
+            Operation::SetOpacity { node, opacity } => {
+                paint::compositing::apply_opacity(&self.node(*node)?, *opacity)?;
+            }
+            Operation::SetVisibility { node, visibility } => {
+                paint::compositing::apply_visibility(&self.node(*node)?, *visibility)?;
+            }
+            Operation::SetZOrder { node, z_order } => {
+                paint::compositing::apply_z_order(&self.node(*node)?, *z_order)?;
+            }
+            Operation::SetText { node, content } => {
+                let element_type = self.node_types.get(node).copied().ok_or_else(|| {
+                    WebError(format!("DOM projection is missing node {}", node.get()))
+                })?;
+                if !self.elements.binding(element_type)?.text_content {
+                    return Err(WebError(format!(
+                        "DOM Host received text for non-text node {}",
+                        node.get()
+                    )));
+                }
+                let text = if let Some(text) = self.text_nodes.get(node) {
+                    text.clone()
+                } else {
+                    let text = self
+                        .document
+                        .create_element("span")
+                        .map_err(|error| js_error("create Whisker DOM text", error))?;
+                    text.set_attribute("data-whisker-text", "")
+                        .map_err(|error| js_error("mark Whisker DOM text", error))?;
+                    set_style(&text, "position", "absolute")?;
+                    self.node(*node)?
+                        .append_child(&text)
+                        .map_err(|error| js_error("attach Whisker DOM text", error))?;
+                    self.text_nodes.insert(*node, text.clone());
+                    text
+                };
+                self.sync_text(*node)?;
+                paint::text::apply(&text, content)?;
+            }
+            Operation::SetTextStyle { node, style } => {
+                let element_type = self.node_types.get(node).copied().ok_or_else(|| {
+                    WebError(format!("DOM projection is missing node {}", node.get()))
+                })?;
+                let registration = &self.elements.binding(element_type)?.registration;
+                if !registration.text_style {
+                    return Err(WebError(format!(
+                        "DOM Host received text style for non-consuming node {}",
+                        node.get()
+                    )));
+                }
+                let result = match self.native_nodes.get_mut(node) {
+                    Some(WebNativeNode::Active(native)) => native.set_text_style(style),
+                    Some(WebNativeNode::Failed) => return Ok(()),
+                    None => {
+                        return Err(WebError(format!("DOM node {} is not native", node.get())));
+                    }
+                };
+                if let Err(error) = result {
+                    self.handle_native_failure(*node, element_type, "set text style", error)?;
+                }
+            }
+            Operation::SetAccessibility {
+                node,
+                accessibility,
+            } => apply_accessibility(&self.node(*node)?, accessibility)?,
+            Operation::SetHitTest { node, behavior } => {
+                let disabled = matches!(
+                    behavior,
+                    whisker_protocol::HitTestBehavior::None
+                        | whisker_protocol::HitTestBehavior::DescendantsOnly
+                );
+                set_style(
+                    &self.node(*node)?,
+                    "pointer-events",
+                    if disabled { "none" } else { "auto" },
+                )?;
+            }
+            Operation::SetCursor { node, cursor } => {
+                paint::cursor::apply(&self.node(*node)?, cursor, |resource| {
+                    self.resources.url(resource)
+                })?;
+            }
+            Operation::SetProperty {
+                node,
+                property,
+                value,
+            } => {
+                let element_type = *self.node_types.get(node).ok_or_else(|| {
+                    WebError(format!("DOM projection is missing node {}", node.get()))
+                })?;
+                let registration = &self.elements.binding(element_type)?.registration;
+                let schema = registration.property(*property).ok_or_else(|| {
+                    WebError(format!(
+                        "DOM element {} has no property {}",
+                        registration.name,
+                        property.get()
+                    ))
+                })?;
+                if !schema.value.accepts(value) {
+                    return Err(WebError(format!(
+                        "DOM property {} expected {:?}",
+                        schema.name, schema.value
+                    )));
+                }
+                let result = match self.native_nodes.get_mut(node) {
+                    Some(WebNativeNode::Active(native)) => native.set_property(*property, value),
+                    Some(WebNativeNode::Failed) => return Ok(()),
+                    None => {
+                        return Err(WebError(format!("DOM node {} is not native", node.get())));
+                    }
+                };
+                if let Err(error) = result {
+                    self.handle_native_failure(*node, element_type, "set property", error)?;
+                }
+            }
+            Operation::ClearProperty { node, property } => {
+                let element_type = *self.node_types.get(node).ok_or_else(|| {
+                    WebError(format!("DOM projection is missing node {}", node.get()))
+                })?;
+                let registration = &self.elements.binding(element_type)?.registration;
+                registration.property(*property).ok_or_else(|| {
+                    WebError(format!(
+                        "DOM element {} has no property {}",
+                        registration.name,
+                        property.get()
+                    ))
+                })?;
+                let result = match self.native_nodes.get_mut(node) {
+                    Some(WebNativeNode::Active(native)) => native.clear_property(*property),
+                    Some(WebNativeNode::Failed) => return Ok(()),
+                    None => {
+                        return Err(WebError(format!("DOM node {} is not native", node.get())));
+                    }
+                };
+                if let Err(error) = result {
+                    self.handle_native_failure(*node, element_type, "clear property", error)?;
+                }
+            }
+            Operation::SetEventMask { node, event_mask } => {
+                self.event_masks
+                    .get(node)
+                    .ok_or_else(|| {
+                        WebError(format!("DOM projection is missing node {}", node.get()))
+                    })?
+                    .set(*event_mask);
+            }
+            Operation::InvokeCommand {
+                node,
+                command,
+                arguments,
+                ..
+            } => {
+                let element_type = *self.node_types.get(node).ok_or_else(|| {
+                    WebError(format!("DOM projection is missing node {}", node.get()))
+                })?;
+                let registration = &self.elements.binding(element_type)?.registration;
+                let schema = registration.command(*command).ok_or_else(|| {
+                    WebError(format!(
+                        "DOM element {} has no command {}",
+                        registration.name,
+                        command.get()
+                    ))
+                })?;
+                if !schema.arguments.accepts(arguments) {
+                    return Err(WebError(format!(
+                        "DOM command {} expected {:?}",
+                        schema.name, schema.arguments
+                    )));
+                }
+                let result = match self.native_nodes.get_mut(node) {
+                    Some(WebNativeNode::Active(native)) => {
+                        native.invoke_command(*command, arguments)
+                    }
+                    Some(WebNativeNode::Failed) => return Ok(()),
+                    None => {
+                        return Err(WebError(format!("DOM node {} is not native", node.get())));
+                    }
+                };
+                if let Err(error) = result {
+                    self.handle_native_failure(*node, element_type, "invoke command", error)?;
+                }
+            }
+            Operation::SetPointerCapture { node, pointer } => {
+                let element = self.node(*node)?;
+                element
+                    .set_pointer_capture(browser_pointer_id(*pointer)?)
+                    .map_err(|error| js_error("capture DOM pointer", error))?;
+                self.pointer_captures.insert(*pointer, *node);
+            }
+            Operation::ReleasePointerCapture { node, pointer } => {
+                if self.pointer_captures.get(pointer) == Some(node) {
+                    let element = self.node(*node)?;
+                    let pointer_id = browser_pointer_id(*pointer)?;
+                    if element.has_pointer_capture(pointer_id) {
+                        element
+                            .release_pointer_capture(pointer_id)
+                            .map_err(|error| js_error("release DOM pointer", error))?;
+                    }
+                    self.pointer_captures.remove(pointer);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn node(&self, node: NodeId) -> Result<web_sys::Element, WebError> {
+        self.nodes
+            .get(&node)
+            .cloned()
+            .ok_or_else(|| WebError(format!("DOM projection is missing node {}", node.get())))
+    }
+
+    fn handle_native_failure(
+        &mut self,
+        node: NodeId,
+        element_type: ElementTypeId,
+        action: &str,
+        error: wasm_bindgen::JsValue,
+    ) -> Result<(), WebError> {
+        let binding = self.elements.binding(element_type)?;
+        let element_name = binding.registration.name.as_str();
+        if !isolates_element_failures(element_name) {
+            return Err(WebError(format!(
+                "built-in DOM element `{element_name}` failed to {action}: {error:?}"
+            )));
+        }
+        Self::log_native_failure(element_name, action, &error);
+        self.native_nodes.insert(node, WebNativeNode::Failed);
+        Ok(())
+    }
+
+    fn log_native_failure(element_name: &str, action: &str, error: &wasm_bindgen::JsValue) {
+        web_sys::console::error_2(
+            &format!(
+                "Disabled `{element_name}` after it failed to {action}; common presentation remains active"
+            )
+            .into(),
+            error,
+        );
+    }
+
+    fn sync_layout(&self, node: NodeId) -> Result<(), WebError> {
+        let Some(geometry) = self.layouts.get(&node) else {
+            return Ok(());
+        };
+        let element = self.node(node)?;
+        let rect = geometry.border_box;
+        let parent_border = self
+            .parents
+            .get(&node)
+            .map_or([0.0; 4], |parent| self.effective_border_widths(*parent));
+        set_style(&element, "left", &px(rect.x - parent_border[3]))?;
+        set_style(&element, "top", &px(rect.y - parent_border[0]))?;
+        set_style(&element, "width", &px(rect.width))?;
+        set_style(&element, "height", &px(rect.height))
+    }
+
+    fn sync_child_layouts(&self, parent: NodeId) -> Result<(), WebError> {
+        let children = self.node(parent)?.children();
+        for index in 0..children.length() {
+            let Some(child) = children
+                .item(index)
+                .and_then(|element| element.get_attribute("data-whisker-node"))
+                .and_then(|value| value.parse().ok())
+                .and_then(NodeId::new)
+            else {
+                continue;
+            };
+            self.sync_layout(child)?;
+        }
+        Ok(())
+    }
+
+    fn effective_border_widths(&self, node: NodeId) -> [f32; 4] {
+        let Some(paint) = self.box_paints.get(&node) else {
+            return [0.0; 4];
+        };
+        self.resolve_border_widths(node, paint)
+    }
+
+    fn resolve_border_widths(&self, node: NodeId, paint: &whisker_protocol::BoxPaint) -> [f32; 4] {
+        let border_box = self
+            .layouts
+            .get(&node)
+            .map_or(whisker_protocol::LayoutRect::default(), |geometry| {
+                geometry.border_box
+            });
+        let resolve = |value: whisker_protocol::PaintLengthPercentage, axis: f32| {
+            value.length + value.fraction * axis
+        };
+        let uses_width = |style| {
+            !matches!(
+                style,
+                whisker_protocol::BorderLineStyle::None | whisker_protocol::BorderLineStyle::Hidden
+            )
+        };
+        [
+            if uses_width(paint.border_styles.top) {
+                resolve(paint.border_widths.top, border_box.height)
+            } else {
+                0.0
+            },
+            if uses_width(paint.border_styles.right) {
+                resolve(paint.border_widths.right, border_box.width)
+            } else {
+                0.0
+            },
+            if uses_width(paint.border_styles.bottom) {
+                resolve(paint.border_widths.bottom, border_box.height)
+            } else {
+                0.0
+            },
+            if uses_width(paint.border_styles.left) {
+                resolve(paint.border_widths.left, border_box.width)
+            } else {
+                0.0
+            },
+        ]
+    }
+
+    fn sync_border_widths(&self, node: NodeId) -> Result<(), WebError> {
+        let Some(paint) = self.box_paints.get(&node) else {
+            return Ok(());
+        };
+        paint::box_paint::apply_border_widths(
+            &self.node(node)?,
+            self.resolve_border_widths(node, paint),
+        )
+    }
+
+    fn sync_content_box(&self, node: NodeId) -> Result<(), WebError> {
+        let Some(geometry) = self.layouts.get(&node) else {
+            return Ok(());
+        };
+        let element = self.node(node)?;
+        let border_box = geometry.border_box;
+        let content_box = geometry.content_box;
+        let border_widths = self.effective_border_widths(node);
+        let padding = [
+            (content_box.y - border_widths[0]).max(0.0),
+            (border_box.width - content_box.x - content_box.width - border_widths[1]).max(0.0),
+            (border_box.height - content_box.y - content_box.height - border_widths[2]).max(0.0),
+            (content_box.x - border_widths[3]).max(0.0),
+        ];
+        set_style(&element, "padding-top", &px(padding[0]))?;
+        set_style(&element, "padding-right", &px(padding[1]))?;
+        set_style(&element, "padding-bottom", &px(padding[2]))?;
+        set_style(&element, "padding-left", &px(padding[3]))
+    }
+
+    fn sync_text(&self, node: NodeId) -> Result<(), WebError> {
+        let (Some(geometry), Some(text)) = (self.layouts.get(&node), self.text_nodes.get(&node))
+        else {
+            return Ok(());
+        };
+        let border_widths = self.effective_border_widths(node);
+        position_text(
+            text,
+            whisker_protocol::LayoutRect {
+                x: geometry.content_box.x - border_widths[3],
+                y: geometry.content_box.y - border_widths[0],
+                width: geometry.content_box.width,
+                height: geometry.content_box.height,
+            },
+        )
+    }
+
+    fn delete_subtree(&mut self, root: NodeId) {
+        if let Some(element) = self.nodes.get(&root) {
+            element.remove();
+        }
+        let mut deleted = vec![root];
+        let mut cursor = 0;
+        while cursor < deleted.len() {
+            let parent = deleted[cursor];
+            deleted.extend(
+                self.parents
+                    .iter()
+                    .filter_map(|(child, candidate)| (*candidate == parent).then_some(*child)),
+            );
+            cursor += 1;
+        }
+        for node in deleted {
+            let captures = self
+                .pointer_captures
+                .iter()
+                .filter_map(|(pointer, target)| (*target == node).then_some(*pointer))
+                .collect::<Vec<_>>();
+            for pointer in captures {
+                if let Some(element) = self.nodes.get(&node)
+                    && let Ok(pointer_id) = browser_pointer_id(pointer)
+                    && element.has_pointer_capture(pointer_id)
+                {
+                    let _ = element.release_pointer_capture(pointer_id);
+                }
+                self.pointer_captures.remove(&pointer);
+            }
+            let element = self.nodes.remove(&node);
+            let element_type = self.node_types.remove(&node);
+            self.parents.remove(&node);
+            self.layouts.remove(&node);
+            self.box_paints.remove(&node);
+            self.text_nodes.remove(&node);
+            let native = self
+                .native_nodes
+                .remove(&node)
+                .and_then(|native| match native {
+                    WebNativeNode::Active(native) => Some(native),
+                    WebNativeNode::Failed => None,
+                });
+            self.event_masks.remove(&node);
+            self.scroll_listeners.remove(&node);
+            self.dirty_scroll_offsets.borrow_mut().remove(&node);
+            if let (Some(element), Some(element_type)) = (element, element_type)
+                && self.elements.binding(element_type).is_ok_and(|binding| {
+                    matches!(
+                        binding.registration.name.as_str(),
+                        "whisker.ui/View" | "whisker.ui/Text"
+                    )
+                })
+            {
+                let pool = self.presentation_pool.entry(element_type).or_default();
+                if pool.len() < 256 {
+                    pool.push(PooledWebPresentation { element, native });
+                }
+            }
+        }
+    }
+
+    fn release_all_pointer_captures(&self) {
+        for (pointer, node) in &self.pointer_captures {
+            let Some(element) = self.nodes.get(node) else {
+                continue;
+            };
+            let Ok(pointer_id) = browser_pointer_id(*pointer) else {
+                continue;
+            };
+            if element.has_pointer_capture(pointer_id) {
+                let _ = element.release_pointer_capture(pointer_id);
+            }
+        }
+    }
+}
+
+fn browser_pointer_id(pointer: PointerId) -> Result<i32, WebError> {
+    let value = pointer.get();
+    if value <= i32::MAX as u64 {
+        return Ok(value as i32);
+    }
+    let magnitude = u64::MAX - value;
+    if magnitude == 0 {
+        return Ok(0);
+    }
+    i32::try_from(magnitude).map(|value| -value).map_err(|_| {
+        WebError(format!(
+            "pointer id {value} cannot be represented by the DOM"
+        ))
+    })
+}
+
+#[cfg(test)]
+mod pointer_capture_tests {
+    use super::browser_pointer_id;
+    use whisker_protocol::PointerId;
+
+    #[test]
+    fn protocol_pointer_ids_round_trip_to_browser_ids() {
+        assert_eq!(browser_pointer_id(PointerId::new(7).unwrap()).unwrap(), 7);
+        assert_eq!(
+            browser_pointer_id(PointerId::new(u64::MAX).unwrap()).unwrap(),
+            0
+        );
+        assert_eq!(
+            browser_pointer_id(PointerId::new(u64::MAX - 1).unwrap()).unwrap(),
+            -1
+        );
+    }
+}
+
+impl FrameSink for DomFrameSink {
+    type Error = WebError;
+
+    fn capabilities(&self) -> whisker_protocol::RenderCapabilities {
+        self.capabilities
+    }
+
+    fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
+        if let Some(capability) = self.capabilities().first_unsupported(packet) {
+            return Err(WebError(format!(
+                "DOM Host does not implement protocol feature {}",
+                capability.as_str()
+            )));
+        }
+        self.validate_frame(packet)?;
+        let result = self
+            .projection
+            .apply(packet)
+            .map_err(|error| WebError(error.to_string()))?;
+        if matches!(result, ApplyResult::Accepted { .. }) {
+            if let Err(error) = self.apply(packet) {
+                // A DOM exception can happen after earlier operations in this
+                // transaction have already mutated the live tree. There is no
+                // portable rollback for DOM or custom-element callbacks, so
+                // drop the partial presentation and ask the sender for a full
+                // snapshot. This path is cold: successful frames pay only the
+                // existing result branch.
+                web_sys::console::error_1(
+                    &format!(
+                        "DOM Host discarded a partially applied frame and requested a snapshot: {error}"
+                    )
+                    .into(),
+                );
+                self.reset_presentation();
+                self.projection = SceneProjection::new(self.projection.surface());
+                return Ok(ApplyResult::NeedSnapshot {
+                    receiver_revision: 0,
+                });
+            }
+        }
+        Ok(result)
+    }
+}
+
+mod content;
+
+use content::*;

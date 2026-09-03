@@ -26,7 +26,7 @@
 //! already know how to make the linker happy on this OS / SDK
 //! combo, and we lean on that.
 //!
-//! After rustc emits the `.o`, [`build_link_plan`] takes the
+//! After rustc emits the `.o`, [`super::link_plan::build_link_plan`] takes the
 //! captured **linker** invocation, drops its object inputs (we have
 //! a fresh one), substitutes our `.o` and `-o`, and adds
 //! `-undefined dynamic_lookup` (macOS) /
@@ -71,7 +71,7 @@ pub fn object_filename(crate_name: &str) -> String {
 
 /// Edit a captured rustc invocation so that running it produces an
 /// object file containing every `pub fn`'s mangled symbol — the
-/// input to the linker step in [`build_link_plan`].
+/// input to the linker step in [`super::link_plan::build_link_plan`].
 ///
 /// Three changes only:
 ///

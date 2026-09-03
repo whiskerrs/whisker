@@ -36,7 +36,6 @@ fn sync_and_read_gradle(app: &Config) -> String {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();
@@ -165,12 +164,13 @@ fn gradle_supports_non_implementation_configurations() {
 }
 
 #[test]
-fn gradle_baseline_unchanged_when_no_plugin_declared() {
+fn gradle_baseline_contains_only_the_builtin_plugin_when_no_user_plugin_is_declared() {
     let app = base_android_app();
     let gradle = sync_and_read_gradle(&app);
     assert!(gradle.contains("id(\"com.android.application\")"));
     assert!(gradle.contains("id(\"rs.whisker.gradle\")"));
-    assert!(gradle.contains("implementation(\"rs.whisker:whisker-runtime-android:"));
+    assert!(gradle.contains("whisker-runtime-android"));
+    assert!(!gradle.contains("lynx"));
     assert!(!gradle.contains("com.google.gms.google-services"));
     assert!(!gradle.contains("firebase-analytics"));
 }

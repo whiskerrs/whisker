@@ -9,6 +9,8 @@ use crate::data_type_ext::EasingFunction;
 use crate::keyword::{
     AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
 };
+use crate::shorthand::Keyframes;
+use crate::style_value::to_animation_value;
 use crate::to_css::ToCss;
 
 /// One animation layer.
@@ -16,6 +18,8 @@ use crate::to_css::ToCss;
 pub struct Animation {
     /// `@keyframes` name.
     pub name: String,
+    /// Typed keyframes used by the Rust-owned timeline.
+    pub keyframes: Option<Keyframes>,
     /// Duration of one cycle.
     pub duration: Option<Time>,
     /// Timing function.
@@ -32,11 +36,43 @@ pub struct Animation {
     pub play_state: Option<AnimationPlayState>,
 }
 
+/// A checked keyframe definition or a migration-only string name.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum AnimationTarget {
+    /// Builder-defined keyframes.
+    Keyframes(Keyframes),
+    /// Compatibility name without an attached Rust keyframe definition.
+    Name(String),
+}
+
+impl From<Keyframes> for AnimationTarget {
+    fn from(value: Keyframes) -> Self {
+        Self::Keyframes(value)
+    }
+}
+
+impl From<String> for AnimationTarget {
+    fn from(value: String) -> Self {
+        Self::Name(value)
+    }
+}
+
+impl From<&str> for AnimationTarget {
+    fn from(value: &str) -> Self {
+        Self::Name(value.to_owned())
+    }
+}
+
 impl Animation {
-    /// Start with the `@keyframes` name.
-    pub fn new(name: impl Into<String>) -> Self {
+    /// Starts an animation from typed keyframes or a compatibility name.
+    pub fn new(target: impl Into<AnimationTarget>) -> Self {
+        let (name, keyframes) = match target.into() {
+            AnimationTarget::Keyframes(keyframes) => (keyframes.name().to_owned(), Some(keyframes)),
+            AnimationTarget::Name(name) => (name, None),
+        };
         Self {
-            name: name.into(),
+            name,
+            keyframes,
             duration: None,
             timing: None,
             delay: None,
@@ -131,20 +167,31 @@ impl Css {
     /// Sets the `animation` shorthand for a single animation.
     /// <https://lynxjs.org/api/css/properties/animation>
     pub fn animation(self, a: Animation) -> Self {
-        self.push("animation", a)
+        let serialized = a.to_css_string();
+        self.push_semantic(
+            crate::StyleProperty::Animation,
+            whisker_style::StyleValue::Animations(vec![to_animation_value(&a)]),
+            serialized,
+        )
     }
 
     /// Sets the `animation` shorthand for multiple comma-separated
     /// animations.
     pub fn animations(self, anims: impl IntoIterator<Item = Animation>) -> Self {
+        let anims = anims.into_iter().collect::<Vec<_>>();
         let mut s = String::new();
-        for (i, a) in anims.into_iter().enumerate() {
+        for (i, a) in anims.iter().enumerate() {
             if i > 0 {
                 s.push_str(", ");
             }
             let _ = a.to_css(&mut s);
         }
-        self.push_raw("animation", s)
+        let semantic = anims.iter().map(to_animation_value).collect();
+        self.push_semantic(
+            crate::StyleProperty::Animation,
+            whisker_style::StyleValue::Animations(semantic),
+            s,
+        )
     }
 }
 
@@ -188,5 +235,40 @@ mod tests {
             Animation::new("slide").duration(500.ms()).delay(100.ms()),
         ]);
         assert_eq!(s.to_string(), "animation: fade 300ms, slide 500ms 100ms;");
+        let resolved = whisker_style::resolve_style(
+            &s.to_specified_style(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(resolved.computed().motion().animations.len(), 2);
+        assert_eq!(
+            resolved.computed().motion().animations[1].name.as_deref(),
+            Some("slide")
+        );
+        assert_eq!(
+            resolved.computed().motion().animations[1].delay.get(),
+            100.0
+        );
+    }
+
+    #[test]
+    fn builder_keyframes_reach_semantic_animation_value() {
+        let keyframes = crate::Keyframes::builder()
+            .named("fade")
+            .from(Css::new().opacity(0.0))
+            .to(Css::new().opacity(1.0))
+            .build()
+            .unwrap();
+        let style = Css::new().animation(Animation::new(keyframes).duration(200.ms()));
+        let resolved = whisker_style::resolve_style(
+            &style.to_specified_style(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        let animation = &resolved.computed().motion().animations[0];
+        assert_eq!(animation.name.as_deref(), Some("fade"));
+        assert_eq!(animation.keyframes.as_ref().unwrap().frames.len(), 2);
     }
 }

@@ -2,7 +2,7 @@
 // hardware-protected, not iCloud-synced, not migrated to a new device
 // or unencrypted backup.
 //
-// Plain helper — no Whisker / Lynx types. The DSL module that exposes
+// Plain helper — no Whisker runtime types. The DSL module that exposes
 // it to Rust lives in `SecureStoreModule.swift`.
 
 import Foundation

@@ -4,29 +4,21 @@
 //! and emits:
 //!
 //! 1. A `XxxProps` struct whose fields mirror the function parameters.
-//! 2. A hand-rolled `XxxPropsBuilder` with one setter per parameter.
-//!    Required fields panic at `.build()` if unset; `Option<T>` and
-//!    `Children` props default to `None`/empty; `#[prop(default = …)]`
-//!    fills in the user-supplied default.
+//! 2. A public PascalCase component marker and hand-rolled builder with one
+//!    setter per parameter. Const-bool type state makes every non-optional
+//!    prop a compile-time requirement; `Option<T>`, `Children`, and
+//!    `#[prop(default = …)]` props remain optional.
 //! 3. A rewritten `fn xxx(__props: XxxProps) -> Element { … }` that
 //!    destructures the props back into local variables and runs the
 //!    user's original body inside the existing
 //!    `mount_component_remountable` hot-reload machinery.
-//! 4. A PascalCase alias (`pub use … as XxxName`) over a private inner
-//!    module — that's what render! calls and what RA surfaces in
-//!    identifier completion.
+//! 4. A PascalCase marker (`XxxName::builder()`) that is equally usable from
+//!    ordinary Rust and the composition macros.
 //!
-//! The builder is hand-rolled rather than `#[derive(TypedBuilder)]`:
-//! typed-builder's per-field type-state markers
-//! (`<Name>PropsBuilder_Error_Missing_required_field_<field>` etc.) are
-//! `pub`, so RA pulls them into auto-import completion at the user's
-//! call site even from a private module. The cost is that required-field
-//! validation is a runtime `.expect(...)` at `.build()` instead of a
-//! compile error.
-//!
-//! Components take a single Props arg, so they can only be invoked
-//! through `render!`'s `XxxName(kwarg: value)` syntax, which expands to
-//! `XxxName(XxxProps::builder().kwarg(value).build())`.
+//! The generated builder is hand-rolled so its helper state stays hidden from
+//! rust-analyzer completion while required props are still checked by Rust's
+//! type system. `render! { XxxName(prop: value) }` is only syntax sugar for
+//! `XxxName::builder().prop(value).build()`.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
@@ -118,8 +110,26 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
     let props_fields: Vec<TokenStream2> = props.iter().map(prop_struct_field).collect();
     let builder_fields: Vec<TokenStream2> = props.iter().map(prop_builder_field).collect();
     let builder_init: Vec<TokenStream2> = props.iter().map(prop_builder_init).collect();
-    let setter_methods: Vec<TokenStream2> = props.iter().map(prop_setter_method).collect();
     let build_assignments: Vec<TokenStream2> = props.iter().map(prop_build_assignment).collect();
+    let body_method = props
+        .iter()
+        .find(|prop| matches!(prop.kind, PropKind::Children))
+        .map(|prop| {
+            let ident = &prop.ident;
+            quote! {
+                pub fn body<F>(mut self, compose: F) -> Self
+                where
+                    F: ::std::ops::Fn(&mut ::whisker::ChildrenBuilder) + 'static,
+                {
+                    self.#ident = ::std::option::Option::Some(::std::rc::Rc::new(move || {
+                        let mut body = ::whisker::ChildrenBuilder::new();
+                        compose(&mut body);
+                        body.finish()
+                    }));
+                    self
+                }
+            }
+        });
 
     let props_name = props_struct_name(fn_name);
 
@@ -206,6 +216,140 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
     // is reached through `.builder()` and never needs to be in scope.
     let internal_mod = format_ident!("__{}_props_internal", fn_name);
     let builder_name = format_ident!("{}Builder", props_name);
+    let inner_mod = format_ident!("__{}_inner", fn_name);
+    let required_state_idents: Vec<Ident> = props
+        .iter()
+        .filter(|prop| matches!(prop.kind, PropKind::Required | PropKind::RequiredGeneric))
+        .map(|prop| format_ident!("__{}_SET", prop.ident.to_string().to_ascii_uppercase()))
+        .collect();
+    let mut builder_generics = generics.clone();
+    for state in &required_state_idents {
+        builder_generics
+            .params
+            .push(syn::parse_quote!(const #state: bool));
+    }
+    let (builder_impl_generics, builder_ty_generics, builder_where_clause) =
+        builder_generics.split_for_impl();
+    let original_generic_args: Vec<TokenStream2> = generics
+        .params
+        .iter()
+        .map(|parameter| match parameter {
+            GenericParam::Lifetime(lifetime) => {
+                let lifetime = &lifetime.lifetime;
+                quote! { #lifetime }
+            }
+            GenericParam::Type(ty) => {
+                let ident = &ty.ident;
+                quote! { #ident }
+            }
+            GenericParam::Const(constant) => {
+                let ident = &constant.ident;
+                quote! { #ident }
+            }
+        })
+        .collect();
+    let builder_type = |states: &[TokenStream2]| {
+        let mut arguments = original_generic_args.clone();
+        arguments.extend_from_slice(states);
+        if arguments.is_empty() {
+            quote! { #builder_name }
+        } else {
+            quote! { #builder_name < #(#arguments),* > }
+        }
+    };
+    let initial_states = required_state_idents
+        .iter()
+        .map(|_| quote! { false })
+        .collect::<Vec<_>>();
+    let ready_states = required_state_idents
+        .iter()
+        .map(|_| quote! { true })
+        .collect::<Vec<_>>();
+    let initial_builder_type = builder_type(&initial_states);
+    let ready_builder_type = builder_type(&ready_states);
+    let state_field = (!required_state_idents.is_empty()).then(|| {
+        quote! {
+            __required: ::std::marker::PhantomData<(
+                #(RequiredState<#required_state_idents>,)*
+            )>
+        }
+    });
+    let state_init = (!required_state_idents.is_empty()).then(|| {
+        quote! {
+            __required: ::std::marker::PhantomData
+        }
+    });
+    let field_bindings: Vec<Ident> = prop_idents
+        .iter()
+        .map(|ident| format_ident!("__field_{}", ident))
+        .collect();
+    let setter_methods: Vec<TokenStream2> = props
+        .iter()
+        .enumerate()
+        .map(|(prop_index, prop)| {
+            if !matches!(prop.kind, PropKind::Required | PropKind::RequiredGeneric) {
+                return prop_setter_method(prop);
+            }
+            let required_index = props[..prop_index]
+                .iter()
+                .filter(|prop| matches!(prop.kind, PropKind::Required | PropKind::RequiredGeneric))
+                .count();
+            let target_states = required_state_idents
+                .iter()
+                .enumerate()
+                .map(|(index, state)| {
+                    if index == required_index {
+                        quote! { true }
+                    } else {
+                        quote! { #state }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let target_type = builder_type(&target_states);
+            let ident = &prop.ident;
+            let ty = &prop.ty;
+            let argument = if matches!(prop.kind, PropKind::RequiredGeneric) {
+                quote! { value: #ty }
+            } else {
+                quote! { value: impl ::std::convert::Into<#ty> }
+            };
+            let stored = if matches!(prop.kind, PropKind::RequiredGeneric) {
+                quote! { value }
+            } else {
+                quote! { value.into() }
+            };
+            let assignments =
+                prop_idents
+                    .iter()
+                    .zip(field_bindings.iter())
+                    .map(|(field, binding)| {
+                        if field == ident {
+                            quote! { #field: ::std::option::Option::Some(#stored) }
+                        } else {
+                            quote! { #field: #binding }
+                        }
+                    });
+            quote! {
+                pub fn #ident(self, #argument) -> #target_type {
+                    let Self {
+                        #(#prop_idents: #field_bindings,)*
+                        __required: _,
+                    } = self;
+                    #builder_name {
+                        #(#assignments,)*
+                        __required: ::std::marker::PhantomData,
+                    }
+                }
+            }
+        })
+        .collect();
+    let public_fn_ptr_expr = if ty_generics_for_turbofish.is_empty() {
+        quote! { #inner_mod::#fn_name as *const () }
+    } else {
+        quote! {
+            #inner_mod::#fn_name :: < #(#ty_generics_for_turbofish),* > as *const ()
+        }
+    };
     let props_struct = quote! {
         // No `#vis`: the module is deliberately tighter than the
         // surrounding fn so the builder stays unreachable by name.
@@ -225,33 +369,38 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
             // The struct must stay `pub`: a private type's `pub fn`
             // methods are unreachable from outside the module even when
             // the caller holds the value, which would break
-            // `XxxProps::builder().setter(…).build()`. Its name is
+            // `Xxx::builder().setter(…).build()`. Its name is
             // therefore visible at the call site, and `#[doc(hidden)]`
             // is the only signal RA's auto-import filter can act on.
             #[doc(hidden)]
-            pub struct #builder_name #impl_generics #where_clause {
-                #(#builder_fields),*
+            struct RequiredState<const SET: bool>;
+
+            pub struct #builder_name #builder_generics #builder_where_clause {
+                #(#builder_fields,)*
+                #state_field
             }
 
             impl #impl_generics #props_name #ty_generics #where_clause {
-                /// Open a builder chain. `XxxProps::builder().a(…).b(…).build()`.
-                pub fn builder() -> #builder_name #ty_generics {
+                /// Internal Props entry point used by the public component marker.
+                pub fn builder() -> #initial_builder_type {
                     #builder_name {
-                        #(#builder_init),*
+                        #(#builder_init,)*
+                        #state_init
                     }
                 }
             }
 
-            impl #impl_generics #builder_name #ty_generics #where_clause {
+            impl #builder_impl_generics #builder_name #builder_ty_generics #builder_where_clause {
                 #(#setter_methods)*
+                #body_method
+            }
 
-                /// Materialise the Props. Required fields that the
-                /// user didn't set fire a `required field `<name>` was
-                /// not set` panic at mount time.
-                pub fn build(self) -> #props_name #ty_generics {
-                    #props_name {
+            impl #impl_generics #ready_builder_type #where_clause {
+                /// Mount the component and return its rendered root.
+                pub fn build(self) -> ::whisker::Element {
+                    super::#inner_mod::#fn_name(#props_name {
                         #(#build_assignments),*
-                    }
+                    })
                 }
             }
         }
@@ -259,8 +408,7 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         #vis use #internal_mod::#props_name;
     };
 
-    // The PascalCase alias is the canonical render! call-site name, so
-    // it stays visible (NOT doc-hidden) for completion.
+    // The PascalCase marker is the canonical builder entry point.
     //
     // Strip the `Props` suffix exactly once: `trim_end_matches` would
     // greedily strip repeats (`TwoPropsProps` → `Two`).
@@ -272,8 +420,7 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
 
     // The rewritten fn lives inside a PRIVATE inner module so its
     // snake_case name doesn't pollute outer-scope completion. Only the
-    // PascalCase alias below re-exports it outward.
-    let inner_mod = format_ident!("__{}_inner", fn_name);
+    // The PascalCase marker below is the only public invocation entry point.
     let new_fn = quote! {
         #[doc(hidden)]
         mod #inner_mod {
@@ -331,27 +478,25 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
     // `#[component]` must sit at module level: `pub use` only works
     // there.
     //
-    // The PascalCase name is emitted twice — a callable alias in the
-    // value namespace and a type alias to Props in the type namespace.
-    // A single `use crate::Icon` imports both, so `render!` can lower a
-    // call to `Icon(Icon::builder()…build())` from the component name
-    // alone and users never import `IconProps` separately.
-    let pascal_alias = if alias_str == fn_name_str {
-        quote! {
-            #[doc(hidden)]
-            #vis use #inner_mod::#fn_name;
-            #[doc(hidden)]
-            #[allow(non_camel_case_types, type_alias_bounds)]
-            #vis type #fn_name #impl_generics = #props_name #ty_generics;
-        }
+    let marker_ident = if alias_str == fn_name_str {
+        fn_name.clone()
     } else {
-        let alias_ident = format_ident!("{}", alias_str);
-        quote! {
-            #[allow(non_snake_case)]
-            #vis use #inner_mod::#fn_name as #alias_ident;
+        format_ident!("{}", alias_str)
+    };
+    let pascal_alias = quote! {
+        #[allow(missing_docs)]
+        #vis struct #marker_ident;
+
+        #[allow(missing_docs)]
+        impl #marker_ident {
+            pub fn builder #impl_generics () -> #internal_mod::#initial_builder_type #where_clause {
+                #props_name::builder()
+            }
+
             #[doc(hidden)]
-            #[allow(type_alias_bounds)]
-            #vis type #alias_ident #impl_generics = #props_name #ty_generics;
+            pub fn __function_id #impl_generics () -> *const () #where_clause {
+                #public_fn_ptr_expr
+            }
         }
     };
 
@@ -578,6 +723,7 @@ fn prop_setter_method(prop: &Prop) -> TokenStream2 {
             inner,
             inner_is_generic,
         } => {
+            let option_setter = format_ident!("{}_option", ident);
             // Setter takes the inner (unwrapped) T; stored as
             // `Some(Some(v))` to record both "set" and "set to Some".
             if *inner_is_generic {
@@ -589,6 +735,12 @@ fn prop_setter_method(prop: &Prop) -> TokenStream2 {
                         );
                         self
                     }
+
+                    #[allow(unused_mut)]
+                    pub fn #option_setter(mut self, value: ::std::option::Option<#inner>) -> Self {
+                        self.#ident = ::std::option::Option::Some(value);
+                        self
+                    }
                 }
             } else {
                 quote! {
@@ -597,6 +749,12 @@ fn prop_setter_method(prop: &Prop) -> TokenStream2 {
                         self.#ident = ::std::option::Option::Some(
                             ::std::option::Option::Some(value.into())
                         );
+                        self
+                    }
+
+                    #[allow(unused_mut)]
+                    pub fn #option_setter(mut self, value: ::std::option::Option<#inner>) -> Self {
+                        self.#ident = ::std::option::Option::Some(value);
                         self
                     }
                 }
@@ -682,12 +840,13 @@ fn option_inner_type(ty: &Type) -> Option<&Type> {
 /// matches bare-ident path types (`T`, not `Option<T>` or
 /// `Vec<T>`).
 fn is_generic_type_param(ty: &Type, generic_type_params: &[Ident]) -> bool {
-    if let Type::Path(tp) = ty {
-        if tp.qself.is_none() && tp.path.segments.len() == 1 {
-            let seg = &tp.path.segments[0];
-            if seg.arguments.is_empty() {
-                return generic_type_params.contains(&seg.ident);
-            }
+    if let Type::Path(tp) = ty
+        && tp.qself.is_none()
+        && tp.path.segments.len() == 1
+    {
+        let seg = &tp.path.segments[0];
+        if seg.arguments.is_empty() {
+            return generic_type_params.contains(&seg.ident);
         }
     }
     false
@@ -1228,7 +1387,7 @@ mod tests {
     fn expand_emits_props_struct_and_rewritten_fn() {
         let input: TokenStream2 = quote! {
             fn card(title: String) -> Element {
-                render! { view { text { {title.clone()} } } }
+                render! { View { Text { {title.clone()} } } }
             }
         };
         let output = expand(input).to_string();
@@ -1237,14 +1396,16 @@ mod tests {
         assert!(output.contains("fn card"));
         assert!(output.contains("__props : CardProps"));
         assert!(output.contains("CardProps { title }"));
-        assert!(output.contains("use __card_inner :: card as Card"));
+        assert!(output.contains("struct Card"));
+        assert!(output.contains("impl Card"));
+        assert!(output.contains("CardProps :: builder"));
     }
 
     #[test]
     fn expand_no_param_component_emits_empty_destructure() {
         let input: TokenStream2 = quote! {
             fn header() -> Element {
-                render! { view { text { "Hi" } } }
+                render! { View { Text { "Hi" } } }
             }
         };
         let output = expand(input).to_string();
@@ -1262,7 +1423,7 @@ mod tests {
         // The emission must not reference typed-builder.
         let input: TokenStream2 = quote! {
             fn card(title: String, count: i32) -> Element {
-                render! { view {} }
+                render! { View {} }
             }
         };
         let output = expand(input).to_string();
@@ -1275,7 +1436,7 @@ mod tests {
     fn expand_generic_component_uses_turbofish() {
         let input: TokenStream2 = quote! {
             fn typed<T: Clone + 'static>(value: T) -> Element {
-                render! { view {} }
+                render! { View {} }
             }
         };
         let output = expand(input).to_string();
@@ -1290,7 +1451,7 @@ mod tests {
     fn expand_rejects_method_receiver() {
         let input: TokenStream2 = quote! {
             fn card(&self, title: String) -> Element {
-                render! { view {} }
+                render! { View {} }
             }
         };
         let output = expand(input).to_string();
@@ -1304,7 +1465,7 @@ mod tests {
     fn expand_rejects_destructuring_pattern() {
         let input: TokenStream2 = quote! {
             fn card((a, b): (i32, i32)) -> Element {
-                render! { view {} }
+                render! { View {} }
             }
         };
         let output = expand(input).to_string();
@@ -1312,18 +1473,18 @@ mod tests {
     }
 
     #[test]
-    fn expand_props_alias_strips_props_suffix_once() {
-        // The alias derived from `TwoPropsProps` must be `TwoProps`,
+    fn expand_component_marker_strips_props_suffix_once() {
+        // The marker derived from `TwoPropsProps` must be `TwoProps`,
         // not `Two` — only one `Props` suffix comes off.
         let input: TokenStream2 = quote! {
             fn two_props(title: String, count: i32) -> Element {
-                render! { view {} }
+                render! { View {} }
             }
         };
         let output = expand(input).to_string();
         assert!(
-            output.contains("as TwoProps"),
-            "alias should be `TwoProps`, not the over-trimmed `Two`; got: {output}"
+            output.contains("struct TwoProps ;"),
+            "marker should be `TwoProps`, not the over-trimmed `Two`; got: {output}"
         );
     }
 
@@ -1331,7 +1492,7 @@ mod tests {
     fn expand_forwards_attribute_on_param_to_props_field() {
         let input: TokenStream2 = quote! {
             fn card(#[allow(dead_code)] title: String) -> Element {
-                render! { view {} }
+                render! { View {} }
             }
         };
         let output = expand(input).to_string();

@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "id": "wpt.css-overflow.clip-002.horizontal",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-overflow/clip-002.html",
+    "reference_path": "css/css-overflow/clip-002-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "Overflow clipping can be applied on the horizontal axis while vertical overflow remains visible.",
+    "adaptation": "The WPT overflow-x:clip section is represented as a two-node Host scene. Opaque colors and pixel samples replace the document's three translucent examples while retaining independent-axis clipping."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [25.0, 25.0, 50.0, 50.0],
+            "background": { "kind": "named", "value": "black" },
+            "clip": { "horizontal": "hidden", "vertical": "visible" }
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [-20.0, -20.0, 90.0, 90.0],
+            "background": { "kind": "named", "value": "red" },
+            "clip": { "horizontal": "visible", "vertical": "visible" }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [20.0, 40.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 },
+          { "point": [40.0, 20.0], "color": { "kind": "named", "value": "red" }, "tolerance": 16 },
+          { "point": [40.0, 40.0], "color": { "kind": "named", "value": "red" }, "tolerance": 16 },
+          { "point": [80.0, 40.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

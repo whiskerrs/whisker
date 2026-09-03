@@ -31,6 +31,7 @@ use whisker_plugin::{FileEntry, PbxprojOp, PlistValue};
 
 use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
+use crate::modules::ResolvedModule;
 use crate::render::{escape_xml, render};
 
 const PBXPROJ: &str = include_str!("templates/ios/Project.xcodeproj/project.pbxproj");
@@ -40,20 +41,24 @@ const XCSCHEME: &str =
     include_str!("templates/ios/Project.xcodeproj/xcshareddata/xcschemes/scheme.xcscheme");
 const INFO_PLIST: &str = include_str!("templates/ios/Info.plist");
 const APP_DELEGATE_SWIFT: &str = include_str!("templates/ios/Sources/AppDelegate.swift");
+const LAUNCH_SCREEN_STORYBOARD: &str =
+    include_str!("templates/ios/Resources/LaunchScreen.storyboard");
+const ASSET_CATALOG: &str = include_str!("templates/ios/Resources/Assets.xcassets/Contents.json");
+const BACKGROUND_COLORSET: &str = include_str!(
+    "templates/ios/Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json"
+);
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IosInputs {
     pub app_name: String,
+    /// Static Host background configured in `whisker.rs` (`#RRGGBB`).
+    pub background: String,
     pub version: String,
     pub build_number: u32,
     pub scheme: String,
     pub bundle_id: String,
     pub deployment_target: String,
-    /// Path to the auto-generated `WhiskerModules` SwiftPM package —
-    /// typically `<crate_dir>/gen/ios/whisker_modules`, the dir
-    /// `whisker-build::ios::stage_module_swift_sources` populates with
-    /// each module's `[ios].swift_sources` and the generated
-    /// `WhiskerModuleBehaviors.swift`.
+    /// Path to the CNG-generated `WhiskerModules` SwiftPM package.
     pub whisker_modules_path: PathBuf,
     /// Absolute path to the cargo workspace root holding the user app
     /// crate's `[workspace]` `Cargo.toml`. Embedded into the pbxproj's
@@ -63,9 +68,13 @@ pub struct IosInputs {
     /// Cargo package name (the user app crate) — the Rust side of
     /// `whisker build-ios --package=...`.
     pub user_package: String,
+    /// Cargo-resolved Whisker modules materialized into the SwiftPM
+    /// aggregator as part of this CNG transaction.
+    #[serde(default)]
+    pub modules: Vec<ResolvedModule>,
     /// Plugin-supplied `Info.plist` entries from the engine's
     /// post-pipeline IR (`ctx.ios.info_plist`), emitted just before the
-    /// closing `</dict>` by [`render_extra_info_plist`]. Every
+    /// closing `</dict>` by the private `render_extra_info_plist` helper. Every
     /// `PlistValue` variant renders recursively except a mixed-type
     /// array, which the hand-rolled XML renderer drops.
     #[serde(default)]
@@ -78,7 +87,7 @@ pub struct IosInputs {
     pub extra_files: BTreeMap<PathBuf, FileEntry>,
     /// Plugin-supplied structural mutations against the Xcode
     /// `project.pbxproj`; see [`PbxprojOp`] for the supported ops and
-    /// [`render_pbxproj_op_placeholders`] for how each renders.
+    /// the private `render_pbxproj_op_placeholders` helper for how each renders.
     /// Deterministic UUIDs (FNV-1a over each op's content) keep the
     /// rendered file byte-identical across rebuilds.
     #[serde(default)]
@@ -90,19 +99,27 @@ pub struct IosInputs {
 /// rewritten. See [`crate::android::sync`] for the fast-path / drift
 /// rationale — same approach.
 pub fn sync(out_dir: &Path, inputs: &IosInputs) -> Result<bool> {
+    crate::background::AppBackground::parse(&inputs.background)
+        .context("validate iOS application background")?;
     let new_fp = fingerprint::fingerprint(
         serde_json::to_vec(inputs)
             .context("serialize IosInputs for fingerprint")?
             .as_slice(),
     );
     let fp_path = out_dir.join(".whisker-fingerprint");
-    if let Ok(existing) = std::fs::read_to_string(&fp_path) {
-        if existing.trim() == new_fp {
-            return Ok(false);
-        }
+    if let Ok(existing) = std::fs::read_to_string(&fp_path)
+        && existing.trim() == new_fp
+    {
+        return Ok(false);
     }
 
     write_files(out_dir, inputs).context("write iOS project files")?;
+    crate::ios_modules::stage_module_swift_sources(
+        out_dir,
+        &inputs.modules,
+        &inputs.workspace_root,
+    )
+    .context("write iOS module aggregator")?;
     std::fs::write(&fp_path, &new_fp)
         .with_context(|| format!("write fingerprint {}", fp_path.display()))?;
     Ok(true)
@@ -111,23 +128,17 @@ pub fn sync(out_dir: &Path, inputs: &IosInputs) -> Result<bool> {
 pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String> {
     let mut v = HashMap::new();
     v.insert("app_name", inputs.app_name.clone());
+    let background = crate::background::AppBackground::parse(&inputs.background)
+        .expect("IosInputs background is validated when it is resolved");
+    let [red, green, blue] = background.rgb();
+    v.insert("background_red", color_component(red));
+    v.insert("background_green", color_component(green));
+    v.insert("background_blue", color_component(blue));
     v.insert("version", inputs.version.clone());
     v.insert("build_number", inputs.build_number.to_string());
     v.insert("ios_scheme", inputs.scheme.clone());
     v.insert("ios_bundle_id", inputs.bundle_id.clone());
     v.insert("ios_deployment_target", inputs.deployment_target.clone());
-    // WhiskerRuntime resolves from the remote `whisker` SwiftPM
-    // package (`XCRemoteSwiftPackageReference`) so the generated
-    // project builds outside the monorepo. Module `Package.swift`
-    // pins must name the same version, or SwiftPM sees two identities.
-    v.insert(
-        "whisker_ios_spm_url",
-        whisker_build::ios::WHISKER_IOS_SPM_URL.to_string(),
-    );
-    v.insert(
-        "whisker_ios_spm_version",
-        whisker_build::ios::WHISKER_IOS_SPM_VERSION.to_string(),
-    );
     v.insert(
         "whisker_modules_ios_path",
         inputs.whisker_modules_path.display().to_string(),
@@ -137,12 +148,14 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
         inputs.workspace_root.display().to_string(),
     );
     v.insert("whisker_user_package", inputs.user_package.clone());
-    // `UILaunchScreen` is seeded rather than hardcoded in the template
-    // so a plugin can supply a launch image / color instead.
+    // A generated storyboard keeps the launch background available on the
+    // crate's iOS 13 deployment target (`UILaunchScreen` starts at iOS 14).
     let mut info_plist = inputs.extra_info_plist.clone();
-    info_plist
-        .entry("UILaunchScreen".to_string())
-        .or_insert_with(|| PlistValue::Dict(BTreeMap::new()));
+    info_plist.remove("UILaunchScreen");
+    info_plist.insert(
+        "UILaunchStoryboardName".to_string(),
+        PlistValue::String("LaunchScreen".to_string()),
+    );
     v.insert("extra_info_plist_kvs", render_extra_info_plist(&info_plist));
     let pbx = render_pbxproj_op_placeholders(&inputs.pbxproj_ops);
     v.insert("extra_pbxproj_build_file_entries", pbx.build_file_entries);
@@ -168,6 +181,10 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
         pbx.target_build_settings,
     );
     v
+}
+
+fn color_component(value: u8) -> String {
+    format!("{:.6}", f32::from(value) / 255.0)
 }
 
 /// Bundled output of [`render_pbxproj_op_placeholders`] — one field
@@ -400,10 +417,10 @@ fn render_extra_info_plist(entries: &BTreeMap<String, PlistValue>) -> String {
 fn push_plist_kv(out: &mut String, key: &str, value: &PlistValue, level: usize) {
     // Arrays/dicts we can't render (a mixed-type array) drop the whole
     // key rather than emit a dangling `<key>`.
-    if let PlistValue::Array(items) = value {
-        if !items.iter().all(|v| matches!(v, PlistValue::String(_))) {
-            return;
-        }
+    if let PlistValue::Array(items) = value
+        && !items.iter().all(|v| matches!(v, PlistValue::String(_)))
+    {
+        return;
     }
     let ind = "\t".repeat(level);
     out.push_str(&format!("{ind}<key>{}</key>\n", escape_xml(key)));
@@ -460,6 +477,18 @@ fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
         (
             out_dir.join("Sources/AppDelegate.swift"),
             APP_DELEGATE_SWIFT,
+        ),
+        (
+            out_dir.join("Resources/LaunchScreen.storyboard"),
+            LAUNCH_SCREEN_STORYBOARD,
+        ),
+        (
+            out_dir.join("Resources/Assets.xcassets/Contents.json"),
+            ASSET_CATALOG,
+        ),
+        (
+            out_dir.join("Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json"),
+            BACKGROUND_COLORSET,
         ),
     ];
     for (path, template) in text_files {
@@ -631,6 +660,7 @@ pub fn inputs_from_with_engine(
         .deployment_target
         .clone()
         .unwrap_or_else(|| "13.0".to_string());
+    let background = crate::background::AppBackground::resolve(app_config)?;
 
     let extra_info_plist = ios_ir.info_plist.clone();
     let extra_files = ios_ir.extra_files.clone();
@@ -638,6 +668,7 @@ pub fn inputs_from_with_engine(
 
     Ok(IosInputs {
         app_name,
+        background: background.hex().to_string(),
         version,
         build_number,
         scheme,
@@ -646,13 +677,14 @@ pub fn inputs_from_with_engine(
         whisker_modules_path,
         workspace_root,
         user_package,
+        modules: Vec::new(),
         extra_info_plist,
         extra_files,
         pbxproj_ops,
         // Bump on any template or renderer change: it feeds the sync
         // fingerprint, and without it existing `gen/ios/` trees keep
         // their stale output.
-        template_version: 15,
+        template_version: 38,
     })
 }
 
@@ -673,6 +705,7 @@ mod tests {
     fn sample_inputs() -> IosInputs {
         IosInputs {
             app_name: "HelloWorld".into(),
+            background: "#FFFFFF".into(),
             version: "0.1.0".into(),
             build_number: 1,
             scheme: "HelloWorld".into(),
@@ -681,11 +714,18 @@ mod tests {
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
+            modules: Vec::new(),
             extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),
-            template_version: 15,
+            template_version: 38,
         }
+    }
+
+    #[test]
+    fn generated_delegate_only_composes_the_sdk_view() {
+        assert!(APP_DELEGATE_SWIFT.contains("WhiskerView(frame:"));
+        assert!(!APP_DELEGATE_SWIFT.contains("class WhiskerView"));
     }
 
     #[test]
@@ -697,6 +737,9 @@ mod tests {
         for expected in [
             "Info.plist",
             "Sources/AppDelegate.swift",
+            "Resources/LaunchScreen.storyboard",
+            "Resources/Assets.xcassets/Contents.json",
+            "Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json",
             "HelloWorld.xcodeproj/project.pbxproj",
             "HelloWorld.xcodeproj/project.xcworkspace/contents.xcworkspacedata",
             "HelloWorld.xcodeproj/xcshareddata/xcschemes/HelloWorld.xcscheme",
@@ -704,7 +747,49 @@ mod tests {
         ] {
             assert!(out.join(expected).exists(), "missing: {expected}");
         }
+        assert!(
+            !out.join("Sources/WhiskerView.swift").exists(),
+            "the generated app must consume WhiskerView from the iOS SDK"
+        );
         assert!(!out.join("project.yml").exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sync_projects_static_background_into_ios_startup_and_container() {
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/ios");
+        let mut inputs = sample_inputs();
+        inputs.background = "#101018".into();
+        sync(&out, &inputs).unwrap();
+
+        let colorset = std::fs::read_to_string(
+            out.join("Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json"),
+        )
+        .unwrap();
+        let plist = std::fs::read_to_string(out.join("Info.plist")).unwrap();
+        let storyboard =
+            std::fs::read_to_string(out.join("Resources/LaunchScreen.storyboard")).unwrap();
+        let delegate = std::fs::read_to_string(out.join("Sources/AppDelegate.swift")).unwrap();
+        let pbxproj =
+            std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
+
+        assert!(colorset.contains("\"red\" : \"0.062745\""));
+        assert!(colorset.contains("\"green\" : \"0.062745\""));
+        assert!(colorset.contains("\"blue\" : \"0.094118\""));
+        assert!(plist.contains("<key>UILaunchStoryboardName</key>"));
+        assert!(plist.contains("<string>LaunchScreen</string>"));
+        assert!(storyboard.contains("red=\"0.062745\""));
+        assert!(storyboard.contains("green=\"0.062745\""));
+        assert!(storyboard.contains("blue=\"0.094118\""));
+        assert!(delegate.contains("UIColor(named: \"WhiskerBackground\")"));
+        assert!(delegate.contains("root.view.addSubview(whiskerView)"));
+        assert!(pbxproj.contains("Assets.xcassets in Resources"));
+        assert!(
+            !pbxproj.contains("ASSETCATALOG_COMPILER_APPICON_NAME"),
+            "a background color catalog must not require an AppIcon catalog",
+        );
+
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -717,17 +802,16 @@ mod tests {
             std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
         assert!(pbxproj.contains("PRODUCT_BUNDLE_IDENTIFIER = \"rs.whisker.examples.helloWorld\""));
         assert!(pbxproj.contains("IPHONEOS_DEPLOYMENT_TARGET = \"13.0\""));
-        assert!(pbxproj.contains("isa = XCRemoteSwiftPackageReference;"));
-        assert!(pbxproj.contains(&format!(
-            "repositoryURL = \"{}\"",
-            whisker_build::ios::WHISKER_IOS_SPM_URL
-        )));
-        assert!(pbxproj.contains(&format!(
-            "version = \"{}\"",
-            whisker_build::ios::WHISKER_IOS_SPM_VERSION
-        )));
-        assert!(pbxproj.contains("package = B25ED1A6F9E42E26D051E805"));
-        assert!(pbxproj.contains("relativePath = \"/abs/gen/ios/whisker_modules\""));
+        assert!(!pbxproj.contains("XCRemoteSwiftPackageReference"));
+        assert!(!pbxproj.contains("WhiskerRuntime"));
+        assert!(!pbxproj.contains("Lynx"));
+        assert!(pbxproj.contains("XCLocalSwiftPackageReference \"whisker_modules\""));
+        assert!(pbxproj.contains("WhiskerModules in Frameworks"));
+        assert!(pbxproj.contains("WhiskerDriver.framework in Embed Frameworks"));
+        assert!(pbxproj.contains("Whisker Build Rust App"));
+        assert!(pbxproj.contains("WHISKER_CLI=\\\"${WHISKER_CLI:-whisker}\\\""));
+        assert!(pbxproj.contains("\\\"$WHISKER_CLI\\\" build-ios"));
+        assert!(pbxproj.contains("@executable_path/Frameworks"));
         assert!(pbxproj.contains("name = \"HelloWorld\""));
         assert!(pbxproj.contains("productName = \"HelloWorld\""));
         assert!(!pbxproj.contains("{{"));

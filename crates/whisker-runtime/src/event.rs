@@ -1,12 +1,9 @@
-//! Typed event objects deserialized from the [`WhiskerValue`] body
-//! Lynx hands an event handler.
-//!
-//! Mirrors Lynx's event hierarchy (see
-//! <https://lynxjs.org/api/lynx-api/event/event.html>):
+//! Typed event objects deserialized from the [`WhiskerValue`] body the Rust
+//! runtime or a Host hands an event handler.
 //!
 //!   - [`Event`] — base shape every event carries (`type`,
 //!     `timestamp`, `target`, `currentTarget`).
-//!   - [`TouchEvent`] — `tap` / `longpress` / `touchstart` /
+//!   - [`TouchEvent`] — `tap` / `click` / `touchstart` /
 //!     `touchmove` / `touchend` / `touchcancel` / `click`. Adds the
 //!     primary-touch [`Point`] `detail` plus `touches` /
 //!     `changedTouches` arrays.
@@ -17,7 +14,7 @@
 //!     `detail`.
 //!
 //! A built-in builder's `on_<event>` method, or a
-//! `#[whisker::module_component]` `on_<event>: TouchEvent` prop,
+//! `#[whisker::module_element]` `on_<event>: TouchEvent` prop,
 //! receives the event body as a [`WhiskerValue`] and recovers the
 //! struct via [`WhiskerValue::deserialize_into`]. Every field is
 //! `#[serde(default)]` so a body missing an optional key (or an
@@ -38,12 +35,67 @@ use crate::view::{Element, set_event_listener};
 /// definition lives in [`crate::view`].
 pub use crate::view::BindType;
 
+/// Structured application metadata attached to an element.
+///
+/// Values use [`WhiskerValue`] so event metadata has the same type model on
+/// every Host instead of stringifying booleans and numbers.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(transparent)]
+pub struct Dataset(BTreeMap<String, WhiskerValue>);
+
+impl Dataset {
+    /// Creates an empty dataset.
+    pub const fn new() -> Self {
+        Self(BTreeMap::new())
+    }
+
+    /// Inserts an arbitrary universal value.
+    pub fn value(mut self, key: impl Into<String>, value: WhiskerValue) -> Self {
+        self.0.insert(key.into(), value);
+        self
+    }
+
+    /// Inserts a string value.
+    pub fn string(self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.value(key, WhiskerValue::String(value.into()))
+    }
+
+    /// Inserts a boolean value.
+    pub fn bool(self, key: impl Into<String>, value: bool) -> Self {
+        self.value(key, WhiskerValue::Bool(value))
+    }
+
+    /// Inserts an integer value.
+    pub fn int(self, key: impl Into<String>, value: i64) -> Self {
+        self.value(key, WhiskerValue::Int(value))
+    }
+
+    /// Inserts a floating-point value.
+    pub fn float(self, key: impl Into<String>, value: f64) -> Self {
+        self.value(key, WhiskerValue::Float(value))
+    }
+
+    /// Returns one value by key.
+    pub fn get(&self, key: &str) -> Option<&WhiskerValue> {
+        self.0.get(key)
+    }
+
+    /// Iterates over entries in stable key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &WhiskerValue)> {
+        self.0.iter()
+    }
+
+    pub(crate) fn as_map(&self) -> &BTreeMap<String, WhiskerValue> {
+        &self.0
+    }
+}
+
 /// Register a **typed** event handler on `handle`.
 ///
 /// The event body crosses the bridge as a [`WhiskerValue`]; this
 /// deserializes it into `E` before calling `handler`. Used by the
 /// built-in builders' `on_<event>` methods and by
-/// `#[whisker::module_component]` for typed `on_<event>: E` props.
+/// `#[whisker::module_element]` for typed `on_<event>: E` props.
 ///
 /// **The handler always fires when the event fires.** "The event
 /// happened" is the primary signal; the typed payload is
@@ -99,18 +151,15 @@ where
 pub struct Target {
     /// The element's `id` attribute (empty when unset).
     pub id: String,
-    /// Lynx Engine's unique element identifier (its "sign").
+    /// The Host's unique element identifier.
     pub uid: i64,
-    /// `data-*` attributes attached to the element, keyed without
-    /// the `data-` prefix.
-    pub dataset: BTreeMap<String, WhiskerValue>,
+    /// Structured application metadata attached to the element.
+    pub dataset: Dataset,
 }
 
-// The platform reporter hands over the *raw* event body, where `target`
-// and `currentTarget` are plain integer signs (Lynx
-// `LynxEvent.generateEventBody`); the richer `{id, dataset, uid}`
-// object is synthesized downstream in the JS layer, which Whisker
-// bypasses. `Target` must therefore accept EITHER form — a hard
+// Host adapters may encode `target` and `currentTarget` as either a plain
+// integer identifier or the richer `{id, dataset, uid}` object. `Target`
+// therefore accepts either form — a hard
 // "expected struct, got number" here fails the *whole* event struct and
 // blanks every field, `detail` included.
 impl<'de> Deserialize<'de> for Target {
@@ -159,7 +208,7 @@ impl<'de> Deserialize<'de> for Target {
                     #[serde(default)]
                     uid: i64,
                     #[serde(default)]
-                    dataset: BTreeMap<String, WhiskerValue>,
+                    dataset: Dataset,
                 }
                 let o = Obj::deserialize(de::value::MapAccessDeserializer::new(map))?;
                 Ok(Target {
@@ -173,7 +222,7 @@ impl<'de> Deserialize<'de> for Target {
     }
 }
 
-/// A 2-D point in LynxView coordinates — the `detail` of a
+/// A 2-D point in surface coordinates — the `detail` of a
 /// [`TouchEvent`] (position of the first touch point).
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[non_exhaustive]
@@ -197,7 +246,7 @@ pub struct Touch {
     pub x: f64,
     #[serde(default)]
     pub y: f64,
-    /// Position in LynxView coordinates.
+    /// Position in surface coordinates.
     #[serde(default)]
     pub page_x: f64,
     #[serde(default)]
@@ -209,7 +258,7 @@ pub struct Touch {
     pub client_y: f64,
 }
 
-/// Base event shape — fields present on every Lynx event.
+/// Base event shape — fields present on every Whisker event.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[non_exhaustive]
 pub struct Event {
@@ -228,7 +277,7 @@ pub struct Event {
 }
 
 /// Touch / tap / click event. The `detail` is the first touch
-/// point's LynxView-coordinate position; `touches` /
+/// point's surface-coordinate position; `touches` /
 /// `changed_touches` carry the full per-finger detail.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -242,9 +291,21 @@ pub struct TouchEvent {
     pub target: Target,
     #[serde(default)]
     pub current_target: Target,
-    /// Position of the first touch point (LynxView coordinates).
+    /// Position of the current pointer in surface coordinates.
     #[serde(default)]
     pub detail: Point,
+    /// Stable id for one pointer stream.
+    #[serde(default)]
+    pub pointer_id: i64,
+    /// `"mouse"`, `"touch"`, `"pen"`, or `"unknown"`.
+    #[serde(default)]
+    pub pointer_type: String,
+    /// Host button bitset active for this sample.
+    #[serde(default)]
+    pub buttons: u32,
+    /// Button changed by this sample, or `-1` when not applicable.
+    #[serde(default)]
+    pub button: i16,
     /// All touch points currently on the surface.
     #[serde(default)]
     pub touches: Vec<Touch>,
@@ -253,7 +314,8 @@ pub struct TouchEvent {
     pub changed_touches: Vec<Touch>,
 }
 
-/// Keyframe / transition animation lifecycle event.
+/// Keyframe / transition animation lifecycle event emitted by the Rust-owned
+/// timeline.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[non_exhaustive]
 pub struct AnimationEvent {
@@ -308,9 +370,8 @@ pub struct Size {
 
 /// `<scroll_view>` scroll events — `scroll`, `scrolltoupper`,
 /// `scrolltolower`, `scrollend`, `contentsizechanged`. The `detail`
-/// carries the current scroll geometry. (CustomEvent → target-only, so
-/// these have no catch/capture variants — see Lynx `CustomEvent`
-/// defaults `Capture::kNo, Bubbles::kNo`.)
+/// carries the current scroll geometry. These events use the current
+/// target-only dispatch contract and have no catch/capture variants.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[non_exhaustive]
 pub struct ScrollEvent {
@@ -326,8 +387,7 @@ pub struct ScrollEvent {
     pub detail: ScrollDetail,
 }
 
-/// Scroll geometry carried by a [`ScrollEvent`] (the event body's
-/// `detail` dict — see Lynx `LynxScrollEventManager`).
+/// Scroll geometry carried by a [`ScrollEvent`]'s `detail` map.
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
@@ -344,6 +404,12 @@ pub struct ScrollDetail {
     /// Total scrollable content height (px).
     #[serde(default)]
     pub scroll_height: f64,
+    /// Visible content width in logical pixels.
+    #[serde(default)]
+    pub viewport_width: f64,
+    /// Visible content height in logical pixels.
+    #[serde(default)]
+    pub viewport_height: f64,
     /// Horizontal delta since the previous scroll event (px).
     #[serde(default)]
     pub delta_x: f64,
@@ -537,7 +603,7 @@ mod tests {
 
     #[test]
     fn touch_event_from_value_tree() {
-        // Shape mirrors Lynx's `generateEventBody` for a tap.
+        // Representative Host payload for a tap.
         let v = WhiskerValue::map([
             ("type", WhiskerValue::String("tap".into())),
             ("timestamp", WhiskerValue::Float(123.0)),
@@ -599,7 +665,7 @@ mod tests {
 
     #[test]
     fn scroll_event_detail_camel_case_mapping() {
-        // Mirrors Lynx's LynxScrollEventManager detail dict.
+        // Mirrors the native scroll event payload shape.
         let v = WhiskerValue::map([
             ("type", WhiskerValue::String("scroll".into())),
             (

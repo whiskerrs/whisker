@@ -29,10 +29,9 @@ include = [
 [lib]
 crate-type = ["rlib"]
 
-# Module-system opt-in marker. Identifies this crate as a Whisker
-# module so `whisker-build` wires its Android Gradle subproject + iOS
-# SwiftPM package into any consuming app's build.
-[package.metadata.whisker]
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { manifest = "Package.swift" }
 
 [dependencies]
 whisker = { workspace = true }

@@ -47,9 +47,6 @@ pub fn run(args: Args) -> Result<()> {
     // directory; reports a single neutral line elsewhere.
     report.add_section("Credentials", check_credentials);
 
-    // No Lynx section: gradle and SPM each resolve Lynx during their
-    // own build, leaving nothing on disk to assert about beforehand.
-
     report.print_summary();
     if report.has_errors() {
         std::process::exit(1);
@@ -316,9 +313,7 @@ fn check_android() -> Vec<Check> {
         }
     };
 
-    // App builds need an NDK (any of the versions whisker-build
-    // accepts); Lynx itself resolves prebuilt via Maven, so no exact
-    // pin is required here.
+    // App builds need an NDK (any version accepted by whisker-build).
     let ndk_root = android_home.join("ndk");
     let has_ndk = std::fs::read_dir(&ndk_root)
         .map(|mut d| d.any(|e| e.is_ok()))

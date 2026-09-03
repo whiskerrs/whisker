@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-use crate::Target;
+use crate::{MacosParams, Target, WebParams};
 use whisker_build::CaptureShims;
 
 /// Builder for cold (full reload) rebuilds. hot-reload patches live in
@@ -25,11 +25,14 @@ pub struct Builder {
     package: String,
     target: Target,
     /// Cargo features forwarded to whichever step compiles the user
-    /// crate. The dev loop turns on `whisker/hot-reload` here.
+    /// crate. The dev loop turns on `whisker/hot-reload` for mobile and
+    /// the generated Host's `hot-reload` feature for macOS.
     features: Vec<String>,
     /// `Some` → fat build (hot reload capture caches get populated).
     /// `None` → plain full reload.
     capture: Option<CaptureShims>,
+    macos: Option<MacosParams>,
+    web: Option<WebParams>,
 }
 
 impl Builder {
@@ -46,6 +49,8 @@ impl Builder {
             target,
             features: Vec::new(),
             capture: None,
+            macos: None,
+            web: None,
         }
     }
 
@@ -55,7 +60,7 @@ impl Builder {
     }
 
     /// Read-only view of the features currently configured. The dev
-    /// loop reads this when constructing the [`Installer`] so the iOS
+    /// loop reads this when constructing the installer so the iOS
     /// xcodebuild env var (`WHISKER_FEATURES`) stays in sync with what
     /// the Builder would have passed to a direct cargo invocation.
     pub fn features(&self) -> &[String] {
@@ -71,11 +76,25 @@ impl Builder {
         self
     }
 
+    /// Supplies the generated native macOS project when this builder targets
+    /// [`Target::Macos`].
+    pub fn with_macos(mut self, macos: Option<MacosParams>) -> Self {
+        self.macos = macos;
+        self
+    }
+
+    pub fn with_web(mut self, web: Option<WebParams>) -> Self {
+        self.web = web;
+        self
+    }
+
     /// Run the build for the current target. Inherits stdout/stderr.
     pub async fn build(&self) -> Result<()> {
         match self.target {
             Target::Android => self.build_android().await,
             Target::IosSimulator => self.build_ios_simulator().await,
+            Target::Macos => self.build_macos().await,
+            Target::Web => self.build_web().await,
         }
     }
 
@@ -87,38 +106,32 @@ impl Builder {
     // ----- per-target build paths ------------------------------------------
 
     async fn build_android(&self) -> Result<()> {
-        // Dev loop only stages module Kotlin sources, then drives
-        // gradle. Gradle's own `whiskerBuildDebugArm64V8a` task runs
-        // `whisker build-android` (which runs cargo + stages the .so +
-        // libc++_shared.so into the generated jniLibs source dir AGP
-        // mergeJniLibFolders picks up), so a *second* pre-cargo build
-        // here would just produce the same `.so` twice and leak its
-        // output across the curated dev-loop UI.
-        //
-        // Mirrors what iOS already does: cargo runs only inside
-        // xcodebuild's Build Phase; the dev-server's `build_ios_simulator`
-        // is module-source-staging only. Aligning Android to the same
-        // shape halves the wall-clock of every full reload on a
-        // cache-warm cargo and removes one race against the TUI viewport.
-        let ws = self.workspace_root.clone();
+        let workspace_root = self.workspace_root.clone();
         let crate_dir = self.crate_dir.clone();
-        let pkg = self.package.clone();
+        let package = self.package.clone();
         let features = self.features.clone();
         let capture = self.capture.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
+            const ABI: &str = "arm64-v8a";
+            let toolchain = whisker_build::android::resolve_toolchain(ABI, 24)
+                .context("resolve Android NDK toolchain")?;
+            let dylib =
+                whisker_build::android::cargo_build_dylib(&whisker_build::android::CargoBuild {
+                    workspace_root: &workspace_root,
+                    package: &package,
+                    toolchain: &toolchain,
+                    profile: whisker_build::Profile::Debug,
+                    features: &features,
+                    capture: capture.as_ref(),
+                })?;
             let gen_android = crate_dir.join("gen/android");
-            // Stage discovered Whisker modules' Android Kotlin
-            // sources before gradle runs. Empty when no module
-            // declares android.kotlin_sources.
-            let modules = whisker_build::modules::discover(&ws.join("Cargo.toml"), &pkg)?;
-            whisker_build::android::stage_module_kotlin_sources(&gen_android, &modules)?;
-            // The Settings plugin's module-report cache is keyed on
-            // Cargo.lock alone and can be stale (other apps in the
-            // workspace, metadata-only edits) — rewrite it fresh so
-            // gradle wires the module subprojects this app actually
-            // has. See refresh_gradle_module_cache docs.
-            whisker_build::modules::refresh_gradle_module_cache(&ws, &pkg)?;
+            whisker_build::android::stage_so_files(
+                &gen_android.join("app/src/main/jniLibs").join(ABI),
+                &dylib,
+                &toolchain,
+                ABI,
+            )?;
             whisker_build::android::run_gradle_assemble(
                 &gen_android,
                 whisker_build::Profile::Debug,
@@ -131,33 +144,89 @@ impl Builder {
         .context("spawn_blocking Android build")?
     }
 
-    async fn build_ios_simulator(&self) -> Result<()> {
-        // Staging the module Swift sources for SwiftPM is all this
-        // does. The `.app` build — and the cargo cross-compile that
-        // produces `WhiskerDriver.framework` — runs during xcodebuild
-        // in `installer.rs::ios_install_and_launch`, through the
-        // cng-generated pbxproj's "Whisker Generate" Run Script Build
-        // Phase, which is also where the capture shims get applied as
-        // env vars on the xcodebuild Command.
-        let ws = self.workspace_root.clone();
-        let crate_dir = self.crate_dir.clone();
-        let pkg = self.package.clone();
-
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            // Stage Whisker modules' iOS Swift sources before
-            // xcodebuild runs so the pbxproj's WhiskerModules SwiftPM
-            // ref resolves cleanly. Empty when no module declares
-            // `[ios].swift_sources` — the staging step still writes a
-            // no-op Package.swift + WhiskerModuleBehaviors.swift so
-            // AppDelegate's `import WhiskerModules` doesn't fail to
-            // resolve.
-            let modules = whisker_build::modules::discover(&ws.join("Cargo.toml"), &pkg)?;
-            let gen_ios = crate_dir.join("gen/ios");
-            whisker_build::ios::stage_module_swift_sources(&gen_ios, &modules)?;
+    async fn build_web(&self) -> Result<()> {
+        let web = self
+            .web
+            .clone()
+            .context("target=Web but Config.web is missing")?;
+        let features = self.features.clone();
+        let capture = self.capture.clone();
+        tokio::task::spawn_blocking(move || {
+            let config = whisker_build::web::WebBuild {
+                project_dir: web.project_dir,
+                target_dir: web.target_dir,
+                dist_dir: web.dist_dir,
+                package: web.generated_package,
+                profile: whisker_build::Profile::Debug,
+                features,
+                capture,
+                development: true,
+            };
+            let raw_wasm = whisker_build::web::compile(&config)?;
+            if config.capture.is_some() {
+                let bytes = std::fs::read(&raw_wasm)
+                    .with_context(|| format!("read {}", raw_wasm.display()))?;
+                let prepared = crate::hotpatch::prepare_wasm_base_module(&bytes)
+                    .context("prepare WebAssembly base module for Hot Reload")?;
+                std::fs::write(&raw_wasm, prepared)
+                    .with_context(|| format!("write {}", raw_wasm.display()))?;
+            }
+            whisker_build::web::bindgen(&config, &raw_wasm)?;
             Ok(())
         })
         .await
-        .context("spawn_blocking iOS module-source stage")?
+        .context("join Web build task")?
+    }
+
+    async fn build_ios_simulator(&self) -> Result<()> {
+        let workspace_root = self.workspace_root.clone();
+        let package = self.package.clone();
+        let features = self.features.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let built_products = workspace_root
+                .join("target/.whisker/ios-derived")
+                .join(&package)
+                .join("Build/Products/Debug-iphonesimulator");
+            whisker_build::ios::build_framework_for_xcode_run_script(
+                &whisker_build::ios::XcodeRunScriptInputs {
+                    workspace_root: &workspace_root,
+                    package: &package,
+                    platform: "iphonesimulator",
+                    // The generated Xcode project uses a generic simulator
+                    // destination, which asks for both slices even on an
+                    // Apple Silicon development machine.
+                    archs: &["arm64", "x86_64"],
+                    features: &features,
+                },
+                &built_products,
+            )?;
+            Ok(())
+        })
+        .await
+        .context("spawn_blocking iOS Rust framework build")?
+    }
+
+    async fn build_macos(&self) -> Result<()> {
+        let params = self
+            .macos
+            .clone()
+            .context("target=Macos but no MacosParams were provided")?;
+        let features = self.features.clone();
+        let capture = self.capture.clone();
+        tokio::task::spawn_blocking(move || {
+            whisker_build::macos::build_app(&whisker_build::macos::MacosBuild {
+                project_dir: &params.project_dir,
+                target_dir: &params.target_dir,
+                app_name: &params.app_name,
+                binary_name: &params.binary_name,
+                profile: whisker_build::Profile::Debug,
+                features: &features,
+                capture: capture.as_ref(),
+            })
+            .map(|_| ())
+        })
+        .await
+        .context("spawn_blocking macOS Host build")?
     }
 }
 
@@ -167,7 +236,12 @@ mod tests {
 
     #[test]
     fn builder_can_be_constructed_for_each_target() {
-        for t in [Target::Android, Target::IosSimulator] {
+        for t in [
+            Target::Android,
+            Target::IosSimulator,
+            Target::Macos,
+            Target::Web,
+        ] {
             let b = Builder::new(
                 PathBuf::from("/tmp/ws"),
                 PathBuf::from("/tmp/ws/examples/x"),

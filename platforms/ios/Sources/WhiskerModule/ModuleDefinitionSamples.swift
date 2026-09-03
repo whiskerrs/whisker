@@ -15,25 +15,32 @@ internal enum ModuleDefinitionSamples {
         func play() { /* noop */ }
         func pause() { /* noop */ }
         func seek(_ seconds: Double) { /* noop */ }
+        func setFontSize(_ value: CGFloat) { /* noop */ }
     }
 
     internal static func videoModuleDefinition() -> ModuleDefinition {
         ModuleDefinition {
             Name("Video")
 
-            Constants(["maxResolution": "1080p"])
-
-            View(FakeVideoView.self) {
+            View("sample/Video", FakeVideoView.self) {
                 Prop("src") { (view: FakeVideoView, value: WhiskerValue) in
                     view.setSrc(value.asString ?? "")
                 }
-                Function("play")  { (view: FakeVideoView, _: [WhiskerValue]) in view.play(); return .null }
-                Function("pause") { (view: FakeVideoView, _: [WhiskerValue]) in view.pause(); return .null }
-                Function("seek")  { (view: FakeVideoView, args: [WhiskerValue]) in
-                    view.seek(args.first?.asDouble ?? 0)
-                    return .null
+                Command("play")  { (view: FakeVideoView, _: WhiskerValue) in view.play() }
+                Command("pause") { (view: FakeVideoView, _: WhiskerValue) in view.pause() }
+                Command("seek")  { (view: FakeVideoView, parameters: WhiskerValue) in
+                    view.seek(parameters.asDouble ?? 0)
                 }
                 Events("onCompleted")
+                TextStyle { (view: FakeVideoView, style: WhiskerTextStyle) in
+                    view.setFontSize(style.fontSize)
+                }
+                Measurement { request in
+                    WhiskerMeasuredSize(
+                        width: request.knownWidth ?? 160,
+                        height: request.knownHeight ?? 90
+                    )
+                }
             }
         }
     }
@@ -57,6 +64,7 @@ internal enum ModuleDefinitionSamples {
 
     // MARK: - WhiskerModule subclass shape
 
+    @WhiskerModule
     internal final class StubModule: Module {
         public override func definition() -> ModuleDefinition {
             ModuleDefinitionSamples.videoModuleDefinition()

@@ -1,0 +1,713 @@
+{
+  "schema": 1,
+  "wpt_revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+  "cases": [
+    {
+      "id": "wpt.css2.backgrounds.background-color-129",
+      "feature": "background-color",
+      "fixture": "wpt/css/CSS2/backgrounds/background-color-129.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css-images.linear-gradient-1",
+      "feature": "background-image-linear-gradient",
+      "fixture": "wpt/css/css-images/linear-gradient-1.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-images.radial-gradient-container-relative-units-001",
+      "feature": "background-image-radial-gradient",
+      "fixture": "wpt/css/css-images/radial-gradient-container-relative-units-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-images.conic-gradient-angle",
+      "feature": "background-image-conic-gradient",
+      "fixture": "wpt/css/css-images/conic-gradient-angle.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-layer-stacking",
+      "feature": "background-image-layer-stacking",
+      "fixture": "wpt/css/css-backgrounds/background-layer-stacking.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.background-layer-geometry-symmetry",
+      "feature": "background-layer-geometry-symmetry",
+      "fixture": "core/background-layer-geometry-symmetry.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-resource-image",
+      "feature": "background-image-resource",
+      "fixture": "wpt/css/css-backgrounds/background-resource-image.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.resource-raster-lifecycle",
+      "feature": "resource-raster-lifecycle",
+      "fixture": "core/resource-raster-lifecycle.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-lifecycle", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.image-rendering-pixelated",
+      "feature": "image-rendering-pixelated",
+      "fixture": "core/image-rendering-pixelated.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.image-rendering-crisp-edges",
+      "feature": "image-rendering-crisp-edges",
+      "fixture": "core/image-rendering-crisp-edges.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-size-009",
+      "feature": "background-size-no-repeat",
+      "fixture": "wpt/css/css-backgrounds/background-size-009.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-size-intrinsic-auto",
+      "feature": "background-size-intrinsic-auto",
+      "fixture": "wpt/css/css-backgrounds/background-size-intrinsic-auto.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-size-auto-round-aspect-ratio",
+      "feature": "background-size-auto-round-aspect-ratio",
+      "fixture": "wpt/css/css-backgrounds/background-size-auto-round-aspect-ratio.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-size-contain-001-intrinsic",
+      "feature": "background-size-contain",
+      "fixture": "wpt/css/css-backgrounds/background-size-contain-001-intrinsic.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-size-cover-001-intrinsic",
+      "feature": "background-size-cover",
+      "fixture": "wpt/css/css-backgrounds/background-size-cover-001-intrinsic.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-position-three-four-values.test1",
+      "feature": "background-position",
+      "fixture": "wpt/css/css-backgrounds/background-position-three-four-values.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.css3-background-origin-border-box",
+      "feature": "background-origin-border-box",
+      "fixture": "wpt/css/css-backgrounds/css3-background-origin-border-box.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.clip-padding-box-with-size",
+      "feature": "background-clip-padding-box",
+      "fixture": "wpt/css/css-backgrounds/clip-padding-box-with-size.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-origin.content-box",
+      "feature": "background-origin-content-box",
+      "fixture": "wpt/css/css-backgrounds/background-origin-content-box.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-clip.content-box",
+      "feature": "background-clip-content-box",
+      "fixture": "wpt/css/css-backgrounds/background-clip-content-box.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-clip.border-area-background-geometry",
+      "feature": "background-clip-border-area",
+      "fixture": "wpt/css/css-backgrounds/background-clip-border-area-background-geometry.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-repeat.repeat-x",
+      "feature": "background-repeat-x",
+      "fixture": "wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-x.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-repeat.repeat-y",
+      "feature": "background-repeat-y",
+      "fixture": "wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-y.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-repeat.space",
+      "feature": "background-repeat-space",
+      "fixture": "wpt/css/css-backgrounds/background-repeat-space.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-repeat.space-single",
+      "feature": "background-repeat-space",
+      "fixture": "wpt/css/css-backgrounds/background-repeat-space-single.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-repeat.round-x",
+      "feature": "background-repeat-round",
+      "fixture": "wpt/css/css-backgrounds/background-repeat-round-x.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-repeat.round-y",
+      "feature": "background-repeat-round",
+      "fixture": "wpt/css/css-backgrounds/background-repeat-round-y.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-repeat.round-position",
+      "feature": "background-repeat-round",
+      "fixture": "wpt/css/css-backgrounds/background-repeat-round-position.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
+      "feature": "border-radius",
+      "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.remaining",
+      "feature": "border-radius-overlap-normalization",
+      "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001-remaining.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-004",
+      "feature": "border-radius",
+      "fixture": "wpt/css/css-backgrounds/border-radius-004.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-different-width-001",
+      "feature": "border-radius-asymmetric-widths",
+      "fixture": "wpt/css/css-backgrounds/border-radius-different-width-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-horizontal-value-is-zero",
+      "feature": "border-radius-zero-axis",
+      "fixture": "wpt/css/css-backgrounds/border-radius-horizontal-value-is-zero.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-style-001",
+      "feature": "border-radius-dotted-style",
+      "fixture": "wpt/css/css-backgrounds/border-radius-style-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-style-002",
+      "feature": "border-radius-dashed-style",
+      "fixture": "wpt/css/css-backgrounds/border-radius-style-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-style-003",
+      "feature": "border-radius-double-style",
+      "fixture": "wpt/css/css-backgrounds/border-radius-style-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-style-004",
+      "feature": "border-radius-solid-style",
+      "fixture": "wpt/css/css-backgrounds/border-radius-style-004.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-style-005",
+      "feature": "border-radius-none-style",
+      "fixture": "wpt/css/css-backgrounds/border-radius-style-005.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-overflow.clip-002.horizontal",
+      "feature": "overflow-x",
+      "fixture": "wpt/css/css-overflow/clip-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-overflow.clip-002.vertical",
+      "feature": "overflow-y",
+      "fixture": "wpt/css/css-overflow/clip-002-vertical.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-transforms.transform-matrix-001",
+      "feature": "transform",
+      "fixture": "wpt/css/css-transforms/transform-matrix-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-local-origin",
+      "feature": "transform",
+      "fixture": "core/transform-local-origin.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-parent-composition",
+      "feature": "transform",
+      "fixture": "core/transform-parent-composition.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-projective-plane",
+      "feature": "transform-3d-flat-plane",
+      "fixture": "core/transform-projective-plane.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-perspective-current-node",
+      "feature": "perspective-current-node",
+      "fixture": "core/transform-perspective-current-node.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-motion-path-line",
+      "feature": "motion-path-line",
+      "fixture": "core/transform-motion-path-line.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-motion-path-curves",
+      "feature": "motion-path-curves",
+      "fixture": "core/transform-motion-path-curves.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-motion-path-ellipses",
+      "feature": "motion-path-ellipses",
+      "fixture": "core/transform-motion-path-ellipses.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-motion-path-inset",
+      "feature": "motion-path-inset",
+      "fixture": "core/transform-motion-path-inset.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-motion-path-arcs",
+      "feature": "motion-path-arcs",
+      "fixture": "core/transform-motion-path-arcs.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-color.opacity-basic-0.6",
+      "feature": "opacity",
+      "fixture": "wpt/css/css-color/t32-opacity-basic-0.6-a.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-color.opacity-offscreen-multiple-boxes-2",
+      "feature": "opacity-group-compositing",
+      "fixture": "wpt/css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-color.opacity-offscreen-with-alpha",
+      "feature": "opacity-group-alpha-compositing",
+      "fixture": "wpt/css/css-color/t32-opacity-offscreen-with-alpha-c.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.visibility-004",
+      "feature": "visibility",
+      "fixture": "wpt/css/CSS2/visufx/visibility-004.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.visibility-005",
+      "feature": "visibility-descendant-override",
+      "fixture": "wpt/css/CSS2/visufx/visibility-005.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.z-index-003",
+      "feature": "z-index",
+      "fixture": "wpt/css/CSS2/zindex/z-index-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.z-index-010",
+      "feature": "z-index-signed-32-bit-maximum",
+      "fixture": "wpt/css/CSS2/zindex/z-index-010.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.z-index-stack-001",
+      "feature": "z-index-sibling-stacking-levels",
+      "fixture": "wpt/css/CSS2/zindex/z-index-stack-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.z-index-stack-002",
+      "feature": "z-index-document-order-tiebreak",
+      "fixture": "wpt/css/CSS2/zindex/z-index-stack-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-overflow-hidden",
+      "feature": "border-radius-overflow-clip",
+      "fixture": "wpt/css/css-backgrounds/border-radius-overflow-hidden.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-clipping-with-transform-001",
+      "feature": "border-radius-overflow-transform",
+      "fixture": "wpt/css/css-backgrounds/border-radius-clipping-with-transform-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.borders.border-top-003",
+      "feature": "border-top",
+      "fixture": "wpt/css/CSS2/borders/border-top-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css-backgrounds.box-shadow-001",
+      "feature": "box-shadow-offset",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.backdrop-filter-blur",
+      "feature": "backdrop-filter-blur",
+      "fixture": "core/backdrop-filter-blur.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-relations"]
+    },
+    {
+      "id": "wpt.css-backgrounds.box-shadow-002",
+      "feature": "box-shadow-spread",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.box-shadow-blur-definition-001",
+      "feature": "box-shadow-blur",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-blur-definition-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
+    },
+    {
+      "id": "wpt.css-backgrounds.box-shadow-inset-without-border-radius",
+      "feature": "box-shadow-inset",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-inset-without-border-radius.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.box-shadow-inset-spread",
+      "feature": "box-shadow-inset-spread",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-inset-spread.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.box-shadow-inset-blur-definition",
+      "feature": "box-shadow-inset-blur",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-inset-blur-definition.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
+    },
+    {
+      "id": "wpt.css-backgrounds.box-shadow-multiple-001",
+      "feature": "multiple-box-shadows",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-multiple-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-masking.clip-path-inset-round-rendering",
+      "feature": "clip-path-inset",
+      "fixture": "wpt/css/css-masking/clip-path-inset-round-rendering.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-masking.clip-path-circle-002",
+      "feature": "clip-path-circle",
+      "fixture": "wpt/css/css-masking/clip-path-circle-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-masking.clip-path-ellipse-002",
+      "feature": "clip-path-ellipse",
+      "fixture": "wpt/css/css-masking/clip-path-ellipse-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-masking.clip-path-path-001",
+      "feature": "clip-path-path-nonzero",
+      "fixture": "wpt/css/css-masking/clip-path-path-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-masking.clip-path-path-002",
+      "feature": "clip-path-path-evenodd",
+      "fixture": "wpt/css/css-masking/clip-path-path-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.borders.border-right-003",
+      "feature": "border-right",
+      "fixture": "wpt/css/CSS2/borders/border-right-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css2.borders.border-bottom-003",
+      "feature": "border-bottom",
+      "fixture": "wpt/css/CSS2/borders/border-bottom-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css2.borders.border-left-003",
+      "feature": "border-left",
+      "fixture": "wpt/css/CSS2/borders/border-left-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css2.borders.border-top-style-003",
+      "feature": "border-top-style",
+      "fixture": "wpt/css/CSS2/borders/border-top-style-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.borders.border-top-style-004",
+      "feature": "border-top-style",
+      "fixture": "wpt/css/CSS2/borders/border-top-style-004.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.borders.border-top-style-006",
+      "feature": "border-top-style",
+      "fixture": "wpt/css/CSS2/borders/border-top-style-006.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.borders.border-top-style-007",
+      "feature": "border-top-style",
+      "fixture": "wpt/css/CSS2/borders/border-top-style-007.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
+    },
+    {
+      "id": "wpt.css2.borders.border-top-style-008",
+      "feature": "border-top-style",
+      "fixture": "wpt/css/CSS2/borders/border-top-style-008.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
+    },
+    {
+      "id": "wpt.css2.borders.border-top-style-009",
+      "feature": "border-top-style",
+      "fixture": "wpt/css/CSS2/borders/border-top-style-009.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
+    },
+    {
+      "id": "wpt.css2.borders.border-top-style-010",
+      "feature": "border-top-style",
+      "fixture": "wpt/css/CSS2/borders/border-top-style-010.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
+    },
+    {
+      "id": "core.text-shadow-single",
+      "feature": "text-shadow-single",
+      "fixture": "core/text-shadow-single.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
+      "id": "core.text-decoration-lynx",
+      "feature": "text-decoration-lynx",
+      "fixture": "core/text-decoration-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
+      "id": "core.text-align-lynx",
+      "feature": "text-align-lynx",
+      "fixture": "core/text-align-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
+      "id": "core.text-indent-lynx",
+      "feature": "text-indent-lynx",
+      "fixture": "core/text-indent-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
+      "id": "core.text-wrap-overflow-lynx",
+      "feature": "text-wrap-overflow-lynx",
+      "fixture": "core/text-wrap-overflow-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
+      "id": "core.text-font-features-lynx",
+      "feature": "text-font-features-lynx",
+      "fixture": "core/text-font-features-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
+      "id": "core.text-basic-style-lynx",
+      "feature": "text-basic-style-lynx",
+      "fixture": "core/text-basic-style-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
+      "id": "host.measure.text.basic",
+      "feature": "text-measurement",
+      "fixture": "core/text-measure-basic.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["measurement"]
+    },
+    {
+      "id": "host.measure.text.font-features",
+      "feature": "text-measurement-font-features",
+      "fixture": "core/text-measure-font-features.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["measurement", "semantic-projection"]
+    },
+    {
+      "id": "host.measure.text.flow",
+      "feature": "text-measurement-flow",
+      "fixture": "core/text-measure-flow.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["measurement", "semantic-projection"]
+    },
+    {
+      "id": "host.measure.text.direction",
+      "feature": "text-measurement-direction-alignment-indent",
+      "fixture": "core/text-measure-direction.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["measurement", "semantic-projection"]
+    },
+    {
+      "id": "host.measure.text.min-content",
+      "feature": "text-measurement-min-content",
+      "fixture": "core/text-measure-min-content.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["measurement"]
+    },
+    {
+      "id": "core.pointer-style-lynx",
+      "feature": "cursor-pointer-events",
+      "fixture": "core/pointer-style-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.pointer-cursor-fidelity",
+      "feature": "cursor-keyword-fidelity",
+      "fixture": "core/pointer-cursor-fidelity.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "host.input.pointer.basic",
+      "feature": "pointer-input",
+      "fixture": "core/pointer-input-basic.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["input"]
+    },
+    {
+      "id": "host.input.pointer.kinds",
+      "feature": "pointer-input-kinds",
+      "fixture": "core/pointer-input-kinds.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["input"]
+    }
+  ]
+}

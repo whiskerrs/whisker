@@ -64,8 +64,8 @@ jobs:
         run: |
           fail=0
           if ! grep -q "WHISKER_IOS_SPM_VERSION: &str = \"$VERSION\"" \
-               crates/whisker-build/src/ios.rs; then
-            echo "::error file=crates/whisker-build/src/ios.rs::WHISKER_IOS_SPM_VERSION is not $VERSION"
+               crates/whisker-cng/src/ios_modules.rs; then
+            echo "::error file=crates/whisker-cng/src/ios_modules.rs::WHISKER_IOS_SPM_VERSION is not $VERSION"
             fail=1
           fi
           for manifest in packages/*/Package.swift; do
@@ -77,10 +77,10 @@ jobs:
           done
           exit $fail
 
-      # The runtime is Swift, and a Swift-only break is invisible to
-      # every Rust job in `ci`. This scheme pulls the Lynx binary target
-      # the same way an app does.
-      - name: Build the runtime
+      # The Host runtime and module API are Swift, and a Swift-only break is
+      # invisible to every Rust job in `ci`. WhiskerRuntime depends on
+      # WhiskerModule, so this validates both products before creating the tag.
+      - name: Build the iOS Host SDK
         working-directory: platforms/ios
         run: |
           xcodebuild -scheme WhiskerRuntime \

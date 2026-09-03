@@ -32,6 +32,7 @@ import android.os.Looper
 import androidx.browser.customtabs.CustomTabsIntent
 import rs.whisker.runtime.DeepLinkListener
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerAppContext
 import rs.whisker.runtime.WhiskerValue
@@ -41,6 +42,8 @@ import rs.whisker.runtime.WhiskerValue
  *  comment above for why this exists. */
 private const val CANCEL_CHECK_DELAY_MS = 300L
 
+
+@WhiskerModule
 class WebBrowserModule : Module() {
     private var pendingRedirectPrefix: String? = null
     private var deepLinkListener: DeepLinkListener? = null

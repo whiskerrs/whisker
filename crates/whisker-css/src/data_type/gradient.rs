@@ -18,7 +18,7 @@
 
 use core::fmt;
 
-use crate::to_css::ToCss;
+use crate::{ValueOrVariable, to_css::ToCss};
 
 use super::{Angle, Color, LengthPercentage, Percentage};
 
@@ -42,7 +42,7 @@ pub enum Gradient {
     /// `conic-gradient([from <angle>] [at <position>], <stops>)`.
     Conic {
         /// Starting angle of the sweep, if any.
-        from: Option<Angle>,
+        from: Option<ValueOrVariable<Angle>>,
         /// Center of the sweep as `<length-percentage> <length-percentage>`
         /// (defaults to `50% 50%` when `None`).
         at: Option<(LengthPercentage, LengthPercentage)>,
@@ -72,7 +72,7 @@ impl Gradient {
 }
 
 /// The direction component of a `linear-gradient`.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LinearDirection {
     /// `to top`.
     ToTop,
@@ -92,7 +92,7 @@ pub enum LinearDirection {
     ToBottomLeft,
     /// Explicit angle (`<angle>`). 0deg points up; positive angles
     /// rotate clockwise.
-    Angle(Angle),
+    Angle(ValueOrVariable<Angle>),
 }
 
 impl ToCss for LinearDirection {
@@ -154,24 +154,24 @@ impl ToCss for RadialShape {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ColorStop {
     /// Color of the stop.
-    pub color: Color,
+    pub color: ValueOrVariable<Color>,
     /// Optional position along the gradient axis.
     pub position: Option<StopPosition>,
 }
 
 impl ColorStop {
     /// Color stop without an explicit position.
-    pub fn new(color: Color) -> Self {
+    pub fn new(color: impl Into<ValueOrVariable<Color>>) -> Self {
         Self {
-            color,
+            color: color.into(),
             position: None,
         }
     }
 
     /// Color stop with an explicit position.
-    pub fn at(color: Color, position: impl Into<StopPosition>) -> Self {
+    pub fn at(color: impl Into<ValueOrVariable<Color>>, position: impl Into<StopPosition>) -> Self {
         Self {
-            color,
+            color: color.into(),
             position: Some(position.into()),
         }
     }
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn linear_with_angle_and_positions() {
         let g = Gradient::Linear {
-            direction: LinearDirection::Angle(Angle::Deg(45.0)),
+            direction: LinearDirection::Angle(Angle::Deg(45.0).into()),
             stops: vec![
                 ColorStop::at(red(), Percentage(0.0)),
                 ColorStop::at(blue(), Percentage(100.0)),
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn conic_from_and_at() {
         let g = Gradient::Conic {
-            from: Some(Angle::Deg(90.0)),
+            from: Some(Angle::Deg(90.0).into()),
             at: Some((Percentage(50.0).into(), Percentage(50.0).into())),
             stops: vec![ColorStop::new(red())],
         };
@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn conic_from_only() {
         let g = Gradient::Conic {
-            from: Some(Angle::Turn(0.25)),
+            from: Some(Angle::Turn(0.25).into()),
             at: None,
             stops: vec![ColorStop::new(red())],
         };
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn stop_with_number_position() {
         let stop = ColorStop {
-            color: red(),
+            color: red().into(),
             position: Some(StopPosition::Number(0.5)),
         };
         assert_eq!(stop.to_css_string(), "red 0.5");

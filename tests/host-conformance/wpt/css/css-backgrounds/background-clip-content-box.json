@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-clip.content-box",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-clip/clip-content-box_with_size.html",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "A content-box background clip paints the background image only inside the content box.",
+    "adaptation": "The Host receives a 100 by 100 border box, its resolved content box at 20,20 with size 60 by 60, and a border-origin 100 by 100 green gradient clipped to content-box. Samples isolate clipping from CSS parsing and resource loading."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 100.0],
+            "content_box": [20.0, 20.0, 60.0, 60.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "background_layer": {
+              "size": [
+                { "length": 100.0, "fraction": 0.0 },
+                { "length": 100.0, "fraction": 0.0 }
+              ],
+              "repeat_x": "no_repeat",
+              "repeat_y": "no_repeat",
+              "origin": "border",
+              "clip": "content"
+            },
+            "linear_gradient": {
+              "angle_degrees": 180.0,
+              "stops": [
+                { "color": { "kind": "named", "value": "green" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "green" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.clip-content-box",
+        "samples": [
+          { "point": [20.0, 20.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [79.0, 79.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [19.0, 50.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [80.0, 50.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [50.0, 19.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [50.0, 80.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

@@ -12,26 +12,24 @@
 //
 // ## C ABI bridge
 //
-// The bridge layer (whisker_bridge_ios.mm) hands the Swift dispatch
-// shim raw `WhiskerValueRaw` arrays. `WhiskerValue.decodeArray(_:
+// The FFI Driver hands the Swift dispatch shim raw `WhiskerValueRaw`
+// arrays. `WhiskerValue.decodeArray(_:
 // count:)` walks the C struct array and produces `[WhiskerValue]`.
-// `WhiskerValue.toRaw()` does the reverse, allocating heap-owned
-// strings / bytes / nested arrays / maps via `malloc` (the bridge
-// frees them after the dispatch returns).
+// `WhiskerValue.toRaw()` does the reverse, allocating Swift-owned
+// strings / bytes / nested arrays / maps. The producer releases them
+// with `WhiskerValue.releaseRaw` after the borrowed ABI call returns.
 //
 // ## Discriminant alignment
 //
-// The discriminants below must stay aligned with `WhiskerValueType`
-// in `whisker_bridge.h`. Drift between the two silently corrupts the
-// payload union.
+// The discriminants below are imported from the generated
+// `whisker_mobile.h`, whose source of truth is `whisker-driver-sys`.
 
 import Foundation
 // `@_exported` so module-author Swift files can `import WhiskerRuntime`
 // alone and still see the C ABI types (`WhiskerValueRaw`,
-// `WhiskerStringRef`, `whisker_bridge_register_module_dispatch`, …)
-// that the codegen-emitted `@_cdecl` dispatch shim references.
+// `WhiskerStringRef`, etc.) that the Host dispatch shim references.
 // Without re-exporting, every module .swift file would need its own
-// `import WhiskerDriver`.
+// C module import.
 @_exported import WhiskerCBridge
 
 public enum WhiskerValue: Equatable {
@@ -49,10 +47,20 @@ public enum WhiskerValue: Equatable {
 // MARK: - Convenience accessors
 
 /// Typed reads for module authors destructuring raw `WhiskerValue`
-/// args (`args[0].asDouble()`, `value.asString()`, …). Numeric
+/// args (`args[0].asDouble`, `value.asString`, …). Numeric
 /// reads coerce between `.int` / `.float`; everything else returns
 /// `nil` on a case mismatch.
 public extension WhiskerValue {
+    /// Whether this value is transferable application data rather than a call failure.
+    var isData: Bool {
+        switch self {
+        case .array(let values): return values.allSatisfy(\.isData)
+        case .map(let values): return values.values.allSatisfy(\.isData)
+        case .error: return false
+        default: return true
+        }
+    }
+
     var asString: String? {
         if case .string(let s) = self { return s }
         return nil
@@ -105,23 +113,23 @@ public extension WhiskerValue {
     /// Copy one `WhiskerValueRaw` into a Swift `WhiskerValue`.
     static func from(raw: WhiskerValueRaw) -> WhiskerValue {
         switch Int(raw.type) {
-        case Int(WHISKER_VALUE_NULL.rawValue):
+        case Int(WHISKER_VALUE_NULL):
             return .null
-        case Int(WHISKER_VALUE_BOOL.rawValue):
+        case Int(WHISKER_VALUE_BOOL):
             return .bool(raw.v.b)
-        case Int(WHISKER_VALUE_INT.rawValue):
+        case Int(WHISKER_VALUE_INT):
             return .int(raw.v.i)
-        case Int(WHISKER_VALUE_FLOAT.rawValue):
+        case Int(WHISKER_VALUE_FLOAT):
             return .float(raw.v.f)
-        case Int(WHISKER_VALUE_STRING.rawValue):
+        case Int(WHISKER_VALUE_STRING):
             return .string(decodeString(raw.v.s))
-        case Int(WHISKER_VALUE_BYTES.rawValue):
+        case Int(WHISKER_VALUE_BYTES):
             return .bytes(decodeBytes(raw.v.bytes))
-        case Int(WHISKER_VALUE_ARRAY.rawValue):
+        case Int(WHISKER_VALUE_ARRAY):
             return .array(decodeArray(raw.v.array.items, count: raw.v.array.count))
-        case Int(WHISKER_VALUE_MAP.rawValue):
+        case Int(WHISKER_VALUE_MAP):
             return .map(decodeMap(raw.v.map))
-        case Int(WHISKER_VALUE_ERROR.rawValue):
+        case Int(WHISKER_VALUE_ERROR):
             return .error(decodeString(raw.v.s))
         default:
             return .error("WhiskerValueRaw carries unknown type \(raw.type)")
@@ -129,40 +137,75 @@ public extension WhiskerValue {
     }
 
     /// Allocate a `WhiskerValueRaw` for this value. Heap allocations
-    /// are bridge-owned — caller MUST eventually call
-    /// `whisker_bridge_value_release` on the returned raw to free
-    /// strings / bytes / nested arrays / maps.
+    /// are Swift-owned — caller MUST eventually call
+    /// `WhiskerValue.releaseRaw` on the returned raw.
     func toRaw() -> WhiskerValueRaw {
         var out = WhiskerValueRaw()
         switch self {
         case .null:
-            out.type = UInt8(WHISKER_VALUE_NULL.rawValue)
+            out.type = UInt8(WHISKER_VALUE_NULL)
         case .bool(let b):
-            out.type = UInt8(WHISKER_VALUE_BOOL.rawValue)
+            out.type = UInt8(WHISKER_VALUE_BOOL)
             out.v.b = b
         case .int(let i):
-            out.type = UInt8(WHISKER_VALUE_INT.rawValue)
+            out.type = UInt8(WHISKER_VALUE_INT)
             out.v.i = i
         case .float(let f):
-            out.type = UInt8(WHISKER_VALUE_FLOAT.rawValue)
+            out.type = UInt8(WHISKER_VALUE_FLOAT)
             out.v.f = f
         case .string(let s):
-            out.type = UInt8(WHISKER_VALUE_STRING.rawValue)
+            out.type = UInt8(WHISKER_VALUE_STRING)
             out.v.s = encodeString(s)
         case .bytes(let b):
-            out.type = UInt8(WHISKER_VALUE_BYTES.rawValue)
+            out.type = UInt8(WHISKER_VALUE_BYTES)
             out.v.bytes = encodeBytes(b)
         case .array(let items):
-            out.type = UInt8(WHISKER_VALUE_ARRAY.rawValue)
+            out.type = UInt8(WHISKER_VALUE_ARRAY)
             out.v.array = encodeArray(items)
         case .map(let entries):
-            out.type = UInt8(WHISKER_VALUE_MAP.rawValue)
+            out.type = UInt8(WHISKER_VALUE_MAP)
             out.v.map = encodeMap(entries)
         case .error(let msg):
-            out.type = UInt8(WHISKER_VALUE_ERROR.rawValue)
+            out.type = UInt8(WHISKER_VALUE_ERROR)
             out.v.s = encodeString(msg)
         }
         return out
+    }
+
+    /// Release a raw tree allocated by `toRaw()` using the matching Swift
+    /// allocator. Rust-borrowed raw values must never be passed here.
+    static func releaseRaw(_ raw: inout WhiskerValueRaw) {
+        switch Int(raw.type) {
+        case Int(WHISKER_VALUE_STRING), Int(WHISKER_VALUE_ERROR):
+            if let pointer = raw.v.s.ptr {
+                UnsafeMutablePointer(mutating: pointer).deallocate()
+            }
+        case Int(WHISKER_VALUE_BYTES):
+            if let pointer = raw.v.bytes.ptr {
+                UnsafeMutablePointer(mutating: pointer).deallocate()
+            }
+        case Int(WHISKER_VALUE_ARRAY):
+            if let pointer = raw.v.array.items {
+                for index in 0..<raw.v.array.count {
+                    releaseRaw(&pointer.advanced(by: index).pointee)
+                }
+                pointer.deallocate()
+            }
+        case Int(WHISKER_VALUE_MAP):
+            if let pointer = raw.v.map.entries {
+                for index in 0..<raw.v.map.count {
+                    let entry = pointer.advanced(by: index)
+                    if let key = entry.pointee.key.ptr {
+                        UnsafeMutablePointer(mutating: key).deallocate()
+                    }
+                    releaseRaw(&entry.pointee.value)
+                }
+                pointer.deallocate()
+            }
+        default:
+            break
+        }
+        raw = WhiskerValueRaw()
     }
 }
 
@@ -255,11 +298,10 @@ private func decodeMap(_ map: WhiskerValueMap) -> [String: WhiskerValue] {
 // MARK: - NSDictionary <-> WhiskerValue
 
 public extension WhiskerValue {
-    /// Decode the params `NSDictionary` Lynx's `LynxUIMethodProcessor`
-    /// hands a method dispatcher into the `[WhiskerValue]` shape user
-    /// code expects.
+    /// Decode a Foundation params dictionary into the `[WhiskerValue]`
+    /// shape user code expects.
     ///
-    /// Convention: `whisker_bridge_invoke_element_method` packs the
+    /// Convention: element command dispatch packs the
     /// Rust-side `&[WhiskerValue]` into `{"args": [...]}` — a single
     /// key `args` holding an `NSArray` of positionally-encoded
     /// entries. Each entry decodes via [WhiskerValue.from(nsObject:)]
@@ -273,7 +315,7 @@ public extension WhiskerValue {
     }
 
     /// Recursive `Any` -> `WhiskerValue` conversion for entries
-    /// inside Lynx-supplied NSDictionary / NSArray payloads.
+    /// inside NSDictionary / NSArray payloads.
     /// `NSNumber` -> int / float / bool depending on its objCType;
     /// `NSDictionary` -> `.map`; `NSArray` -> `.array`; everything
     /// else falls through to `.error`.
@@ -305,9 +347,7 @@ public extension WhiskerValue {
     }
 
     /// Encode a `WhiskerValue` into an Obj-C-compatible `Any?`
-    /// suitable for handing to Lynx's `LynxUIMethodCallbackBlock`
-    /// (`callback(code, id _Nullable data)`). The bridge then passes
-    /// the value back through Lynx's standard callback JNI path.
+    /// suitable for handing to a native Host callback.
     ///
     /// `bytes` becomes `Data` (`NSData` on the Obj-C side). `error`
     /// becomes `["error": message]` since the callback already has

@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting a native EditText. Registration is driven by
+// Whisker module element hosting a native EditText. Registration is driven by
 // `InputModule`'s `definition()`, not by annotations on this class.
 //
 // ## Two-way binding + cursor-jump prevention
@@ -11,19 +11,13 @@
 // writes, and `userEdit`, which `WhiskerEditText` sets at the entry
 // points a user's edits actually arrive through.
 //
-// ## CSS text-style interception
-//
-// Whisker-registered custom UIs don't get an APT-generated prop setter
-// for CSS properties, so `color`, `font-size`, `font-weight`, and
-// `text-align` are intercepted in `updatePropertiesInterval` via
-// `StylesDiffMap.mBackingMap` — the same pattern `WhiskerImageView`
-// uses for `border-radius`.
+// Text styling arrives through ModuleDefinition.TextStyle, the same contract
+// used by every Host.
 
 package rs.whisker.elements.input
 
 import android.content.Context
 import android.graphics.Color
-import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.os.Build
 import android.text.Editable
@@ -39,10 +33,11 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
-import com.lynx.tasm.behavior.StylesDiffMap
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerCustomEvent
 import rs.whisker.runtime.WhiskerUI
+import rs.whisker.runtime.WhiskerTextAlignment
+import rs.whisker.runtime.WhiskerTextStyle
 
 open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.EditText>(context) {
 
@@ -109,34 +104,21 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     private var autoCorrectFlag: Int = InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
     private var noSuggestionsFlag: Int = 0
 
-    /// Last-applied CSS `background-color` (ARGB int) and corner radius
-    /// (device px), rendered through a [GradientDrawable] we own rather
-    /// than Lynx's `BackgroundDrawable` — see [applyBackground].
-    private var bgColor: Int = Color.TRANSPARENT
-    private var bgRadiusPx: Float = 0f
-
     // -------------------------------------------------------------------------
     // View creation
     // -------------------------------------------------------------------------
 
     override fun createView(context: Context): android.widget.EditText {
         val et = WhiskerEditText(context)
-        // A GradientDrawable we own, replacing the EditText's default
-        // underline. It must not be nulled: Lynx calls
-        // `view.setBackground(...)` exactly once, in
-        // `LynxUI.didEnsureCreateView()`, and only if its own
-        // `BackgroundDrawable` already exists at that instant — later
-        // background-color / border-radius changes mutate that drawable in
-        // place without re-attaching it, so a custom UI's CSS background
-        // never reaches the wrapped view on its own.
-        et.background = android.graphics.drawable.GradientDrawable()
+        // Common Whisker presentation paints the background, border, radius,
+        // and clipping on the outer module element.
+        et.background = null
+        et.setPadding(0, 0, 0, 0)
         et.isSingleLine = true
         et.inputType = InputType.TYPE_CLASS_TEXT
 
         // `setAutoFocus` may run before the EditText is attached, and a
-        // focus request has no effect then. This class is the LynxUI
-        // wrapper, not the View, so `onAttachedToWindow` isn't overridable
-        // here — listen on the EditText instead.
+        // focus request has no effect then, so listen on the EditText.
         et.addOnAttachStateChangeListener(
             object : android.view.View.OnAttachStateChangeListener {
                 override fun onViewAttachedToWindow(v: android.view.View) {
@@ -216,7 +198,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     /// user's edits arrive through: the IME's `InputConnection`, the
     /// text-selection toolbar (paste / cut, which writes the `Editable`
     /// directly), and the autofill framework. Everything else that mutates
-    /// the editor — Lynx applying props, the system restoring state as the
+    /// the editor — Host props, system state restoration, and application
     /// InputConnection is (re)established — stays untagged and out of the
     /// two-way binding.
     private inner class WhiskerEditText(context: Context) : android.widget.EditText(context) {
@@ -278,7 +260,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     // Props called from InputModule
     // -------------------------------------------------------------------------
 
-    /** External `value` prop (from Lynx attribute pipeline). */
+    /** External `value` module property. */
     fun setValue(incoming: String) {
         applyTextIfChanged(incoming)
     }
@@ -289,24 +271,21 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     }
 
     fun setPlaceholder(text: String) {
-        view?.hint = text
+        view().hint = text
     }
 
     fun setPlaceholderColor(color: String) {
-        val et = view ?: return
+        val et = view()
         val parsed = parseColor(color) ?: return
         et.setHintTextColor(parsed)
     }
 
-    // Named `applyCaretColor`, not `setCaretColor`: the LynxUI base class
-    // already declares `setCaretColor(String?)`, and a same-JVM-signature
-    // Kotlin `setCaretColor(String)` would accidentally override it.
-    // `InputModule`'s `caret-color` Prop calls this instead.
+    // Named `applyCaretColor` to distinguish it from the Android widget API.
     fun applyCaretColor(color: String) {
-        val et = view ?: return
+        val et = view()
         val parsed = parseColor(color) ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            et.textCursorDrawable?.setColorFilter(parsed, PorterDuff.Mode.SRC_IN)
+            et.textCursorDrawable?.setTint(parsed)
         }
         // Pre-API-29 the caret keeps the theme color: there is no typed
         // cursor-tint API, and the `mCursorDrawableRes` reflection hack is
@@ -314,15 +293,14 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     }
 
     fun setSelectionColor(color: String) {
-        val et = view ?: return
+        val et = view()
         val parsed = parseColor(color) ?: return
         et.highlightColor = parsed
     }
 
-    fun setMultiline(flag: String) {
-        val et = view ?: return
-        val multi = flag == "true"
-        if (multi) {
+    fun setMultiline(multiline: Boolean) {
+        val et = view()
+        if (multiline) {
             et.isSingleLine = false
             et.inputType = et.inputType or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             // Top-align, matching iOS.
@@ -336,18 +314,18 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         applyTextFlags()
     }
 
-    fun setLines(countStr: String) {
-        val et = view ?: return
-        val n = countStr.toIntOrNull() ?: 0
+    fun setLines(count: Long) {
+        val et = view()
+        val n = count.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
         if (n > 0) {
             // CSS is the authoritative height; this is best-effort.
             et.setLines(n)
         }
     }
 
-    fun setSecure(flag: String) {
-        val et = view ?: return
-        if (flag == "true") {
+    fun setSecure(secure: Boolean) {
+        val et = view()
+        if (secure) {
             // Preserve the current class (text vs number), replace variation.
             val base = et.inputType and InputType.TYPE_MASK_CLASS
             et.inputType = base or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -359,17 +337,19 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         applyTextFlags()
     }
 
-    fun setEditable(flag: String) {
-        val et = view ?: return
-        val enabled = flag != "false"
-        et.isEnabled = enabled
-        et.isFocusable = enabled
-        et.isFocusableInTouchMode = enabled
+    fun setEditable(editable: Boolean) {
+        val et = view()
+        et.isEnabled = editable
+        et.isFocusable = editable
+        et.isFocusableInTouchMode = editable
     }
 
-    fun setAutoFocus(flag: String) {
-        if (flag != "true") return
-        val et = view ?: return
+    fun setAutoFocus(autoFocus: Boolean) {
+        if (!autoFocus) {
+            pendingAutoFocus = false
+            return
+        }
+        val et = view()
         if (et.isAttachedToWindow) {
             focusField()
         } else {
@@ -377,9 +357,9 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         }
     }
 
-    fun setMaxLength(countStr: String) {
-        val et = view ?: return
-        val n = countStr.toIntOrNull() ?: 0
+    fun setMaxLength(count: Long) {
+        val et = view()
+        val n = count.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
         if (n > 0) {
             et.filters = arrayOf(InputFilter.LengthFilter(n))
         } else {
@@ -388,7 +368,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     }
 
     fun setKeyboardType(type: String) {
-        val et = view ?: return
+        val et = view()
         // Preserve the variation flags (password, etc.), replace the class
         // bits.
         val variation = et.inputType and InputType.TYPE_MASK_VARIATION
@@ -408,7 +388,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     }
 
     fun setReturnKey(type: String) {
-        val et = view ?: return
+        val et = view()
         et.imeOptions = when (type) {
             "done" -> EditorInfo.IME_ACTION_DONE
             "go" -> EditorInfo.IME_ACTION_GO
@@ -429,14 +409,14 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         applyTextFlags()
     }
 
-    fun setAutocorrect(flag: String) {
-        autoCorrectFlag = if (flag == "false") 0 else InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
+    fun setAutocorrect(enabled: Boolean) {
+        autoCorrectFlag = if (enabled) InputType.TYPE_TEXT_FLAG_AUTO_CORRECT else 0
         applyTextFlags()
     }
 
-    fun setSpellCheck(flag: String) {
+    fun setSpellCheck(enabled: Boolean) {
         // `spell_check` is the inverse of the `NO_SUGGESTIONS` flag.
-        noSuggestionsFlag = if (flag == "false") InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS else 0
+        noSuggestionsFlag = if (enabled) 0 else InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         applyTextFlags()
     }
 
@@ -453,7 +433,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
      * harmless.
      */
     private fun applyTextFlags() {
-        val et = view ?: return
+        val et = view()
         val managed = InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
             InputType.TYPE_TEXT_FLAG_CAP_WORDS or
             InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
@@ -468,7 +448,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     // -------------------------------------------------------------------------
 
     fun focusField() {
-        val et = view ?: return
+        val et = view()
         et.requestFocus()
         val imm = et.context.getSystemService(Context.INPUT_METHOD_SERVICE)
             as? InputMethodManager ?: return
@@ -476,7 +456,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     }
 
     fun blurField() {
-        val et = view ?: return
+        val et = view()
         et.clearFocus()
         val imm = et.context.getSystemService(Context.INPUT_METHOD_SERVICE)
             as? InputMethodManager ?: return
@@ -485,7 +465,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
 
     /** Clear the text and emit `input` so the bound signal updates. */
     fun clearField() {
-        val et = view ?: return
+        val et = view()
         // An explicit, app-initiated content change: the `input` event has
         // to fire, but it is not a *user* edit, so it can't reach the
         // watcher's gate. Write under `programmaticWrite` and emit here
@@ -502,164 +482,27 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         emitInput("")
     }
 
-    /** Return the EditText's current text — used by `getValue`. */
-    fun currentText(): String = view?.text?.toString() ?: ""
-
     // -------------------------------------------------------------------------
-    // CSS text-style interception
+    // Resolved text style
     // -------------------------------------------------------------------------
 
-    /// Custom UIs don't receive an APT-generated prop setter for CSS
-    /// properties, but the parsed values do land in
-    /// `StylesDiffMap.mBackingMap` keyed by the CSS property name — so the
-    /// text styles have to be picked out of the backing map here.
-    override fun updatePropertiesInterval(props: StylesDiffMap?) {
-        super.updatePropertiesInterval(props)
-        val map = props?.mBackingMap ?: return
-        val et = view ?: return
-
-        // ARGB int from Lynx's CSS engine.
-        if (map.hasKey("color")) {
-            runCatching {
-                val color = map.getInt("color")
-                et.setTextColor(color)
-            }
+    fun applyTextStyle(style: WhiskerTextStyle) {
+        val et = view()
+        et.setTextColor(style.color)
+        et.setTextSize(TypedValue.COMPLEX_UNIT_PX, style.fontSize)
+        val family = style.fontFamilies.firstOrNull()?.takeUnless { it == "system" }
+        val base = Typeface.create(family, Typeface.NORMAL)
+        et.typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Typeface.create(base, style.fontWeight.coerceIn(1, 1000), false)
+        } else {
+            Typeface.create(base, if (style.fontWeight >= 600) Typeface.BOLD else Typeface.NORMAL)
         }
-
-        // PlatformLength quartet `[px, unit, px, unit]`; index 0 is already
-        // density-multiplied, so it goes out as COMPLEX_UNIT_PX to avoid
-        // double-scaling.
-        if (map.hasKey("font-size")) {
-            runCatching {
-                val arr = map.getArray("font-size")
-                if (arr != null && arr.size() >= 1) {
-                    val px = arr.getDouble(0).toFloat()
-                    et.setTextSize(TypedValue.COMPLEX_UNIT_PX, px)
-                }
-            }
+        val horizontal = when (style.alignment) {
+            WhiskerTextAlignment.CENTER -> Gravity.CENTER_HORIZONTAL
+            WhiskerTextAlignment.END, WhiskerTextAlignment.RIGHT -> Gravity.END
+            WhiskerTextAlignment.START, WhiskerTextAlignment.LEFT -> Gravity.START
         }
-
-        // Arrives as a number (400, 700) or a string ("bold", "normal").
-        if (map.hasKey("font-weight")) {
-            runCatching {
-                val weight = when {
-                    map.getDynamic("font-weight")?.type ==
-                        com.lynx.react.bridge.ReadableType.Number ->
-                        map.getInt("font-weight")
-                    map.getDynamic("font-weight")?.type ==
-                        com.lynx.react.bridge.ReadableType.String ->
-                        when (map.getString("font-weight")) {
-                            "bold" -> 700
-                            "normal" -> 400
-                            else -> map.getString("font-weight")?.toIntOrNull() ?: 400
-                        }
-                    else -> 400
-                }
-                val style = if (weight >= 600) Typeface.BOLD else Typeface.NORMAL
-                et.setTypeface(et.typeface, style)
-            }
-        }
-
-        if (map.hasKey("text-align")) {
-            runCatching {
-                val align = map.getString("text-align")
-                val hGrav = when (align) {
-                    "center" -> Gravity.CENTER_HORIZONTAL
-                    "right" -> Gravity.END
-                    else -> Gravity.START
-                }
-                // Preserve the vertical gravity `setMultiline` chose.
-                val vGrav = et.gravity and Gravity.VERTICAL_GRAVITY_MASK
-                et.gravity = vGrav or hGrav
-            }
-        }
-
-        var bgChanged = false
-
-        // ARGB int, same encoding as `color`.
-        if (map.hasKey("background-color")) {
-            runCatching {
-                val c = map.getInt("background-color")
-                if (c != bgColor) {
-                    bgColor = c
-                    bgChanged = true
-                }
-            }
-        }
-
-        // Lynx splits the shorthand into four per-corner keys, but
-        // GradientDrawable's `cornerRadius` is one uniform float — collapse
-        // to the largest corner.
-        var maxRadius = 0f
-        var sawRadius = false
-        for (k in CORNER_KEYS) {
-            if (!map.hasKey(k)) continue
-            runCatching {
-                val arr = map.getArray(k) ?: return@runCatching
-                if (arr.size() < 1) return@runCatching
-                sawRadius = true
-                val px = arr.getDouble(0).toFloat()
-                if (px > maxRadius) maxRadius = px
-            }
-        }
-        if (sawRadius && maxRadius != bgRadiusPx) {
-            bgRadiusPx = maxRadius
-            bgChanged = true
-        }
-
-        if (bgChanged) applyBackground()
-    }
-
-    /**
-     * Rebuild and apply the EditText's background [GradientDrawable] from
-     * the current [bgColor] + [bgRadiusPx].
-     *
-     * A custom Lynx Android UI does NOT get its CSS `background-color` /
-     * `border-radius` auto-painted onto the wrapped view: `LynxUI` sets the
-     * view background once in `didEnsureCreateView`, and only when its own
-     * `BackgroundDrawable` already exists — later mutations don't
-     * re-attach. iOS paints it via the UITextField's layer, so this is
-     * Android-only work.
-     */
-    private fun applyBackground() {
-        val et = view ?: return
-        val bg = android.graphics.drawable.GradientDrawable().apply {
-            setColor(bgColor)
-            cornerRadius = bgRadiusPx
-        }
-        et.background = bg
-    }
-
-    // -------------------------------------------------------------------------
-    // CSS padding
-    // -------------------------------------------------------------------------
-
-    /// Lynx resolves CSS `padding` (shorthand, units, %) during the layout
-    /// pass, so the values are only final once `onLayoutUpdated` fires;
-    /// reading them in `updatePropertiesInterval` can catch a pre-layout
-    /// zero on first render.
-    override fun onLayoutUpdated() {
-        super.onLayoutUpdated()
-        applyPadding()
-    }
-
-    /**
-     * Mirror the Lynx-computed CSS padding (device px) onto the EditText.
-     * All four sides are set unconditionally so the EditText's built-in
-     * ~4-6dp internal padding never leaks through: with no CSS padding the
-     * computed values are 0 and the field sits flush, matching iOS.
-     */
-    private fun applyPadding() {
-        val et = view ?: return
-        // These resolve to `LynxBaseUI.getPaddingLeft()` etc. — Lynx's
-        // computed padding — not `android.view.View`'s, because `this` is
-        // the LynxUI wrapper rather than the View.
-        et.setPadding(
-            getPaddingLeft(),
-            getPaddingTop(),
-            getPaddingRight(),
-            getPaddingBottom(),
-        )
+        et.gravity = (et.gravity and Gravity.VERTICAL_GRAVITY_MASK) or horizontal
     }
 
     // -------------------------------------------------------------------------
@@ -672,7 +515,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
      * the end on every keystroke of the two-way round-trip.
      */
     private fun applyTextIfChanged(incoming: String) {
-        val et = view ?: return
+        val et = view()
         lastEmitted = incoming
         val current = et.text?.toString() ?: ""
         if (current == incoming) return
@@ -692,16 +535,12 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
      *
      * Dispatch is synchronous, which is safe because `with_renderer` takes
      * a shared borrow and scopes every renderer field borrow so it never
-     * spans a re-entrant FFI call (whisker #3) — a native focus-loss
-     * callback firing `blur` / `change` from inside a Lynx `remove_child`
-     * therefore cannot hit "RefCell already borrowed". All callers already
-     * run on the UI thread.
+     * spans a re-entrant FFI call (whisker #3). All callers run on the UI
+     * thread.
      */
     private fun emitEvent(name: String, text: String) {
-        // Pass the payload directly as the params — do NOT wrap it in a
-        // `detail` key. WhiskerView's LynxEventReporter already places the
-        // dispatched params under `detail` in the event body, so wrapping
-        // here double-nests and `on_input` only ever sees an empty string.
+        // Pass the payload directly; the Host event boundary owns the common
+        // event envelope.
         val params = mapOf("value" to text)
         WhiskerCustomEvent.dispatch(
             ui = this,
@@ -725,17 +564,5 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         } catch (_: Throwable) {
             null
         }
-    }
-
-    private companion object {
-        /// The four per-corner keys Lynx splits `border-radius` into, each
-        /// a `[px, unit, px, unit]` PlatformLength quartet with the
-        /// density-multiplied px at index 0.
-        val CORNER_KEYS = listOf(
-            "border-top-left-radius",
-            "border-top-right-radius",
-            "border-bottom-right-radius",
-            "border-bottom-left-radius",
-        )
     }
 }

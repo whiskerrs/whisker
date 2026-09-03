@@ -39,8 +39,10 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::get;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::Event;
 
@@ -103,7 +105,7 @@ pub mod wire_jump_table {
 /// client.
 #[derive(Clone)]
 pub struct PatchSender {
-    tx: broadcast::Sender<Patch>,
+    tx: broadcast::Sender<ServerUpdate>,
     /// Latest `aslr_reference` reported by a connected client via the
     /// `hello` handshake. Single-slot, last-write-wins: we don't yet
     /// support targeted-per-client patches, so all connected clients
@@ -118,7 +120,13 @@ impl PatchSender {
     /// Returns the number of clients the message was queued for —
     /// `0` is fine (no client connected yet) and not an error.
     pub fn send(&self, patch: Patch) -> usize {
-        self.tx.send(patch).unwrap_or(0)
+        self.tx.send(ServerUpdate::Patch(patch)).unwrap_or(0)
+    }
+
+    /// Ask connected browser clients to load the freshly-built WASM bundle.
+    /// Native clients ignore this text-only control message.
+    pub fn reload_browser(&self) -> usize {
+        self.tx.send(ServerUpdate::Reload).unwrap_or(0)
     }
 
     /// Number of clients currently subscribed.
@@ -139,7 +147,7 @@ impl PatchSender {
 
 #[derive(Clone)]
 struct AppState {
-    tx: broadcast::Sender<Patch>,
+    tx: broadcast::Sender<ServerUpdate>,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     aslr_reference: Arc<Mutex<Option<u64>>>,
     /// Expected shared dev-session token. When `Some`, a client must
@@ -150,6 +158,12 @@ struct AppState {
     /// peer from pushing arbitrary native code. `None` = unauthenticated
     /// (token-less local setup / tests).
     expected_token: Option<Arc<str>>,
+}
+
+#[derive(Debug, Clone)]
+enum ServerUpdate {
+    Patch(Patch),
+    Reload,
 }
 
 /// Bind on `addr`, spawn the axum server on the current tokio
@@ -164,8 +178,9 @@ pub async fn serve(
     addr: SocketAddr,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     expected_token: Option<String>,
+    static_root: Option<PathBuf>,
 ) -> Result<(PatchSender, SocketAddr, tokio::task::JoinHandle<()>)> {
-    let (tx, _rx) = broadcast::channel::<Patch>(16);
+    let (tx, _rx) = broadcast::channel::<ServerUpdate>(16);
     let aslr_reference: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
     let state = AppState {
         tx: tx.clone(),
@@ -174,9 +189,14 @@ pub async fn serve(
         expected_token: expected_token.map(Arc::from),
     };
 
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/whisker-dev", get(ws_handler))
         .with_state(state);
+    if let Some(root) = static_root {
+        app = app.fallback_service(
+            ServeDir::new(root.clone()).fallback(ServeFile::new(root.join("index.html"))),
+        );
+    }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
@@ -221,7 +241,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         tokio::select! {
             // server → client: forward broadcast patches as binary frames.
             recv = bcast_rx.recv() => {
-                let patch = match recv {
+                let update = match recv {
                     Ok(p) => p,
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,
@@ -232,15 +252,24 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 if !authed {
                     continue;
                 }
-                let frame = match encode_patch_frame(&patch) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        whisker_build::ui::warn(format!("encode patch frame: {e}"));
-                        continue;
+                match update {
+                    ServerUpdate::Patch(patch) => {
+                        let frame = match encode_patch_frame(&patch) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                whisker_build::ui::warn(format!("encode patch frame: {e}"));
+                                continue;
+                            }
+                        };
+                        if tx_ws.send(Message::Binary(frame.into())).await.is_err() {
+                            break;
+                        }
                     }
-                };
-                if tx_ws.send(Message::Binary(frame.into())).await.is_err() {
-                    break;
+                    ServerUpdate::Reload => {
+                        if tx_ws.send(Message::Text(r#"{"kind":"reload"}"#.into())).await.is_err() {
+                            break;
+                        }
+                    }
                 }
             }
             // client → server: drain so Pings/Pongs are honoured and
@@ -440,7 +469,7 @@ mod tests {
         on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     ) -> (PatchSender, SocketAddr) {
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (sender, addr, _handle) = serve(any, on_event, None).await.expect("serve");
+        let (sender, addr, _handle) = serve(any, on_event, None, None).await.expect("serve");
         (sender, addr)
     }
 
@@ -503,6 +532,69 @@ mod tests {
         assert_eq!(header["table"]["lib"], "/tmp/dummy.dylib");
         assert_eq!(header["table"]["aslr_reference"], 4294967296_u64);
         assert_eq!(dylib, b"FAKE_DYLIB_BYTES");
+    }
+
+    #[tokio::test]
+    async fn browser_reload_is_sent_as_a_text_control_message() {
+        let (sender, addr) = spawn_test_server(None).await;
+        let mut client = connect(addr).await;
+        for _ in 0..100 {
+            if sender.client_count() > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        assert_eq!(sender.reload_browser(), 1);
+        let message = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+            .await
+            .expect("recv timed out")
+            .expect("stream ended")
+            .expect("ws error");
+        assert_eq!(
+            message,
+            tokio_tungstenite::tungstenite::Message::Text(r#"{"kind":"reload"}"#.into())
+        );
+    }
+
+    #[tokio::test]
+    async fn static_root_serves_index_and_browser_assets() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let root = std::env::temp_dir().join(format!(
+            "whisker-web-static-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("index.html"), b"INDEX").unwrap();
+        std::fs::write(root.join("whisker_app.js"), b"JAVASCRIPT").unwrap();
+        let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let (_sender, addr, _handle) = serve(any, None, None, Some(root.clone()))
+            .await
+            .expect("serve");
+
+        async fn get(addr: SocketAddr, path: &str) -> String {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            stream
+                .write_all(
+                    format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n")
+                        .as_bytes(),
+                )
+                .await
+                .unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).await.unwrap();
+            String::from_utf8(response).unwrap()
+        }
+
+        assert!(get(addr, "/").await.ends_with("INDEX"));
+        assert!(get(addr, "/detail/42").await.ends_with("INDEX"));
+        assert!(get(addr, "/whisker_app.js").await.ends_with("JAVASCRIPT"));
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[tokio::test]
@@ -575,7 +667,7 @@ mod tests {
 
     async fn spawn_test_server_with_token(token: Option<String>) -> (PatchSender, SocketAddr) {
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (sender, addr, _handle) = serve(any, None, token).await.expect("serve");
+        let (sender, addr, _handle) = serve(any, None, token, None).await.expect("serve");
         (sender, addr)
     }
 

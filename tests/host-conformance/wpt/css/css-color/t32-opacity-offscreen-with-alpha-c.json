@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "id": "wpt.css-color.opacity-offscreen-with-alpha",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-color/t32-opacity-offscreen-with-alpha-c.xht",
+    "reference_path": "css/css-color/t32-opacity-offscreen-with-alpha-c-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "Alpha within an offscreen opacity group is composited correctly.",
+    "adaptation": "Three blue boxes over white reach the same effective alpha 0.2 through direct opacity, nested parent/child opacity, and a translucent child inside an opaque group. Equal samples distinguish premultiplied group compositing from repeated straight-alpha blending."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 80.0, "height": 80.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 80.0, 80.0],
+            "background": { "kind": "named", "value": "white" }
+          },
+          {
+            "id": 2,
+            "parent": null,
+            "rect": [10.0, 10.0, 50.0, 14.0],
+            "background": { "kind": "named", "value": "blue" },
+            "opacity": 0.2
+          },
+          {
+            "id": 3,
+            "parent": null,
+            "rect": [10.0, 30.0, 50.0, 14.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "opacity": 0.5
+          },
+          {
+            "id": 4,
+            "parent": 3,
+            "rect": [0.0, 0.0, 50.0, 14.0],
+            "background": { "kind": "named", "value": "blue" },
+            "opacity": 0.4
+          },
+          {
+            "id": 5,
+            "parent": null,
+            "rect": [10.0, 50.0, 50.0, 14.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "opacity": 0.4
+          },
+          {
+            "id": 6,
+            "parent": 5,
+            "rect": [0.0, 0.0, 50.0, 14.0],
+            "background": { "kind": "srgba", "red": 0, "green": 0, "blue": 255, "alpha": 0.5 }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [30.0, 17.0], "color": { "kind": "srgba", "red": 204, "green": 204, "blue": 255, "alpha": 1.0 }, "tolerance": 18 },
+          { "point": [30.0, 37.0], "color": { "kind": "srgba", "red": 204, "green": 204, "blue": 255, "alpha": 1.0 }, "tolerance": 18 },
+          { "point": [30.0, 57.0], "color": { "kind": "srgba", "red": 204, "green": 204, "blue": 255, "alpha": 1.0 }, "tolerance": 18 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

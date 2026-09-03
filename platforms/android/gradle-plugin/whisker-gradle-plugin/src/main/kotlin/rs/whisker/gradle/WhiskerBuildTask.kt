@@ -69,15 +69,16 @@ abstract class WhiskerBuildTask : DefaultTask() {
 
     @TaskAction
     fun run() {
-        // Fail fast with a clear message if `whisker` isn't on
-        // PATH. Without this, Gradle reports the raw POSIX error
-        // (`Cannot run program 'whisker': error=2, No such file
-        // or directory`) which leaves the user guessing what to
-        // install. Mirrors the `command -v` check the iOS Run Script
-        // does up-front for the same reason.
-        if (!isOnPath("whisker")) {
+        val whiskerCli = System.getenv("WHISKER_CLI")
+            ?.takeIf { it.isNotBlank() }
+            ?: "whisker"
+        // Fail fast with a clear message when the selected CLI cannot
+        // execute. `whisker run/build` supplies its own absolute path;
+        // Android Studio builds fall back to resolving `whisker` on PATH.
+        // Without this check Gradle only reports a raw POSIX spawn error.
+        if (!isExecutable(whiskerCli)) {
             error(
-                "rs.whisker.gradle: 'whisker' is not on PATH. " +
+                "rs.whisker.gradle: Whisker CLI '$whiskerCli' is not executable. " +
                     "Install with: cargo install whisker-cli " +
                     "(re-open Android Studio after install so it picks up the new PATH).",
             )
@@ -106,7 +107,7 @@ abstract class WhiskerBuildTask : DefaultTask() {
         execOperations.exec {
             commandLine(
                 listOf(
-                    "whisker",
+                    whiskerCli,
                     "build-android",
                     "--workspace=$ws",
                     "--package=${packageName.get()}",
@@ -128,7 +129,11 @@ abstract class WhiskerBuildTask : DefaultTask() {
         }
     }
 
-    private fun isOnPath(tool: String): Boolean {
+    private fun isExecutable(tool: String): Boolean {
+        val direct = java.io.File(tool)
+        if (direct.isAbsolute || tool.contains(java.io.File.separatorChar)) {
+            return direct.isFile && direct.canExecute()
+        }
         val pathEnv = System.getenv("PATH") ?: return false
         val sep = System.getProperty("path.separator") ?: ":"
         return pathEnv.split(sep).any { dir ->

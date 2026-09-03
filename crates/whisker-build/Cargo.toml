@@ -25,24 +25,15 @@ description = "Whisker build orchestration: cargo cross-compile + gradle / xcode
 
 [dependencies]
 anyhow = { workspace = true }
+whisker-cng = { workspace = true }
 # POSIX `kill(2)` for `child_guard` — SIGTERM in-flight build children
 # (cargo / gradle / xcodebuild) when `whisker run` hard-exits on `q` /
 # Ctrl-C. Every target we spawn builds on is POSIX.
 libc = { workspace = true }
-# SHA-256 hashing for `whisker modules`' `cargo_lock_sha256`
-# field — the Gradle plugin keys its disk cache off that value.
-sha2 = "0.10"
 # Curated terminal output for the dev loop. Used by the `ui` module to
 # replace ad-hoc `eprintln!` calls across whisker-build /
 # whisker-dev-server / whisker-cli with structured step + status
 # events. Stays a single shared crate so the three orchestration
 # layers all hit the same look + feel.
 indicatif = "0.17"
-# Module-system discovery deserializes the `[package.metadata.whisker]`
-# table, which cargo_metadata surfaces as a `serde_json::Value`.
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-# Cargo metadata traversal — used by `whisker-build::modules` to
-# walk the consuming app's dep tree and find each dep that declares
-# a `[package.metadata.whisker]` table.
-cargo_metadata = "0.18"
+wasm-bindgen-cli-support = "=0.2.127"

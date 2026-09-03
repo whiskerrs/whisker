@@ -4,7 +4,7 @@
 //!
 //! - [`keyboard_height`] — a process-global
 //!   `ReadSignal<f64>` carrying the keyboard's current overlap from the
-//!   bottom of the screen (points on iOS, dp on Android), `0.0` when
+//!   bottom of the Screen (points on iOS, dp on Android), `0.0` when
 //!   hidden. Pad or scroll a container by this value so a focused input
 //!   isn't covered. This is Whisker's analogue of Flutter's
 //!   `MediaQuery.viewInsets.bottom` / React Native's
@@ -15,9 +15,14 @@
 //!   (`clearFocus()`) *and* hides the IME. Removing focus — rather than
 //!   only hiding the soft keyboard — is what prevents a **hardware
 //!   keyboard** from continuing to type into an input that has scrolled
-//!   or navigated off screen (on Android, `hideSoftInputFromWindow`
+//!   or navigated off Screen (on Android, `hideSoftInputFromWindow`
 //!   alone leaves the field focused). Mirrors React Native's
 //!   `Keyboard.dismiss()` / Flutter's `FocusManager.primaryFocus.unfocus()`.
+//!
+//! Web dismisses the active DOM element and reports a fixed height of `0.0`;
+//! browser viewport resizing remains the layout engine's responsibility.
+//! Desktop currently provides a successful no-op dismiss and the same fixed
+//! zero height without linking a Host adapter.
 //!
 //! ## Usage
 //!
@@ -32,7 +37,7 @@
 //!     let kb = keyboard_height();
 //!     let pad = move || format!("padding-bottom: {}px;", kb.get());
 //!     render! {
-//!         scroll_view(style: pad()) { /* fields … */ }
+//!         ScrollView(style: pad()) { /* fields … */ }
 //!     }
 //! }
 //! ```
@@ -56,8 +61,11 @@
 
 use std::sync::OnceLock;
 
+#[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32", test))]
+use whisker::WhiskerValue;
+#[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
 use whisker::module;
-use whisker::{ArcRwSignal, ArcWriteSignal, Owner, ReadSignal, WhiskerValue};
+use whisker::{ArcRwSignal, ArcWriteSignal, Owner, ReadSignal};
 
 /// Dismiss the keyboard by releasing focus globally.
 ///
@@ -67,9 +75,10 @@ use whisker::{ArcRwSignal, ArcWriteSignal, Owner, ReadSignal, WhiskerValue};
 /// call from any Whisker event handler; the native side marshals the
 /// UIKit / Android View work to the main thread.
 pub fn dismiss() {
-    // An app without whisker-keyboard's native half surfaces a swallowed
-    // `WhiskerValue::Error`, degrading to a no-op.
-    let _ = module!("Keyboard").invoke("dismiss", vec![]);
+    #[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
+    {
+        let _ = module!("Keyboard").invoke("dismiss", vec![]);
+    }
 }
 
 /// Reactive accessor for the on-screen keyboard's current height —
@@ -121,22 +130,31 @@ fn install() {
 /// event. The subscription is intentionally leaked — the signal lives
 /// for the process lifetime.
 fn subscribe_to_native(writer: MainThreadOnly<ArcWriteSignal<f64>>) {
-    let module = module!("Keyboard");
-    let sub = module.on_event("keyboardChanged", move |payload| {
-        if let Some(height) = decode_payload(payload) {
-            let w = &writer;
-            w.inner.set(height);
-        }
-    });
-    if let Some(err) = sub.error() {
-        eprintln!("[whisker-keyboard] failed to subscribe: {err}");
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+    {
+        let _ = writer;
     }
-    std::mem::forget(sub);
+
+    #[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
+    {
+        let module = module!("Keyboard");
+        let sub = module.on_event("keyboardChanged", move |payload| {
+            if let Some(height) = decode_payload(payload) {
+                let w = &writer;
+                w.inner.set(height);
+            }
+        });
+        if let Some(err) = sub.error() {
+            eprintln!("[whisker-keyboard] failed to subscribe: {err}");
+        }
+        std::mem::forget(sub);
+    }
 }
 
 /// Decode a `{ height }` map payload. A missing / non-numeric `height`
 /// degrades to `0.0` (keyboard treated as hidden) rather than wedging
 /// the subscription.
+#[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32", test))]
 fn decode_payload(value: WhiskerValue) -> Option<f64> {
     let WhiskerValue::Map(fields) = value else {
         return None;
@@ -152,16 +170,25 @@ fn decode_payload(value: WhiskerValue) -> Option<f64> {
 
 static SLOT: OnceLock<Slot> = OnceLock::new();
 
+/// Empty visual schema paired with the service-only Web keyboard Host module.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        std::iter::empty::<whisker::ElementProviderMetadata>(),
+    )
+}
+
 /// Locally-scoped wrapper asserting main-thread-only access to
 /// `inner`. Same pattern (and safety contract) as
 /// `whisker-safe-area`'s `MainThreadOnly`: every access path runs on
-/// the Lynx TASM thread by contract.
+/// the runtime thread by contract.
 #[derive(Copy, Clone)]
 struct MainThreadOnly<T> {
     inner: T,
 }
 // SAFETY: the signal read (`keyboard_height`) and write (the `on_event`
-// callback) both run on the Lynx TASM thread by contract. Misuse would
+// callback) both run on the runtime thread by contract. Misuse would
 // corrupt the reactive arena.
 unsafe impl<T> Send for MainThreadOnly<T> {}
 unsafe impl<T> Sync for MainThreadOnly<T> {}
@@ -199,5 +226,12 @@ mod tests {
     fn decode_non_map_is_none() {
         assert_eq!(decode_payload(WhiskerValue::Null), None);
         assert_eq!(decode_payload(WhiskerValue::Float(1.0)), None);
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+    #[test]
+    fn desktop_fallback_stays_zero() {
+        dismiss();
+        assert_eq!(keyboard_height().get(), 0.0);
     }
 }

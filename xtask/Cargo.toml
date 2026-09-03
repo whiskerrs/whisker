@@ -1,0 +1,16 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+cbindgen = "0.29.4"
+serde_json = { workspace = true }
+whisker-build = { workspace = true }
+whisker-cli = { workspace = true }
+whisker-dev-server = { workspace = true }
+zip = { version = "0.6", default-features = false, features = ["deflate"] }

@@ -394,10 +394,10 @@ impl<A, M, F: HotFunction<A, M>> HotFn<A, M, F> {
         }
 
         let known_fn_ptr = <F as HotFunction<A, M>>::call_it as *const () as usize;
-        if let Some(jump_table) = unsafe { get_jump_table() } {
-            if let Some(ptr) = jump_table.map.get(&(known_fn_ptr as u64)).cloned() {
-                return HotFnPtr(ptr);
-            }
+        if let Some(jump_table) = unsafe { get_jump_table() }
+            && let Some(ptr) = jump_table.map.get(&(known_fn_ptr as u64)).cloned()
+        {
+            return HotFnPtr(ptr);
         }
 
         HotFnPtr(known_fn_ptr as u64)
@@ -504,7 +504,40 @@ impl<A, M, F: HotFunction<A, M>> HotFn<A, M, F> {
 /// `component_owners` map. The Strategy C hot-reload path (Whisker A6+) uses
 /// this list to find live component owners whose body is now stale and re-mount
 /// them.
-pub unsafe fn apply_patch(mut table: JumpTable) -> Result<Vec<*const ()>, PatchError> {
+pub unsafe fn apply_patch(table: JumpTable) -> Result<Vec<*const ()>, PatchError> {
+    #[cfg(target_arch = "wasm32")]
+    return unsafe { apply_patch_impl(table, None) };
+    #[cfg(not(target_arch = "wasm32"))]
+    unsafe {
+        apply_patch_impl(table)
+    }
+}
+
+/// Apply a WebAssembly patch and invoke `completion` after its side module is
+/// instantiated and the jump table has been committed.
+///
+/// WebAssembly compilation is asynchronous in browsers, so framework
+/// integrations must not remount components immediately after [`apply_patch`]
+/// returns. Native platforms keep using the synchronous API above.
+///
+/// # Safety
+///
+/// The supplied jump table must map functions with compatible signatures and
+/// originate from the exact base WebAssembly module currently running. An
+/// invalid mapping can redirect calls to incompatible code.
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn apply_patch_with_callback(
+    table: JumpTable,
+    completion: impl FnOnce(Vec<*const ()>) + 'static,
+) -> Result<(), PatchError> {
+    unsafe { apply_patch_impl(table, Some(Box::new(completion))) }.map(|_| ())
+}
+
+unsafe fn apply_patch_impl(
+    mut table: JumpTable,
+    #[cfg(target_arch = "wasm32")] completion: Option<Box<dyn FnOnce(Vec<*const ()>)>>,
+) -> Result<Vec<*const ()>, PatchError> {
+    #[allow(unused_unsafe)]
     unsafe {
         // On non-wasm platforms we can just use libloading and the known aslr offsets to load the library
         #[cfg(any(unix, windows))]
@@ -598,14 +631,14 @@ pub unsafe fn apply_patch(mut table: JumpTable) -> Result<Vec<*const ()>, PatchE
             let exports: Object = wasm_bindgen::exports().unchecked_into();
 
             let path = table.lib.to_str().unwrap();
-            if !path.ends_with(".wasm") {
-                return;
-            }
+            // Whisker transfers patch bytes in the WebSocket frame and uses a
+            // browser `blob:` URL here. Such URLs intentionally have no file
+            // extension; WebAssembly compilation validates the payload.
 
             // Fetch + decode the patch wasm. Both awaits are pure I/O — they
             // touch no shared state, so the future is safe to drop here.
             let response: web_sys::Response =
-                JsFuture::from(web_sys::window().unwrap_throw().fetch_with_str(&path))
+                JsFuture::from(web_sys::window().unwrap_throw().fetch_with_str(path))
                     .await
                     .unwrap()
                     .unchecked_into();
@@ -720,7 +753,15 @@ pub unsafe fn apply_patch(mut table: JumpTable) -> Result<Vec<*const ()>, PatchE
                 }
             }
 
+            let patched = table
+                .map
+                .keys()
+                .map(|address| *address as usize as *const ())
+                .collect::<Vec<_>>();
             unsafe { commit_patch(table) };
+            if let Some(completion) = completion {
+                completion(patched);
+            }
         });
 
         // wasm path applies the patch asynchronously inside the spawned
@@ -817,8 +858,8 @@ pub fn aslr_reference() -> usize {
 /// - https://developer.android.com/ndk/reference/structandroid/dlextinfo
 #[cfg(target_os = "android")]
 unsafe fn android_memmap_dlopen(file: &std::path::Path) -> Result<libloading::Library, PatchError> {
-    use std::ffi::{CStr, CString, c_void};
-    use std::os::fd::{AsRawFd, BorrowedFd};
+    use std::ffi::c_void;
+    use std::os::fd::AsRawFd;
     use std::ptr;
 
     #[repr(C)]
@@ -840,24 +881,25 @@ unsafe fn android_memmap_dlopen(file: &std::path::Path) -> Result<libloading::Li
         ) -> *const c_void;
     }
 
-    use memmap2::MmapAsRawDesc;
-    use std::os::unix::prelude::{FromRawFd, IntoRawFd};
-
     let contents = std::fs::read(file)
         .map_err(|e| PatchError::AndroidMemfd(format!("Failed to read file: {}", e)))?;
-    let mut mfd = memfd::MemfdOptions::default()
+    let mfd = memfd::MemfdOptions::default()
         .create("subsecond-patch")
         .map_err(|e| PatchError::AndroidMemfd(format!("Failed to create memfd: {}", e)))?;
     mfd.as_file()
         .set_len(contents.len() as u64)
         .map_err(|e| PatchError::AndroidMemfd(format!("Failed to set memfd length: {}", e)))?;
 
-    let raw_fd = mfd.into_raw_fd();
+    let raw_fd = mfd.as_file().as_raw_fd();
 
-    let mut map = memmap2::MmapMut::map_mut(raw_fd)
+    // SAFETY: `mfd` owns `raw_fd` and remains alive through both this mapping and
+    // `android_dlopen_ext` below. The mapping cannot outlive the descriptor here.
+    let mut map = unsafe { memmap2::MmapMut::map_mut(mfd.as_file()) }
         .map_err(|e| PatchError::AndroidMemfd(format!("Failed to map memfd: {}", e)))?;
     map.copy_from_slice(&contents);
-    let map = map
+    // Keep the executable mapping alive until the dynamic linker has consumed
+    // the descriptor. Both it and the owning memfd are released on return.
+    let _executable_map = map
         .make_exec()
         .map_err(|e| PatchError::AndroidMemfd(format!("Failed to make memfd executable: {}", e)))?;
 
@@ -877,7 +919,9 @@ unsafe fn android_memmap_dlopen(file: &std::path::Path) -> Result<libloading::Li
 
     let handle = libloading::os::unix::with_dlerror(
         || {
-            let ptr = android_dlopen_ext(filename.as_ptr() as _, flags, &info);
+            // SAFETY: `filename` is NUL-terminated, `info` points to a valid
+            // `ExtInfo`, and its `library_fd` remains open for this call.
+            let ptr = unsafe { android_dlopen_ext(filename.as_ptr() as _, flags, &info) };
             if ptr.is_null() {
                 return None;
             } else {

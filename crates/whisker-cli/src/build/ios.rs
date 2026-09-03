@@ -46,7 +46,7 @@ pub struct Args {
     manifest_path: Option<PathBuf>,
 }
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(args: Args, no_tui: bool) -> Result<()> {
     let m = manifest::resolve(args.manifest_path.as_deref())?;
     // Same resolution `whisker run ios` uses (run.rs::ios_params_from).
     let bundle_id = m
@@ -84,16 +84,17 @@ pub fn run(args: Args) -> Result<()> {
     let version = m.config.version.clone().unwrap_or_else(|| "0.1.0".into());
     let build_number = m.config.build_number.unwrap_or(1);
     let method: ExportMethod = args.method.into();
+    // Credential pre-step before any compilation (prompt up front,
+    // fail fast on key problems). `_staging` holds the decrypted .p8
+    // until xcodebuild finishes.
+    let (_staging, signing) = credential::require_ios_signing(&m.crate_dir, &bundle_id)?;
+
+    let build_ui = super::BuildUi::start(no_tui, "iOS", &bundle_id);
     ui::section("Build");
     ui::info(format!(
         "building {bundle_id} {version} ({build_number}) — release ipa [{}]",
         method.plist_value(),
     ));
-
-    // Credential pre-step before any compilation (prompt up front,
-    // fail fast on key problems). `_staging` holds the decrypted .p8
-    // until xcodebuild finishes.
-    let (_staging, signing) = credential::require_ios_signing(&m.crate_dir, &bundle_id)?;
 
     // `Target::IosSimulator` here only selects which gen tree to
     // render — gen/ios/ is one project for simulator and device;
@@ -110,9 +111,6 @@ pub fn run(args: Args) -> Result<()> {
     // the dev loop runs (see whisker-dev-server::builder). Writes a
     // no-op package even with zero modules so `import WhiskerModules`
     // always resolves.
-    let modules = whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), &m.package)?;
-    whisker_build::ios::stage_module_swift_sources(&sync.gen_dir, &modules)?;
-
     let ipa = whisker_build::ios::archive_and_export(&IosReleaseInputs {
         gen_dir: &sync.gen_dir,
         scheme: &scheme,
@@ -126,7 +124,7 @@ pub fn run(args: Args) -> Result<()> {
             issuer_id: &signing.issuer_id,
         },
     })?;
-    ui::info(format!("✓ {}", ipa.display()));
+    build_ui.complete(&ipa);
     match method {
         ExportMethod::AppStoreConnect => {
             ui::info("upload via Transporter.app, or keep it for `whisker submit` (planned)");

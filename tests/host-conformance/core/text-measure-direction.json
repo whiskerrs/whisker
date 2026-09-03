@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "id": "host.measure.text.direction",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 320.0, "height": 160.0, "scale": 1.0 },
+      {
+        "type": "measure_text",
+        "key": 20,
+        "text": "مرحبا Whisker",
+        "font_families": ["system"],
+        "font_size": 20.0,
+        "line_height": 28.0,
+        "direction": "right_to_left",
+        "alignment": "end",
+        "indent": { "logical_pixels": 12.0, "percentage": 10.0 },
+        "available_width": 180.0
+      },
+      {
+        "type": "checkpoint_measurement",
+        "key": 20,
+        "min_width": 80.0,
+        "max_width": 180.0,
+        "min_height": 20.0,
+        "max_height": 70.0
+      },
+      {
+        "type": "measure_text",
+        "key": 21,
+        "text": "centered text",
+        "font_families": ["system"],
+        "font_size": 18.0,
+        "line_height": 24.0,
+        "direction": "left_to_right",
+        "alignment": "center",
+        "available_width": 180.0
+      },
+      {
+        "type": "checkpoint_measurement",
+        "key": 21,
+        "min_width": 60.0,
+        "max_width": 180.0,
+        "min_height": 18.0,
+        "max_height": 40.0
+      }
+    ]
+  }
+}

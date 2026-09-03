@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "wpt.css-images.radial-gradient-container-relative-units-001",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-images/radial-gradient-container-relative-units-001.html",
+    "reference_path": "css/css-images/radial-gradient-container-relative-units-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "A container-relative horizontal center resolves to the same radial gradient as the equivalent absolute center.",
+    "adaptation": "Container-unit and CSS position resolution remain Rust responsibilities. The Host receives the WPT reference as an explicit 50 by 50 logical-pixel ellipse centered at 50,50 in a 100 by 100 box; representative sRGB samples verify radial interpolation."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 100.0],
+            "background": { "kind": "srgba", "red": 255, "green": 255, "blue": 255, "alpha": 0.0 },
+            "radial_gradient": {
+              "center": [50.0, 50.0],
+              "radii": [50.0, 50.0],
+              "stops": [
+                { "color": { "kind": "named", "value": "green" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "blue" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.radial-gradient",
+        "samples": [
+          { "point": [50.0, 50.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [25.0, 50.0], "color": { "kind": "srgba", "red": 0, "green": 64, "blue": 128, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [1.0, 50.0], "color": { "kind": "srgba", "red": 0, "green": 3, "blue": 250, "alpha": 1.0 }, "tolerance": 6 }
+        ]
+      }
+    ]
+  }
+}

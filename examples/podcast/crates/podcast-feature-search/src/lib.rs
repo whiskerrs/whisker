@@ -24,7 +24,7 @@
 //!
 //! ```text
 //!   +---------------------------+
-//!   |  <- back    Search        |   top bar (safe-area inset)
+//!   |  <- back    Search        |   top Bar (safe-area inset)
 //!   +---------------------------+
 //!   |  search query...          |   native text input
 //!   +---------------------------+
@@ -90,20 +90,20 @@ pub fn search_screen() -> Element {
     });
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_shrink: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             background_color: theme::BG,
         )) {
-            search_top_bar()
+            SearchTopBar()
             // Search input field -- two-way bound to `query`.
             // Every keystroke fires the bound `text` signal update,
             // which reactively re-triggers the resource above.
-            search_input_bar(query: query)
+            SearchInputBar(query: query)
             // Results area -- branches on the resource's current state.
-            search_results(
+            SearchResults(
                 results: results,
                 query: query,
             )
@@ -135,8 +135,8 @@ fn search_top_bar() -> Element {
     });
 
     render! {
-        view(style: wrapper_style) {
-            view(style: css!(
+        View(style: wrapper_style) {
+            View(style: css!(
                 width: percent(100),
                 min_height: theme::NAV_HEIGHT,
                 flex_shrink: 0.0,
@@ -146,7 +146,7 @@ fn search_top_bar() -> Element {
                 padding_left: theme::GUTTER,
                 padding_right: theme::GUTTER,
             )) {
-                view(
+                View(
                     style: css!(
                         flex_grow: 1.0,
                         flex_shrink: 1.0,
@@ -160,7 +160,7 @@ fn search_top_bar() -> Element {
                 ) {
                     Icon(svg: lucide::ChevronLeft, color: "#a78bfa", size: "26")
                 }
-                view(style: css!(
+                View(style: css!(
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                     flex_basis: percent(0),
@@ -169,7 +169,7 @@ fn search_top_bar() -> Element {
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::Center,
                 )) {
-                    text(
+                    Text(
                         style: css!(
                             font_size: theme::T_NAV_TITLE,
                             color: theme::TEXT_PRIMARY,
@@ -179,7 +179,7 @@ fn search_top_bar() -> Element {
                     )
                 }
                 // Spacer keeps the title genuinely centred.
-                view(style: css!(
+                View(style: css!(
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                     flex_basis: percent(0),
@@ -198,7 +198,7 @@ fn search_top_bar() -> Element {
 #[component]
 fn search_input_bar(query: RwSignal<String>) -> Element {
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
@@ -222,10 +222,13 @@ fn search_input_bar(query: RwSignal<String>) -> Element {
                 text: query,
                 placeholder: "Podcasts, shows, episodes...",
                 return_key: ReturnKey::Search,
-                // Style as a raw string -- matches the whisker-input
-                // example pattern; sidesteps Css->Style->Option coercion.
-                style: "flex-grow: 1; flex-shrink: 1; margin-left: 8px; \
-                        font-size: 15px; color: #ffffff; min-height: 24px;",
+                style: Css::new()
+                    .flex_grow(1.0)
+                    .flex_shrink(1.0)
+                    .margin_left(px(8))
+                    .font_size(px(15))
+                    .color(Color::hex(0xffffff))
+                    .min_height(px(24)),
                 placeholder_color: "#8E8E93",
             )
         }
@@ -245,17 +248,15 @@ fn search_input_bar(query: RwSignal<String>) -> Element {
 #[component]
 fn search_results(results: Resource<Vec<Podcast>>, query: RwSignal<String>) -> Element {
     render! {
-        scroll_view(
+        ScrollView(
             style: css!(
                 flex_grow: 1.0,
                 flex_shrink: 1.0,
                 width: percent(100),
             ),
-            scroll_orientation: ScrollOrientation::Vertical,
-            scroll_bar_enable: false,
-            bounces: true,
+            axis: ScrollAxis::Vertical,
         ) {
-            view(style: css!(
+            View(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 padding_bottom: px(96),
@@ -268,23 +269,23 @@ fn search_results(results: Resource<Vec<Podcast>>, query: RwSignal<String>) -> E
                             && results.error().is_none()
                             && !query.get().trim().is_empty()
                     },
-                    fallback: || render! { fragment() },
+                    fallback: || render! { Fragment() },
                 ) {
-                    status_pane(message: "Searching...".to_string())
+                    StatusPane(message: "Searching...".to_string())
                 }
                 Show(
                     // Empty query: show a gentle prompt.
                     when: move || query.get().trim().is_empty(),
-                    fallback: || render! { fragment() },
+                    fallback: || render! { Fragment() },
                 ) {
-                    status_pane(message: "Type to search podcasts".to_string())
+                    StatusPane(message: "Type to search podcasts".to_string())
                 }
                 Show(
                     // Error state.
                     when: move || results.error().is_some(),
-                    fallback: || render! { fragment() },
+                    fallback: || render! { Fragment() },
                 ) {
-                    status_pane(
+                    StatusPane(
                         message: results.error()
                             .unwrap_or_else(|| "Unknown error".to_string()),
                     )
@@ -295,16 +296,16 @@ fn search_results(results: Resource<Vec<Podcast>>, query: RwSignal<String>) -> E
                         results.get().map(|v| v.is_empty()).unwrap_or(false)
                             && !query.get().trim().is_empty()
                     },
-                    fallback: || render! { fragment() },
+                    fallback: || render! { Fragment() },
                 ) {
-                    status_pane(message: "No results".to_string())
+                    StatusPane(message: "No results".to_string())
                 }
                 Show(
                     // Ready with results.
                     when: move || results.get().map(|v| !v.is_empty()).unwrap_or(false),
-                    fallback: || render! { fragment() },
+                    fallback: || render! { Fragment() },
                 ) {
-                    result_list(podcasts: results.get().unwrap_or_default())
+                    ResultList(podcasts: results.get().unwrap_or_default())
                 }
             }
         }
@@ -318,8 +319,9 @@ fn search_results(results: Resource<Vec<Podcast>>, query: RwSignal<String>) -> E
 /// Vertical list of search-result cards.
 #[component]
 fn result_list(podcasts: Vec<Podcast>) -> Element {
+    let podcasts = StoredValue::new(podcasts.clone());
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             padding_left: theme::GUTTER,
@@ -327,11 +329,11 @@ fn result_list(podcasts: Vec<Podcast>) -> Element {
         )) {
             ForEach(
                 each: {
-                    let items = podcasts.clone();
+                    let items = podcasts.get();
                     move || items.clone()
                 },
                 key: |p: &Podcast| p.id,
-                children: |p: Podcast| render! { result_row(podcast: p) },
+                children: |p: Podcast| render! { ResultRow(podcast: p) },
             )
         }
     }
@@ -351,7 +353,7 @@ fn result_row(podcast: Podcast) -> Element {
         .unwrap_or_else(|| std::rc::Rc::new(|_| {}));
 
     render! {
-        view(
+        View(
             style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Row,
@@ -372,29 +374,29 @@ fn result_row(podcast: Podcast) -> Element {
                 src: artwork_src,
                 mode: ImageMode::AspectFill,
             )
-            view(style: css!(
+            View(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 flex_grow: 1.0,
                 flex_shrink: 1.0,
                 margin_left: px(12),
             )) {
-                text(
+                Text(
                     style: css!(
                         font_size: px(15),
                         color: theme::TEXT_PRIMARY,
                         font_weight: FontWeight::Numeric(600),
                         text_overflow: TextOverflow::Ellipsis,
-                    ).raw("text-maxline", "1"),
+                    ),
                     value: title,
                 )
-                text(
+                Text(
                     style: css!(
                         font_size: px(13),
                         color: theme::TEXT_SECONDARY,
                         margin_top: px(2),
                         text_overflow: TextOverflow::Ellipsis,
-                    ).raw("text-maxline", "1"),
+                    ),
                     value: artist,
                 )
             }
@@ -411,8 +413,9 @@ fn result_row(podcast: Podcast) -> Element {
 /// this layout; only the message string varies.
 #[component]
 fn status_pane(message: String) -> Element {
+    let body_message = message.clone();
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
@@ -420,12 +423,12 @@ fn status_pane(message: String) -> Element {
             padding_top: px(60),
             padding_bottom: px(60),
         )) {
-            text(
+            Text(
                 style: css!(
                     font_size: px(14),
                     color: theme::TEXT_SECONDARY,
                 ),
-                value: message.clone(),
+                value: body_message.clone(),
             )
         }
     }

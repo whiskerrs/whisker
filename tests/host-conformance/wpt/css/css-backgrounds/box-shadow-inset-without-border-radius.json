@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.box-shadow-inset-without-border-radius",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/box-shadow-inset-without-border-radius.html",
+    "reference_path": "css/css-backgrounds/reference/box-shadow-inset-without-border-radius-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "An inset shadow is clipped to the padding box and a positive offset exposes the shadow along its top and left edges.",
+    "adaptation": "The upstream first subtest is isolated as an 80px border box with an 8px transparent border and a 10px/10px hard inset shadow. Direct samples replace its HTML reference rendering."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 120.0, "height": 120.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [20.0, 20.0, 80.0, 80.0],
+            "content_box": [24.0, 24.0, 32.0, 32.0],
+            "background": { "kind": "named", "value": "white" },
+            "border": {
+              "widths": [8.0, 8.0, 8.0, 8.0],
+              "colors": [
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" }
+              ],
+              "styles": ["solid", "solid", "solid", "solid"],
+              "radii": [0.0, 0.0, 0.0, 0.0]
+            },
+            "box_shadows": [
+              {
+                "offset": [10.0, 10.0],
+                "blur_radius": 0.0,
+                "spread_radius": 0.0,
+                "color": { "kind": "named", "value": "black" },
+                "inset": true
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.visual-effects.box-shadow-inset",
+        "samples": [
+          { "point": [32.0, 50.0], "color": { "kind": "named", "value": "black" }, "tolerance": 5 },
+          { "point": [50.0, 32.0], "color": { "kind": "named", "value": "black" }, "tolerance": 5 },
+          { "point": [50.0, 50.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 },
+          { "point": [24.0, 50.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 },
+          { "point": [88.0, 50.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

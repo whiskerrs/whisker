@@ -24,8 +24,8 @@
 //!
 //! `whisker-config` is intentionally a small, dependency-light
 //! crate so the probe build is cheap. Pulling in `whisker`
-//! (umbrella) would also pull `whisker-runtime`, `whisker-driver`,
-//! Lynx headers, etc. — turning the probe into a multi-minute build.
+//! (umbrella) would also pull `whisker-runtime`, `whisker-driver`, and
+//! the Host protocol stack — turning the probe into a much larger build.
 //! The user crate's `whisker.rs` therefore writes
 //! `use whisker_config::Config` directly, not `use
 //! whisker::Config`.
@@ -33,7 +33,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use whisker_cng::{DiscoveredPlugin, discover_plugins};
+use whisker_cng::{DiscoveredPlugin, ProjectDependencyGraph};
 use whisker_config::Config;
 
 /// Run the probe and return the parsed config. Caches via mtime so
@@ -55,8 +55,9 @@ pub fn run(whisker_rs: &Path, crate_dir: &Path, crate_name: &str) -> Result<Conf
     // The probe needs every plugin crate as a dependency to name its
     // `Plugin` impl; see `render_plugin_dep_lines` for how they're
     // spelled.
-    let plugins = discover_plugins(&user_manifest, crate_name)
-        .with_context(|| format!("discover Whisker CNG plugins for `{crate_name}`"))?;
+    let plugins = ProjectDependencyGraph::resolve(&user_manifest, crate_name)
+        .with_context(|| format!("resolve Whisker dependencies for `{crate_name}`"))?
+        .cng_plugins;
 
     // Carry over the user crate's own `[patch.crates-io]` table, if
     // any — see `read_patch_crates_io_table`'s doc comment for why.

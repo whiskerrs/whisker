@@ -16,19 +16,13 @@ let package = Package(
         .library(name: "WhiskerKeyboard", targets: ["WhiskerKeyboard"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.10"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.12"),
     ],
     targets: [
         .target(
             name: "WhiskerKeyboard",
             dependencies: [
-                // WhiskerModule provides the Module base + DSL;
-                // WhiskerRuntime is pulled for parity with the other
-                // module packages (and to keep the codegen plugin's
-                // generated registration compiling against the same
-                // runtime symbols).
                 .product(name: "WhiskerModule", package: "whisker"),
-                .product(name: "WhiskerRuntime", package: "whisker"),
             ],
             path: "ios/Sources/WhiskerKeyboard",
             plugins: [

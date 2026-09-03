@@ -1,10 +1,10 @@
 // `whisker-webview` ModuleDefinition (Android).
 //
-// KSP scans this module's sources for any concrete `Module` subclass
+// KSP scans this module's sources for `@WhiskerModule`
 // and emits the registration block into
 // `WhiskerWebViewBehaviors.registerAll()`.
 //
-// The `WhiskerWebView` Lynx UI subclass this references lives in
+// The `WhiskerWebView` Whisker module view this references lives in
 // `WhiskerWebView.kt`. Matching iOS files live under
 // `packages/whisker-webview/ios/Sources/WhiskerWebView/`.
 //
@@ -14,50 +14,59 @@
 package rs.whisker.elements.webview
 
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 class WebViewModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("WebView")
-        View(WhiskerWebView::class.java) {
+        View("whisker-webview:WebView", WhiskerWebView::class.java) {
 
             // ---- content props -------------------------------------------
 
-            Prop("url") { view: WhiskerWebView, value ->
-                view.setUrl(value.asString() ?: "")
+            Prop("url", clear = { view: WhiskerWebView -> view.setUrl("") }) {
+                    view: WhiskerWebView, value -> view.setUrl(value.asString() ?: "")
             }
 
             // Inline HTML, used only when `url` is empty.
-            Prop("html") { view: WhiskerWebView, value ->
-                view.setHtml(value.asString() ?: "")
+            Prop("html", clear = { view: WhiskerWebView -> view.setHtml("") }) {
+                    view: WhiskerWebView, value -> view.setHtml(value.asString() ?: "")
             }
 
             // ---- behaviour props -----------------------------------------
 
             // Must be set before any load to take effect.
-            Prop("user-agent") { view: WhiskerWebView, value ->
-                view.setUserAgent(value.asString() ?: "")
+            Prop("user-agent", clear = { view: WhiskerWebView -> view.setUserAgent("") }) {
+                    view: WhiskerWebView, value -> view.setUserAgent(value.asString() ?: "")
             }
 
-            // Defaults to false on Android, unlike iOS.
-            Prop("javascript-enabled") { view: WhiskerWebView, value ->
-                view.setJavascriptEnabled(value.asString() ?: "false")
+            Prop(
+                "javascript-enabled",
+                clear = { view: WhiskerWebView -> view.setJavascriptEnabled(true) },
+            ) { view: WhiskerWebView, value ->
+                view.setJavascriptEnabled(value.asBool() ?: true)
             }
 
-            Prop("scroll-enabled") { view: WhiskerWebView, value ->
-                view.setScrollEnabled(value.asString() ?: "true")
+            Prop(
+                "scroll-enabled",
+                clear = { view: WhiskerWebView -> view.setScrollEnabled(true) },
+            ) { view: WhiskerWebView, value ->
+                view.setScrollEnabled(value.asBool() ?: true)
             }
 
             // JSON array string, e.g. `["https://*"]`.
-            Prop("origin-whitelist") { view: WhiskerWebView, value ->
-                view.setOriginWhitelist(value.asString() ?: "")
-            }
+            Prop(
+                "origin-whitelist",
+                clear = { view: WhiskerWebView -> view.setOriginWhitelist("") },
+            ) { view: WhiskerWebView, value -> view.setOriginWhitelist(value.asString() ?: "") }
 
             // `style` is handled by the WhiskerUI base.
 
             // Declaration-only, but the KSP-generated registrar needs it to
-            // register these names with Lynx's event system; dispatch
+            // register these names with the Host event registry; dispatch
             // itself happens inside WhiskerWebView.
             Events(
                 "message",
@@ -68,58 +77,32 @@ class WebViewModule : Module() {
                 "progress",
             )
 
-            // ---- callable UI methods -------------------------------------
+            // ---- one-way View commands ----------------------------------
 
-            Function("reload") { view: WhiskerWebView, _ ->
+            Command("reload") { view: WhiskerWebView, _ ->
                 view.reload()
-                WhiskerValue.Null
             }
 
-            Function("goBack") { view: WhiskerWebView, _ ->
+            Command("goBack") { view: WhiskerWebView, _ ->
                 view.goBack()
-                WhiskerValue.Null
             }
 
-            Function("goForward") { view: WhiskerWebView, _ ->
+            Command("goForward") { view: WhiskerWebView, _ ->
                 view.goForward()
-                WhiskerValue.Null
             }
 
-            Function("stopLoading") { view: WhiskerWebView, _ ->
+            Command("stopLoading") { view: WhiskerWebView, _ ->
                 view.stopLoading()
-                WhiskerValue.Null
             }
 
-            Function("postMessage") { view: WhiskerWebView, args ->
-                val data = args.getOrNull(0)?.asString() ?: ""
+            Command("postMessage") { view: WhiskerWebView, parameters ->
+                val data = parameters.asString() ?: ""
                 view.postMessageToPage(data)
-                WhiskerValue.Null
             }
 
-            // Fire-and-forget; the result-returning form is the
-            // AsyncFunction below.
-            Function("evaluateJavaScript") { view: WhiskerWebView, args ->
-                val script = args.getOrNull(0)?.asString() ?: ""
+            Command("evaluateJavaScript") { view: WhiskerWebView, parameters ->
+                val script = parameters.asString() ?: ""
                 view.evaluateJs(script)
-            }
-
-            // Async so the WebView's ValueCallback can carry the JS
-            // result back through the promise.
-            AsyncFunction("evaluateJavaScriptWithResult") { view: WhiskerWebView, args, promise ->
-                val script = args.getOrNull(0)?.asString()
-                if (script == null) {
-                    promise.reject("evaluateJavaScriptWithResult: missing script argument")
-                } else {
-                    view.evaluateJsWithResult(script, promise)
-                }
-            }
-
-            Function("canGoBack") { view: WhiskerWebView, _ ->
-                view.queryCanGoBack()
-            }
-
-            Function("canGoForward") { view: WhiskerWebView, _ ->
-                view.queryCanGoForward()
             }
         }
     }

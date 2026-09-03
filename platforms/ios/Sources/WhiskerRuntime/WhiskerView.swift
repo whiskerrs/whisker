@@ -1,168 +1,419 @@
 import UIKit
-import Lynx
-// WhiskerCBridge re-exports the C ABI of `whisker_bridge.h` (see its
-// module.modulemap), so `whisker_bridge_engine_attach` etc. are visible
-// from this single import.
-import WhiskerCBridge
+import WhiskerModule
 
-/// Hosts the Whisker runtime on iOS.
-///
-/// Swift only attaches the engine and hands it to the Rust runtime via
-/// `whisker_app_main`. The element tree, the diff engine, and reactive
-/// state all live in Rust.
-///
-/// Render loop:
-///   - A `CADisplayLink` is the heartbeat. It starts paused.
-///   - Rust calls back into `requestFrameTrampoline` whenever a signal
-///     update marks the tree dirty, which unpauses the link.
-///   - On each vsync tick we call `whisker_tick`. The Rust runtime returns
-///     `true` once it has nothing further to render; we pause the link
-///     until the next signal update.
-///
-/// So idle apps consume zero per-frame wakeups while interactive updates
-/// land on the next display refresh with no `Timer` jitter.
-public final class WhiskerView: LynxView {
-
-    private var engine: OpaquePointer?
+/** The single iOS View that owns a Whisker runtime and its native scene. */
+public final class WhiskerView: UIView {
     private var displayLink: CADisplayLink?
-    private var displayLinkProxy: DisplayLinkProxy?
+    private var hostToken: UnsafeMutableRawPointer?
+    private var runtimeHandle: UnsafeMutableRawPointer?
+    private var runtimePaused = false
+    private var isApplicationActive = true
+    private var moduleEventSinkEpoch: UInt64 = 0
+    private let pendingModuleEvents = PendingModuleEvents()
+    private lazy var pointerInputRecognizer: WhiskerTouchObserverGestureRecognizer = {
+        let recognizer = WhiskerTouchObserverGestureRecognizer(target: nil, action: nil)
+        recognizer.touchHandler = { [weak self] touches, event in
+            self?.dispatchTouches(touches, event: event)
+        }
+        return recognizer
+    }()
+    private var touchIdentities = HostTouchIdentityMap()
+    private var dirtyScrollOffsets: [UInt64: CGPoint] = [:]
+    private let modules = HostModuleDispatcher()
+    private let resources = HostResourceStore()
+    private lazy var resourceService = HostResourceService(store: resources)
+    private var rasterResourceObserver: ((WhiskerRasterResourceEvent) -> Void)?
+    private lazy var scene = HostScene(
+        root: self,
+        resources: resources,
+        logicalBounds: { [unowned self] in self.logicalBounds },
+        emitElementEvent: { [weak self] node, name, detail in
+            self?.dispatchElementEvent(node: node, name: name, detail: detail)
+        },
+        updateScrollOffset: { [weak self] node, offset in
+            self?.dirtyScrollOffsets[node] = offset
+        },
+        removeScrollOffset: { [weak self] node in
+            self?.dirtyScrollOffsets.removeValue(forKey: node)
+        }
+    )
+
+    private var logicalBounds: CGRect {
+        edgeToEdgeViewportBounds(bounds, safeAreaInsets: safeAreaInsets)
+    }
 
     public override init(frame: CGRect) {
-        super.init(builderBlock: { builder in
-            builder.frame = frame
-        })
-
-        let viewPtr = Unmanaged.passUnretained(self).toOpaque()
-        guard let engine = whisker_bridge_engine_attach(viewPtr) else {
-            NSLog("[WhiskerView] whisker_bridge_engine_attach returned NULL")
-            return
+        super.init(frame: frame)
+        backgroundColor = .clear
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        isMultipleTouchEnabled = true
+        addGestureRecognizer(pointerInputRecognizer)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        resourceService.eventHandler = { [weak self] event in
+            DispatchQueue.main.async { self?.dispatchRasterResourceEvent(event) }
         }
-        self.engine = engine
-
-        // Create the CADisplayLink BEFORE calling `whisker_app_main`.
-        // The Rust bootstrap registers `requestFrameTrampoline` as the
-        // host-wake callback and then synchronously runs the user's
-        // `app()`, which can wake the runtime immediately. With
-        // `displayLink` still nil, the trampoline's
-        // `view.displayLink?.isPaused` optional-chaining no-ops and
-        // that first wake is silently dropped — no display link means
-        // no `whisker_tick`, so any pending future never gets polled.
-        //
-        // Route through a weak proxy rather than `target: self`. A
-        // CADisplayLink added to a run loop is retained by that run
-        // loop, and the link strongly retains its `target`; `target:
-        // self` therefore forms a retain cycle (run loop → link → view)
-        // that keeps the WhiskerView — and the Rust engine it owns —
-        // alive forever, so `deinit` never runs and
-        // `whisker_bridge_engine_release` never fires.
-        let proxy = DisplayLinkProxy(target: self)
-        self.displayLinkProxy = proxy
-        let link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick(_:)))
-        link.isPaused = true
-        link.add(to: .main, forMode: .common)
-        self.displayLink = link
-
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-        whisker_app_main(
-            UnsafeMutableRawPointer(engine),
-            WhiskerView.requestFrameTrampoline,
-            selfPtr
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
         )
     }
 
-    public required init?(coder: NSCoder) {
-        fatalError("init(coder:) is not supported")
+    public required init?(coder: NSCoder) { nil }
+
+    /// Registers an already-decoded raster for use by resource-backed paint images.
+    @discardableResult
+    public func registerRasterResource(id: UInt64, image: CGImage) -> Bool {
+        resources.registerRasterImage(image, id: id)
+    }
+
+    /// Starts native acquisition and decode for one monotonically newer generation.
+    @discardableResult
+    public func loadRasterResource(
+        id: UInt64,
+        generation: UInt64,
+        source: WhiskerRasterResourceSource
+    ) -> Bool {
+        resourceService.load(id: id, generation: generation, source: source)
+    }
+
+    /// Releases exactly one generation without evicting a newer replacement.
+    @discardableResult
+    public func releaseRasterResource(id: UInt64, generation: UInt64) -> Bool {
+        resourceService.release(id: id, generation: generation)
+    }
+
+    /// Returns the retained lifecycle state for one exact generation.
+    public func rasterResourceState(
+        id: UInt64,
+        generation: UInt64
+    ) -> WhiskerRasterResourceState? {
+        resourceService.state(id: id, generation: generation)
+    }
+
+    /// Installs the Host-to-runtime notification boundary for lifecycle events.
+    public func observeRasterResourceEvents(
+        _ handler: ((WhiskerRasterResourceEvent) -> Void)?
+    ) {
+        rasterResourceObserver = handler
     }
 
     deinit {
-        displayLink?.invalidate()
-        if let engine = engine {
-            whisker_bridge_engine_release(engine)
-        }
+        unmount()
+        NotificationCenter.default.removeObserver(self)
     }
 
-    fileprivate func handleDisplayLink(_ link: CADisplayLink) {
-        guard let engine = engine else { return }
-        let idle = whisker_tick(UnsafeMutableRawPointer(engine))
-        if idle {
-            link.isPaused = true
-        }
-    }
-
-    /// C-ABI entry point Rust calls into when a signal marks the tree
-    /// dirty. `userData` is the WhiskerView pointer set up in `init`.
-    private static let requestFrameTrampoline:
-        @convention(c) (UnsafeMutableRawPointer?) -> Void = { userData in
-        guard let userData = userData else { return }
-        let view = Unmanaged<WhiskerView>.fromOpaque(userData).takeUnretainedValue()
-        // The display link must be touched from the main run loop. In our
-        // current iOS setup the runtime/Lynx-TASM thread already *is* the
-        // main thread, so this is the synchronous fast path; the
-        // `DispatchQueue.main.async` branch is a safety net for future
-        // multi-threaded TASM setups.
-        if Thread.isMainThread {
-            view.displayLink?.isPaused = false
+    public override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            WhiskerInsetsDispatcher.attach(self)
+            mountWhenSized()
+            resumeRuntime()
+            flushModuleEventsOnMain()
         } else {
-            DispatchQueue.main.async {
-                view.displayLink?.isPaused = false
+            pauseRuntime()
+            WhiskerInsetsDispatcher.detach(self)
+        }
+    }
+
+    public override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        WhiskerInsetsDispatcher.update(self)
+        if runtimeHandle != nil { requestFrame() }
+    }
+
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        mountWhenSized()
+        if runtimeHandle != nil { requestFrame() }
+    }
+
+    private func mountWhenSized() {
+        let viewport = logicalBounds
+        guard runtimeHandle == nil, window != nil, viewport.width > 0, viewport.height > 0 else { return }
+        let token = Unmanaged.passRetained(self).toOpaque()
+        hostToken = token
+        moduleEventSinkEpoch &+= 1
+        let sinkEpoch = moduleEventSinkEpoch
+        WhiskerModuleEventCenter.installEventSink(owner: self) { [weak self] module, event, payload in
+            guard let self else { return }
+            let shouldSchedule = self.pendingModuleEvents.offer(PendingModuleEvent(
+                epoch: sinkEpoch,
+                module: module,
+                event: event,
+                payload: payload
+            ))
+            if shouldSchedule {
+                DispatchQueue.main.async { [weak self] in self?.flushModuleEventsOnMain() }
+            }
+        }
+        runtimeHandle = whiskerViewCreate(
+            Float(viewport.width), Float(viewport.height), Float(window?.screen.scale ?? 1),
+            IOSHostCapabilities.current.rawValue,
+            whiskerIOSRequestFrame, token,
+            whiskerIOSBootstrap, token,
+            whiskerIOSMeasure, token,
+            whiskerIOSPresentFrame, token,
+            whiskerIOSResourceCommand, token,
+            whiskerIOSInvokeModule, whiskerIOSObserveModule, token
+        )
+        if runtimeHandle != nil {
+            runtimePaused = false
+            driveRuntimeFrame(timestampMs: ProcessInfo.processInfo.systemUptime * 1_000)
+            requestFrame()
+        } else {
+            moduleEventSinkEpoch &+= 1
+            WhiskerModuleEventCenter.installEventSink(owner: self, nil)
+            Unmanaged<WhiskerView>.fromOpaque(token).release()
+            hostToken = nil
+        }
+    }
+
+    func applyResourceCommand(_ command: HostResourceCommand) -> Bool {
+        switch command {
+        case let .load(id, generation, kind, source):
+            guard kind == .rasterImage else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.dispatchRasterResourceEvent(WhiskerRasterResourceEvent(
+                        id: id,
+                        generation: generation,
+                        state: .failed,
+                        failureCode: .unsupported,
+                        diagnostic: "resource kind is unsupported by the iOS Host"
+                    ))
+                }
+                return true
+            }
+            return resourceService.load(id: id, generation: generation, source: source)
+        case let .release(id, generation):
+            _ = resourceService.release(id: id, generation: generation)
+            return true
+        }
+    }
+
+    private func dispatchRasterResourceEvent(_ event: WhiskerRasterResourceEvent) {
+        rasterResourceObserver?(event)
+        guard let handle = runtimeHandle else { return }
+        _ = withMobileResourceEvent(event) { raw in
+            whiskerViewDispatchResourceEvent(handle, &raw)
+        }
+    }
+
+    private func dispatchTouches(_ touches: Set<UITouch>, event: HostPointerEvent) {
+        for touch in touches {
+            let key = ObjectIdentifier(touch)
+            let pointerID: UInt64
+            if event == .down {
+                pointerID = touchIdentities.begin(key)
+            } else if let existing = touchIdentities.existing(key) {
+                pointerID = existing
+            } else { continue }
+            let location = touch.location(in: self)
+            let viewport = logicalBounds
+            let logicalPosition = logicalPointerPosition(location, viewport: viewport)
+            dispatchTouchSample(
+                timestampMs: touch.timestamp * 1_000,
+                event: event,
+                pointerID: pointerID,
+                pointerKind: hostPointerKind(for: touch.type),
+                x: Float(logicalPosition.x),
+                y: Float(logicalPosition.y)
+            )
+            if event == .up || event == .cancel { touchIdentities.end(key) }
+        }
+    }
+
+    private func dispatchTouchSample(
+        timestampMs: Double,
+        event: HostPointerEvent,
+        pointerID: UInt64,
+        pointerKind: HostPointerKind,
+        x: Float,
+        y: Float
+    ) {
+        guard let handle = runtimeHandle,
+              let input = makeWhiskerPointerDispatch(
+                  timestampMs: timestampMs,
+                  event: event,
+                  pointerID: pointerID,
+                  pointerKind: pointerKind,
+                  x: x,
+                  y: y
+              ) else { return }
+        _ = dispatchWhiskerPointer(
+            handle: handle,
+            input: input,
+            scrollOffsets: takeScrollOffsets()
+        )
+    }
+
+    private func takeScrollOffsets() -> [UInt64: CGPoint] {
+        let result = dirtyScrollOffsets
+        dirtyScrollOffsets.removeAll(keepingCapacity: true)
+        return result
+    }
+
+    private func unmount() {
+        moduleEventSinkEpoch &+= 1
+        WhiskerModuleEventCenter.installEventSink(owner: self, nil)
+        let handle = runtimeHandle
+        let ownedRuntime = handle != nil || hostToken != nil
+        runtimeHandle = nil
+        runtimePaused = false
+        displayLink?.invalidate()
+        displayLink = nil
+        if let handle { whiskerViewDestroy(handle) }
+        // Avoid initializing the lazy scene from `deinit` for a View that was
+        // never mounted. Its initializer captures `weak self`, which UIKit
+        // correctly rejects once object deallocation has begun.
+        if ownedRuntime { scene.clear() }
+        pendingModuleEvents.clear()
+        touchIdentities.clear()
+        dirtyScrollOffsets.removeAll(keepingCapacity: false)
+        if let token = hostToken {
+            Unmanaged<WhiskerView>.fromOpaque(token).release()
+            hostToken = nil
+        }
+    }
+
+    func requestFrame() {
+        guard runtimeHandle != nil, !runtimePaused, isApplicationActive, window != nil else { return }
+        if displayLink == nil {
+            displayLink = CADisplayLink(target: self, selector: #selector(driveFrame(_:)))
+            displayLink?.add(to: .main, forMode: .common)
+        }
+        displayLink?.isPaused = false
+    }
+
+    @objc private func driveFrame(_ link: CADisplayLink) {
+        guard runtimeHandle != nil, !runtimePaused, isApplicationActive else {
+            link.isPaused = true
+            return
+        }
+        let idle = driveRuntimeFrame(timestampMs: link.timestamp * 1_000)
+        link.isPaused = idle
+    }
+
+    @discardableResult
+    private func driveRuntimeFrame(timestampMs: Double) -> Bool {
+        guard let handle = runtimeHandle else { return true }
+        return whiskerViewTick(
+            handle,
+            timestampMs,
+            Float(logicalBounds.width), Float(logicalBounds.height), Float(window?.screen.scale ?? 1)
+        )
+    }
+
+    @objc private func applicationDidBecomeActive() {
+        isApplicationActive = true
+        mountWhenSized()
+        resumeRuntime()
+        requestFrame()
+    }
+
+    @objc private func applicationWillResignActive() {
+        isApplicationActive = false
+        pauseRuntime()
+    }
+
+    private func pauseRuntime() {
+        displayLink?.invalidate()
+        displayLink = nil
+        guard let handle = runtimeHandle, !runtimePaused else { return }
+        if whiskerViewPause(handle) { runtimePaused = true }
+    }
+
+    private func resumeRuntime() {
+        guard isApplicationActive, window != nil,
+              let handle = runtimeHandle, runtimePaused else { return }
+        if whiskerViewResume(handle) { runtimePaused = false }
+    }
+
+    func bootstrap(_ raw: WhiskerMobileBootstrap) -> Bool {
+        HostElementBootstrap.bind(raw)
+    }
+
+    func applyFrame(
+        _ frame: WhiskerMobileFrame,
+        response: inout WhiskerMobileApplyResponse
+    ) -> Bool {
+        scene.applyFrame(frame, response: &response)
+    }
+    private func dispatchElementEvent(node: UInt64, name: String, detail: WhiskerValue) {
+        scene.dispatchOrDefer { [weak self] in
+            guard let self, let handle = runtimeHandle else { return }
+            var raw = detail.toRaw()
+            defer { WhiskerValue.releaseRaw(&raw) }
+            let nameBytes = Array(name.utf8)
+            nameBytes.withUnsafeBytes { nameBuffer in
+                _ = whiskerViewDispatchEvent(
+                    handle,
+                    ProcessInfo.processInfo.systemUptime * 1_000,
+                    node,
+                    nameBuffer.bindMemory(to: UInt8.self).baseAddress,
+                    nameBytes.count,
+                    &raw
+                )
             }
         }
     }
 
-    public override func onEnterForeground() {
-        super.onEnterForeground()
-    }
-
-    public override func onEnterBackground() {
-        super.onEnterBackground()
-    }
-
-    // MARK: - Safe-area broadcast
-
-    /// Called by UIKit whenever the host view's `safeAreaInsets`
-    /// recompute — on first layout after attach, on rotation, on
-    /// multitasking split-screen resize, on notch / Dynamic Island
-    /// reveal. We re-broadcast through `NotificationCenter` so the
-    /// `whisker-safe-area:SafeArea` module can pick the change up
-    /// without holding a direct reference to this view. Going through
-    /// a notification keeps the runtime agnostic of the opt-in
-    /// safe-area module.
-    public override func safeAreaInsetsDidChange() {
-        super.safeAreaInsetsDidChange()
-        NotificationCenter.default.post(
-            name: WhiskerView.safeAreaInsetsDidChangeNotification,
-            object: self,
-            userInfo: [WhiskerView.safeAreaInsetsKey: safeAreaInsets]
+    func invokeModule(
+        module name: String,
+        method: String,
+        rawArgs: UnsafePointer<WhiskerValueRaw>?,
+        argumentCount: Int,
+        isAsync: Bool,
+        result: @escaping WhiskerModuleResult,
+        resultData: UnsafeMutableRawPointer?
+    ) -> Bool {
+        modules.invoke(
+            module: name,
+            method: method,
+            rawArgs: rawArgs,
+            argumentCount: argumentCount,
+            isAsync: isAsync,
+            result: result,
+            resultData: resultData
         )
     }
 
-    /// Posted on every `safeAreaInsetsDidChange()` fire. `object` is
-    /// the firing `WhiskerView`; `userInfo[safeAreaInsetsKey]` is a
-    /// `UIEdgeInsets`. Loose-coupling hook for the `whisker-safe-area`
-    /// module.
-    public static let safeAreaInsetsDidChangeNotification =
-        Notification.Name("WhiskerViewSafeAreaInsetsDidChange")
-
-    /// `userInfo` key carrying the `UIEdgeInsets` payload of
-    /// [`safeAreaInsetsDidChangeNotification`].
-    public static let safeAreaInsetsKey = "WhiskerViewSafeAreaInsets"
-}
-
-/// Weak forwarding target for the `CADisplayLink`, so the link (and the
-/// run loop that retains it) does not strongly retain the
-/// `WhiskerView`. See the comment at the link's creation in `init` for
-/// why a direct `target: self` would leak the view and its engine.
-private final class DisplayLinkProxy {
-    weak var target: WhiskerView?
-
-    init(target: WhiskerView) {
-        self.target = target
+    func observeModule(module: String, event: String, observing: Bool) {
+        modules.observe(owner: self, module: module, event: event, observing: observing)
     }
 
-    @objc func tick(_ link: CADisplayLink) {
-        // If the view has been deallocated the weak ref is nil and the
-        // tick is a no-op; the view's `deinit` will have invalidated the
-        // link by then anyway.
-        target?.handleDisplayLink(link)
+    private func flushModuleEventsOnMain() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let pending = pendingModuleEvents.drain(epoch: moduleEventSinkEpoch)
+        guard !pending.isEmpty else { return }
+        scene.dispatchOrDefer { [weak self] in
+            guard let self, let handle = runtimeHandle else { return }
+            var dispatched = false
+            for moduleEvent in pending {
+                var raw = moduleEvent.payload.toRaw()
+                defer { WhiskerValue.releaseRaw(&raw) }
+                let moduleBytes = Array(moduleEvent.module.utf8)
+                let eventBytes = Array(moduleEvent.event.utf8)
+                moduleBytes.withUnsafeBytes { moduleBuffer in
+                    eventBytes.withUnsafeBytes { eventBuffer in
+                        dispatched = whiskerViewDispatchModuleEvent(
+                            handle,
+                            moduleBuffer.bindMemory(to: UInt8.self).baseAddress,
+                            moduleBytes.count,
+                            eventBuffer.bindMemory(to: UInt8.self).baseAddress,
+                            eventBytes.count,
+                            &raw
+                        ) || dispatched
+                    }
+                }
+            }
+            if dispatched { requestFrame() }
+        }
     }
 }

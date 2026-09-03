@@ -5,12 +5,13 @@
 //! and renders each step's result, so a `whisker run` on a real device
 //! verifies the native module wiring end-to-end.
 
+use whisker::css::{FlexDirection, FontWeight};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_secure_store::WhiskerSecureStore;
 
-const BG: &str = "#101012";
-const FG: &str = "#f0f0f3";
+const BG: u32 = 0x101012;
+const FG: u32 = 0xf0f0f3;
 
 #[whisker::main]
 pub fn app() -> Element {
@@ -44,17 +45,28 @@ pub fn app() -> Element {
         log.set(out);
     });
 
-    let page = format!(
-        "background-color: {BG}; flex-grow: 1; display: flex; flex-direction: column; \
-         padding-top: 72px; padding-left: 20px; padding-right: 20px;"
-    );
-    let title = format!("color: {FG}; font-size: 22px; font-weight: 700; margin-bottom: 20px;");
-    let body = format!("color: {FG}; font-size: 16px; line-height: 28px;");
+    let page = Css::new()
+        .background_color(Color::hex(BG))
+        .flex_grow(1.0)
+        .display_flex()
+        .flex_direction(FlexDirection::Column)
+        .padding_top(px(72))
+        .padding_left(px(20))
+        .padding_right(px(20));
+    let title = Css::new()
+        .color(Color::hex(FG))
+        .font_size(px(22))
+        .font_weight(FontWeight::Numeric(700))
+        .margin_bottom(px(20));
+    let body = Css::new()
+        .color(Color::hex(FG))
+        .font_size(px(16))
+        .line_height(px(28));
 
     render! {
-        view(style: page) {
-            text(style: title, value: "whisker-secure-store")
-            text(style: body, value: computed(move || log.get()))
+        View(style: page) {
+            Text(style: title, value: "whisker-secure-store")
+            Text(style: body, value: computed(move || log.get()))
         }
     }
 }

@@ -2,24 +2,22 @@
 
 Whisker's reactive layer is modelled on **Solid.js / Leptos**: components
 run **once** at mount, and dynamic UI is driven by `effect` subscriptions
-to signals. An update patches the Lynx element tree at exactly the
-affected property — there is no virtual DOM and no diff pass.
+to signals. An update writes the affected typed property into the retained
+Rust scene — there is no virtual DOM or component-tree diff pass.
 
 This doc is the *design* of the runtime — the "why" and "how it's built".
 For the user-facing "how to write components" side, see the guide on
 [whisker.rs/docs](https://whisker.rs/docs). The implementation lives in
 `crates/whisker-runtime/src/reactive/*` (primitives) and
-`crates/whisker-runtime/src/view/*` (the renderer that wires effects to
-Lynx handles).
+`crates/whisker-runtime/src/view/*` (renderer-independent operations that wire
+effects to the active surface).
 
 ## Why fine-grained
 
-1. **Lynx's `FiberElement::SetAttribute(name, value)` is already
-   per-property granular.** A fine-grained reactive model maps directly
-   onto it — there's no need to build a virtual DOM, diff it, and emit
-   patches that target individual attributes. The effect *is* the patch:
-   a dynamic `style` / `value` / text node is just an `effect` that calls
-   `SetAttribute` / `SetRawInlineStyles` when its dependency changes.
+1. **The retained scene is per-property granular.** A fine-grained reactive
+   model maps directly onto typed dirty slots, without building or diffing a
+   virtual DOM. The effect writes the changed property and frame preparation
+   later coalesces it into one transaction.
 2. **Mobile CPU sensitivity.** Whisker targets Android / iOS, where
    weaker per-core throughput makes virtual-DOM diffing more visible.
 3. **Smaller runtime.** No value-tree `Element` representation and no
@@ -27,9 +25,11 @@ Lynx handles).
 
 ## Primitives
 
-The reactive module is a single thread-local `ReactiveRuntime` (Whisker
-runs all reactive work on Lynx's TASM thread). Every primitive funnels
-through it. Public surface is re-exported from `whisker::prelude`.
+Each mounted `RuntimeInstance` owns an isolated `ReactiveRuntime` inside its
+`RuntimeContext`. Host callbacks temporarily activate that instance in a
+thread-local execution slot, allowing multiple surfaces to share one UI thread
+without sharing signals or owners. Every primitive funnels through the active
+slot. Public surface is re-exported from `whisker::prelude`.
 
 ### Signal
 
@@ -147,10 +147,10 @@ let stories = resource(|| async {
 });
 ```
 
-`resource(fetcher)` spawns the `async` fetcher on Whisker's
-single-threaded local pool (the TASM thread). Blocking IO inside the
+`resource(fetcher)` spawns the `async` fetcher on the instance's
+single-threaded local pool (the Host UI thread). Blocking IO inside the
 fetcher should be wrapped in `tasks::run_blocking`, which offloads to a
-worker thread and marshals the result back to the main thread.
+worker thread; the task waker requests that specific instance from the Host.
 
 `Resource<T>` is `Copy` and exposes `state() -> ResourceState<T>`
 (`Loading | Ready(T) | Error(String)`), plus the conveniences
@@ -175,7 +175,7 @@ let history: StoredValue<Vec<String>> = StoredValue::new(Vec::new());
 ### `Signal<T>` — the prop-value type
 
 A 2-variant sum used by built-in tag builders, `#[component]`, and
-`#[whisker::module_component]` to receive prop values that may be either a
+`#[whisker::module_element]` to receive prop values that may be either a
 static `T` or a reactive `ReadSignal<T>`. One unified type lets all three
 component surfaces share one calling convention.
 
@@ -200,12 +200,12 @@ pub enum Signal<T: 'static> {
 So the **Static vs Dynamic decision is visible at the call site**:
 
 ```rust
-text(value: "literal")            // → Static
-text(value: my_string)            // → Static
-text(value: my_signal)            // → Dynamic (reactive)
-text(value: my_rw_signal)         // → Dynamic (reactive)
-text(value: computed(move || …))  // → Dynamic (memoised derivation)
-text(value: my_signal.get())      // → Static (snapshot — read happens at
+Text(value: "literal")            // → Static
+Text(value: my_string)            // → Static
+Text(value: my_signal)            // → Dynamic (reactive)
+Text(value: my_rw_signal)         // → Dynamic (reactive)
+Text(value: computed(move || …))  // → Dynamic (memoised derivation)
+Text(value: my_signal.get())      // → Static (snapshot — read happens at
                                   //   the call site, before any effect
                                   //   is on the observer stack)
 ```
@@ -230,7 +230,7 @@ prop on each body invocation.
 
 An earlier design had the macro silently wrap each kwarg in
 `move || …` so the builder always received a closure, making
-`text(value: signal.get())` reactive with no user effort. That was
+`Text(value: signal.get())` reactive with no user effort. That was
 dropped because it was (1) asymmetric — built-in tags got the auto-wrap
 but `#[component]` calls didn't; (2) hidden DX — no syntactic marker for
 where the reactive boundary was; and (3) closure-only — static values
@@ -241,9 +241,10 @@ do.
 
 ## Arena + Owner
 
-All reactive state lives in the thread-local `ReactiveRuntime`. Whisker
-runs on a single Lynx TASM thread, so single-threaded (no `Arc`, no
-locks) is both correct and borrow-checker-clean.
+All reactive state belongs to a `RuntimeContext`. While the Host executes one
+event or frame, that context occupies the UI thread's active slot. The arena
+itself remains single-threaded (no locks), while wake handles and
+`RuntimeDispatcher` are the narrow `Send + Sync` paths from workers.
 
 ```rust
 struct ReactiveRuntime {
@@ -263,7 +264,7 @@ struct Scope {                              // the owner record
     contexts: HashMap<TypeId, Rc<dyn Any>>, // provide/use_context bag
     cleanups: Vec<Box<dyn FnOnce()>>,       // on_cleanup, LIFO
     mount_fn: Option<*const ()>,            // component fn-ptr, for hot reload
-    elements: Vec<Element>,                 // Lynx handles to release on dispose
+    elements: Vec<Element>,                 // Host handles to release on dispose
     paused:   bool,                         // pause/resume — see below
 }
 
@@ -283,7 +284,7 @@ register against it. `#[component]` and `Owner::with` push/pop it.
 
 **Disposal cascades.** `Owner::dispose` recursively disposes children,
 runs `cleanups` LIFO, frees the scope's reactive nodes (severing
-subscriber links and Arc back-refs), and releases the scope's Lynx
+subscriber links and Arc back-refs), and releases the scope's Host
 `Element` handles back to the renderer — preventing the bridge's element
 map from accumulating dangling pointers across `Show` flips, `ForEach`
 removals, and per-component remounts.
@@ -304,10 +305,10 @@ fn counter(initial: i32, on_change: WriteSignal<i32>) -> Element {
     on_cleanup(|| log::info!("counter unmounted"));
 
     render! {
-        view(style: "flex-direction: column; padding: 16px;") {
-            text(value: computed(move || format!("Count: {}", count.get())))
-            view(on_tap: move |_| set_count.update(|n| *n += 1)) {
-                text(value: "+")
+        View(style: css!(flex_direction: FlexDirection::Column, padding: px(16))) {
+            Text(value: computed(move || format!("Count: {}", count.get())))
+            View(on_tap: move |_| set_count.update(|n| *n += 1)) {
+                Text(value: "+")
             }
         }
     }
@@ -316,8 +317,8 @@ fn counter(initial: i32, on_change: WriteSignal<i32>) -> Element {
 
 The `#[component]` macro generates, for `fn xxx(...)`:
 
-1. A `XxxProps` struct mirroring the parameters + a hand-rolled
-   `XxxPropsBuilder` (one setter per field). Required fields take
+1. A `XxxProps` struct mirroring the parameters plus a public PascalCase
+   marker and hand-rolled builder (one setter per field). Required fields take
    `impl Into<Type>`, so call sites omit conversions; for `Signal<T>`
    props that's the `Into<Signal<T>>` coercion above. `#[prop(default =
    …)]` marks optional props. (Hand-rolled rather than `#[derive(
@@ -327,8 +328,8 @@ The `#[component]` macro generates, for `fn xxx(...)`:
    fresh owner, runs the user body inside it (under `untrack`, so ambient
    `signal.get()` reads in the body don't contaminate an outer node), and
    returns the view via `mount_component_remountable`.
-3. A PascalCase alias (`Xxx`) the `render!` macro calls as
-   `Xxx(XxxProps::builder().k(v).build())`.
+3. A PascalCase marker (`Xxx`) whose `Xxx::builder()` API is usable directly;
+   `render! { Xxx(k: v) }` lowers to `Xxx::builder().k(v).build()`.
 
 Lifecycle hooks register against the current owner:
 
@@ -357,7 +358,7 @@ component invocation.
 Each one allocates a **phantom element** (`create_phantom_element`, no
 on-screen footprint) and installs a reactive `effect` that mounts /
 disposes children under it. The phantom's hoisting machinery routes each
-child mount/detach to the nearest *real* (non-phantom) Lynx ancestor, so
+child mount/detach to the nearest *real* (non-phantom) Host ancestor, so
 the on-screen tree is wrapper-less while user code keeps its hierarchical
 mental model.
 
@@ -405,7 +406,7 @@ to the runtime's `pending` queue. The queue is drained by `flush`:
 1. Explicitly, and at the end of the current event handler / effect — the
    Solid/Leptos microtask-batching model.
 2. Implicitly: the first enqueue on an empty queue pings the host's
-   request-frame callback (`host_wake::wake_runtime`) so the runtime can
+   request-frame callback (`runtime_wake::wake_runtime`) so the runtime can
    wake out of idle.
 
 Within a batch, `flush` reentrantly drains until the queue is empty (an

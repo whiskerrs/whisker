@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.box-shadow-multiple-001",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/box-shadow-multiple-001.html",
+    "reference_path": "css/css-backgrounds/reference/box-shadow-multiple-001-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "A comma-separated box-shadow list is painted front to back, so the first shadow is visible above later overlapping shadows.",
+    "adaptation": "The upstream multiple-overlapping1 subtest is reduced to a 40px yellow box and four pairs of same-offset hard shadows. Samples verify all four directions and that each first-listed color covers the red shadow behind it."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 200.0, "height": 200.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [80.0, 80.0, 40.0, 40.0],
+            "background": { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 },
+            "box_shadows": [
+              { "offset": [0.0, -40.0], "blur_radius": 0.0, "spread_radius": 0.0, "color": { "kind": "srgba", "red": 128, "green": 0, "blue": 128, "alpha": 1.0 } },
+              { "offset": [0.0, -40.0], "blur_radius": 0.0, "spread_radius": 0.0, "color": { "kind": "named", "value": "red" } },
+              { "offset": [40.0, 0.0], "blur_radius": 0.0, "spread_radius": 0.0, "color": { "kind": "named", "value": "blue" } },
+              { "offset": [40.0, 0.0], "blur_radius": 0.0, "spread_radius": 0.0, "color": { "kind": "named", "value": "red" } },
+              { "offset": [0.0, 40.0], "blur_radius": 0.0, "spread_radius": 0.0, "color": { "kind": "srgba", "red": 255, "green": 0, "blue": 255, "alpha": 1.0 } },
+              { "offset": [0.0, 40.0], "blur_radius": 0.0, "spread_radius": 0.0, "color": { "kind": "named", "value": "red" } },
+              { "offset": [-40.0, 0.0], "blur_radius": 0.0, "spread_radius": 0.0, "color": { "kind": "srgba", "red": 255, "green": 165, "blue": 0, "alpha": 1.0 } },
+              { "offset": [-40.0, 0.0], "blur_radius": 0.0, "spread_radius": 0.0, "color": { "kind": "named", "value": "red" } }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.visual-effects.box-shadow-multiple",
+        "samples": [
+          { "point": [100.0, 60.0], "color": { "kind": "srgba", "red": 128, "green": 0, "blue": 128, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [140.0, 100.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 5 },
+          { "point": [100.0, 140.0], "color": { "kind": "srgba", "red": 255, "green": 0, "blue": 255, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [60.0, 100.0], "color": { "kind": "srgba", "red": 255, "green": 165, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [100.0, 100.0], "color": { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

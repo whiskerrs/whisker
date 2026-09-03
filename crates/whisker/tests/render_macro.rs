@@ -1,7 +1,7 @@
 //! Integration test for the `render!` macro.
 //!
 //! Covers the compose-syntax surface: static elements + attrs, event
-//! handlers, builder-shaped text content (`text(value: …)`), dynamic
+//! handlers, builder-shaped text content (`Text(value: …)`), dynamic
 //! attribute closures, `Show` / `For` control flow.
 //!
 //! Tests install a small recording renderer, expand `render!`,
@@ -16,7 +16,7 @@ use whisker::runtime::view::{
     BindType, DynRenderer, Element, install_renderer, uninstall_renderer,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Op {
     Create {
         id: u32,
@@ -27,9 +27,29 @@ enum Op {
         key: String,
         value: String,
     },
-    SetStyles {
+    SetSpecifiedStyle {
         id: u32,
-        css: String,
+        declarations: usize,
+    },
+    SetId {
+        id: u32,
+        value: String,
+    },
+    SetDataset {
+        id: u32,
+        entries: usize,
+    },
+    SetAccessibility {
+        id: u32,
+        label: Option<String>,
+    },
+    SetTextMaxLines {
+        id: u32,
+        value: u32,
+    },
+    SetObject {
+        id: u32,
+        key: String,
     },
     Append {
         parent: u32,
@@ -80,10 +100,41 @@ impl DynRenderer for Recorder {
             value: v.into(),
         });
     }
-    fn set_inline_styles(&self, h: Element, css: &str) {
-        self.log.borrow_mut().push(Op::SetStyles {
+    fn set_specified_style(
+        &self,
+        h: Element,
+        style: &whisker_engine::whisker_style::SpecifiedStyle,
+    ) -> bool {
+        self.log.borrow_mut().push(Op::SetSpecifiedStyle {
             id: h.id(),
-            css: css.into(),
+            declarations: style.len(),
+        });
+        true
+    }
+    fn set_element_id(&self, h: Element, value: String) {
+        self.log.borrow_mut().push(Op::SetId { id: h.id(), value });
+    }
+    fn set_dataset(&self, h: Element, value: Dataset) {
+        self.log.borrow_mut().push(Op::SetDataset {
+            id: h.id(),
+            entries: value.iter().count(),
+        });
+    }
+    fn set_accessibility(&self, h: Element, value: Accessibility) {
+        self.log.borrow_mut().push(Op::SetAccessibility {
+            id: h.id(),
+            label: value.label,
+        });
+    }
+    fn set_text_max_lines(&self, h: Element, value: u32) {
+        self.log
+            .borrow_mut()
+            .push(Op::SetTextMaxLines { id: h.id(), value });
+    }
+    fn set_attribute_object(&self, h: Element, key: &str, _value: &[(String, f64)]) {
+        self.log.borrow_mut().push(Op::SetObject {
+            id: h.id(),
+            key: key.to_owned(),
         });
     }
     fn append_child(&self, p: Element, c: Element) {
@@ -129,12 +180,35 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     result
 }
 
+struct PlainValue;
+
+struct PlainValueBuilder {
+    value: i32,
+}
+
+impl PlainValue {
+    fn builder() -> PlainValueBuilder {
+        PlainValueBuilder { value: 0 }
+    }
+}
+
+impl PlainValueBuilder {
+    fn value(mut self, value: i32) -> Self {
+        self.value = value;
+        self
+    }
+
+    fn build(self) -> i32 {
+        self.value
+    }
+}
+
 // ----- Static element trees -------------------------------------------------
 
 #[test]
 fn single_view_emits_create_and_returns_handle() {
     with_recorder(|log| {
-        let h = render! { view() };
+        let h = render! { View() };
         assert_eq!(h.id(), 0);
         assert_eq!(
             *log.borrow(),
@@ -147,16 +221,63 @@ fn single_view_emits_create_and_returns_handle() {
 }
 
 #[test]
+fn compose_is_the_generic_adapter_over_the_same_builder_chain() {
+    with_recorder(|log| {
+        let h = compose! { View(id: "root") };
+        assert_eq!(h.id(), 0);
+        assert_eq!(
+            *log.borrow(),
+            vec![
+                Op::Create {
+                    id: 0,
+                    tag: ElementTag::View,
+                },
+                Op::SetId {
+                    id: 0,
+                    value: "root".into(),
+                },
+            ]
+        );
+    });
+}
+
+#[test]
+fn compose_does_not_special_case_whisker_elements() {
+    let value = compose! { PlainValue(value: 42) };
+    assert_eq!(value, 42);
+}
+
+#[test]
+fn builtin_builders_are_a_complete_public_non_macro_api() {
+    with_recorder(|log| {
+        let root = View::builder()
+            .id("root")
+            .body(|body| {
+                body.push(Text::builder().value("Hello").build());
+            })
+            .build();
+        assert_eq!(root.id(), 0);
+        assert!(log.borrow().iter().any(|op| matches!(
+            op,
+            Op::Append {
+                parent: 0,
+                child: 1
+            }
+        )));
+    });
+}
+
+#[test]
 fn nested_view_with_text_child() {
     with_recorder(|log| {
         let _h = render! {
-            view {
-                text(value: "Hello")
+            View {
+                Text(value: "Hello")
             }
         };
         // Expected ops:
-        //  Create view (0)
-        //  Create text (1)
+        //  Create View (0)
+        //  Create Text (1)
         //  Create raw_text (2)  ← from text's `value` method
         //  Append raw_text → text
         //  SetAttr text="Hello" on raw_text (in the effect)
@@ -207,10 +328,10 @@ fn nested_view_with_text_child() {
 }
 
 #[test]
-fn style_attribute_emits_set_inline_styles() {
+fn style_attribute_emits_structured_style() {
     with_recorder(|log| {
         let _ = render! {
-            view(style: "padding: 16px;")
+            View(style: css!(padding: px(16)))
         };
         let ops = log.borrow();
         assert_eq!(
@@ -220,20 +341,21 @@ fn style_attribute_emits_set_inline_styles() {
                 tag: ElementTag::View
             }
         );
-        assert!(ops.contains(&Op::SetStyles {
+        assert!(ops.contains(&Op::SetSpecifiedStyle {
             id: 0,
-            css: "padding: 16px;".into()
+            declarations: 4,
         }));
     });
 }
 
 #[test]
-fn arbitrary_attribute_emits_set_attribute() {
+fn common_metadata_uses_structured_renderer_paths() {
     with_recorder(|log| {
         let _ = render! {
-            view(
-                role: "banner",
-                alt: "example",
+            View(
+                id: "banner",
+                dataset: Dataset::new().int("index", 3),
+                accessibility: Accessibility::new().label("Example"),
             )
         };
         let ops = log.borrow();
@@ -244,24 +366,20 @@ fn arbitrary_attribute_emits_set_attribute() {
                 tag: ElementTag::View
             }
         );
-        assert!(ops.contains(&Op::SetAttr {
+        assert!(ops.contains(&Op::SetId {
             id: 0,
-            key: "role".into(),
             value: "banner".into(),
         }));
-        assert!(ops.contains(&Op::SetAttr {
+        assert!(ops.contains(&Op::SetDataset { id: 0, entries: 1 }));
+        assert!(ops.contains(&Op::SetAccessibility {
             id: 0,
-            key: "alt".into(),
-            value: "example".into(),
+            label: Some("Example".into()),
         }));
     });
 }
 
 #[test]
-fn typed_attribute_methods_route_to_named_setters() {
-    // Named attribute methods route to `.method(v)`, not the
-    // String-only `.attr`, so bool / number / enum-string values reach
-    // the right Lynx attribute name.
+fn built_in_control_options_route_to_typed_setters() {
     let has = |ops: &[Op], key: &str, val: &str| {
         ops.iter()
             .any(|op| matches!(op, Op::SetAttr { key: k, value: v, .. } if k == key && v == val))
@@ -269,35 +387,27 @@ fn typed_attribute_methods_route_to_named_setters() {
 
     with_recorder(|log| {
         let _ = render! {
-            scroll_view(bounces: true, enable_scroll: false, upper_threshold: 50)
+            ScrollView(
+                axis: ScrollAxis::Horizontal,
+                scroll_enabled: false,
+                snap: ScrollSnap::center(),
+            )
         };
         let ops = log.borrow();
-        assert!(has(&ops, "bounces", "true"), "got {ops:?}");
+        assert!(has(&ops, "scroll-orientation", "horizontal"), "got {ops:?}");
         assert!(has(&ops, "enable-scroll", "false"), "got {ops:?}");
-        assert!(has(&ops, "upper-threshold", "50"), "got {ops:?}");
+        assert!(ops.contains(&Op::SetObject {
+            id: 0,
+            key: "item-snap".into()
+        }));
     });
 
     with_recorder(|log| {
         let _ = render! {
-            text(value: "hi", text_maxline: 2, text_selection: true)
+            Text(value: "hi", max_lines: 2_u32)
         };
         let ops = log.borrow();
-        assert!(has(&ops, "text-maxline", "2"), "got {ops:?}");
-        assert!(has(&ops, "text-selection", "true"), "got {ops:?}");
-    });
-
-    with_recorder(|log| {
-        let _ = render! {
-            view(flatten: true, hit_slop: "10px", pan_intercept_direction: PanInterceptDirection::Horizontal)
-        };
-        let ops = log.borrow();
-        assert!(has(&ops, "flatten", "true"), "got {ops:?}");
-        assert!(has(&ops, "hit-slop", "10px"), "got {ops:?}");
-        // Sent as the wire int (0 = Horizontal), not the enum's
-        // display string — Lynx's native prop setter for this
-        // attribute is integer-typed on both platforms; see
-        // `PanInterceptDirection::as_wire_int`'s doc comment.
-        assert!(has(&ops, "pan-intercept-direction", "0"), "got {ops:?}");
+        assert!(ops.contains(&Op::SetTextMaxLines { id: 0, value: 2 }));
     });
 }
 
@@ -307,7 +417,7 @@ fn on_tap_emits_set_event_listener() {
         let fired = Rc::new(RefCell::new(false));
         let f = fired.clone();
         let _ = render! {
-            view(on_tap: move |_| *f.borrow_mut() = true)
+            View(on_tap: move |_| *f.borrow_mut() = true)
         };
         let ops = log.borrow();
         assert!(ops.iter().any(|op| matches!(
@@ -326,11 +436,11 @@ fn tap_propagation_variants_route_to_bind_types() {
     // with the matching propagation `BindType`.
     with_recorder(|log| {
         let _ = render! {
-            view {
-                view(on_tap: |_| {})
-                view(on_tap_catch: |_| {})
-                view(on_capture_tap: |_| {})
-                view(on_capture_tap_catch: |_| {})
+            View {
+                View(on_tap: |_| {})
+                View(on_tap_catch: |_| {})
+                View(on_capture_tap: |_| {})
+                View(on_capture_tap_catch: |_| {})
             }
         };
         let kinds: Vec<BindType> = log
@@ -357,13 +467,10 @@ fn tap_propagation_variants_route_to_bind_types() {
 
 #[test]
 fn component_specific_events_route_bind_only() {
-    // Tag-specific CustomEvents register as `BindType::Bind` and have
-    // no catch/capture variants — Lynx CustomEvents are target-only.
+    // Tag-specific events use the binding declared by their public builder.
     with_recorder(|log| {
         let _ = render! {
-            scroll_view {
-                text(on_layout: |_| {}, on_selectionchange: |_| {})
-            }
+            ScrollView(on_scroll: |_| {})
         };
         let names: Vec<(String, BindType)> = log
             .borrow()
@@ -375,59 +482,9 @@ fn component_specific_events_route_bind_only() {
                 _ => None,
             })
             .collect();
-        for n in ["layout", "selectionchange"] {
-            assert!(
-                names.contains(&(n.to_string(), BindType::Bind)),
-                "missing bind listener for {n}; got {names:?}"
-            );
-        }
-    });
-}
-
-#[test]
-fn scroll_view_scroll_events_route_bind() {
-    with_recorder(|log| {
-        let _ = render! {
-            scroll_view(
-                on_scroll: |_| {},
-                on_scrolltoupper: |_| {},
-                on_scrolltolower: |_| {},
-                on_scrollend: |_| {},
-                on_contentsizechanged: |_| {},
-            )
-        };
-        let names: Vec<String> = log
-            .borrow()
-            .iter()
-            .filter_map(|op| match op {
-                Op::Event {
-                    name, bind_type, ..
-                } if *bind_type == BindType::Bind => Some(name.clone()),
-                _ => None,
-            })
-            .collect();
-        for n in [
-            "scroll",
-            "scrolltoupper",
-            "scrolltolower",
-            "scrollend",
-            "contentsizechanged",
-        ] {
-            assert!(names.contains(&n.to_string()), "missing {n}; got {names:?}");
-        }
-    });
-}
-
-#[test]
-fn camel_case_event_handler_lowercased() {
-    with_recorder(|log| {
-        let _ = render! {
-            view(onTap: |_| {})
-        };
-        let ops = log.borrow();
         assert!(
-            ops.iter()
-                .any(|op| matches!(op, Op::Event { name, .. } if name == "tap"))
+            names.contains(&("scroll".to_owned(), BindType::Bind)),
+            "missing bind listener for scroll; got {names:?}"
         );
     });
 }
@@ -436,10 +493,10 @@ fn camel_case_event_handler_lowercased() {
 fn multiple_children_append_in_order() {
     with_recorder(|log| {
         let _ = render! {
-            view {
-                text(value: "A")
-                text(value: "B")
-                text(value: "C")
+            View {
+                Text(value: "A")
+                Text(value: "B")
+                Text(value: "C")
             }
         };
         let appends: Vec<_> = log
@@ -455,7 +512,7 @@ fn multiple_children_append_in_order() {
     });
 }
 
-// ----- Dynamic value interpolation via `text(value: …)` --------------------
+// ----- Dynamic value interpolation via `Text(value: …)` --------------------
 
 #[test]
 fn dynamic_value_renders_initial_via_effect() {
@@ -466,7 +523,7 @@ fn dynamic_value_renders_initial_via_effect() {
         // the `value` builder as `Signal::Dynamic`.
         let label = computed(move || count.get().to_string());
         let _h = render! {
-            text(value: label)
+            Text(value: label)
         };
         let set_text: Vec<_> = log
             .borrow()
@@ -486,7 +543,7 @@ fn dynamic_value_updates_on_signal_write() {
         let (count, set_count) = signal(0_i32).split();
         let label = computed(move || count.get().to_string());
         let _h = render! {
-            text(value: label)
+            Text(value: label)
         };
         set_count.set(5);
         flush();
@@ -508,45 +565,45 @@ fn dynamic_value_updates_on_signal_write() {
 #[test]
 fn dynamic_style_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
-        let (color, set_color) = signal("red".to_string()).split();
-        let css = computed(move || format!("color: {};", color.get()));
+        let (color, set_color) = signal(NamedColor::Red).split();
+        let css = computed(move || Css::new().color(Color::Named(color.get())));
         let _h = render! {
-            view(style: css)
+            View(style: css)
         };
-        set_color.set("blue".into());
+        set_color.set(NamedColor::Blue);
         flush();
 
         let styles: Vec<_> = log
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetStyles { css, .. } => Some(css.clone()),
+                Op::SetSpecifiedStyle { declarations, .. } => Some(*declarations),
                 _ => None,
             })
             .collect();
-        assert_eq!(styles, vec!["color: red;", "color: blue;"]);
+        assert_eq!(styles, vec![1, 1]);
     });
 }
 
 #[test]
-fn dynamic_attribute_re_runs_on_dep_change() {
+fn dynamic_element_id_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
-        let (src, set_src) = signal("a.png".to_string()).split();
+        let (id, set_id) = signal("first".to_string()).split();
         let _h = render! {
-            view(src: src)
+            View(id: id)
         };
-        set_src.set("b.png".into());
+        set_id.set("second".into());
         flush();
 
-        let attrs: Vec<_> = log
+        let ids: Vec<_> = log
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetAttr { key, value, .. } if key == "src" => Some(value.clone()),
+                Op::SetId { value, .. } => Some(value.clone()),
                 _ => None,
             })
             .collect();
-        assert_eq!(attrs, vec!["a.png", "b.png"]);
+        assert_eq!(ids, vec!["first", "second"]);
     });
 }
 
@@ -554,7 +611,7 @@ fn dynamic_attribute_re_runs_on_dep_change() {
 fn static_value_only_sets_text_once() {
     with_recorder_and_owner(|log| {
         let _h = render! {
-            text(value: "static")
+            Text(value: "static")
         };
         let set_text: Vec<_> = log
             .borrow()
@@ -569,17 +626,12 @@ fn static_value_only_sets_text_once() {
 }
 
 #[test]
-fn mixed_static_and_dynamic_children_via_raw_text() {
-    // Two raw_text siblings: the first static, the second reading the
-    // signal.
+fn text_value_combines_static_and_dynamic_content() {
     with_recorder_and_owner(|log| {
         let (count, _set) = signal(7_i32).split();
-        let count_label = computed(move || count.get().to_string());
+        let count_label = computed(move || format!("count={}", count.get()));
         let _h = render! {
-            text {
-                raw_text(text: "count=")
-                raw_text(text: count_label)
-            }
+            Text(value: count_label)
         };
         let set_text: Vec<_> = log
             .borrow()
@@ -589,7 +641,7 @@ fn mixed_static_and_dynamic_children_via_raw_text() {
                 _ => None,
             })
             .collect();
-        assert_eq!(set_text, vec!["count=".to_string(), "7".to_string()]);
+        assert_eq!(set_text, vec!["count=7".to_string()]);
     });
 }
 
@@ -601,9 +653,9 @@ fn signal_only_updates_elements_that_read_it() {
         let a_label = computed(move || a.get().to_string());
         let b_label = computed(move || b.get().to_string());
         let _h = render! {
-            view {
-                text(value: a_label)
-                text(value: b_label)
+            View {
+                Text(value: a_label)
+                Text(value: b_label)
             }
         };
         log.borrow_mut().clear(); // ignore initial ops
@@ -628,9 +680,9 @@ fn show_renders_children_when_true() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(true).split();
         let _h = render! {
-            view {
+            View {
                 Show(when: move || cond.get()) {
-                    text(value: "main")
+                    Text(value: "main")
                 }
             }
         };
@@ -651,12 +703,12 @@ fn show_renders_fallback_when_false() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(false).split();
         let _h = render! {
-            view {
+            View {
                 Show(
                     when: move || cond.get(),
-                    fallback: || render! { text(value: "fallback") },
+                    fallback: || render! { Text(value: "fallback") },
                 ) {
-                    text(value: "main")
+                    Text(value: "main")
                 }
             }
         };
@@ -677,12 +729,12 @@ fn show_swaps_on_condition_flip() {
     with_recorder_and_owner(|log| {
         let (cond, set_cond) = signal(true).split();
         let _h = render! {
-            view {
+            View {
                 Show(
                     when: move || cond.get(),
-                    fallback: || render! { text(value: "fb") },
+                    fallback: || render! { Text(value: "fb") },
                 ) {
-                    text(value: "main")
+                    Text(value: "main")
                 }
             }
         };
@@ -707,9 +759,9 @@ fn show_without_fallback_renders_nothing_when_false() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(false).split();
         let _h = render! {
-            view {
+            View {
                 Show(when: move || cond.get()) {
-                    text(value: "only")
+                    Text(value: "only")
                 }
             }
         };
@@ -743,11 +795,11 @@ fn for_renders_initial_items() {
         ])
         .split();
         let _h = render! {
-            view {
+            View {
                 ForEach(
                     each: move || items.get(),
                     key: |i: &Item| i.id,
-                    children: move |i: Item| render! { text(value: i.name) },
+                    children: move |i: Item| render! { Text(value: i.name) },
                 )
             }
         };
@@ -772,11 +824,11 @@ fn for_adds_new_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2]).split();
         let _h = render! {
-            view {
+            View {
                 ForEach(
                     each: move || items.get(),
                     key: |x: &u32| *x,
-                    children: move |x: u32| render! { text(value: x.to_string()) },
+                    children: move |x: u32| render! { Text(value: x.to_string()) },
                 )
             }
         };
@@ -813,11 +865,11 @@ fn for_reorders_existing_items_visually() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]).split();
         let _h = render! {
-            view {
+            View {
                 ForEach(
                     each: move || items.get(),
                     key: |x: &u32| *x,
-                    children: move |x: u32| render! { text(value: x.to_string()) },
+                    children: move |x: u32| render! { Text(value: x.to_string()) },
                 )
             }
         };
@@ -843,11 +895,11 @@ fn for_removes_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]).split();
         let _h = render! {
-            view {
+            View {
                 ForEach(
                     each: move || items.get(),
                     key: |x: &u32| *x,
-                    children: move |x: u32| render! { text(value: x.to_string()) },
+                    children: move |x: u32| render! { Text(value: x.to_string()) },
                 )
             }
         };
@@ -872,9 +924,9 @@ fn for_removes_items_on_update() {
 fn view_scroll_view_tags_supported() {
     with_recorder(|log| {
         let _ = render! {
-            view {
-                scroll_view {
-                    view()
+            View {
+                ScrollView {
+                    View()
                 }
             }
         };

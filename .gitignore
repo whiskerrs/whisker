@@ -28,7 +28,7 @@ examples/**/gen/
 packages/**/example/gen/
 
 # Native build artifacts under the workspace's Whisker-internal
-# `native/` tree (Lynx AARs, SPM build caches, etc.). These belong to
+# `native/` tree (Android artifacts, SPM build caches, etc.). These belong to
 # the Whisker build, not user projects.
 platforms/android/.gradle/
 platforms/android/build/
@@ -60,6 +60,8 @@ packages/**/Package.resolved
 packages/**/build/
 packages/**/.gradle/
 packages/**/.kotlin/
+packages/**/.whisker-generated/
+packages/**/WhiskerGenerated/
 
 # Per-example Rust workspace artifacts.
 examples/**/target/

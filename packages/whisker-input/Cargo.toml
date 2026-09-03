@@ -9,10 +9,10 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Text-input component for Whisker — a native single-line / multiline field (UITextField / UITextView on iOS, EditText on Android) with Leptos-style two-way binding, placeholder / caret / selection colors, keyboard + return-key configuration, and an imperative focus / blur / clear / value handle."
+description = "Cross-platform text-input element for Whisker with two-way binding, native IME integration, and an imperative focus / blur / clear / value handle."
 
 # Explicit `include` list — mirrors `whisker-image`. A `cargo publish`
-# ships the Kotlin + Swift platform sources alongside `src/lib.rs`,
+# ships the Kotlin, Swift, and Rust Host sources alongside `src/lib.rs`,
 # but never the local Gradle / Xcode build artifacts that would
 # accidentally bloat the published crate if a stale build dir lingers.
 include = [
@@ -22,7 +22,10 @@ include = [
     "src/lib.rs",
     "android/**/*.kt",
     "ios/**/*.swift",
-    "README.md",
+    "desktop/**/*.rs",
+    "desktop/Cargo.toml",
+    "web/**/*.rs",
+    "web/Cargo.toml",
 ]
 
 [lib]
@@ -32,7 +35,11 @@ crate-type = ["rlib"]
 # crate as a Whisker module; `whisker-build` walks the consuming app's
 # dep tree, picks out every dep carrying it, and wires the Android
 # Gradle subproject + iOS SwiftPM package into the host build.
-[package.metadata.whisker]
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { manifest = "Package.swift" }
+web = { manifest = "web/Cargo.toml" }
+desktop = { manifest = "desktop/Cargo.toml" }
 
 [dependencies]
 whisker = { workspace = true }

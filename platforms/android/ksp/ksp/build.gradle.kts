@@ -5,7 +5,7 @@
 //
 // Pure Kotlin/JVM module. The processor itself isn't Android-aware;
 // it just generates Kotlin source. The generated source IS Android-
-// aware (imports Lynx + Android classes) but that lands inside the
+// aware (imports Android Host classes) but that lands inside the
 // user app's gradle build, which has Android available.
 //
 // Published as `rs.whisker:ksp` (short name picked because the
@@ -46,7 +46,7 @@ publishing {
                 name.set("Whisker KSP processor")
                 description.set(
                     "KSP SymbolProcessor that scans the user app's classpath " +
-                        "for rs.whisker.runtime.Module subclasses and emits " +
+                        "for @rs.whisker.runtime.WhiskerModule declarations and emits " +
                         "<Module>Behaviors.kt aggregator source.",
                 )
                 url.set("https://github.com/whiskerrs/whisker")

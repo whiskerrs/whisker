@@ -40,13 +40,12 @@ ksp {
 }
 
 dependencies {
-    // Phase J — single Whisker runtime dep. `ksp("rs.whisker:ksp:0.1.19")`
+    // Phase J — single Whisker runtime dep. `ksp("rs.whisker:ksp:0.1.20")`
     // stays separate (it is a build-time processor, not on the
-    // runtime classpath). Phase M (Issue #59) dropped the
-    // `:annotations` JAR: the KSP processor finds Module subclasses
-    // by inheritance, so no marker annotation is needed.
-    implementation("rs.whisker:whisker-module-android:0.1.19")
-    ksp("rs.whisker:ksp:0.1.19")
+    // runtime classpath). The KSP processor discovers explicit
+    // `@WhiskerModule` declarations from the runtime artifact.
+    implementation("rs.whisker:whisker-module-android:0.1.20")
+    ksp("rs.whisker:ksp:0.1.20")
 
     // Phase 7-Φ.G PoC — an external Maven dependency. AndroidX
     // Collection is small + pure-Kotlin (no native libs), so it

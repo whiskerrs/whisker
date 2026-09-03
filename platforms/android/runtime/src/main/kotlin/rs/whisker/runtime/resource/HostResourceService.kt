@@ -1,0 +1,372 @@
+package rs.whisker.runtime.resource
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Base64
+import java.io.ByteArrayOutputStream
+import java.io.FileNotFoundException
+import java.io.IOException
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+import rs.whisker.runtime.paint.HostRasterResourceStore
+
+/** Observable state of one exact resource generation. */
+enum class HostResourceState {
+    Loading,
+    Ready,
+    Failed,
+    Released,
+}
+
+/** Stable failure classification shared with the mobile resource ABI. */
+enum class HostResourceFailureCode(internal val abiValue: Int) {
+    None(0),
+    NotFound(1),
+    Denied(2),
+    Network(3),
+    Decode(4),
+    Cancelled(5),
+    Unsupported(6),
+}
+
+/** Generation-specific resource state retained outside scene transactions. */
+data class HostResourceSnapshot(
+    val resourceId: Long,
+    val generation: Long,
+    val state: HostResourceState,
+    val width: Int = 0,
+    val height: Int = 0,
+    val failureCode: HostResourceFailureCode = HostResourceFailureCode.None,
+    val diagnostic: String? = null,
+)
+
+internal sealed interface HostRasterSource {
+    data class Bytes(val mediaType: String, val data: ByteArray) : HostRasterSource
+    data class Url(val value: String) : HostRasterSource
+    data class BundledAsset(val value: String) : HostRasterSource
+}
+
+/**
+ * Android-owned raster acquisition and decode lifecycle.
+ *
+ * Network and decode work always runs off the UI thread. Completion publishes
+ * into the paint store only when both ResourceId and generation remain current.
+ */
+internal class HostResourceService(
+    private val rasterStore: HostRasterResourceStore,
+    private val onEvent: (HostResourceSnapshot) -> Unit,
+    private val openBundledAsset: ((String) -> InputStream)? = null,
+    private val executor: ExecutorService = newResourceExecutor(),
+) {
+    private data class Key(val resourceId: Long, val generation: Long)
+
+    private class AcquisitionFailure(
+        val code: HostResourceFailureCode,
+        message: String,
+    ) : Exception(message)
+
+    private val lock = ReentrantLock()
+    private val changed = lock.newCondition()
+    private val highestGeneration = HashMap<Long, Long>()
+    private val snapshots = HashMap<Key, HostResourceSnapshot>()
+
+    fun load(resourceId: Long, generation: Long, source: HostRasterSource): Boolean {
+        if (resourceId == 0L || generation == 0L || !validSource(source)) return false
+        val key = begin(resourceId, generation) ?: return false
+        return try {
+            executor.execute { acquire(key, source) }
+            true
+        } catch (_: RuntimeException) {
+            completeFailure(key, HostResourceFailureCode.Cancelled, "resource executor rejected work")
+            false
+        }
+    }
+
+    fun fail(
+        resourceId: Long,
+        generation: Long,
+        code: HostResourceFailureCode,
+        diagnostic: String? = null,
+    ): Boolean {
+        if (code == HostResourceFailureCode.None) return false
+        val key = begin(resourceId, generation) ?: return false
+        completeFailure(key, code, diagnostic)
+        return true
+    }
+
+    fun release(resourceId: Long, generation: Long): Boolean {
+        if (resourceId == 0L || generation == 0L) return false
+        val snapshot = lock.withLock {
+            val key = Key(resourceId, generation)
+            if (snapshots[key] == null) return false
+            HostResourceSnapshot(resourceId, generation, HostResourceState.Released).also {
+                snapshots[key] = it
+                rasterStore.release(resourceId, generation)
+                changed.signalAll()
+            }
+        }
+        onEvent(snapshot)
+        return true
+    }
+
+    fun snapshot(resourceId: Long, generation: Long): HostResourceSnapshot? =
+        lock.withLock { snapshots[Key(resourceId, generation)] }
+
+    fun awaitTerminal(
+        resourceId: Long,
+        generation: Long,
+        timeoutMillis: Long,
+    ): HostResourceSnapshot? {
+        var remaining = TimeUnit.MILLISECONDS.toNanos(timeoutMillis.coerceAtLeast(0L))
+        lock.lock()
+        try {
+            val key = Key(resourceId, generation)
+            while (true) {
+                val snapshot = snapshots[key] ?: return null
+                if (snapshot.state != HostResourceState.Loading || remaining <= 0L) return snapshot
+                remaining = changed.awaitNanos(remaining)
+            }
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    private fun acquire(key: Key, source: HostRasterSource) {
+        val bitmap = try {
+            val encoded = when (source) {
+                is HostRasterSource.Bytes -> {
+                    if (!source.mediaType.startsWith("image/", ignoreCase = true)) {
+                        throw AcquisitionFailure(
+                            HostResourceFailureCode.Decode,
+                            "raster bytes use non-image media type ${source.mediaType}",
+                        )
+                    }
+                    source.data
+                }
+                is HostRasterSource.Url -> acquireUrl(source.value)
+                is HostRasterSource.BundledAsset -> acquireBundledAsset(source.value)
+            }
+            decodeRaster(encoded)
+                ?: throw AcquisitionFailure(
+                    HostResourceFailureCode.Decode,
+                    "encoded raster could not be decoded",
+                )
+        } catch (error: AcquisitionFailure) {
+            completeFailure(key, error.code, error.message)
+            return
+        } catch (error: FileNotFoundException) {
+            completeFailure(key, HostResourceFailureCode.NotFound, error.message)
+            return
+        } catch (error: SecurityException) {
+            completeFailure(key, HostResourceFailureCode.Denied, error.message)
+            return
+        } catch (error: IOException) {
+            completeFailure(key, HostResourceFailureCode.Network, error.message)
+            return
+        } catch (error: Exception) {
+            completeFailure(key, HostResourceFailureCode.Decode, error.message)
+            return
+        } catch (_: OutOfMemoryError) {
+            completeFailure(key, HostResourceFailureCode.Decode, "raster decode exhausted memory")
+            return
+        }
+        val ready = lock.withLock {
+            val current = snapshots[key]
+            if (
+                highestGeneration[key.resourceId] != key.generation ||
+                current?.state != HostResourceState.Loading
+            ) {
+                null
+            } else if (!rasterStore.register(key.resourceId, key.generation, bitmap)) {
+                HostResourceSnapshot(
+                    key.resourceId,
+                    key.generation,
+                    HostResourceState.Failed,
+                    failureCode = HostResourceFailureCode.Decode,
+                    diagnostic = "decoded raster was rejected by the paint store",
+                ).also {
+                    snapshots[key] = it
+                    changed.signalAll()
+                }
+            } else {
+                HostResourceSnapshot(
+                    key.resourceId,
+                    key.generation,
+                    HostResourceState.Ready,
+                    bitmap.width,
+                    bitmap.height,
+                ).also {
+                    snapshots[key] = it
+                    changed.signalAll()
+                }
+            }
+        }
+        if (ready == null) {
+            bitmap.recycle()
+        } else {
+            onEvent(ready)
+        }
+    }
+
+    private fun completeFailure(
+        key: Key,
+        code: HostResourceFailureCode,
+        diagnostic: String?,
+    ) {
+        val failed = lock.withLock {
+            val current = snapshots[key]
+            if (
+                highestGeneration[key.resourceId] != key.generation ||
+                current?.state != HostResourceState.Loading
+            ) {
+                null
+            } else {
+                HostResourceSnapshot(
+                    key.resourceId,
+                    key.generation,
+                    HostResourceState.Failed,
+                    failureCode = code,
+                    diagnostic = diagnostic,
+                ).also {
+                    snapshots[key] = it
+                    changed.signalAll()
+                }
+            }
+        }
+        if (failed != null) onEvent(failed)
+    }
+
+    private fun begin(resourceId: Long, generation: Long): Key? {
+        if (resourceId == 0L || generation == 0L) return null
+        val key = Key(resourceId, generation)
+        lock.withLock {
+            val highest = highestGeneration[resourceId]
+            if (highest != null && java.lang.Long.compareUnsigned(generation, highest) <= 0) {
+                return null
+            }
+            highestGeneration[resourceId] = generation
+            snapshots[key] = HostResourceSnapshot(resourceId, generation, HostResourceState.Loading)
+            changed.signalAll()
+        }
+        return key
+    }
+
+    private fun acquireUrl(value: String): ByteArray {
+        if (value.startsWith("data:", ignoreCase = true)) return decodeDataUrl(value)
+        val url = URL(value)
+        if (url.protocol != "http" && url.protocol != "https") {
+            throw AcquisitionFailure(
+                HostResourceFailureCode.Unsupported,
+                "unsupported resource URL scheme ${url.protocol}",
+            )
+        }
+        val connection = url.openConnection() as HttpURLConnection
+        return try {
+            connection.connectTimeout = NETWORK_TIMEOUT_MILLIS
+            connection.readTimeout = NETWORK_TIMEOUT_MILLIS
+            connection.instanceFollowRedirects = true
+            connection.requestMethod = "GET"
+            connection.connect()
+            val status = connection.responseCode
+            if (status == HttpURLConnection.HTTP_NOT_FOUND) {
+                throw AcquisitionFailure(HostResourceFailureCode.NotFound, "HTTP $status")
+            }
+            if (status == HttpURLConnection.HTTP_UNAUTHORIZED || status == HttpURLConnection.HTTP_FORBIDDEN) {
+                throw AcquisitionFailure(HostResourceFailureCode.Denied, "HTTP $status")
+            }
+            if (status !in 200..299) {
+                throw AcquisitionFailure(HostResourceFailureCode.Network, "HTTP $status")
+            }
+            if (connection.contentLengthLong > MAX_ENCODED_BYTES) {
+                throw AcquisitionFailure(
+                    HostResourceFailureCode.Decode,
+                    "encoded raster exceeds Host byte limit",
+                )
+            }
+            connection.inputStream.use(::readBounded)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun acquireBundledAsset(value: String): ByteArray {
+        val opener = openBundledAsset ?: throw AcquisitionFailure(
+            HostResourceFailureCode.Unsupported,
+            "bundled assets are unavailable in this Host context",
+        )
+        return try {
+            opener(value).use(::readBounded)
+        } catch (error: FileNotFoundException) {
+            throw AcquisitionFailure(HostResourceFailureCode.NotFound, error.message.orEmpty())
+        }
+    }
+
+    private fun decodeDataUrl(value: String): ByteArray {
+        val comma = value.indexOf(',')
+        require(comma > 5)
+        val metadata = value.substring(5, comma)
+        require(metadata.substringBefore(';').startsWith("image/", ignoreCase = true))
+        require(metadata.split(';').drop(1).any { it.equals("base64", ignoreCase = true) })
+        return Base64.decode(value.substring(comma + 1), Base64.DEFAULT).also {
+            require(it.isNotEmpty() && it.size <= MAX_ENCODED_BYTES)
+        }
+    }
+
+    private fun decodeRaster(encoded: ByteArray): Bitmap? {
+        if (encoded.isEmpty() || encoded.size > MAX_ENCODED_BYTES) return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(encoded, 0, encoded.size, bounds)
+        val width = bounds.outWidth
+        val height = bounds.outHeight
+        if (
+            width <= 0 || height <= 0 || width > MAX_RASTER_AXIS || height > MAX_RASTER_AXIS ||
+            width.toLong() * height.toLong() > MAX_RASTER_PIXELS
+        ) {
+            return null
+        }
+        return BitmapFactory.decodeByteArray(encoded, 0, encoded.size)
+    }
+
+    private fun readBounded(input: java.io.InputStream): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            require(output.size() + count <= MAX_ENCODED_BYTES)
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+
+    private fun validSource(source: HostRasterSource): Boolean = when (source) {
+        is HostRasterSource.Bytes ->
+            source.mediaType.isNotBlank() && source.data.isNotEmpty() &&
+                source.data.size <= MAX_ENCODED_BYTES
+        is HostRasterSource.Url -> source.value.isNotBlank()
+        is HostRasterSource.BundledAsset -> source.value.isNotBlank()
+    }
+
+    private companion object {
+        const val NETWORK_TIMEOUT_MILLIS = 15_000
+        const val MAX_ENCODED_BYTES = 64 * 1024 * 1024
+        const val MAX_RASTER_AXIS = 16_384
+        const val MAX_RASTER_PIXELS = 100_000_000L
+
+        private val threadNumber = AtomicInteger()
+
+        private fun newResourceExecutor(): ExecutorService =
+            Executors.newFixedThreadPool(2) { runnable ->
+                Thread(runnable, "whisker-resource-${threadNumber.incrementAndGet()}").apply {
+                    isDaemon = true
+                }
+            }
+    }
+}

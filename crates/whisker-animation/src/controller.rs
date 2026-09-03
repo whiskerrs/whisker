@@ -1,4 +1,4 @@
-//! [`AnimationController`] + the per-thread [`AnimationScheduler`].
+//! [`AnimationController`] + the per-runtime [`AnimationScheduler`].
 //!
 //! The controller is a state machine driving a `0..1` **progress**
 //! signal. It is *idle when not driving*: `forward` / `reverse` /
@@ -296,22 +296,17 @@ impl ControllerState {
     }
 }
 
-thread_local! {
-    static SCHEDULER: RefCell<AnimationScheduler> =
-        RefCell::new(AnimationScheduler::new());
-}
-
-/// One per runtime thread: holds the set of active controllers and
+/// One per runtime instance: holds the set of active controllers and
 /// advances them each frame. Registered with the runtime's
 /// [`anim_hook`] the first time any controller is created on this
-/// thread, so the driver's `tick_frame` drives it.
+/// instance, so the driver's `tick_frame` drives it.
 struct AnimationScheduler {
     active: Vec<Rc<RefCell<ControllerState>>>,
     /// Most recent timestamp seen from `step` — used as the start time
     /// for a `forward`/`reverse` issued between frames.
     last_ms: f64,
     /// Whether the per-frame callback has been registered with the
-    /// runtime's `anim_hook` for this thread.
+    /// runtime's `anim_hook` for this instance.
     hook_installed: bool,
 }
 
@@ -325,33 +320,50 @@ impl AnimationScheduler {
     }
 }
 
+impl Default for AnimationScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+type Scheduler = Rc<RefCell<AnimationScheduler>>;
+
+fn scheduler() -> Scheduler {
+    whisker_runtime::runtime_local::state::<AnimationScheduler>()
+}
+
 /// Ensure the scheduler's per-frame step callback is registered with
-/// the runtime, so `tick_frame` advances animations on this thread.
-fn ensure_hook_installed() {
-    let already = SCHEDULER.with(|s| {
+/// the runtime, so `tick_frame` advances animations for this instance.
+fn ensure_hook_installed() -> Scheduler {
+    let scheduler = scheduler();
+    let already = {
+        let s = &scheduler;
         let mut s = s.borrow_mut();
         let was = s.hook_installed;
         s.hook_installed = true;
         was
-    });
+    };
     if !already {
-        anim_hook::set_step_callback(Box::new(step));
+        let owned = Rc::clone(&scheduler);
+        anim_hook::set_step_callback(Box::new(move |now_ms| step(&owned, now_ms)));
     }
+    scheduler
 }
 
 /// Advance every active controller by one frame at `now_ms`. Returns
 /// `true` if any controller is still animating afterward. This is the
 /// callback the runtime's `anim_hook` invokes each `tick_frame`.
-fn step(now_ms: f64) -> bool {
+fn step(scheduler: &Scheduler, now_ms: f64) -> bool {
     // Snapshot outside the scheduler borrow: `advance` writes a value
     // signal, scheduling reactive subscribers. None re-enter the
     // scheduler, but the tight borrow window matches the runtime's
     // discipline.
-    let snapshot: Vec<Rc<RefCell<ControllerState>>> = SCHEDULER.with(|s| {
+    let snapshot: Vec<Rc<RefCell<ControllerState>>> = {
+        let s = scheduler;
         let mut s = s.borrow_mut();
         s.last_ms = now_ms;
         s.active.clone()
-    });
+    };
 
     let mut finished: Vec<*const RefCell<ControllerState>> = Vec::new();
     for st in &snapshot {
@@ -361,7 +373,8 @@ fn step(now_ms: f64) -> bool {
         }
     }
 
-    SCHEDULER.with(|s| {
+    {
+        let s = scheduler;
         let mut s = s.borrow_mut();
         if !finished.is_empty() {
             s.active.retain(|st| !finished.contains(&Rc::as_ptr(st)));
@@ -369,7 +382,7 @@ fn step(now_ms: f64) -> bool {
         let any = !s.active.is_empty();
         anim_hook::mark_animating(any);
         any
-    })
+    }
 }
 
 /// Register `state` as active (idempotent) and wake the host so a frame
@@ -381,39 +394,41 @@ fn step(now_ms: f64) -> bool {
 /// clock. We deliberately **do not** touch `velocity` here: the run's
 /// initial velocity is decided by the caller before registering (see the
 /// hand-off note on `AnimationController::start_run`).
-fn register(state: &Rc<RefCell<ControllerState>>) {
-    let already = SCHEDULER.with(|s| {
+fn register(scheduler: &Scheduler, state: &Rc<RefCell<ControllerState>>) {
+    let already = {
+        let s = scheduler;
         let s = s.borrow();
         s.active.iter().any(|a| Rc::ptr_eq(a, state))
-    });
+    };
     {
         let mut st = state.borrow_mut();
         st.start_ms = None;
         st.last_frame_ms = None;
     }
     if !already {
-        SCHEDULER.with(|s| s.borrow_mut().active.push(state.clone()));
+        scheduler.borrow_mut().active.push(state.clone());
     }
     // Report busy before the next `step`, and nudge the host for a frame.
     anim_hook::mark_animating(true);
-    whisker_runtime::host_wake::wake_runtime();
+    whisker_runtime::runtime_wake::wake_runtime();
 }
 
 /// Deregister `state` from the active list (no-op if absent).
-fn deregister(state: &Rc<RefCell<ControllerState>>) {
-    SCHEDULER.with(|s| {
+fn deregister(scheduler: &Scheduler, state: &Rc<RefCell<ControllerState>>) {
+    {
+        let s = scheduler;
         let mut s = s.borrow_mut();
         s.active.retain(|a| !Rc::ptr_eq(a, state));
         if s.active.is_empty() {
             anim_hook::mark_animating(false);
         }
-    });
+    }
 }
 
-/// (Test only) number of currently-active controllers on this thread.
+/// (Test only) number of currently-active controllers in the active runtime.
 #[doc(hidden)]
 pub fn __active_count() -> usize {
-    SCHEDULER.with(|s| s.borrow().active.len())
+    scheduler().borrow().active.len()
 }
 
 /// (Test only) drive one animation frame at monotonic time `now_ms`
@@ -424,16 +439,16 @@ pub fn __active_count() -> usize {
 /// Returns `true` if any controller is still animating.
 #[doc(hidden)]
 pub fn __step_for_tests(now_ms: f64) -> bool {
-    let still = step(now_ms);
+    let still = step(&scheduler(), now_ms);
     whisker_runtime::reactive::flush();
     still
 }
 
-/// (Test only) reset the scheduler thread-local. Pairs with the
+/// (Test only) reset the active runtime's scheduler. Pairs with the
 /// runtime's `__reset_for_tests`.
 #[doc(hidden)]
 pub fn __reset_for_tests() {
-    SCHEDULER.with(|s| *s.borrow_mut() = AnimationScheduler::new());
+    *scheduler().borrow_mut() = AnimationScheduler::new();
     anim_hook::__reset_for_tests();
 }
 
@@ -456,12 +471,13 @@ pub fn __reset_for_tests() {
 #[derive(Clone)]
 pub struct AnimationController {
     state: Rc<RefCell<ControllerState>>,
+    scheduler: Scheduler,
 }
 
 impl AnimationController {
     /// Create a controller for `cfg`, sitting idle at progress `0.0`.
     pub fn new(cfg: AnimConfig) -> Self {
-        ensure_hook_installed();
+        let scheduler = ensure_hook_installed();
         let value = signal(0.0_f32);
         let state = Rc::new(RefCell::new(ControllerState {
             cfg,
@@ -480,13 +496,14 @@ impl AnimationController {
         // Deregister on owner dispose, or a controller created inside a
         // component leaves a dangling frame request behind.
         let weak = Rc::downgrade(&state);
+        let weak_scheduler = Rc::downgrade(&scheduler);
         on_cleanup(move || {
-            if let Some(st) = weak.upgrade() {
-                deregister(&st);
+            if let (Some(st), Some(scheduler)) = (weak.upgrade(), weak_scheduler.upgrade()) {
+                deregister(&scheduler, &st);
             }
         });
 
-        Self { state }
+        Self { state, scheduler }
     }
 
     /// The live progress as a read-only signal (`0.0..=1.0`).
@@ -512,7 +529,7 @@ impl AnimationController {
     /// interrupts a spring that is still moving, the in-flight velocity is
     /// carried into the new target (so a swipe hand-off keeps momentum);
     /// otherwise the run starts from the spring's configured initial
-    /// velocity (default `0`). See [`start_run`](Self::start_run).
+    /// velocity (default `0`).
     pub fn animate_to(&self, target: f32) {
         self.start_run(target, None);
     }
@@ -615,7 +632,7 @@ impl AnimationController {
             st.fire_on_finish(true);
             return;
         }
-        register(&self.state);
+        register(&self.scheduler, &self.state);
     }
 
     /// Halt at the current value. Deregisters from the scheduler; the
@@ -631,7 +648,7 @@ impl AnimationController {
         if was_active {
             self.state.borrow_mut().fire_on_finish(false);
         }
-        deregister(&self.state);
+        deregister(&self.scheduler, &self.state);
     }
 
     /// Set the progress to `v` (clamped `0.0..=1.0`) **once**, without
@@ -646,7 +663,7 @@ impl AnimationController {
             st.velocity = 0.0;
             st.value.set(v);
         }
-        deregister(&self.state);
+        deregister(&self.scheduler, &self.state);
     }
 
     /// Register a callback fired each time a non-repeating run finishes.
@@ -672,7 +689,7 @@ impl AnimationController {
             st.target = 1.0;
             st.active = true;
         }
-        register(&self.state);
+        register(&self.scheduler, &self.state);
     }
 
     /// Ping-pong forever: forward to `1.0`, reverse to `0.0`, repeat.
@@ -687,7 +704,7 @@ impl AnimationController {
             st.target = 1.0;
             st.active = true;
         }
-        register(&self.state);
+        register(&self.scheduler, &self.state);
     }
 
     /// Whether this controller is currently self-driving.

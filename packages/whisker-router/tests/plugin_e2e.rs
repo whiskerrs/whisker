@@ -46,7 +46,6 @@ fn render_manifest(engine: &Engine, label: &str) -> String {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://example.invalid/maven".into(),
-        "https://example.invalid/lynx".into(),
     )
     .unwrap();
     let r#gen = unique_tempdir(label).join("gen/android");

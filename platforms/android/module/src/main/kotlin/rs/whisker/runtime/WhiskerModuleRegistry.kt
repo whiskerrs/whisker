@@ -10,8 +10,7 @@ public typealias WhiskerModuleDispatchFn = (String, Array<WhiskerValue>) -> Whis
 /// Signature of a module's ASYNC dispatch closure. Given a method,
 /// its args, and a [WhiskerPromise] to resolve. Returns true if an
 /// `AsyncFunction` with that name exists (it was invoked and owns the
-/// promise); false if not — the C bridge then falls back to the sync
-/// dispatch.
+/// promise); false if not — the Host then falls back to sync dispatch.
 public typealias WhiskerModuleAsyncDispatchFn =
     (String, Array<WhiskerValue>, WhiskerPromise) -> Boolean
 
@@ -23,10 +22,8 @@ public typealias WhiskerModuleAsyncDispatchFn =
  * resolves the right Kotlin method via a `when (method)` switch and
  * returns a [WhiskerValue].
  *
- * The C bridge (`whisker_bridge_android.cc`) routes
- * `whisker_bridge_invoke_module` through [invokeDispatch] via a
- * single cached static-method JNI call, so there is no per-call
- * reflection.
+ * `WhiskerView` routes calls from its retained Rust runtime through these
+ * functions. Module implementations remain unaware of the transport.
  */
 public object WhiskerModuleRegistry {
     private val dispatchers = ConcurrentHashMap<String, WhiskerModuleDispatchFn>()
@@ -54,11 +51,8 @@ public object WhiskerModuleRegistry {
     }
 
     /**
-     * Invoke the registered dispatcher for [moduleName] with the
-     * given [method] and [args]. The C JNI bridge in
-     * `whisker_bridge_android.cc` looks this static method up once
-     * (cached `jmethodID`) and calls it on every
-     * `whisker_bridge_invoke_module` from Rust.
+     * Invoke the registered dispatcher for [moduleName] with [method] and
+     * [args].
      *
      * Returns `WhiskerValue.Err(...)` rather than throwing on
      * unknown module — keeps the wire shape uniform across happy /
@@ -80,26 +74,22 @@ public object WhiskerModuleRegistry {
     }
 
     /**
-     * Async parallel of [invokeDispatch], called from the C bridge's
-     * `whisker_bridge_invoke_module_async`. Constructs a [WhiskerPromise]
-     * wrapping the bridge callback (passed as raw pointers) and hands it
-     * to the module's async dispatcher.
+     * Async parallel of [invokeDispatch]. The Host supplies [onSettle], which
+     * is wrapped in a one-shot [WhiskerPromise].
      *
      * Returns true if an async dispatcher owned the method (it will fire
-     * the callback later, via [nativeResolveAsync]); false if not — the C
-     * side then falls back to the sync path, so it must NOT have touched
-     * the callback.
+     * the callback later); false if not, allowing the Host to fall back to
+     * the sync path.
      */
     @JvmStatic
     public fun invokeDispatchAsync(
         moduleName: String,
         method: String,
         args: Array<WhiskerValue>,
-        callbackPtr: Long,
-        userDataPtr: Long,
+        onSettle: (WhiskerValue) -> Unit,
     ): Boolean {
         val fn = asyncDispatchers[moduleName] ?: return false
-        val promise = WhiskerPromise(callbackPtr, userDataPtr)
+        val promise = WhiskerPromise(onSettle)
         return try {
             fn(method, args, promise)
         } catch (t: Throwable) {
@@ -110,11 +100,4 @@ public object WhiskerModuleRegistry {
         }
     }
 
-    /**
-     * JNI: invoke the C bridge callback `callbackPtr(userDataPtr, value)`
-     * exactly once, from [WhiskerPromise.resolve]/`reject`. Implemented in
-     * `whisker_bridge_android.cc`.
-     */
-    @JvmStatic
-    public external fun nativeResolveAsync(callbackPtr: Long, userDataPtr: Long, value: WhiskerValue)
 }

@@ -4,7 +4,7 @@
 //!
 //! A build-time config ([`WhiskerSplashScreenConfig`], set in
 //! `whisker.rs`) — the splash image, background color, and resize mode —
-//! that the [`plugin`] turns into the native launch screen:
+//! that the private `plugin` module turns into the native launch screen:
 //!
 //! * **Android**: an Android 12 `SplashScreen` theme
 //!   (`windowSplashScreenBackground` + `windowSplashScreenAnimatedIcon`),

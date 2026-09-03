@@ -83,7 +83,7 @@ fn ios_gen_tree_gets_asset_catalog_and_pbxproj_reference() {
         "{pbxproj}"
     );
     assert!(pbxproj.contains("folder.assetcatalog"), "{pbxproj}");
-    assert!(pbxproj.contains("ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon"));
+    assert!(pbxproj.contains("ASSETCATALOG_COMPILER_APPICON_NAME = \"AppIcon\""));
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -104,7 +104,6 @@ fn android_gen_tree_gets_mipmaps_and_manifest_icon() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
 
@@ -201,13 +200,13 @@ fn ios_icon_bundle_reaches_gen_tree_and_pbxproj() {
     let pbxproj = std::fs::read_to_string(out.join("IconApp.xcodeproj/project.pbxproj")).unwrap();
     assert!(pbxproj.contains("AppIcon.icon in Resources"), "{pbxproj}");
     assert!(pbxproj.contains("folder.iconcomposer.icon"), "{pbxproj}");
-    assert!(pbxproj.contains("ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon"));
+    assert!(pbxproj.contains("ASSETCATALOG_COMPILER_APPICON_NAME = \"AppIcon\""));
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
-fn no_declaration_leaves_gen_trees_icon_free() {
+fn no_declaration_keeps_background_catalog_without_requiring_an_app_icon() {
     let tmp = unique_tempdir();
     let mut app = Config::default();
     app.name("PlainApp").bundle_id("rs.whisker.plain");
@@ -222,6 +221,16 @@ fn no_declaration_leaves_gen_trees_icon_free() {
     let out = tmp.join("gen/ios");
     whisker_cng::ios::sync(&out, &inputs).unwrap();
     assert!(!out.join("Assets.xcassets").exists());
+    assert!(
+        out.join("Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json")
+            .is_file()
+    );
+
+    let pbxproj = std::fs::read_to_string(out.join("PlainApp.xcodeproj/project.pbxproj")).unwrap();
+    assert!(
+        !pbxproj.contains("ASSETCATALOG_COMPILER_APPICON_NAME"),
+        "a plain app must not claim an AppIcon that was not generated",
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

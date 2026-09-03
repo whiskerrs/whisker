@@ -2,8 +2,8 @@
 //
 // Subscribes to the host Activity's `OnBackPressedDispatcher` while at
 // least one Rust subscriber is registered. The Rust half is
-// `AndroidPredictiveBack` in `src/render/gesture.rs`, which drives the
-// same coordinated two-screen scrub as the iOS `SwipeBack`.
+// The Router's internal platform navigation driver uses these events to drive
+// the same coordinated two-screen scrub as the iOS edge-swipe driver.
 //
 // `androidx.activity.OnBackPressedDispatcher` rather than the raw
 // API-33+ `Activity.onBackInvokedDispatcher`, so one code path covers
@@ -36,8 +36,9 @@ import android.view.RoundedCorner
 import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
-import rs.whisker.runtime.HostAttachedListener
+import rs.whisker.runtime.RuntimeAttachedListener
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
@@ -56,6 +57,8 @@ private const val NOT_READY = -1.0
  * `whisker-router:PredictiveBack` module. View-less — registers itself
  * via the dispatch table; the public surface is the four back events.
  */
+
+@WhiskerModule
 public class PredictiveBackModule : Module() {
 
     /**
@@ -76,7 +79,7 @@ public class PredictiveBackModule : Module() {
      * before the WhiskerView attaches to its window — fires once the host
      * becomes available and finishes the deferred `addCallback`.
      */
-    private var pendingAttachListener: HostAttachedListener? = null
+    private var pendingAttachListener: RuntimeAttachedListener? = null
 
     override fun definition(): ModuleDefinition = ModuleDefinition {
         Name("PredictiveBack")
@@ -150,16 +153,16 @@ public class PredictiveBackModule : Module() {
         // cold start the host Activity isn't resolvable yet. Defer the
         // dispatcher registration until WhiskerAppContext signals attach.
         if (pendingAttachListener != null) return
-        val listener = HostAttachedListener {
-            if (callback != null) return@HostAttachedListener
+        val listener = RuntimeAttachedListener {
+            if (callback != null) return@RuntimeAttachedListener
             tryRegisterCallback()
         }
         pendingAttachListener = listener
-        appContext.addOnHostAttachedListener(listener)
+        appContext.addOnRuntimeAttachedListener(listener)
     }
 
     private fun teardown() {
-        pendingAttachListener?.let { appContext.removeOnHostAttachedListener(it) }
+        pendingAttachListener?.let { appContext.removeOnRuntimeAttachedListener(it) }
         pendingAttachListener = null
         callback?.remove()
         callback = null

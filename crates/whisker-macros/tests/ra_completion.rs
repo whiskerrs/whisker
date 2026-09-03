@@ -52,7 +52,7 @@ const RA_VERSION: &str = "2026-05-18";
 
 /// Whether RA surfaced a completion for builder method `name`.
 ///
-/// The built-in builder methods (`style`, `class`, `on_tap`, …) live on
+/// The built-in builder methods (`style`, `dataset`, `on_tap`, …) live on
 /// the `ElementBuilder` trait, and RA labels trait-provided methods as
 /// `name(as ElementBuilder)` to disambiguate them from inherent ones —
 /// selecting either inserts `name`. So accept either form.
@@ -70,7 +70,7 @@ use whisker::runtime::view::Element;
 
 fn probe() -> Element {
     render! {
-        view(sty|)
+        View(sty|)
     }
 }
 "#;
@@ -80,8 +80,31 @@ fn probe() -> Element {
         "expected `style` in completions; got {labels:?}"
     );
     assert!(
-        surfaces_method(&labels, "class"),
-        "expected `class` in completions; got {labels:?}"
+        surfaces_method(&labels, "dataset") && surfaces_method(&labels, "accessibility"),
+        "expected structured common metadata in completions; got {labels:?}"
+    );
+    assert!(
+        !surfaces_method(&labels, "class"),
+        "removed string class API must not be suggested; got {labels:?}"
+    );
+}
+
+#[test]
+fn partial_kwarg_in_compose_completes_the_same_builder_methods() {
+    let source = r#"
+use whisker::prelude::*;
+use whisker::runtime::view::Element;
+
+fn probe() -> Element {
+    compose! {
+        View(sty|)
+    }
+}
+"#;
+    let labels = run_probe("partial_kwarg_in_compose", source);
+    assert!(
+        surfaces_method(&labels, "style"),
+        "compose! kwarg completion must expose `style`; got {labels:?}"
     );
 }
 
@@ -96,7 +119,7 @@ use whisker::runtime::view::Element;
 #[component]
 fn probe() -> Element {
     render! {
-        view(sty|)
+        View(sty|)
     }
 }
 "#;
@@ -115,35 +138,35 @@ use whisker::runtime::view::Element;
 
 fn probe() -> Element {
     render! {
-        vie|
+        Vie|
     }
 }
 "#;
     let labels = run_probe("partial_tag_root", source);
     assert!(
-        labels.iter().any(|l| l == "view"),
-        "expected `view` in completions for partial `vie|`; got {labels:?}"
+        labels.iter().any(|l| l == "View"),
+        "expected `View` in completions for partial `Vie|`; got {labels:?}"
     );
 }
 
 #[test]
 fn props_builder_helper_types_are_hidden_from_completion() {
     // The builder type is `pub` but pure plumbing. `#[component]` tucks
-    // it behind a `#[doc(hidden)]` private module so RA doesn't pollute
-    // the candidate list with `ArtTilePropsBuilder` on every keystroke;
-    // only `ArtTileProps` re-exports outward.
+    // it behind a private module so RA doesn't pollute the candidate list
+    // with `ArtTilePropsBuilder`; only `ArtTileProps` remains exportable for
+    // documentation and type references.
     let source = r#"
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
 #[component]
 fn art_tile(label: &'static str) -> Element {
-    render! { text(value: label) }
+    render! { Text(value: label) }
 }
 
 fn probe() -> Element {
     render! {
-        view() {
+        View() {
             ArtTile|
         }
     }
@@ -188,12 +211,12 @@ use whisker::runtime::view::Element;
 
 #[component]
 fn art_tile(label: &'static str) -> Element {
-    render! { text(value: label) }
+    render! { Text(value: label) }
 }
 
 fn probe() -> Element {
     render! {
-        view() {
+        View() {
             ArtTilePropsBu|
         }
     }
@@ -225,12 +248,12 @@ use whisker::runtime::view::Element;
 
 #[component]
 fn art_tile(label: &'static str) -> Element {
-    render! { text(value: label) }
+    render! { Text(value: label) }
 }
 
 fn probe() -> Element {
     render! {
-        view() {
+        View() {
             Art|
         }
     }
@@ -243,9 +266,9 @@ fn probe() -> Element {
     );
     // The critical items that MUST stay hidden:
     //
-    // 1. snake_case fn `art_tile` — user calls via PascalCase alias.
+    // 1. snake_case fn `art_tile` — user calls via the PascalCase marker.
     // 2. builder struct `ArtTilePropsBuilder` — reached only via
-    //    `ArtTileProps::builder()`, never by name.
+    //    `ArtTile::builder()`, never by name.
     // 3. typed-builder-style markers (`ArtTilePropsBuilder_Error_*`,
     //    `ArtTilePropsBuilder_Repeated_*`) — must stay completely
     //    gone after the hand-rolled builder migration.
@@ -273,7 +296,7 @@ fn probe() -> Element {
 #[test]
 fn partial_user_component_completes_to_pascal_case_alias() {
     // `Art|` in a render! children block should surface the
-    // `ArtTile` PascalCase alias the `#[component]` macro emits
+    // `ArtTile` PascalCase marker the `#[component]` macro emits
     // for `fn art_tile`. Without that alias, only `art_tile` is
     // in scope and `Art…` matches nothing.
     let source = r#"
@@ -282,12 +305,12 @@ use whisker::runtime::view::Element;
 
 #[component]
 fn art_tile(label: &'static str) -> Element {
-    render! { text(value: label) }
+    render! { Text(value: label) }
 }
 
 fn probe() -> Element {
     render! {
-        view() {
+        View() {
             Art|
         }
     }
@@ -296,7 +319,7 @@ fn probe() -> Element {
     let labels = run_probe("partial_user_component", source);
     assert!(
         labels.iter().any(|l| l == "ArtTile"),
-        "expected `ArtTile` PascalCase alias for `fn art_tile`; got {labels:?}"
+        "expected `ArtTile` PascalCase marker for `fn art_tile`; got {labels:?}"
     );
 }
 
@@ -308,16 +331,16 @@ use whisker::runtime::view::Element;
 
 fn probe() -> Element {
     render! {
-        view() {
-            vie|
+        View() {
+            Vie|
         }
     }
 }
 "#;
     let labels = run_probe("partial_tag_child", source);
     assert!(
-        labels.iter().any(|l| l == "view"),
-        "expected `view` in child-position completions for `vie|`; got {labels:?}"
+        labels.iter().any(|l| l == "View"),
+        "expected `View` in child-position completions for `Vie|`; got {labels:?}"
     );
 }
 

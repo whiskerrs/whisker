@@ -130,7 +130,7 @@ pub struct Background {
     /// Image layers, listed first-to-last.
     pub layers: Vec<BackgroundLayer>,
     /// Trailing color.
-    pub color: Option<Color>,
+    pub color: Option<crate::ValueOrVariable<Color>>,
 }
 
 impl Background {
@@ -146,8 +146,8 @@ impl Background {
     }
 
     /// Set the trailing color.
-    pub fn color(mut self, c: Color) -> Self {
-        self.color = Some(c);
+    pub fn color(mut self, c: impl Into<crate::ValueOrVariable<Color>>) -> Self {
+        self.color = Some(c.into());
         self
     }
 }
@@ -176,8 +176,81 @@ impl Css {
     /// Sets the `background` shorthand.
     /// <https://lynxjs.org/api/css/properties/background>
     pub fn background(self, b: Background) -> Self {
-        self.push("background", b)
+        let serialized_value = b.to_css_string();
+        let value = background_value(&b)
+            .expect("background positions combine one horizontal and one vertical component");
+        self.push_semantic(crate::StyleProperty::Background, value, serialized_value)
     }
+}
+
+fn background_value(background: &Background) -> Option<whisker_style::StyleValue> {
+    use whisker_style::{
+        BackgroundAttachmentValue, BackgroundBoxValue, BackgroundLayerValue,
+        BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundRepeatValue,
+        BackgroundSizeValue, BackgroundValue, ColorValue, LengthPercentageValue, StyleNumber,
+        StyleValue,
+    };
+
+    let zero = || LengthPercentageValue::Percentage(StyleNumber::new(0.0));
+    let default_position = || BackgroundPositionValue {
+        horizontal: zero(),
+        vertical: zero(),
+    };
+    let default_repeat = BackgroundRepeatValue {
+        horizontal: BackgroundRepeatModeValue::Repeat,
+        vertical: BackgroundRepeatModeValue::Repeat,
+    };
+    let layers = background
+        .layers
+        .iter()
+        .map(|layer| {
+            Some(BackgroundLayerValue {
+                image: crate::prop::background::background_image_value(&layer.image),
+                position: match layer.position.clone() {
+                    Some(position) => crate::prop::background::background_position_value(position)?,
+                    None => default_position(),
+                },
+                size: layer
+                    .size
+                    .clone()
+                    .map(crate::prop::background::background_size_value)
+                    .unwrap_or(BackgroundSizeValue::Auto),
+                repeat: layer
+                    .repeat
+                    .map(crate::prop::background::background_repeat_value)
+                    .unwrap_or(default_repeat),
+                origin: match layer.origin.unwrap_or(BackgroundOrigin::PaddingBox) {
+                    BackgroundOrigin::BorderBox => BackgroundBoxValue::Border,
+                    BackgroundOrigin::PaddingBox => BackgroundBoxValue::Padding,
+                    BackgroundOrigin::ContentBox => BackgroundBoxValue::Content,
+                },
+                clip: match layer.clip.unwrap_or(BackgroundClip::BorderBox) {
+                    BackgroundClip::BorderBox => BackgroundBoxValue::Border,
+                    BackgroundClip::PaddingBox => BackgroundBoxValue::Padding,
+                    BackgroundClip::ContentBox => BackgroundBoxValue::Content,
+                    BackgroundClip::BorderArea => BackgroundBoxValue::BorderArea,
+                },
+                attachment: match layer.attachment.unwrap_or(BackgroundAttachment::Scroll) {
+                    BackgroundAttachment::Scroll => BackgroundAttachmentValue::Scroll,
+                    BackgroundAttachment::Fixed => BackgroundAttachmentValue::Fixed,
+                    BackgroundAttachment::Local => BackgroundAttachmentValue::Local,
+                },
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let color = background.color.as_ref().map_or_else(
+        || {
+            ColorValue::Rgba {
+                red: 0,
+                green: 0,
+                blue: 0,
+                alpha: StyleNumber::new(0.0),
+            }
+            .into()
+        },
+        crate::style_value::to_color_component,
+    );
+    Some(StyleValue::Background(BackgroundValue { layers, color }))
 }
 
 #[cfg(test)]
@@ -194,6 +267,7 @@ mod tests {
     fn background_color_only() {
         let s = Css::new().background(Background::new().color(Color::Named(NamedColor::Red)));
         assert_eq!(s.to_string(), "background: red;");
+        let _ = s.to_specified_style();
     }
 
     #[test]
@@ -207,8 +281,8 @@ mod tests {
     #[test]
     fn background_gradient_with_color_trailing() {
         let layer = BackgroundLayer::new(Gradient::linear_to_bottom([
-            ColorStop::new(NamedColor::Red.into()),
-            ColorStop::new(NamedColor::Blue.into()),
+            ColorStop::new(Color::Named(NamedColor::Red)),
+            ColorStop::new(Color::Named(NamedColor::Blue)),
         ]));
         let s = Css::new().background(
             Background::new()
@@ -219,6 +293,7 @@ mod tests {
             s.to_string(),
             "background: linear-gradient(to bottom, red, blue) white;"
         );
+        let _ = s.to_specified_style();
     }
 
     #[test]
@@ -231,6 +306,7 @@ mod tests {
             s.to_string(),
             "background: url(\"top.png\") no-repeat, url(\"base.png\");"
         );
+        let _ = s.to_specified_style();
     }
 
     #[test]
@@ -240,6 +316,27 @@ mod tests {
             .size(BackgroundSize::Cover);
         let s = Css::new().background(Background::new().layer(layer));
         assert_eq!(s.to_string(), "background: url(\"a.png\") center / cover;");
+        let _ = s.to_specified_style();
+    }
+
+    #[test]
+    fn background_layer_propagates_size_format_errors() {
+        struct RejectCover;
+
+        impl fmt::Write for RejectCover {
+            fn write_str(&mut self, value: &str) -> fmt::Result {
+                if value == "cover" {
+                    Err(fmt::Error)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let layer = BackgroundLayer::new(ImageRef::None)
+            .position(Position::Keyword(PositionKeyword::Center))
+            .size(BackgroundSize::Cover);
+        assert_eq!(layer.to_css(&mut RejectCover), Err(fmt::Error));
     }
 
     #[test]

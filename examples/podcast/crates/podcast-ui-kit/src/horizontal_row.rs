@@ -1,6 +1,6 @@
 //! Horizontally-scrolling row of arbitrary children.
 //!
-//! Wraps a Lynx `scroll-view` with `scroll_orientation: horizontal`
+//! Wraps a `scroll_view` with `axis: ScrollAxis::Horizontal`
 //! and applies the page gutter as left padding so the first card
 //! visually aligns with the section header. Cards inside provide
 //! their own intrinsic widths.
@@ -13,29 +13,26 @@ use whisker::runtime::view::Element;
 
 #[component]
 pub fn horizontal_row(children: Children) -> Element {
+    let projected = children.clone();
     render! {
-        // `bounces: true` → iOS rubber-banding at the ends;
-        // `scroll_bar_enable: false` → Apple-style podcast browsers
-        // don't show a scroll bar.
-        scroll_view(
+        // Host scrolling behavior stays at the standard ScrollView defaults.
+        ScrollView(
             style: css!(width: percent(100), display: Display::Flex),
-            scroll_orientation: ScrollOrientation::Horizontal,
-            scroll_bar_enable: false,
-            bounces: true,
+            axis: ScrollAxis::Horizontal,
         ) {
             // Inner content row — cards laid out left-to-right with
             // `GUTTER` of breathing room at either side of the row.
             // Card-to-card gap is the caller's concern (the browse
             // screen inserts manual spacer views) so this component
             // stays style-agnostic.
-            view(style: css!(
+            View(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::FlexStart,
                 padding_left: theme::GUTTER,
                 padding_right: theme::GUTTER,
             )) {
-                children()
+                { projected() }
             }
         }
     }

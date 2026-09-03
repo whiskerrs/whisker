@@ -49,6 +49,8 @@
 //! `packages/whisker-svg/{ios,android}/`. Icon bytes are vendored
 //! under `packages/whisker-icons/vendor/lucide/`.
 
+use whisker::css::ext::{em, percent, px, rem, vh, vw};
+use whisker::css::{Css, Size};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_svg::Svg;
@@ -72,15 +74,26 @@ pub fn icon(svg: Signal<String>, color: Signal<String>, size: Signal<String>) ->
     let style = computed(move || {
         let raw = size.get();
         let t = raw.trim();
-        // A bare number means `px`; anything with a unit passes through.
-        let has_unit = ["px", "em", "rem", "%", "vw", "vh"]
-            .iter()
-            .any(|u| t.ends_with(u));
-        if has_unit {
-            format!("width: {t}; height: {t};")
+        let value = |suffix: &str| {
+            t.strip_suffix(suffix)
+                .and_then(|value| value.trim().parse::<f32>().ok())
+        };
+        let size: Size = if let Some(value) = value("rem") {
+            rem(value).into()
+        } else if let Some(value) = value("px") {
+            px(value).into()
+        } else if let Some(value) = value("em") {
+            em(value).into()
+        } else if let Some(value) = value("vw") {
+            vw(value).into()
+        } else if let Some(value) = value("vh") {
+            vh(value).into()
+        } else if let Some(value) = value("%") {
+            percent(value).into()
         } else {
-            format!("width: {t}px; height: {t}px;")
-        }
+            px(t.parse::<f32>().unwrap_or_default()).into()
+        };
+        Css::new().width(size.clone()).height(size)
     });
 
     render! {

@@ -50,10 +50,10 @@ impl Owner {
             let mut scope = Scope::new(parent);
             scope.paused = parent_paused;
             let id = rt.owners.insert(scope);
-            if let Some(p) = parent {
-                if let Some(parent_scope) = rt.owners.get_mut(p) {
-                    parent_scope.children.push(id);
-                }
+            if let Some(p) = parent
+                && let Some(parent_scope) = rt.owners.get_mut(p)
+            {
+                parent_scope.children.push(id);
             }
             id
         })
@@ -325,7 +325,7 @@ impl Owner {
             true
         });
         if any_resumed {
-            crate::host_wake::wake_runtime();
+            crate::runtime_wake::wake_runtime();
         }
     }
 

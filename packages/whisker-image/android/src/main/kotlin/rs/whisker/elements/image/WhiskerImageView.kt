@@ -1,6 +1,4 @@
-// Lynx UI subclass hosting an ImageView + Coil-driven URL loading.
-// Registration is driven by `ImageModule`'s `definition()`, not by
-// annotations on this class.
+// Whisker module element hosting an ImageView with Coil-driven URL loading.
 
 package rs.whisker.elements.image
 
@@ -10,8 +8,6 @@ import coil.dispose
 import coil.load
 import coil.request.CachePolicy
 import coil.request.Disposable
-import coil.transform.RoundedCornersTransformation
-import com.lynx.tasm.behavior.StylesDiffMap
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerCustomEvent
 import rs.whisker.runtime.WhiskerUI
@@ -21,45 +17,11 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
     private var currentSrc: String? = null
     private var currentHeaders: Map<String, String> = emptyMap()
     private var currentRequest: Disposable? = null
-    /// Corner radius in **device pixels** — Lynx's CSS pipeline has
-    /// already converted it, and Coil's `RoundedCornersTransformation`
-    /// takes pixels too, so it passes straight through. `0f` = no rounding.
-    private var cornerRadiusPx: Float = 0f
-
     override fun createView(context: Context): ImageView {
         val v = ImageView(context)
-        // `CENTER_CROP` matches the Lynx `mode` default of `aspectFill`.
+        // `CENTER_CROP` matches the module's `aspectFill` default.
         v.scaleType = ImageView.ScaleType.CENTER_CROP
         return v
-    }
-
-    /// Whisker-registered custom UIs ship without an APT-generated
-    /// `$$PropsSetter`, so Lynx's per-key dispatch never reaches the typed
-    /// `setBorderRadius(int, ReadableArray)` hook on `LynxBaseUI`. The
-    /// kebab-case `border-*-radius` entries DO land in
-    /// `StylesDiffMap.mBackingMap`, so they have to be read out here.
-    ///
-    /// Lynx splits the shorthand into four per-corner properties, each a
-    /// `[x_px, x_unit, y_px, y_unit]` PlatformLength quartet with x_px
-    /// already density-multiplied. `RoundedCornersTransformation` takes one
-    /// uniform float, so this collapses to the largest corner.
-    override fun updatePropertiesInterval(props: StylesDiffMap?) {
-        super.updatePropertiesInterval(props)
-        val map = props?.mBackingMap ?: return
-        var maxPx = 0f
-        var sawAny = false
-        for (k in CORNER_KEYS) {
-            if (!map.hasKey(k)) continue
-            val arr = map.getArray(k) ?: continue
-            if (arr.size() < 1) continue
-            sawAny = true
-            val px = arr.getDouble(0).toFloat()
-            if (px > maxPx) maxPx = px
-        }
-        if (sawAny && maxPx != cornerRadiusPx) {
-            cornerRadiusPx = maxPx
-            reload()
-        }
     }
 
     /**
@@ -94,10 +56,9 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
         }.getOrDefault(emptyMap())
     }
 
-    /// Backing of the `mode` prop, mapping the Lynx-convention mode
-    /// strings onto `ImageView.ScaleType`.
+    /// Backing of the `mode` prop, mapping module values to `ImageView.ScaleType`.
     fun setMode(value: String) {
-        val imageView = view ?: return
+        val imageView = view()
         imageView.scaleType = when (value) {
             "aspectFill" -> ImageView.ScaleType.CENTER_CROP
             "aspectFit" -> ImageView.ScaleType.FIT_CENTER
@@ -109,11 +70,11 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
 
     /**
      * Issue (or re-issue) a Coil request for the current `src` with the
-     * current `cornerRadiusPx`.
+     * current request options.
      */
     private fun reload() {
         val src = currentSrc ?: return
-        val imageView = view ?: return
+        val imageView = view()
 
         // `dispose()` is a no-op on an already-completed disposable.
         currentRequest?.dispose()
@@ -166,18 +127,6 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
             }
             memoryCachePolicy(CachePolicy.ENABLED)
             diskCachePolicy(CachePolicy.ENABLED)
-            if (cornerRadiusPx > 0f) {
-                transformations(RoundedCornersTransformation(cornerRadiusPx))
-            }
         }
-    }
-
-    private companion object {
-        val CORNER_KEYS = listOf(
-            "border-top-left-radius",
-            "border-top-right-radius",
-            "border-bottom-right-radius",
-            "border-bottom-left-radius",
-        )
     }
 }

@@ -4,7 +4,7 @@
 //!
 //! ```text
 //!   ┌───────────────────────────┐
-//!   │  ← back   title           │   top bar (safe-area inset)
+//!   │  ← back   title           │   top Bar (safe-area inset)
 //!   ├───────────────────────────┤
 //!   │       ╔═══════════╗       │
 //!   │       ║           ║       │   large artwork
@@ -125,28 +125,26 @@ fn detail_body(podcast: Podcast) -> Element {
     let meta_line = build_meta_line(genre, track_count, is_explicit);
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_shrink: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             background_color: theme::BG,
         )) {
-            top_bar(title: "Show".to_string())
-            scroll_view(
+            TopBar(title: "Show".to_string())
+            ScrollView(
                 style: css!(
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                     width: percent(100),
                 ),
-                scroll_orientation: ScrollOrientation::Vertical,
-                scroll_bar_enable: false,
-                bounces: true,
+                axis: ScrollAxis::Vertical,
             ) {
                 // Hero block — artwork + title metadata. Padded
                 // horizontally by the page gutter so it visually
                 // aligns with the section content below.
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
@@ -161,11 +159,11 @@ fn detail_body(podcast: Podcast) -> Element {
                             height: px(220),
                             border_radius: theme::ARTWORK_RADIUS,
                             background_color: theme::SURFACE,
-                        ).raw("aspect-ratio", "1 / 1"),
+                        ).aspect_ratio(1.0, 1.0),
                         src: artwork_src,
                         mode: ImageMode::AspectFill,
                     )
-                    text(
+                    Text(
                         style: css!(
                             font_size: px(22),
                             color: theme::TEXT_PRIMARY,
@@ -173,10 +171,10 @@ fn detail_body(podcast: Podcast) -> Element {
                             margin_top: px(16),
                             text_align: TextAlign::Center,
                             text_overflow: TextOverflow::Ellipsis,
-                        ).raw("text-maxline", "3"),
+                        ),
                         value: title,
                     )
-                    text(
+                    Text(
                         style: css!(
                             font_size: px(15),
                             color: theme::ACCENT,
@@ -185,7 +183,7 @@ fn detail_body(podcast: Podcast) -> Element {
                         ),
                         value: artist,
                     )
-                    text(
+                    Text(
                         style: css!(
                             font_size: px(13),
                             color: theme::TEXT_SECONDARY,
@@ -194,12 +192,12 @@ fn detail_body(podcast: Podcast) -> Element {
                         ),
                         value: meta_line,
                     )
-                    follow_pill()
+                    FollowPill()
                 }
                 // Episodes section header + list. `Show` toggles
                 // between the loading / error placeholder and the
                 // populated list once the resource resolves.
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Column,
                     padding_left: theme::GUTTER,
@@ -207,7 +205,7 @@ fn detail_body(podcast: Podcast) -> Element {
                     padding_top: px(8),
                     padding_bottom: px(96),
                 )) {
-                    text(
+                    Text(
                         style: css!(
                             font_size: theme::T_SECTION,
                             color: theme::TEXT_PRIMARY,
@@ -219,14 +217,14 @@ fn detail_body(podcast: Podcast) -> Element {
                     Show(
                         when: move || episodes.get().is_some(),
                         fallback: move || render! {
-                            episode_status(message: if episodes.error().is_some() {
+                            EpisodeStatus(message: if episodes.error().is_some() {
                                 "Couldn't load episodes.".to_string()
                             } else {
                                 "Loading…".to_string()
                             })
                         },
                     ) {
-                        episode_list(
+                        EpisodeList(
                             episodes: episodes.get().unwrap_or_default(),
                             show_title: show_title.clone(),
                             show_artwork: show_artwork.clone(),
@@ -268,6 +266,7 @@ fn build_meta_line(genre: Option<String>, track_count: u32, is_explicit: bool) -
 /// [`Navigator::go_back`] from context (provided by the host).
 #[component]
 fn top_bar(title: String) -> Element {
+    let body_title = title.clone();
     let insets = safe_area_insets();
     let on_back = use_context::<Navigator>()
         .expect("top_bar requires Navigator in context")
@@ -282,8 +281,8 @@ fn top_bar(title: String) -> Element {
     });
 
     render! {
-        view(style: wrapper_style) {
-            view(style: css!(
+        View(style: wrapper_style) {
+            View(style: css!(
                 width: percent(100),
                 min_height: theme::NAV_HEIGHT,
                 flex_shrink: 0.0,
@@ -293,7 +292,7 @@ fn top_bar(title: String) -> Element {
                 padding_left: theme::GUTTER,
                 padding_right: theme::GUTTER,
             )) {
-                view(
+                View(
                     style: css!(
                         flex_grow: 1.0,
                         flex_shrink: 1.0,
@@ -311,7 +310,7 @@ fn top_bar(title: String) -> Element {
                         size: "26",
                     )
                 }
-                view(style: css!(
+                View(style: css!(
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                     flex_basis: percent(0),
@@ -320,19 +319,19 @@ fn top_bar(title: String) -> Element {
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::Center,
                 )) {
-                    text(
+                    Text(
                         style: css!(
                             font_size: theme::T_NAV_TITLE,
                             color: theme::TEXT_PRIMARY,
                             font_weight: FontWeight::Numeric(600),
                         ),
-                        value: title.clone(),
+                        value: body_title.clone(),
                     )
                 }
                 // Right-side spacer keeps the title genuinely
                 // centered — without it the title slides leftward
                 // by the chevron's width.
-                view(style: css!(
+                View(style: css!(
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                     flex_basis: percent(0),
@@ -347,7 +346,7 @@ fn top_bar(title: String) -> Element {
 #[component]
 fn follow_pill() -> Element {
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
@@ -361,7 +360,7 @@ fn follow_pill() -> Element {
             background_color: theme::SURFACE,
         )) {
             Icon(svg: lucide::Plus, color: "#ffffff", size: "16")
-            text(
+            Text(
                 style: css!(
                     font_size: px(14),
                     color: theme::TEXT_PRIMARY,
@@ -378,8 +377,9 @@ fn follow_pill() -> Element {
 /// placeholder used so layout doesn't shift between resource states.
 #[component]
 fn episode_status(message: String) -> Element {
+    let body_message = message.clone();
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
@@ -389,13 +389,13 @@ fn episode_status(message: String) -> Element {
             border_radius: px(12),
             background_color: theme::SURFACE,
         )) {
-            text(
+            Text(
                 style: css!(
                     font_size: px(14),
                     color: theme::TEXT_SECONDARY,
                     text_align: TextAlign::Center,
                 ),
-                value: message.clone(),
+                value: body_message.clone(),
             )
         }
     }
@@ -406,22 +406,25 @@ fn episode_status(message: String) -> Element {
 /// surface the show title + artwork without a back-channel lookup.
 #[component]
 fn episode_list(episodes: Vec<Episode>, show_title: String, show_artwork: String) -> Element {
+    let episodes = StoredValue::new(episodes.clone());
+    let show_title = StoredValue::new(show_title.clone());
+    let show_artwork = StoredValue::new(show_artwork.clone());
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
         )) {
             ForEach(
                 each: {
-                    let items = episodes.clone();
+                    let items = episodes.get();
                     move || items.clone()
                 },
                 key: |ep: &Episode| ep.id,
                 children: {
-                    let show_title = show_title.clone();
-                    let show_artwork = show_artwork.clone();
+                    let show_title = show_title.get();
+                    let show_artwork = show_artwork.get();
                     move |ep: Episode| render! {
-                        episode_row(
+                        EpisodeRow(
                             episode: ep,
                             show_title: show_title.clone(),
                             show_artwork: show_artwork.clone(),
@@ -475,7 +478,7 @@ fn episode_row(episode: Episode, show_title: String, show_artwork: String) -> El
     };
 
     render! {
-        view(
+        View(
             style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
@@ -485,16 +488,16 @@ fn episode_row(episode: Episode, show_title: String, show_artwork: String) -> El
             ),
             on_tap: on_tap,
         ) {
-            text(
+            Text(
                 style: css!(
                     font_size: px(15),
                     color: theme::TEXT_PRIMARY,
                     font_weight: FontWeight::Numeric(600),
                     text_overflow: TextOverflow::Ellipsis,
-                ).raw("text-maxline", "2"),
+                ),
                 value: title.clone(),
             )
-            text(
+            Text(
                 style: css!(
                     font_size: px(12),
                     color: theme::TEXT_SECONDARY,
@@ -572,15 +575,15 @@ fn short_duration(ms: u64) -> String {
 /// link before browse populated the cache, or the id is bogus).
 fn not_found() -> Element {
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_shrink: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             background_color: theme::BG,
         )) {
-            top_bar(title: "Show".to_string())
-            view(style: css!(
+            TopBar(title: "Show".to_string())
+            View(style: css!(
                 flex_grow: 1.0,
                 flex_shrink: 1.0,
                 display: Display::Flex,
@@ -590,7 +593,7 @@ fn not_found() -> Element {
                 padding_left: theme::GUTTER,
                 padding_right: theme::GUTTER,
             )) {
-                text(
+                Text(
                     style: css!(
                         font_size: px(16),
                         color: theme::TEXT_SECONDARY,

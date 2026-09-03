@@ -9,10 +9,8 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Raw FFI + C++ bridge sources for the Whisker driver. Internal — use `whisker-driver` for the safe wrappers."
-links = "whisker_bridge_static"
+description = "Raw native Host ABI shared by Whisker's Rust runtime and platform drivers."
 build = "build.rs"
 
 [build-dependencies]
-anyhow = { workspace = true }
 cc = "1"

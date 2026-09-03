@@ -5,9 +5,9 @@
 // (no host-side `WhiskerActivity` / `WhiskerView` /
 // `WhiskerModuleRegistry`).
 //
-// Published as `rs.whisker:whisker-module-android`. The `lynxFork`
-// / `whiskerSdkRelease` Gradle property toggle works the same way
-// as in `:whisker-runtime` — see that file's header comment.
+// Published independently as `rs.whisker:whisker-module-android` so native
+// modules can depend on the authoring API without pulling in WhiskerView and
+// the Host renderer.
 
 plugins {
     id("com.android.library")
@@ -54,29 +54,14 @@ android {
     }
 }
 
-val whiskerSdkRelease = providers.gradleProperty("whiskerSdkRelease").orNull == "true"
-val lynxFork = providers.gradleProperty("lynxFork").getOrElse("v4.0.1-whisker.2").removePrefix("v")
-
 dependencies {
-    if (whiskerSdkRelease) {
-        api("rs.whisker:lynx-android:$lynxFork")
-        api("rs.whisker:lynx-base-android:$lynxFork")
-        api("rs.whisker:lynx-trace-android:$lynxFork")
-        api("rs.whisker:lynx-service-api-android:$lynxFork")
-    } else {
-        api(":LynxAndroid@aar")
-        api(":LynxBase@aar")
-        api(":LynxTrace@aar")
-        api(":ServiceAPI@aar")
-    }
-    api("org.lynxsdk.lynx:primjs:4.0.0")
-
     // `WhiskerInsetsDispatcher` exposes `WindowInsetsCompat` in its
     // public API and calls `ViewCompat.setOnApplyWindowInsetsListener` /
     // `getRootWindowInsets`. `api` (not `implementation`) so consuming
     // modules see `WindowInsetsCompat` on their compile classpath when
     // they write an inset callback.
     api("androidx.core:core-ktx:1.13.1")
+    testImplementation("junit:junit:4.13.2")
 
     // No annotation re-export needed (Phase M / Issue #59): a
     // module's `build.gradle.kts` depends on this AAR alone for

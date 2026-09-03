@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "id": "core.text-wrap-overflow-lynx",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 420, "height": 210, "scale": 1 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          { "id": 1, "parent": null, "rect": [10, 10, 120, 80], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "ordinary wrapping words", "font_size": 18, "color": { "kind": "named", "value": "black" }, "white_space": "normal", "word_break": "normal" } },
+          { "id": 2, "parent": null, "rect": [150, 10, 120, 40], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "never wrap this text", "font_size": 18, "color": { "kind": "named", "value": "black" }, "white_space": "no_wrap", "word_break": "normal" } },
+          { "id": 3, "parent": null, "rect": [290, 10, 70, 80], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "abcdefghijklmnop", "font_size": 18, "color": { "kind": "named", "value": "black" }, "white_space": "normal", "word_break": "break_all" } },
+          { "id": 4, "parent": null, "rect": [10, 110, 120, 80], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "日本語の語句", "font_size": 18, "color": { "kind": "named", "value": "black" }, "white_space": "normal", "word_break": "keep_all" } },
+          { "id": 5, "parent": null, "rect": [150, 110, 150, 30], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "this line is deliberately too long", "font_size": 18, "color": { "kind": "named", "value": "black" }, "white_space": "no_wrap", "word_break": "normal", "max_lines": 1, "overflow": "ellipsis" } }
+        ]
+      },
+      { "type": "checkpoint", "name": "paint.text.wrap-overflow-lynx" }
+    ]
+  }
+}

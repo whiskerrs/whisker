@@ -1,9 +1,5 @@
 package rs.whisker.runtime
 
-import com.lynx.react.bridge.ReadableArray
-import com.lynx.react.bridge.ReadableMap
-import com.lynx.react.bridge.ReadableType
-
 /**
  * WhiskerValue — Kotlin mirror of the Rust `whisker::platform_module::
  * WhiskerValue` tagged union. Used by `Module`-subclass methods as
@@ -65,6 +61,14 @@ public sealed class WhiskerValue {
     }
     public fun asBytes(): ByteArray? = (this as? Bytes)?.value
 
+    /** Whether this value is transferable application data rather than a call failure. */
+    public fun isData(): Boolean = when (this) {
+        is Array -> value.all { it.isData() }
+        is Map -> value.values.all { it.isData() }
+        is Err -> false
+        else -> true
+    }
+
     public companion object {
         /**
          * Convert a Java Object[] (from the JNI bridge) into a
@@ -80,79 +84,12 @@ public sealed class WhiskerValue {
             }
         }
 
-        /**
-         * Decode a Lynx `ReadableMap` (the `params` argument
-         * `LynxUIMethodsExecutor` hands the method forwarder) into the
-         * `List<WhiskerValue>` shape method authors expect.
-         *
-         * Convention: `whisker_bridge_invoke_element_method` packs the
-         * Rust-side `&[WhiskerValue]` into `{"args": [...]}` — a single
-         * key `args` holding a `ReadableArray` of positional entries.
-         * Each entry decodes recursively. A missing key or non-array
-         * shape yields an empty list rather than an error, so the user
-         * method still runs (with no args).
-         */
-        @JvmStatic
-        public fun fromReadableMap(params: ReadableMap?): List<WhiskerValue> {
-            if (params == null || !params.hasKey("args")) return emptyList()
-            val array = params.getArray("args") ?: return emptyList()
-            return List(array.size()) { i -> readableArrayValue(array, i) }
-        }
-
-        private fun readableArrayValue(arr: ReadableArray, i: kotlin.Int): WhiskerValue {
-            return when (arr.getType(i)) {
-                ReadableType.Null -> Null
-                ReadableType.Boolean -> Bool(arr.getBoolean(i))
-                ReadableType.Int -> Int(arr.getInt(i).toLong())
-                ReadableType.Long -> Int(arr.getLong(i))
-                ReadableType.Number -> Float(arr.getDouble(i))
-                ReadableType.String -> Str(arr.getString(i) ?: "")
-                ReadableType.Map -> Map(readableMapToMap(arr.getMap(i)))
-                ReadableType.Array -> Array(readableArrayToList(arr.getArray(i)))
-                ReadableType.ByteArray -> Bytes(arr.getByteArray(i) ?: ByteArray(0))
-                // ReadableType has additional variants for Lynx-
-                // internal payloads (PiperData / LynxObject /
-                // ByteBuffer / TemplateData). They never appear in
-                // user-emitted method-args payloads, but the `when`
-                // needs an exhaustive branch.
-                else -> Err("unsupported ReadableType in @WhiskerUIMethod args")
-            }
-        }
-
-        private fun readableMapToMap(map: ReadableMap?): kotlin.collections.Map<String, WhiskerValue> {
-            if (map == null) return emptyMap()
-            val out = LinkedHashMap<String, WhiskerValue>()
-            val iter = map.keySetIterator()
-            while (iter.hasNextKey()) {
-                val key = iter.nextKey()
-                out[key] = when (map.getType(key)) {
-                    ReadableType.Null -> Null
-                    ReadableType.Boolean -> Bool(map.getBoolean(key))
-                    ReadableType.Int -> Int(map.getInt(key).toLong())
-                    ReadableType.Long -> Int(map.getLong(key))
-                    ReadableType.Number -> Float(map.getDouble(key))
-                    ReadableType.String -> Str(map.getString(key) ?: "")
-                    ReadableType.Map -> Map(readableMapToMap(map.getMap(key)))
-                    ReadableType.Array -> Array(readableArrayToList(map.getArray(key)))
-                    ReadableType.ByteArray -> Bytes(map.getByteArray(key) ?: ByteArray(0))
-                    else -> Err("unsupported ReadableType for key $key")
-                }
-            }
-            return out
-        }
-
-        private fun readableArrayToList(arr: ReadableArray?): List<WhiskerValue> {
-            if (arr == null) return emptyList()
-            return List(arr.size()) { i -> readableArrayValue(arr, i) }
-        }
     }
 }
 
 /**
  * Encode a [WhiskerValue] into a Java-compatible nested
- * map/list/primitive tree suitable for handing to Lynx's
- * `Callback.invoke(code, result)`. The host JS / bridge then sees the
- * value via Lynx's standard `Callback` -> JNI marshalling.
+ * map/list/primitive tree suitable for handing to the JNI Host adapter.
  *
  * `Bytes` is emitted as a `ByteArray` (passes through JNI as
  * `byte[]`). `Err` becomes a `mapOf("error" to message)` since

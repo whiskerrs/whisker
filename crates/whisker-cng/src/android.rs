@@ -10,9 +10,7 @@
 //! │   └── src/main/
 //! │       ├── AndroidManifest.xml
 //! │       ├── jniLibs/                          (populated at build time)
-//! │       └── kotlin/<package-path>/
-//! │           ├── MainActivity.kt
-//! │           └── <AppName>Application.kt
+//! │       └── kotlin/<package-path>/MainActivity.kt
 //! ├── build.gradle.kts
 //! ├── settings.gradle.kts
 //! ├── gradle.properties
@@ -43,9 +41,12 @@ use crate::render::{escape_xml, render};
 
 const APP_BUILD_GRADLE_KTS: &str = include_str!("templates/android/app/build.gradle.kts");
 const APP_MANIFEST_XML: &str = include_str!("templates/android/app/src/main/AndroidManifest.xml");
+const COLORS_XML: &str = include_str!("templates/android/app/src/main/res/values/colors.xml");
+const STYLES_XML: &str = include_str!("templates/android/app/src/main/res/values/styles.xml");
+const STYLES_V31_XML: &str =
+    include_str!("templates/android/app/src/main/res/values-v31/styles.xml");
 const MAIN_ACTIVITY_KT: &str =
     include_str!("templates/android/app/src/main/kotlin/MainActivity.kt");
-const APPLICATION_KT: &str = include_str!("templates/android/app/src/main/kotlin/Application.kt");
 const ROOT_BUILD_GRADLE_KTS: &str = include_str!("templates/android/build.gradle.kts");
 const SETTINGS_GRADLE_KTS: &str = include_str!("templates/android/settings.gradle.kts");
 const GRADLE_PROPERTIES: &str = include_str!("templates/android/gradle.properties");
@@ -63,6 +64,8 @@ const GRADLE_WRAPPER_JAR: &[u8] =
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AndroidInputs {
     pub app_name: String,
+    /// Static Host background configured in `whisker.rs` (`#RRGGBB`).
+    pub background: String,
     pub version: String,
     pub build_number: u32,
     pub application_id: String,
@@ -80,7 +83,7 @@ pub struct AndroidInputs {
     /// Cargo crate name of the user app. Echoed into
     /// `whisker { userPackage = "..." }`. The Settings plugin
     /// walks the cargo dep graph rooted here for
-    /// `[package.metadata.whisker]`-tagged module deps.
+    /// `[package.metadata.whisker.module.platforms]` module deps.
     pub whisker_user_package: String,
     /// Version for `rs.whisker:whisker-runtime-android:<this>` and its
     /// sibling SDK coordinates.
@@ -94,9 +97,6 @@ pub struct AndroidInputs {
     /// declare it in both `pluginManagement.repositories` and
     /// `dependencyResolutionManagement.repositories`.
     pub whisker_maven_url: String,
-    /// gh-pages Maven URL hosting the Lynx fork AARs that
-    /// `whisker-runtime-android` pulls transitively.
-    pub lynx_maven_url: String,
     /// `<uses-permission android:name="…"/>` rows from the engine's
     /// post-pipeline IR, emitted after the template's hardcoded
     /// `INTERNET` permission and dedup'd across plugins.
@@ -165,16 +165,18 @@ pub struct AndroidInputs {
 /// rewritten — `false` means the cached fingerprint matched and the
 /// existing tree was reused.
 pub fn sync(out_dir: &Path, inputs: &AndroidInputs) -> Result<bool> {
+    crate::background::AppBackground::parse(&inputs.background)
+        .context("validate Android application background")?;
     let new_fp = fingerprint::fingerprint(
         serde_json::to_vec(inputs)
             .context("serialize AndroidInputs for fingerprint")?
             .as_slice(),
     );
     let fp_path = out_dir.join(".whisker-fingerprint");
-    if let Ok(existing) = std::fs::read_to_string(&fp_path) {
-        if existing.trim() == new_fp {
-            return Ok(false);
-        }
+    if let Ok(existing) = std::fs::read_to_string(&fp_path)
+        && existing.trim() == new_fp
+    {
+        return Ok(false);
     }
 
     write_files(out_dir, inputs).context("write Android project files")?;
@@ -187,6 +189,7 @@ pub fn sync(out_dir: &Path, inputs: &AndroidInputs) -> Result<bool> {
 pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, String> {
     let mut v = HashMap::new();
     v.insert("app_name", inputs.app_name.clone());
+    v.insert("background", inputs.background.clone());
     v.insert("version", inputs.version.clone());
     v.insert("build_number", inputs.build_number.to_string());
     v.insert("android_application_id", inputs.application_id.clone());
@@ -209,7 +212,6 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
         inputs.whisker_gradle_plugin_version.clone(),
     );
     v.insert("whisker_maven_url", inputs.whisker_maven_url.clone());
-    v.insert("lynx_maven_url", inputs.lynx_maven_url.clone());
     v.insert(
         "extra_uses_permissions",
         render_extra_permissions(&inputs.extra_permissions),
@@ -247,42 +249,36 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
         inputs
             .android_theme
             .clone()
-            .unwrap_or_else(|| "@style/Theme.AppCompat.NoActionBar".to_string()),
+            .unwrap_or_else(|| "@style/Theme.Whisker".to_string()),
     );
-    let (main_activity_imports, main_activity_body) = render_main_activity(
-        &inputs.main_activity_imports,
-        &inputs.main_activity_pre_super,
-        &inputs.main_activity_post_super,
-    );
+    let (main_activity_imports, main_activity_pre_super, main_activity_post_super) =
+        render_main_activity(
+            &inputs.main_activity_imports,
+            &inputs.main_activity_pre_super,
+            &inputs.main_activity_post_super,
+        );
     v.insert("main_activity_imports", main_activity_imports);
-    v.insert("main_activity_body", main_activity_body);
+    v.insert("main_activity_pre_super", main_activity_pre_super);
+    v.insert("main_activity_post_super", main_activity_post_super);
     v
 }
 
 /// Render `MainActivity.kt`'s extra imports + `onCreate` override body.
 ///
-/// Returns `(imports, body)`:
+/// Returns `(imports, pre_super, post_super)`:
 /// - `imports` — extra `import` lines to append after the baseline
-///   `WhiskerActivity` import (each prefixed with a leading `\n`), or
-///   empty. When a body is generated, `android.os.Bundle` is added
-///   automatically.
-/// - `body` — either empty (`class MainActivity : WhiskerActivity()`
-///   stays a one-liner) or ` { override fun onCreate(…) { … } }` when
-///   `pre_super`/`post_super` inject statements. `pre_super` runs before
-///   `super.onCreate`, `post_super` after.
+///   Android imports (each prefixed with a leading `\n`), or
+///   empty. `android.os.Bundle` is already part of the shell template.
+/// - `pre_super` / `post_super` — statements indented for the generated
+///   `onCreate`. The native shell always owns the method body.
 fn render_main_activity(
     imports: &[String],
     pre_super: &[String],
     post_super: &[String],
-) -> (String, String) {
-    let has_body = !pre_super.is_empty() || !post_super.is_empty();
-
+) -> (String, String, String) {
     let mut import_lines: Vec<String> = Vec::new();
-    if has_body {
-        import_lines.push("android.os.Bundle".to_string());
-    }
     for i in imports {
-        if !import_lines.contains(i) {
+        if i != "android.os.Bundle" && !import_lines.contains(i) {
             import_lines.push(i.clone());
         }
     }
@@ -291,22 +287,13 @@ fn render_main_activity(
         .map(|i| format!("\nimport {i}"))
         .collect::<String>();
 
-    if !has_body {
-        return (imports_str, String::new());
-    }
-
     let indent = |lines: &[String]| {
         lines
             .iter()
             .map(|l| format!("        {l}\n"))
             .collect::<String>()
     };
-    let body = format!(
-        " {{\n    override fun onCreate(savedInstanceState: Bundle?) {{\n{pre}        super.onCreate(savedInstanceState)\n{post}    }}\n}}",
-        pre = indent(pre_super),
-        post = indent(post_super),
-    );
-    (imports_str, body)
+    (imports_str, indent(pre_super), indent(post_super))
 }
 
 /// Render `apply_plugins` entries as Kotlin DSL lines inside the
@@ -491,16 +478,25 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
         .join("app/src/main/kotlin")
         .join(application_id_to_path(&inputs.application_id));
 
-    let app_class_filename = format!("{}.kt", application_class_name(&inputs.app_name));
-
     let text_files: &[(PathBuf, &str)] = &[
         (out_dir.join("app/build.gradle.kts"), APP_BUILD_GRADLE_KTS),
         (
             out_dir.join("app/src/main/AndroidManifest.xml"),
             APP_MANIFEST_XML,
         ),
+        (
+            out_dir.join("app/src/main/res/values/colors.xml"),
+            COLORS_XML,
+        ),
+        (
+            out_dir.join("app/src/main/res/values/styles.xml"),
+            STYLES_XML,
+        ),
+        (
+            out_dir.join("app/src/main/res/values-v31/styles.xml"),
+            STYLES_V31_XML,
+        ),
         (kotlin_pkg.join("MainActivity.kt"), MAIN_ACTIVITY_KT),
-        (kotlin_pkg.join(&app_class_filename), APPLICATION_KT),
         (out_dir.join("build.gradle.kts"), ROOT_BUILD_GRADLE_KTS),
         (out_dir.join("settings.gradle.kts"), SETTINGS_GRADLE_KTS),
         (out_dir.join("gradle.properties"), GRADLE_PROPERTIES),
@@ -560,10 +556,10 @@ fn clean_managed_tree(out_dir: &Path) -> Result<()> {
             .strip_prefix(out_dir)
             .map(|p| p.to_path_buf())
             .ok();
-        if let Some(rel) = rel {
-            if keep.iter().any(|k| rel == Path::new(k)) {
-                continue;
-            }
+        if let Some(rel) = rel
+            && keep.iter().any(|k| rel == Path::new(k))
+        {
+            continue;
         }
         // Only the files we own under `app/`; recurse one level.
         if entry.file_name() == "app" && entry.path().is_dir() {
@@ -670,7 +666,6 @@ pub fn inputs_from(
     whisker_sdk_version: String,
     whisker_gradle_plugin_version: String,
     whisker_maven_url: String,
-    lynx_maven_url: String,
 ) -> Result<AndroidInputs> {
     inputs_from_with_engine(
         &Engine::with_builtins(),
@@ -681,7 +676,6 @@ pub fn inputs_from(
         whisker_sdk_version,
         whisker_gradle_plugin_version,
         whisker_maven_url,
-        lynx_maven_url,
     )
 }
 
@@ -698,7 +692,6 @@ pub fn inputs_from_with_engine(
     whisker_sdk_version: String,
     whisker_gradle_plugin_version: String,
     whisker_maven_url: String,
-    lynx_maven_url: String,
 ) -> Result<AndroidInputs> {
     // The engine seeds the IR from `Config` and plugins may override
     // any of it, so everything below reads the post-pipeline IR.
@@ -726,6 +719,7 @@ pub fn inputs_from_with_engine(
     })?;
     let min_sdk = android_ir.min_sdk.unwrap_or(24);
     let target_sdk = android_ir.target_sdk.unwrap_or(34);
+    let background = crate::background::AppBackground::resolve(app_config)?;
 
     let extra_permissions = android_ir.manifest.permissions.clone();
     let extra_meta_data = android_ir.manifest.application_meta_data.clone();
@@ -741,6 +735,7 @@ pub fn inputs_from_with_engine(
 
     Ok(AndroidInputs {
         app_name,
+        background: background.hex().to_string(),
         version,
         build_number,
         application_id,
@@ -752,7 +747,6 @@ pub fn inputs_from_with_engine(
         whisker_sdk_version,
         whisker_gradle_plugin_version,
         whisker_maven_url,
-        lynx_maven_url,
         extra_permissions,
         extra_meta_data,
         extra_application_attributes,
@@ -764,7 +758,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 14,
+        template_version: 35,
     })
 }
 
@@ -785,6 +779,7 @@ mod tests {
     fn sample_inputs() -> AndroidInputs {
         AndroidInputs {
             app_name: "HelloWorld".into(),
+            background: "#FFFFFF".into(),
             version: "0.1.0".into(),
             build_number: 1,
             application_id: "rs.whisker.examples.helloworld".into(),
@@ -796,7 +791,6 @@ mod tests {
             whisker_sdk_version: "0.1.0".into(),
             whisker_gradle_plugin_version: "0.1.0".into(),
             whisker_maven_url: "https://whiskerrs.github.io/whisker/maven".into(),
-            lynx_maven_url: "https://whiskerrs.github.io/lynx/maven".into(),
             extra_permissions: Vec::new(),
             extra_meta_data: Vec::new(),
             extra_application_attributes: Vec::new(),
@@ -808,8 +802,27 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 14,
+            template_version: 36,
         }
+    }
+
+    #[test]
+    fn generated_activity_only_composes_the_sdk_view() {
+        assert!(MAIN_ACTIVITY_KT.contains("import androidx.activity.ComponentActivity"));
+        assert!(MAIN_ACTIVITY_KT.contains("class MainActivity : ComponentActivity()"));
+        assert!(MAIN_ACTIVITY_KT.contains("import rs.whisker.runtime.WhiskerView"));
+        assert!(MAIN_ACTIVITY_KT.contains("WhiskerWindow.enableEdgeToEdge(this)"));
+        assert!(
+            MAIN_ACTIVITY_KT
+                .contains("window.setBackgroundDrawableResource(R.color.whisker_background)")
+        );
+        assert!(MAIN_ACTIVITY_KT.contains("setContentView(WhiskerView(this))"));
+        assert!(MAIN_ACTIVITY_KT.contains("override fun onNewIntent(intent: Intent)"));
+        assert!(
+            MAIN_ACTIVITY_KT
+                .contains("intent.dataString?.let(WhiskerAppContext::dispatchDeepLink)")
+        );
+        assert!(APP_BUILD_GRADLE_KTS.contains("androidx.activity:activity:1.8.2"));
     }
 
     #[test]
@@ -850,7 +863,7 @@ mod tests {
         let mut inputs = sample_inputs();
         assert_eq!(
             template_vars(&inputs)["android_theme"],
-            "@style/Theme.AppCompat.NoActionBar"
+            "@style/Theme.Whisker"
         );
         inputs.android_theme = Some("@style/Theme.App.Splash".into());
         assert_eq!(
@@ -860,27 +873,47 @@ mod tests {
     }
 
     #[test]
-    fn main_activity_stays_empty_without_injection() {
-        let (imports, body) = render_main_activity(&[], &[], &[]);
+    fn inputs_resolve_static_background_from_app_config() {
+        let mut config = Config::default();
+        config
+            .name("Background")
+            .bundle_id("rs.whisker.background")
+            .background("#101018");
+
+        let inputs = inputs_from(
+            &config,
+            "background".into(),
+            PathBuf::from("../.."),
+            "background".into(),
+            "0.1.0".into(),
+            "0.1.0".into(),
+            "https://example.invalid/maven".into(),
+        )
+        .unwrap();
+
+        assert_eq!(inputs.background, "#101018");
+    }
+
+    #[test]
+    fn main_activity_has_no_injections_by_default() {
+        let (imports, pre, post) = render_main_activity(&[], &[], &[]);
         assert_eq!(imports, "");
-        assert_eq!(body, "");
+        assert_eq!(pre, "");
+        assert_eq!(post, "");
     }
 
     #[test]
     fn main_activity_injects_oncreate_with_pre_super() {
-        let (imports, body) = render_main_activity(
+        let (imports, pre, post) = render_main_activity(
             &["androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen".into()],
             &["installSplashScreen()".into()],
             &[],
         );
-        assert!(imports.contains("\nimport android.os.Bundle"));
         assert!(imports.contains(
             "\nimport androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen"
         ));
-        let pre = body.find("installSplashScreen()").unwrap();
-        let sup = body.find("super.onCreate(savedInstanceState)").unwrap();
-        assert!(pre < sup, "installSplashScreen must precede super.onCreate");
-        assert!(body.starts_with(" {\n    override fun onCreate("));
+        assert_eq!(pre, "        installSplashScreen()\n");
+        assert_eq!(post, "");
     }
 
     #[test]
@@ -915,8 +948,10 @@ mod tests {
         for expected in [
             "app/build.gradle.kts",
             "app/src/main/AndroidManifest.xml",
+            "app/src/main/res/values/colors.xml",
+            "app/src/main/res/values/styles.xml",
+            "app/src/main/res/values-v31/styles.xml",
             "app/src/main/kotlin/rs/whisker/examples/helloworld/MainActivity.kt",
-            "app/src/main/kotlin/rs/whisker/examples/helloworld/HelloWorldApplication.kt",
             "build.gradle.kts",
             "settings.gradle.kts",
             "gradle.properties",
@@ -928,6 +963,42 @@ mod tests {
         ] {
             assert!(out.join(expected).exists(), "missing: {expected}");
         }
+        assert!(
+            !out.join("app/src/main/kotlin/rs/whisker/runtime/WhiskerView.kt")
+                .exists(),
+            "the generated app must consume WhiskerView from the Android SDK"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sync_projects_static_background_into_android_startup_resources() {
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/android");
+        let mut inputs = sample_inputs();
+        inputs.background = "#101018".into();
+        sync(&out, &inputs).unwrap();
+
+        let colors =
+            std::fs::read_to_string(out.join("app/src/main/res/values/colors.xml")).unwrap();
+        let styles =
+            std::fs::read_to_string(out.join("app/src/main/res/values/styles.xml")).unwrap();
+        let styles_v31 =
+            std::fs::read_to_string(out.join("app/src/main/res/values-v31/styles.xml")).unwrap();
+        let manifest =
+            std::fs::read_to_string(out.join("app/src/main/AndroidManifest.xml")).unwrap();
+
+        assert!(colors.contains("<color name=\"whisker_background\">#101018</color>"));
+        assert!(
+            styles.contains(
+                "<item name=\"android:windowBackground\">@color/whisker_background</item>"
+            )
+        );
+        assert!(styles_v31.contains(
+            "<item name=\"android:windowSplashScreenBackground\">@color/whisker_background</item>"
+        ));
+        assert!(manifest.contains("android:theme=\"@style/Theme.Whisker\""));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -940,7 +1011,7 @@ mod tests {
 
         let manifest =
             std::fs::read_to_string(out.join("app/src/main/AndroidManifest.xml")).unwrap();
-        assert!(manifest.contains("android:name=\".HelloWorldApplication\""));
+        assert!(!manifest.contains("android:name=\".HelloWorldApplication\""));
         assert!(manifest.contains("android:label=\"HelloWorld\""));
         assert!(!manifest.contains("{{"));
         // The activity opts out of system keyboard avoidance — the app
@@ -952,6 +1023,24 @@ mod tests {
         )
         .unwrap();
         assert!(main_activity.starts_with("package rs.whisker.examples.helloworld\n"));
+
+        let settings = std::fs::read_to_string(out.join("settings.gradle.kts")).unwrap();
+        assert!(!settings.contains("lynx"));
+        assert_eq!(
+            settings
+                .matches("maven { url = uri(\"https://whiskerrs.github.io/whisker/maven\") }")
+                .count(),
+            2,
+            "the published SDK repository must resolve plugins and AARs",
+        );
+        assert!(settings.contains("rs.whisker:ksp"));
+        assert!(settings.contains("id(\"rs.whisker\") version \"0.1.0\""));
+        assert!(settings.contains("includeBuild(localGradlePlugin)"));
+        assert!(settings.contains("userPackage = \"hello-world\""));
+
+        let app_gradle = std::fs::read_to_string(out.join("app/build.gradle.kts")).unwrap();
+        assert!(app_gradle.contains("id(\"rs.whisker.gradle\")"));
+        assert!(!app_gradle.contains("whisker_module_deps.gradle.kts"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1079,7 +1168,6 @@ mod tests {
             "0.1.0".into(),
             "0.1.0".into(),
             "https://whiskerrs.github.io/whisker/maven".into(),
-            "https://whiskerrs.github.io/lynx/maven".into(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("application_id"), "got: {err:#}");

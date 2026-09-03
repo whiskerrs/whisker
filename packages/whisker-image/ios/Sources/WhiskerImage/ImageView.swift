@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting a UIImageView + Kingfisher-driven URL
+// Whisker module view hosting a UIImageView + Kingfisher-driven URL
 // loading. Registration is driven by `ImageModule`'s `definition()`, not
 // by annotations on this class.
 //
@@ -7,15 +7,8 @@
 // finds it under either the SwiftPM-target-prefixed form
 // (`whisker_image.WhiskerImageView`) or the bare form.
 //
-// ## Corners — iOS does it natively
-//
-// CSS `border-radius` needs no subclass-side help here: Lynx iOS
-// dispatches props through the Obj-C runtime, so `LynxUI`'s own
-// `setBorderRadius` resolves down the class hierarchy into every custom
-// subclass, updates `_backgroundManager.borderRadius`, and clips the
-// CALayer via `clipOnBorderRadius`. Android's APT-generated
-// `$$PropsSetter` dispatch tables don't extend to runtime-registered
-// custom modules, so it needs the workaround in `WhiskerImageView.kt`.
+// CSS presentation, including border radius and clipping, is owned by the
+// common Host wrapper around this module view.
 
 import Foundation
 import Kingfisher
@@ -30,7 +23,7 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
 
     @objc public override func createView() -> UIImageView {
         let v = UIImageView()
-        // `aspectFill` matches the Lynx `mode` default, and needs
+        // `aspectFill` is the module default, and needs
         // `clipsToBounds` so the overflowing edges don't paint beyond the
         // element's frame.
         v.contentMode = .scaleAspectFill
@@ -180,12 +173,12 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
         parseHeaders(json)
     }
 
-    /// Backing of the `mode` prop, mapping the Lynx-convention mode
+    /// Backing of the `mode` prop, mapping its stable wire
     /// strings onto `UIView.ContentMode`.
     ///
     /// `clipsToBounds` stays on for every mode, including the `aspectFit` /
     /// `scaleToFill` cases that don't overflow: it is also what makes
-    /// Lynx's CSS-driven `cornerRadius` clip the painted bitmap.
+    /// the common presentation wrapper clip the painted bitmap.
     public func setMode(_ value: String) {
         let imageView: UIImageView = self.view()
         switch value {

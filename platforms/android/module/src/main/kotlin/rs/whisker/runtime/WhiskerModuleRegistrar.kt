@@ -1,270 +1,504 @@
-// Android dispatch wiring for the `ModuleDefinition` DSL.
-//
-// At module-registration time (host-app launch), the framework
-// calls `module.registerWithLynx()`. This walks the DSL definition
-// the author built in `definition()` and installs:
-//
-//   - One [com.lynx.tasm.behavior.utils.LynxUISetter] per `View(...)`
-//     block that dispatches every `Prop("...") { setter }` declared
-//     inside it.
-//   - One [com.lynx.tasm.behavior.utils.LynxUIMethodInvoker] per
-//     `View(...)` block that dispatches every `Function("...") { handler }`
-//     declared inside it.
-//
-// Both are registered against the Class-explicit overloads the Lynx
-// fork makes public:
-//
-//   PropsUpdater.registerSetter(Class, Settable)
-//   LynxUIMethodsExecutor.registerMethodInvoker(Class, Invoker)
-//
-// keyed by the target UI class declared in `View(MyView::class.java) {...}`.
-// Registration is last-write-wins per target class.
-
 package rs.whisker.runtime
 
-import com.lynx.react.bridge.Callback
-import com.lynx.react.bridge.ReadableMap
-import com.lynx.tasm.behavior.StylesDiffMap
-import com.lynx.tasm.behavior.ui.LynxBaseUI
-import com.lynx.tasm.behavior.utils.LynxUIMethodInvoker
-import com.lynx.tasm.behavior.utils.LynxUISetter
-import com.lynx.tasm.behavior.LynxUIMethodConstants
-import com.lynx.tasm.behavior.utils.LynxUIMethodsExecutor
-import com.lynx.tasm.behavior.utils.PropsUpdater
+import android.content.Context
+import android.util.Log
+import android.view.View
+import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Walk [definitionLazy] and install the DSL-declared surface.
- *
- * Two shapes:
- *
- *  - **View-bearing** (`View(...) { Prop / Function }`): installs a
- *    [LynxUISetter] + [LynxUIMethodInvoker] on the view class via
- *    the Class-explicit registration APIs.
- *  - **View-less** (module-level `Function`s, no `View(...)`):
- *    registers a dispatch closure with [WhiskerModuleRegistry]
- *    under the module's `Name(...)`, so `whisker_bridge_invoke_module`
- *    from Rust routes into the DSL handlers.
- *
- * Idempotent — re-registering replaces the prior entry
- * (last-write-wins on both maps).
- */
-public fun Module.registerWithLynx(crateName: String? = null) {
-    val def = definitionLazy
-    val viewBlock = def.view
+public typealias WhiskerElementEventSink = (WhiskerEventBinding, WhiskerValue) -> Unit
 
-    if (viewBlock != null) {
-        // View props / methods dispatch on the view CLASS, so no
-        // name prefix is needed here.
-        registerViewBearing(viewBlock)
-    } else {
-        // View-less dispatch is keyed by module name — namespace it
-        // with the crate so two crates can ship same-named modules.
-        registerViewLess(def, crateName)
+/** Taffy available-space constraint on one measurement axis. */
+public enum class WhiskerAvailableSpace { DEFINITE, MIN_CONTENT, MAX_CONTENT }
+
+public data class WhiskerMeasureRequest(
+    val availableWidth: Float?, val availableHeight: Float?,
+    val availableWidthKind: WhiskerAvailableSpace,
+    val availableHeightKind: WhiskerAvailableSpace,
+    val knownWidth: Float?, val knownHeight: Float?,
+    val payloadVersion: Int, val payload: WhiskerValue,
+)
+
+public data class WhiskerMeasuredSize(val width: Float, val height: Float)
+
+/** Decoded `SetText` payload passed to the Host element implementation. */
+public data class WhiskerTextContent(
+    public val value: String,
+    public val fontSize: Float,
+    public val fontWeight: Int,
+    public val fontFamilies: List<String> = listOf("system"),
+    public val fontStyle: WhiskerFontStyle = WhiskerFontStyle.NORMAL,
+    public val lineHeight: Float? = null,
+    public val letterSpacing: Float = 0f,
+    public val fontFeatures: List<WhiskerFontFeature> = emptyList(),
+    public val fontVariations: List<WhiskerFontVariation> = emptyList(),
+    public val fontOpticalSizing: WhiskerFontOpticalSizing = WhiskerFontOpticalSizing.NONE,
+    public val color: Int,
+    public val direction: WhiskerTextDirection = WhiskerTextDirection.AUTO,
+    public val alignment: WhiskerTextAlignment = WhiskerTextAlignment.START,
+    public val indent: WhiskerTextIndent = WhiskerTextIndent(),
+    public val wrap: Boolean = true,
+    public val wordBreak: WhiskerTextWordBreak = WhiskerTextWordBreak.NORMAL,
+    public val maxLines: Int = 0,
+    public val overflow: WhiskerTextOverflow = WhiskerTextOverflow.CLIP,
+    public val decoration: WhiskerTextDecoration? = null,
+    public val shadow: WhiskerTextShadow? = null,
+)
+
+/** Resolved inherited text style delivered independently from text content. */
+public data class WhiskerTextStyle(
+    public val fontSize: Float,
+    public val fontWeight: Int,
+    public val fontFamilies: List<String> = listOf("system"),
+    public val fontStyle: WhiskerFontStyle = WhiskerFontStyle.NORMAL,
+    public val lineHeight: Float? = null,
+    public val letterSpacing: Float = 0f,
+    public val fontFeatures: List<WhiskerFontFeature> = emptyList(),
+    public val fontVariations: List<WhiskerFontVariation> = emptyList(),
+    public val fontOpticalSizing: WhiskerFontOpticalSizing = WhiskerFontOpticalSizing.NONE,
+    public val color: Int,
+    public val direction: WhiskerTextDirection = WhiskerTextDirection.AUTO,
+    public val alignment: WhiskerTextAlignment = WhiskerTextAlignment.START,
+    public val decoration: WhiskerTextDecoration? = null,
+    public val shadow: WhiskerTextShadow? = null,
+)
+
+public fun WhiskerTextContent.styleSnapshot(): WhiskerTextStyle = WhiskerTextStyle(
+    fontSize = fontSize,
+    fontWeight = fontWeight,
+    fontFamilies = fontFamilies,
+    fontStyle = fontStyle,
+    lineHeight = lineHeight,
+    letterSpacing = letterSpacing,
+    fontFeatures = fontFeatures,
+    fontVariations = fontVariations,
+    fontOpticalSizing = fontOpticalSizing,
+    color = color,
+    direction = direction,
+    alignment = alignment,
+    decoration = decoration,
+    shadow = shadow,
+)
+
+public data class WhiskerFontFeature(public val tag: String, public val value: Long)
+public data class WhiskerFontVariation(public val tag: String, public val value: Float)
+public enum class WhiskerFontOpticalSizing { AUTO, NONE }
+public enum class WhiskerFontStyle { NORMAL, ITALIC, OBLIQUE }
+
+public enum class WhiskerTextDirection { AUTO, LEFT_TO_RIGHT, RIGHT_TO_LEFT }
+
+public enum class WhiskerTextAlignment { START, END, LEFT, RIGHT, CENTER }
+
+public enum class WhiskerTextWordBreak { NORMAL, BREAK_ALL, KEEP_ALL }
+
+public enum class WhiskerTextOverflow { CLIP, ELLIPSIS }
+
+/** First-line indentation; percentage is relative to the final Text width. */
+public data class WhiskerTextIndent(
+    public val logicalPixels: Float = 0f,
+    public val percentage: Float = 0f,
+)
+
+/** One inherited Whisker text decoration. */
+public data class WhiskerTextDecoration(
+    public val line: WhiskerTextDecorationLine,
+    public val style: WhiskerTextDecorationStyle,
+    public val color: Int,
+)
+
+public enum class WhiskerTextDecorationLine { UNDERLINE, LINE_THROUGH }
+
+public enum class WhiskerTextDecorationStyle { SOLID, DOUBLE, DOTTED, DASHED, WAVY }
+
+/** One resolved shadow painted behind native text glyphs. */
+public data class WhiskerTextShadow(
+    public val offsetX: Float,
+    public val offsetY: Float,
+    public val blurRadius: Float,
+    public val color: Int,
+)
+
+/** One native View mounted for a retained Whisker node. */
+public class WhiskerMountedElement internal constructor(
+    public val registration: WhiskerElementRegistration,
+    public val view: View,
+    private val textUpdater: ((View, WhiskerTextContent) -> Unit)?,
+    private val textStyleUpdater: ((View, WhiskerTextStyle) -> Unit)?,
+    private val childrenHost: ((View) -> android.view.ViewGroup)?,
+    private val properties: Map<Int, WhiskerPropComponent>,
+    private val commands: Map<Int, WhiskerCommandComponent>,
+    private val eventsByName: Map<String, WhiskerEventBinding>,
+    eventSink: WhiskerElementEventSink,
+    private val isolatesFailures: Boolean = false,
+    initiallyFailed: Boolean = false,
+) {
+    private var eventMask: Long = 0
+    private var eventSink: WhiskerElementEventSink = eventSink
+    private var failed: Boolean = initiallyFailed
+
+    init {
+        installEventSink()
     }
-}
 
-private fun registerViewBearing(viewBlock: WhiskerViewComponent) {
-    @Suppress("UNCHECKED_CAST")
-    val viewClass: Class<out LynxBaseUI> =
-        viewBlock.viewClass as Class<out LynxBaseUI>
-
-    val propComponents = viewBlock.components.filterIsInstance<WhiskerPropComponent>()
-    val funcComponents = viewBlock.components.filterIsInstance<WhiskerFunctionComponent>()
-    val asyncComponents = viewBlock.components.filterIsInstance<WhiskerAsyncFunctionComponent>()
-
-    if (propComponents.isNotEmpty()) {
-        PropsUpdater.registerSetter(
-            viewClass,
-            WhiskerDSLPropsSetter(propComponents),
-        )
-    }
-    if (funcComponents.isNotEmpty() || asyncComponents.isNotEmpty()) {
-        LynxUIMethodsExecutor.registerMethodInvoker(
-            viewClass,
-            WhiskerDSLMethodInvoker(funcComponents, asyncComponents),
-        )
-    }
-}
-
-private fun registerViewLess(def: ModuleDefinition, crateName: String?) {
-    val name = def.name ?: return
-    val functions = def.functions
-    val asyncFunctions = def.asyncFunctions
-    if (functions.isEmpty() && asyncFunctions.isEmpty()) return
-
-    // `<crate>:<Name>` so the Rust side's `module!("Name")` (which
-    // prepends its own crate name) resolves to the same key.
-    val qualifiedName = if (crateName.isNullOrEmpty()) name else "$crateName:$name"
-
-    if (functions.isNotEmpty()) {
-        val byName = functions.associateBy { it.name }
-        WhiskerModuleRegistry.registerDispatch(qualifiedName) { method, args ->
-            val fn = byName[method]
-                ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
-            try {
-                fn.handler(null, args.asList())
-            } catch (t: Throwable) {
-                WhiskerValue.Err("exception in module `$name` method `$method`: ${t.message}")
-            }
+    private fun installEventSink() {
+        (view as? WhiskerEventSource)?.installWhiskerEventSink { name, detail ->
+            val event = eventsByName[name] ?: return@installWhiskerEventSink
+            val bit = 1L shl (event.id - 1)
+            if (eventMask and bit != 0L) eventSink(event, detail)
         }
     }
 
-    if (asyncFunctions.isNotEmpty()) {
-        val asyncByName = asyncFunctions.associateBy { it.name }
-        WhiskerModuleRegistry.registerDispatchAsync(qualifiedName) { method, args, promise ->
-            val fn = asyncByName[method] ?: return@registerDispatchAsync false
-            // The handler owns the promise; it resolves now or later.
-            // Exceptions surface via `invokeDispatchAsync`'s catch
-            // (→ promise.reject).
-            fn.handler(null, args.asList(), promise)
-            true
-        }
-    }
-}
-
-// ----- LynxUISetter adapter ------------------------------------------------
-
-/**
- * Generic [LynxUISetter] that dispatches every prop declared inside
- * a `View(...)` block by looking up the matching
- * [WhiskerPropComponent] and calling its closure.
- *
- * Lynx calls `setProperty(ui, propName, props)` once per changed
- * prop; we look up by name and route into the DSL closure with the
- * decoded value.
- */
-internal class WhiskerDSLPropsSetter(
-    private val props: List<WhiskerPropComponent>,
-) : LynxUISetter<LynxBaseUI> {
-
-    private val byName: Map<String, WhiskerPropComponent> =
-        props.associateBy { it.name }
-
-    override fun setProperty(ui: LynxBaseUI, name: String, propsMap: StylesDiffMap) {
-        val component = byName[name] ?: return
-        component.setter(ui, whiskerValueOf(decodeProp(propsMap, name)))
+    public fun setProperty(id: Int, value: WhiskerValue) {
+        runElementOperation("set property", id) { properties[id]?.setter?.invoke(view, value) }
     }
 
-    private fun decodeProp(propsMap: StylesDiffMap, name: String): Any? {
-        val dyn = propsMap.getDynamic(name) ?: return null
-        // What Lynx hands us is determined by the JS / Rust side's
-        // encoded value, not the Kotlin closure's declared type, so
-        // probing the type tag is the only safe path.
+    /** Clear is a protocol operation and is intentionally not `WhiskerValue.Null`. */
+    public fun clearProperty(id: Int) {
+        runElementOperation("clear property", id) { properties[id]?.clearer?.invoke(view) }
+    }
+
+    public fun invokeCommand(id: Int, parameters: WhiskerValue) {
+        runElementOperation("invoke command", id) { commands[id]?.handler?.invoke(view, parameters) }
+    }
+
+    public fun setEventMask(mask: Long) { eventMask = mask }
+
+    public fun setText(content: WhiskerTextContent): Boolean {
+        val update = textUpdater ?: return false
+        runElementOperation("set text") { update(view, content) }
+        return true
+    }
+
+    public fun setTextStyle(style: WhiskerTextStyle): Boolean {
+        val update = textStyleUpdater ?: return false
+        runElementOperation("set text style") { update(view, style) }
+        return true
+    }
+
+    public fun childrenHost(): android.view.ViewGroup? {
+        if (failed) return null
+        if (!isolatesFailures) return childrenHost?.invoke(view)
         return try {
-            when (dyn.type) {
-                com.lynx.react.bridge.ReadableType.Boolean -> dyn.asBoolean()
-                com.lynx.react.bridge.ReadableType.Int -> dyn.asInt()
-                com.lynx.react.bridge.ReadableType.Number -> dyn.asDouble()
-                com.lynx.react.bridge.ReadableType.String -> dyn.asString()
-                com.lynx.react.bridge.ReadableType.Map -> dyn.asMap()
-                com.lynx.react.bridge.ReadableType.Array -> dyn.asArray()
-                else -> null
-            }
-        } catch (_: Throwable) {
+            childrenHost?.invoke(view)
+        } catch (error: Exception) {
+            fail("resolve children host", null, error)
             null
         }
     }
+
+    /** Resets protocol-owned state before a built-in presentation is reused. */
+    public fun prepareForReuse(eventSink: WhiskerElementEventSink) {
+        properties.values.forEach { it.clearer(view) }
+        view.visibility = View.VISIBLE
+        eventMask = 0
+        this.eventSink = eventSink
+        installEventSink()
+    }
+
+    public fun dispose() { (view as? WhiskerEventSource)?.installWhiskerEventSink(null) }
+
+    private inline fun runElementOperation(
+        label: String,
+        member: Int? = null,
+        operation: () -> Unit,
+    ) {
+        if (failed) return
+        if (!isolatesFailures) {
+            operation()
+            return
+        }
+        try {
+            operation()
+        } catch (error: Exception) {
+            fail(label, member, error)
+        }
+    }
+
+    private fun fail(label: String, member: Int?, error: Exception) {
+        if (failed) return
+        failed = true
+        val operation = if (member == null) label else "$label $member"
+        Log.e(
+            "WhiskerElement",
+            "Disabled `${registration.name}` after it failed to $operation; common presentation remains active",
+            error,
+        )
+    }
 }
 
-// ----- LynxUIMethodInvoker adapter -----------------------------------------
+/** Host-owned declaration. It contains names and behavior, never Rust IDs. */
+public class WhiskerElementFactory(
+    public val name: String,
+    internal val textUpdater: ((View, WhiskerTextContent) -> Unit)? = null,
+    internal val textStyleUpdater: ((View, WhiskerTextStyle) -> Unit)? = null,
+    internal val childrenHost: ((View) -> android.view.ViewGroup)? = null,
+    internal val measurer: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)? = null,
+    internal val makeView: (Context) -> View,
+) {
+    init {
+        require(name.isNotEmpty() && '@' !in name) {
+            "Host element name must be non-empty and versionless"
+        }
+    }
 
-/**
- * Generic [LynxUIMethodInvoker] that dispatches every function
- * declared inside a `View(...)` block by looking up the matching
- * [WhiskerFunctionComponent] and calling its closure.
- *
- * Lynx calls `invoke(ui, methodName, params, callback)` once per
- * `lynxUI.invoke(...)` from the JS / Rust side. We look up by
- * name, decode the args array Lynx packs into `params`, run the
- * closure, and resolve the callback with the result (or a
- * NODE_NOT_FOUND error if the method isn't declared).
- *
- * Params convention: Lynx packs positional args as
- * `{"args": [v1, v2, ...]}`. Preserving that contract is what lets
- * the Rust-side `ElementRef::invoke(...)` call site stay uniform.
- */
-internal class WhiskerDSLMethodInvoker(
-    private val functions: List<WhiskerFunctionComponent>,
-    private val asyncFunctions: List<WhiskerAsyncFunctionComponent> = emptyList(),
-) : LynxUIMethodInvoker<LynxBaseUI> {
 
-    private val byName: Map<String, WhiskerFunctionComponent> =
-        functions.associateBy { it.name }
-    private val asyncByName: Map<String, WhiskerAsyncFunctionComponent> =
-        asyncFunctions.associateBy { it.name }
+    internal fun withTextStyleUpdater(
+        updater: ((View, WhiskerTextStyle) -> Unit)?,
+    ): WhiskerElementFactory = WhiskerElementFactory(
+        name = name,
+        textUpdater = textUpdater,
+        textStyleUpdater = updater ?: textStyleUpdater,
+        childrenHost = childrenHost,
+        measurer = measurer,
+        makeView = makeView,
+    )
 
-    override fun invoke(
-        ui: LynxBaseUI,
-        methodName: String,
-        params: ReadableMap?,
-        callback: Callback,
-    ) {
-        val asyncComponent = asyncByName[methodName]
-        if (asyncComponent != null) {
-            val args = decodeArgs(params).map { whiskerValueOf(it) }
-            val promise = WhiskerPromise({ value -> settle(callback, value) })
+    internal fun withMeasurer(
+        provider: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)?,
+    ): WhiskerElementFactory = WhiskerElementFactory(
+        name = name,
+        textUpdater = textUpdater,
+        textStyleUpdater = textStyleUpdater,
+        childrenHost = childrenHost,
+        measurer = provider ?: measurer,
+        makeView = makeView,
+    )
+}
+
+private data class WhiskerDeclaredElement(
+    val factory: WhiskerElementFactory,
+    val properties: Map<String, WhiskerPropComponent>,
+    val events: Set<String>,
+    val commands: Map<String, WhiskerCommandComponent>,
+)
+
+internal data class WhiskerBoundElement(
+    val registration: WhiskerElementRegistration,
+    val factory: WhiskerElementFactory,
+    val properties: Map<Int, WhiskerPropComponent>,
+    val commands: Map<Int, WhiskerCommandComponent>,
+)
+
+/** One surface's immutable-after-bootstrap mapping from Rust IDs to Host declarations. */
+public class WhiskerElementBindings private constructor() {
+    @Volatile private var boundByType: Map<Int, WhiskerBoundElement> = emptyMap()
+
+    internal fun publish(bindings: Map<Int, WhiskerBoundElement>) {
+        boundByType = bindings
+    }
+
+    public fun mount(
+        elementType: Int,
+        context: Context,
+        eventSink: WhiskerElementEventSink,
+    ): WhiskerMountedElement? {
+        val element = boundByType[elementType] ?: return null
+        val isolatesFailures = when (element.registration.name) {
+            "whisker.ui/View", "whisker.ui/Text", "whisker.ui/ScrollView" -> false
+            else -> true
+        }
+        val (view, factoryFailed) = if (isolatesFailures) {
             try {
-                asyncComponent.handler(ui, args, promise)
-            } catch (t: Throwable) {
-                promise.reject("exception while invoking `$methodName`: ${t.message}")
+                element.factory.makeView(context) to false
+            } catch (error: Exception) {
+                Log.e(
+                    "WhiskerElement",
+                    "Disabled `${element.registration.name}` after its View factory failed; common presentation remains active",
+                    error,
+                )
+                View(context) to true
             }
-            return
+        } else {
+            element.factory.makeView(context) to false
         }
+        return WhiskerMountedElement(
+            element.registration,
+            view,
+            element.factory.textUpdater,
+            element.factory.textStyleUpdater,
+            element.factory.childrenHost,
+            element.properties,
+            element.commands,
+            element.registration.events.associateBy { it.name },
+            eventSink,
+            isolatesFailures,
+            factoryFailed,
+        )
+    }
 
-        val component = byName[methodName]
-        if (component == null) {
-            callback.invoke(
-                LynxUIMethodConstants.METHOD_NOT_FOUND,
-                "unknown method `$methodName`",
+    public fun measure(elementType: Int, request: WhiskerMeasureRequest): WhiskerMeasuredSize? =
+        boundByType[elementType]?.factory?.measurer?.invoke(request)
+
+    public fun registration(elementType: Int): WhiskerElementRegistration? =
+        boundByType[elementType]?.registration
+
+    /** Constant-time validation for compact property operations on this surface. */
+    public fun hasProperty(elementType: Int, property: Int): Boolean =
+        boundByType[elementType]?.properties?.containsKey(property) == true
+
+    /** Constant-time validation for compact command operations on this surface. */
+    public fun hasCommand(elementType: Int, command: Int): Boolean =
+        boundByType[elementType]?.commands?.containsKey(command) == true
+
+    internal companion object {
+        fun empty(): WhiskerElementBindings = WhiskerElementBindings()
+    }
+}
+
+/** Process-wide Host declarations used to negotiate independent surface-local binding tables. */
+public object WhiskerElementRegistry {
+    private const val LOG_TAG = "WhiskerElementRegistry"
+    private val declarations = ConcurrentHashMap<String, WhiskerDeclaredElement>()
+
+    @JvmStatic
+    public fun newBindings(): WhiskerElementBindings = WhiskerElementBindings.empty()
+
+    @JvmStatic
+    public fun register(factory: WhiskerElementFactory) {
+        register(factory, emptyMap(), emptySet(), emptyMap())
+    }
+
+    internal fun register(view: WhiskerViewComponent, fallbackName: String) {
+        val name = view.elementName ?: fallbackName
+        view.factory?.let { factory ->
+            val properties = view.components.filterIsInstance<WhiskerPropComponent>().associateBy { it.name }
+            val events = view.components.filterIsInstance<WhiskerEventsComponent>().flatMap { it.names }.toSet()
+            val commands = view.components.filterIsInstance<WhiskerCommandComponent>().associateBy { it.name }
+            val textStyle = view.components.filterIsInstance<WhiskerTextStyleComponent>().singleOrNull()
+            val measurement = view.components.filterIsInstance<WhiskerMeasurementComponent>().singleOrNull()
+            register(
+                factory.withTextStyleUpdater(textStyle?.handler).withMeasurer(measurement?.handler),
+                properties,
+                events,
+                commands,
             )
             return
         }
-        val args: List<WhiskerValue> = decodeArgs(params).map { whiskerValueOf(it) }
-        val result: WhiskerValue = try {
-            component.handler(ui, args)
-        } catch (t: Throwable) {
-            callback.invoke(
-                LynxUIMethodConstants.UNKNOWN,
-                "exception while invoking `$methodName`: ${t.message}",
-            )
-            return
+        val declaredClass = requireNotNull(view.viewClass) { "$name View declaration needs a class or factory" }
+        require(View::class.java.isAssignableFrom(declaredClass)) {
+            "$name View class must extend android.view.View"
         }
-        settle(callback, result)
+        @Suppress("UNCHECKED_CAST")
+        val viewClass = declaredClass as Class<out View>
+        val properties = view.components.filterIsInstance<WhiskerPropComponent>().associateBy { it.name }
+        val events = view.components.filterIsInstance<WhiskerEventsComponent>().flatMap { it.names }.toSet()
+        val commands = view.components.filterIsInstance<WhiskerCommandComponent>().associateBy { it.name }
+        val textStyle = view.components.filterIsInstance<WhiskerTextStyleComponent>().singleOrNull()
+        val measurement = view.components.filterIsInstance<WhiskerMeasurementComponent>().singleOrNull()
+        register(
+            WhiskerElementFactory(
+                name = name,
+                textStyleUpdater = textStyle?.handler,
+                measurer = measurement?.handler,
+                makeView = { context -> viewClass.getConstructor(Context::class.java).newInstance(context) },
+            ),
+            properties,
+            events,
+            commands,
+        )
     }
 
-    /** [WhiskerValue.Err] rides the error-code channel — a
-     *  success-coded error flattens into a plain map in the lepus
-     *  round-trip and the message is lost. */
-    private fun settle(callback: Callback, value: WhiskerValue) {
-        when (value) {
-            is WhiskerValue.Err ->
-                callback.invoke(LynxUIMethodConstants.UNKNOWN, value.message)
-            else ->
-                callback.invoke(LynxUIMethodConstants.SUCCESS, value.toJavaObject())
+    private fun register(
+        factory: WhiskerElementFactory,
+        properties: Map<String, WhiskerPropComponent>,
+        events: Set<String>,
+        commands: Map<String, WhiskerCommandComponent>,
+    ) {
+        require(declarations.putIfAbsent(factory.name, WhiskerDeclaredElement(factory, properties, events, commands)) == null) {
+            "element factory already registered for ${factory.name}"
         }
     }
 
-    private fun decodeArgs(params: ReadableMap?): List<Any?> {
-        if (params == null) return emptyList()
-        return try {
-            val arr = params.getArray("args") ?: return emptyList()
-            buildList(capacity = arr.size()) {
-                for (i in 0 until arr.size()) {
-                    add(
-                        when (arr.getType(i)) {
-                            com.lynx.react.bridge.ReadableType.Boolean -> arr.getBoolean(i)
-                            com.lynx.react.bridge.ReadableType.Int -> arr.getInt(i)
-                            com.lynx.react.bridge.ReadableType.Number -> arr.getDouble(i)
-                            com.lynx.react.bridge.ReadableType.String -> arr.getString(i)
-                            com.lynx.react.bridge.ReadableType.Map -> arr.getMap(i)
-                            com.lynx.react.bridge.ReadableType.Array -> arr.getArray(i)
-                            else -> null
-                        }
-                    )
-                }
+    /** Match Host strings to Rust registrations and compile compact dispatch tables. */
+    @JvmStatic
+    public fun bind(
+        target: WhiskerElementBindings,
+        registrations: List<WhiskerElementRegistration>,
+    ): Boolean {
+        fun reject(message: String): Boolean {
+            Log.e(LOG_TAG, "Host element bootstrap rejected: $message")
+            return false
+        }
+
+        val byType = LinkedHashMap<Int, WhiskerBoundElement>()
+        val byName = LinkedHashMap<String, WhiskerBoundElement>()
+        for (registration in registrations) {
+            val declaration = declarations[registration.name]
+                ?: return reject("no Host declaration for `${registration.name}`")
+            if ((registration.childPolicy == WhiskerChildPolicy.PlainText) != (declaration.factory.textUpdater != null)) {
+                return reject("child policy mismatch for `${registration.name}`: Rust=${registration.childPolicy}, Host text updater=${declaration.factory.textUpdater != null}")
             }
-        } catch (_: Throwable) {
-            emptyList()
+            if (registration.textStyle != (declaration.factory.textStyleUpdater != null)) {
+                return reject("text-style capability mismatch for `${registration.name}`: Rust=${registration.textStyle}, Host=${declaration.factory.textStyleUpdater != null}")
+            }
+            val needsHostMeasurer = registration.measurement == WhiskerMeasurement.ReplacedContent ||
+                registration.measurement == WhiskerMeasurement.Custom
+            if (needsHostMeasurer != (declaration.factory.measurer != null)) {
+                return reject("measurement capability mismatch for `${registration.name}`: Rust=${registration.measurement}, Host measurer=${declaration.factory.measurer != null}")
+            }
+            val rustProps = registration.properties.associateBy { it.name }
+            if (rustProps.keys != declaration.properties.keys) {
+                return reject("property mismatch for `${registration.name}`: Rust=${rustProps.keys.sorted()}, Host=${declaration.properties.keys.sorted()}")
+            }
+            val rustEvents = registration.events.map { it.name }.toSet()
+            if (rustEvents != declaration.events) {
+                return reject("event mismatch for `${registration.name}`: Rust=${rustEvents.sorted()}, Host=${declaration.events.sorted()}")
+            }
+            val rustCommands = registration.commands.map { it.name }.toSet()
+            if (rustCommands != declaration.commands.keys) {
+                return reject("command mismatch for `${registration.name}`: Rust=${rustCommands.sorted()}, Host=${declaration.commands.keys.sorted()}")
+            }
+            val properties = registration.properties.associate { property ->
+                property.id to requireNotNull(declaration.properties[property.name])
+            }
+            val commands = registration.commands.associate { command ->
+                command.id to requireNotNull(declaration.commands[command.name])
+            }
+            val bound = WhiskerBoundElement(registration, declaration.factory, properties, commands)
+            if (byType.put(registration.elementType, bound) != null) {
+                return reject("duplicate Rust element type ${registration.elementType}")
+            }
+            if (byName.put(registration.name, bound) != null) {
+                return reject("duplicate Rust element name `${registration.name}`")
+            }
+        }
+        target.publish(byType)
+        return true
+    }
+}
+
+/** Single bootstrap boundary for independently compiled Host modules. */
+public object WhiskerModuleKernel {
+    private val installedNames = ConcurrentHashMap.newKeySet<String>()
+
+    /** Validates and installs one complete service + element declaration. */
+    @JvmStatic
+    public fun install(module: Module, crateName: String? = null) {
+        val def = module.definitionLazy
+        def.validateElementDeclaration()
+        val name = requireNotNull(def.name) { "ModuleDefinition requires Name" }
+        val qualifiedName = module.qualifiedName
+            ?: if (crateName.isNullOrEmpty() || '/' in name) name else "$crateName:$name"
+        require(installedNames.add(qualifiedName)) { "module already installed: $qualifiedName" }
+        module.qualifiedName = qualifiedName
+        WhiskerModuleEventCenter.register(module)
+
+        def.views.forEach { WhiskerElementRegistry.register(it, qualifiedName) }
+
+        val functions = def.functions.associateBy { it.name }
+        if (functions.isNotEmpty()) {
+            WhiskerModuleRegistry.registerDispatch(qualifiedName) { method, args ->
+                val function = functions[method]
+                    ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
+                function.handler(args.asList())
+            }
+        }
+        val asyncFunctions = def.asyncFunctions.associateBy { it.name }
+        if (asyncFunctions.isNotEmpty()) {
+            WhiskerModuleRegistry.registerDispatchAsync(qualifiedName) { method, args, promise ->
+                val function = asyncFunctions[method] ?: return@registerDispatchAsync false
+                function.handler(args.asList(), promise)
+                true
+            }
         }
     }
 }

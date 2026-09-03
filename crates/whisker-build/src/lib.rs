@@ -17,16 +17,8 @@
 //! - [`ios`] — `cargo rustc` per iOS triple, lipo of simulator
 //!   slices, `WhiskerDriver.xcframework` assembly, `xcodebuild` for
 //!   the generated app project.
-//! - [`modules`] — discover `[package.metadata.whisker]` deps via
-//!   `cargo metadata` and resolve per-platform source contributions
-//!   the host build needs to stage.
-//!
-//! Lynx itself is never fetched here: iOS resolves the four
-//! xcframeworks via SPM `binaryTarget(url:checksum:)` in
-//! `platforms/ios/Package.swift`, Android pulls
-//! `rs.whisker:lynx-android:<ver>` from the
-//! `whiskerrs.github.io/lynx/maven` repository transitively via the
-//! SDK pom.
+//! - [`modules`] — compatibility re-exports for CNG-owned dependency
+//!   resolution used by build-system adapters.
 //!
 //! Sync-only API. Dev-server callers wrap invocations in
 //! `tokio::task::spawn_blocking`; the cli runs them directly.
@@ -35,12 +27,14 @@ pub mod android;
 pub mod capture;
 pub mod child_guard;
 pub mod ios;
+pub mod macos;
 pub mod modules;
 pub mod ui;
+pub mod web;
 
 pub use capture::{
-    CaptureShims, capture_env_vars, capture_env_vars_for_triple, target_linker_env_var,
-    target_rustflags_env_var,
+    CaptureShims, capture_env_vars, capture_env_vars_all_crates, capture_env_vars_for_triple,
+    target_linker_env_var, target_rustflags_env_var,
 };
 
 /// Build profile. Maps to `cargo --release` and to the

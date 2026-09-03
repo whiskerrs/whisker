@@ -1,20 +1,21 @@
 // `Module` base class (Android) — the API a Whisker module
-// subclasses. **Subclassing is the registration signal** — the
-// KSP processor (`rs.whisker.ksp.WhiskerModuleProcessor`) walks
-// every concrete subclass and emits the Lynx registration. No
-// marker annotation is required at the declaration site.
+// subclasses. `@WhiskerModule` is the explicit registration signal;
+// KSP validates the annotated class and emits its registration.
 //
 // ```kotlin
 // import rs.whisker.runtime.Module        // ← explicit import: bare
 //                                         //   `Module` would resolve
 //                                         //   to java.lang.Module
 //
+// @WhiskerModule
 // class VideoModule : Module() {
 //     override fun definition() = ModuleDefinition {
 //         Name("Video")
-//         View(VideoView::class.java) {
-//             Prop("src") { view: VideoView, value: String -> view.setSrc(value) }
-//             Function("play") { view: VideoView -> view.play() }
+//         View("whisker-video:Video", VideoView::class.java) {
+//             Prop("src") { view: VideoView, value ->
+//                 view.setSrc(value.asString() ?: "")
+//             }
+//             Command("play") { view: VideoView, _ -> view.play() }
 //         }
 //     }
 // }
@@ -70,6 +71,7 @@ public abstract class Module {
      */
     public fun sendEvent(event: String, payload: WhiskerValue = WhiskerValue.Null) {
         val qname = qualifiedName ?: return
+        if (event !in definitionLazy.events || !payload.isData()) return
         WhiskerModuleEventCenter.dispatchSend(qname, event, payload)
     }
 

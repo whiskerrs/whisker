@@ -1,6 +1,6 @@
 // Resolves the app's per-directory sandbox paths from Foundation.
 //
-// Plain helper — no Whisker / Lynx types. The DSL module that exposes
+// Plain helper — no Whisker runtime types. The DSL module that exposes
 // it to Rust lives in `PathsModule.swift`. Returns plain filesystem
 // paths (not file:// URLs) so the Rust side can use them with std::fs
 // directly. The directories are not created here — a returned path may

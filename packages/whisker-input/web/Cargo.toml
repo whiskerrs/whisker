@@ -1,0 +1,23 @@
+[package]
+name = "whisker-input-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web Host implementation for whisker-input."
+
+[dependencies]
+whisker-protocol = { workspace = true }
+whisker-web = { workspace = true }
+web-sys = { version = "0.3", features = [
+    "CssStyleDeclaration",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlElement",
+    "HtmlInputElement",
+    "HtmlTextAreaElement",
+    "KeyboardEvent",
+] }

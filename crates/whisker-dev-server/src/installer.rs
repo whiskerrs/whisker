@@ -2,26 +2,29 @@
 //!
 //! After a successful cold-rebuild, the freshly-built artifact has to
 //! land on the target and start (re-bootstrapping the dev-runtime so
-//! it dials the dev-server back). For Android we shell out to `adb`;
-//! for iOS Simulator to `xcrun simctl`.
+//! it dials the dev-server back). For Android we shell out to `adb`,
+//! for iOS Simulator to `xcrun simctl`, and for macOS we launch the
+//! generated app executable while retaining its child handle.
 //!
 //! Application identity (bundle id, applicationId, launcher activity,
 //! scheme, …) is **not** baked in here. The cli passes those as
-//! `Config::android` / `Config::ios` after reading the user's
+//! `Config::android` / `Config::ios` / `Config::macos` after reading the user's
 //! `whisker.rs::configure(&mut Config)`, so this module has zero
 //! knowledge of which example or external user crate is in play.
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::Command;
 
-use crate::{AndroidParams, IosParams, Target};
+use crate::{AndroidParams, IosParams, MacosParams, Target};
 use whisker_build::CaptureShims;
 
 pub struct Installer {
     target: Target,
     android: Option<AndroidParams>,
     ios: Option<IosParams>,
+    macos: Option<MacosParams>,
     workspace_root: PathBuf,
     package: String,
     /// Capture shims for hot reload. When `Some`, the xcodebuild
@@ -52,6 +55,8 @@ pub struct Installer {
     /// `SIMCTL_CHILD_WHISKER_DEV_TOKEN`; Android via
     /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
     dev_token: Option<String>,
+    macos_child: tokio::sync::Mutex<Option<tokio::process::Child>>,
+    web_opened: AtomicBool,
 }
 
 impl Installer {
@@ -60,6 +65,7 @@ impl Installer {
         target: Target,
         android: Option<AndroidParams>,
         ios: Option<IosParams>,
+        macos: Option<MacosParams>,
         workspace_root: PathBuf,
         package: String,
         capture: Option<CaptureShims>,
@@ -71,12 +77,15 @@ impl Installer {
             target,
             android,
             ios,
+            macos,
             workspace_root,
             package,
             capture,
             features,
             dev_port,
             dev_token,
+            macos_child: tokio::sync::Mutex::new(None),
+            web_opened: AtomicBool::new(false),
         }
     }
 
@@ -103,8 +112,97 @@ impl Installer {
                 )
                 .await
             }
+            Target::Macos => {
+                let params = self.macos.as_ref().context(
+                    "target=Macos but no MacosParams — cli must provide the generated Host",
+                )?;
+                let executable = params
+                    .target_dir
+                    .join("bundles/debug")
+                    .join(format!("{}.app", params.app_name))
+                    .join("Contents/MacOS")
+                    .join(&params.binary_name);
+                if !executable.is_file() {
+                    anyhow::bail!(
+                        "macOS Host executable is missing at {}",
+                        executable.display()
+                    );
+                }
+                let mut slot = self.macos_child.lock().await;
+                if let Some(mut previous) = slot.take() {
+                    let _ = previous.kill().await;
+                    let _ = previous.wait().await;
+                }
+                let mut command = Command::new(&executable);
+                command
+                    .current_dir(executable.parent().expect("bundle executable has a parent"))
+                    .env("WHISKER_DEV_ADDR", format!("127.0.0.1:{}", self.dev_port))
+                    .kill_on_drop(true);
+                if let Some(token) = &self.dev_token {
+                    command.env("WHISKER_DEV_TOKEN", token);
+                }
+                *slot = Some(
+                    command
+                        .spawn()
+                        .with_context(|| format!("launch macOS Host {}", executable.display()))?,
+                );
+                Ok(())
+            }
+            Target::Web => {
+                if self.web_opened.swap(true, Ordering::AcqRel) {
+                    Ok(())
+                } else {
+                    open_browser(self.dev_port).await
+                }
+            }
         }
     }
+
+    /// Start the artifact already present on the target. Unlike a Full Reload,
+    /// this does not compile or reinstall anything.
+    pub async fn relaunch(&self) -> Result<()> {
+        match self.target {
+            Target::Android => {
+                let params = self.android.as_ref().context(
+                    "target=Android but no AndroidParams — cli must populate Config.android",
+                )?;
+                android_launch(params).await
+            }
+            Target::IosSimulator => {
+                let params = self.ios.as_ref().context(
+                    "target=IosSimulator but no IosParams — cli must populate Config.ios",
+                )?;
+                ios_launch(params, self.dev_port, self.dev_token.as_deref()).await
+            }
+            Target::Macos => self.install_and_launch().await,
+            Target::Web => open_browser(self.dev_port).await,
+        }
+    }
+}
+
+async fn open_browser(port: u16) -> Result<()> {
+    let url = format!("http://127.0.0.1:{port}/");
+    let open_step = whisker_build::ui::step(whisker_build::ui::OperationKind::Open, url.clone());
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg(&url);
+        command
+    } else if cfg!(target_os = "windows") {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", &url]);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(&url);
+        command
+    };
+    let status = command.status().await.context("open Web Host in browser")?;
+    if !status.success() {
+        open_step.fail(status.to_string());
+        anyhow::bail!("browser launcher exited with {status}");
+    }
+    open_step.done("");
+    Ok(())
 }
 
 /// Run a `tokio::process::Command` to completion, capture its stderr,
@@ -118,9 +216,9 @@ async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::proces
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let mut child = cmd.spawn().context("spawn child")?;
-    // Track the PID so `whisker run`'s hard-exit quit path can SIGTERM
-    // an in-flight xcodebuild / simctl instead of orphaning it. The
-    // guard unregisters when this fn returns.
+    // Track the PID so workflow cancellation can SIGTERM an in-flight
+    // xcodebuild / simctl instead of orphaning it. The guard unregisters
+    // when this fn returns.
     let _child_guard = child.id().map(whisker_build::child_guard::track);
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
@@ -168,12 +266,9 @@ async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::proces
 }
 
 /// `xcodebuild`'s `-quiet` flag silences progress chatter but the
-/// underlying compiler still emits diagnostics — which under Xcode
-/// with iOS 26 SDK + Lynx's pre-iOS-26 framework headers means a
-/// hundreds-of-lines deprecation cascade (`'mainScreen' is
-/// deprecated`, `'screens' is deprecated`, …) on every build. None
-/// of it is actionable by Whisker users (the headers ship from
-/// upstream Lynx), so we filter it as benign here.
+/// underlying compiler still emits diagnostics. Framework deprecation
+/// cascades can produce hundreds of non-actionable lines on every build, so
+/// the concise UI filters warning chains while verbose mode preserves them.
 ///
 /// Approach: drop anything that looks like a clang / xcodebuild
 /// warning chain — the `warning:` line, the `note:` follow-ups,
@@ -225,7 +320,7 @@ fn is_benign_xcodebuild_line(raw: &str) -> bool {
     }
 
     // Source-line listings rendered alongside the warning chain:
-    //   `217 | #import "LynxBackgroundInfo.h"`
+    //   `217 | #import "FrameworkHeader.h"`
     //   `    | ^`
     //   `56 |`        (empty source line for context)
     // After trimming leading whitespace and ALL leading digits, the
@@ -293,8 +388,7 @@ impl SimctlNoise {
     }
 
     fn is_benign_stdout(&self, line: &str) -> bool {
-        // `-quiet` doesn't fully silence xcodebuild on an iOS 26 SDK
-        // against pre-iOS-26 Lynx headers, so its stdout needs the
+        // `-quiet` does not fully silence xcodebuild, so its stdout needs the
         // benign filter too.
         if matches!(self, SimctlNoise::Xcodebuild) && is_benign_xcodebuild_line(line) {
             return true;
@@ -379,7 +473,7 @@ async fn android_install_and_launch(
     }
 
     let install_step = whisker_build::ui::step(
-        "install",
+        whisker_build::ui::OperationKind::Install,
         apk.file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "app-debug.apk".into()),
@@ -395,13 +489,18 @@ async fn android_install_and_launch(
     }
     install_step.done("");
 
+    android_launch(p).await
+}
+
+async fn android_launch(p: &AndroidParams) -> Result<()> {
     // force-stop first, so the relaunch really re-bootstraps.
     let mut stop_cmd = Command::new("adb");
     stop_cmd.args(["shell", "am", "force-stop", &p.application_id]);
     let _ = run_filtered(stop_cmd, SimctlNoise::Other).await;
 
     let component = format!("{}/{}", p.application_id, p.launcher_activity);
-    let launch_step = whisker_build::ui::step("launch", component.clone());
+    let launch_step =
+        whisker_build::ui::step(whisker_build::ui::OperationKind::Launch, component.clone());
     let mut launch_cmd = Command::new("adb");
     launch_cmd.args(["shell", "am", "start", "-n", &component]);
     let launch = run_filtered(launch_cmd, SimctlNoise::AdbAmStart)
@@ -435,8 +534,12 @@ async fn ios_install_and_launch(
         .join("target/.whisker/ios-derived")
         .join(package);
 
-    let xc_step = whisker_build::ui::step("xcodebuild", p.scheme.clone());
+    let xc_step = whisker_build::ui::step(
+        whisker_build::ui::OperationKind::Xcodebuild,
+        p.scheme.clone(),
+    );
     let mut xc_cmd = Command::new("xcodebuild");
+    use_current_whisker_cli(&mut xc_cmd)?;
     xc_cmd
         .arg("-project")
         .arg(&xcode_project)
@@ -505,13 +608,16 @@ async fn ios_install_and_launch(
         .clone()
         .or_else(pick_available_iphone)
         .unwrap_or_else(|| "iPhone 17 Pro".into());
-    let boot_step = whisker_build::ui::step("boot", device.clone());
+    let boot_step = whisker_build::ui::step(whisker_build::ui::OperationKind::Boot, device.clone());
     let mut boot_cmd = Command::new("xcrun");
     boot_cmd.args(["simctl", "boot", &device]);
     let _ = run_filtered(boot_cmd, SimctlNoise::Boot).await;
     boot_step.done("");
 
-    let install_step = whisker_build::ui::step("install", format!("{}.app", p.scheme));
+    let install_step = whisker_build::ui::step(
+        whisker_build::ui::OperationKind::Install,
+        format!("{}.app", p.scheme),
+    );
     let mut install_cmd = Command::new("xcrun");
     install_cmd
         .args(["simctl", "install", "booted"])
@@ -525,6 +631,10 @@ async fn ios_install_and_launch(
     }
     install_step.done("");
 
+    ios_launch(p, dev_port, dev_token).await
+}
+
+async fn ios_launch(p: &IosParams, dev_port: u16, dev_token: Option<&str>) -> Result<()> {
     // `SIMCTL_CHILD_<NAME>` shows up as `<NAME>` inside the launched
     // app's env — that's how the dev-runtime finds us.
     //
@@ -534,7 +644,10 @@ async fn ios_install_and_launch(
     // terminate` first would print `Simulator device failed to
     // terminate <bundle>.` on every cold start, where the app is
     // installed but not running; the flag handles that silently.
-    let launch_step = whisker_build::ui::step("launch", p.bundle_id.clone());
+    let launch_step = whisker_build::ui::step(
+        whisker_build::ui::OperationKind::Launch,
+        p.bundle_id.clone(),
+    );
     let mut launch_cmd = Command::new("xcrun");
     launch_cmd
         .args([
@@ -563,6 +676,17 @@ async fn ios_install_and_launch(
         anyhow::bail!("simctl launch {} failed ({launch})", p.bundle_id);
     }
     launch_step.done("");
+    Ok(())
+}
+
+/// Make an Xcode build launched by this CLI call the exact same executable
+/// from its Rust build phase. This matters for `cargo run`: a bare `whisker`
+/// lookup may otherwise select an older cargo-installed binary from `PATH`.
+/// Xcode builds started independently keep the generated script's `whisker`
+/// fallback.
+fn use_current_whisker_cli(command: &mut Command) -> Result<()> {
+    let executable = std::env::current_exe().context("resolve current Whisker CLI executable")?;
+    command.env("WHISKER_CLI", executable);
     Ok(())
 }
 
@@ -611,6 +735,7 @@ mod tests {
             Target::Android,
             None,
             None,
+            None,
             PathBuf::new(),
             "x".into(),
             None,
@@ -631,6 +756,7 @@ mod tests {
     fn installer_for_ios_without_params_errors() {
         let inst = Installer::new(
             Target::IosSimulator,
+            None,
             None,
             None,
             PathBuf::new(),
@@ -659,5 +785,21 @@ mod tests {
             .block_on(async { android_install_and_launch(&p, 9876, None).await })
             .unwrap_err();
         assert!(err.to_string().contains("APK missing"), "got: {err:#}");
+    }
+
+    #[test]
+    fn xcodebuild_uses_the_current_whisker_cli() {
+        let mut command = Command::new("xcodebuild");
+        use_current_whisker_cli(&mut command).unwrap();
+
+        let configured = command
+            .as_std()
+            .get_envs()
+            .find_map(|(key, value)| (key == "WHISKER_CLI").then_some(value))
+            .flatten();
+        assert_eq!(
+            configured,
+            Some(std::env::current_exe().unwrap().as_os_str())
+        );
     }
 }

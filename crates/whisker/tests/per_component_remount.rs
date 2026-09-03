@@ -29,7 +29,6 @@ use whisker::{ElementTag, flush};
 enum Op {
     Create { id: u32, tag: ElementTag },
     SetAttr { id: u32, key: String, value: String },
-    SetStyles { id: u32, css: String },
     Append { parent: u32, child: u32 },
     Remove { parent: u32, child: u32 },
     Event { id: u32, name: String },
@@ -74,12 +73,6 @@ impl DynRenderer for Recorder {
             id: h.id(),
             key: k.into(),
             value: v.into(),
-        });
-    }
-    fn set_inline_styles(&self, h: Element, css: &str) {
-        self.log.borrow_mut().push(Op::SetStyles {
-            id: h.id(),
-            css: css.into(),
         });
     }
     fn append_child(&self, p: Element, c: Element) {
@@ -137,8 +130,8 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 #[component]
 fn leaf(label: &'static str) -> Element {
     render! {
-        view {
-            text(value: label)
+        View {
+            Text(value: label)
         }
     }
 }
@@ -153,8 +146,8 @@ fn leaf(label: &'static str) -> Element {
 #[component]
 fn nested_inner() -> Element {
     render! {
-        view {
-            text(value: "x")
+        View {
+            Text(value: "x")
         }
     }
 }
@@ -162,7 +155,7 @@ fn nested_inner() -> Element {
 #[component]
 fn nested_outer() -> Element {
     render! {
-        view {
+        View {
             NestedInner()
             NestedInner()
             NestedInner()
@@ -173,8 +166,8 @@ fn nested_outer() -> Element {
 #[component]
 fn batch_child() -> Element {
     render! {
-        view {
-            text(value: "c")
+        View {
+            Text(value: "c")
         }
     }
 }
@@ -182,7 +175,7 @@ fn batch_child() -> Element {
 #[component]
 fn batch_parent() -> Element {
     render! {
-        view {
+        View {
             BatchChild()
             BatchChild()
         }
@@ -201,9 +194,9 @@ fn context_inner_screen() -> Element {
     let counter_label = computed(move || state.counter.get().to_string());
     let local_label = computed(move || local.get().to_string());
     render! {
-        view {
-            text(value: counter_label)
-            text(value: local_label)
+        View {
+            Text(value: counter_label)
+            Text(value: local_label)
         }
     }
 }
@@ -251,7 +244,7 @@ fn remount_replaces_root_at_same_parent_slot() {
         let (parent, root_initial) = mount_under_test_parent(|| render! { Leaf(label: "v1") });
         log.borrow_mut().clear();
 
-        remount_components_for(&[Leaf as *const ()]);
+        remount_components_for(&[Leaf::__function_id()]);
 
         let ops = log.borrow();
         assert!(
@@ -291,13 +284,13 @@ fn remount_replaces_root_at_same_parent_slot() {
 fn remount_disposes_old_owner_and_registers_new() {
     with_recorder_and_owner(|_log| {
         let (_parent, _root) = mount_under_test_parent(|| render! { Leaf(label: "first") });
-        let initial_owners = owners_for_fn(Leaf as *const ());
+        let initial_owners = owners_for_fn(Leaf::__function_id());
         assert_eq!(initial_owners.len(), 1);
         let first_owner_id = initial_owners[0];
 
-        remount_components_for(&[Leaf as *const ()]);
+        remount_components_for(&[Leaf::__function_id()]);
 
-        let after_owners = owners_for_fn(Leaf as *const ());
+        let after_owners = owners_for_fn(Leaf::__function_id());
         assert_eq!(after_owners.len(), 1);
         assert_ne!(
             after_owners[0], first_owner_id,
@@ -322,7 +315,7 @@ fn remount_releases_old_body_elements() {
         let component_elements = creates_initial_total - 1;
 
         log.borrow_mut().clear();
-        remount_components_for(&[Leaf as *const ()]);
+        remount_components_for(&[Leaf::__function_id()]);
 
         let releases = log
             .borrow()
@@ -385,20 +378,20 @@ fn nested_component_mount_sites_cleared_on_parent_remount() {
     with_recorder_and_owner(|_log| {
         let (_parent, _root) = mount_under_test_parent(|| render! { NestedOuter() });
 
-        assert_eq!(owners_for_fn(NestedOuter as *const ()).len(), 1);
+        assert_eq!(owners_for_fn(NestedOuter::__function_id()).len(), 1);
         assert_eq!(
-            owners_for_fn(NestedInner as *const ()).len(),
+            owners_for_fn(NestedInner::__function_id()).len(),
             3,
             "three inner invocations expected after initial mount",
         );
 
         // Remounting outer must dispose the 3 old inner owners and
         // their MountSites, then create 3 fresh inner invocations.
-        remount_components_for(&[NestedOuter as *const ()]);
+        remount_components_for(&[NestedOuter::__function_id()]);
 
         // The count must stay at 3 — not balloon to 6.
         assert_eq!(
-            owners_for_fn(NestedInner as *const ()).len(),
+            owners_for_fn(NestedInner::__function_id()).len(),
             3,
             "after parent remount, child owners should be exactly the new 3, \
              not the old 3 + new 3 (orphan MountSites must be scrubbed)",
@@ -421,19 +414,19 @@ fn batch_with_parent_and_child_skips_descendant() {
 
     with_recorder_and_owner(|_log| {
         let (_p, _r) = mount_under_test_parent(|| render! { BatchParent() });
-        assert_eq!(owners_for_fn(BatchParent as *const ()).len(), 1);
-        assert_eq!(owners_for_fn(BatchChild as *const ()).len(), 2);
+        assert_eq!(owners_for_fn(BatchParent::__function_id()).len(), 1);
+        assert_eq!(owners_for_fn(BatchChild::__function_id()).len(), 2);
 
-        let initial_parent_owner = owners_for_fn(BatchParent as *const ())[0];
-        let initial_child_owners = owners_for_fn(BatchChild as *const ());
+        let initial_parent_owner = owners_for_fn(BatchParent::__function_id())[0];
+        let initial_child_owners = owners_for_fn(BatchChild::__function_id());
 
         // Worst-case ordering: child listed FIRST in the patch
         // batch. Filter must skip the children because their
         // ancestor `batch_parent` is also in the batch.
-        remount_components_for(&[BatchChild as *const (), BatchParent as *const ()]);
+        remount_components_for(&[BatchChild::__function_id(), BatchParent::__function_id()]);
 
         // Parent was remounted (new owner).
-        let new_parent_owners = owners_for_fn(BatchParent as *const ());
+        let new_parent_owners = owners_for_fn(BatchParent::__function_id());
         assert_eq!(new_parent_owners.len(), 1);
         assert_ne!(
             new_parent_owners[0], initial_parent_owner,
@@ -444,7 +437,7 @@ fn batch_with_parent_and_child_skips_descendant() {
         // remount, NOT remounted independently. Concretely: the
         // new child owners are different from the initial ones
         // (because parent's body re-ran and called BatchChild() fresh).
-        let new_child_owners = owners_for_fn(BatchChild as *const ());
+        let new_child_owners = owners_for_fn(BatchChild::__function_id());
         assert_eq!(
             new_child_owners.len(),
             2,
@@ -480,7 +473,7 @@ fn remount_preserves_signal_held_above_in_context() {
         // Mutate the outer state, then remount.
         let state = use_context::<PreservedState>().unwrap();
         state.counter.set(100);
-        remount_components_for(&[ContextInnerScreen as *const ()]);
+        remount_components_for(&[ContextInnerScreen::__function_id()]);
         flush();
 
         let texts: Vec<_> = log

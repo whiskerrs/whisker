@@ -4,10 +4,9 @@
 //! [`RouteState`](crate::core::RouteState) core in the Whisker reactive
 //! runtime: a signal-backed [`RouterHandle`] + [`use_navigator`], the
 //! [`Outlet`] / [`Stack`] / [`Switch`] renderers,
-//! float-`Tween` transitions (via `whisker-animation`, **not** Lynx's
-//! animator), and the interactive back gestures ([`SwipeBack`] for iOS
-//! edge swipe, [`AndroidPredictiveBack`] for Android 13+ predictive back)
-//! — both driving the same coordinated two-screen scrub.
+//! float-`Tween` transitions (via `whisker-animation`), and platform
+//! navigation drivers for Web History, iOS edge swipe, and Android system /
+//! predictive back.
 //!
 //! The id → component map is built by the [`routes!`](crate::routes) macro
 //! (which also builds the route tree); for advanced use-cases a
@@ -17,14 +16,14 @@
 //!
 //! [`RouterHandle`] owns the immutable [`CompiledTree`](crate::core::CompiledTree),
 //! the [`RouteRegistry`], and a single `RwSignal<RouteState>`. Every verb
-//! (`navigate` / `select` / `back` / `replace` / `pop_to` / `reset`)
+//! (`navigate` / `push` / `back` / `replace` / `pop_to` / `reset`)
 //! clones the state, runs the [`Navigator`](crate::core::Navigator) op,
 //! and writes the signal back. `current` is a `computed`, never stored.
 //!
 //! ## Fine-grained re-render
 //!
 //! Each container renders from its **own slice** of the state
-//! ([`RouterHandle::slice_at`]); because `computed` memoises by
+//! (`RouterHandle::slice_at`); because `computed` memoises by
 //! `PartialEq` (`RouteState: Eq`), an op that doesn't change a given
 //! container's subtree produces an unchanged slice and that container's
 //! mount effect does not re-run. So pushing into tab A's stack does not
@@ -45,17 +44,17 @@
 //!         }
 //!     }) {
 //!         Outlet {}
-//!         SwipeBack {}
 //!     }
 //! }
 //! // inside a screen:  use_navigator().navigate("/detail/42");
 //! ```
 
 pub mod components;
-pub mod gesture;
 pub mod handle;
+mod history;
 pub(crate) mod keyboard;
 pub mod node;
+mod platform_navigation;
 pub mod registry;
 pub mod transition;
 
@@ -63,12 +62,12 @@ pub mod transition;
 mod tests;
 
 pub use components::{
-    Layout, LayoutProps, OutletAnchor, Router, RouterProps, RouterRoot, Stack, StackProps, Switch,
-    SwitchProps,
+    Layout, LayoutProps, OutletAnchor, Router, RouterProps, Stack, StackProps, Switch, SwitchProps,
 };
 pub use components::{Outlet, OutletProps};
-pub use gesture::{AndroidPredictiveBack, AndroidPredictiveBackProps, SwipeBack, SwipeBackProps};
-pub use handle::{RouterHandle, provide_router, use_navigator, use_param, use_pathname};
+pub use handle::{
+    RouterHandle, provide_router, use_group, use_location, use_navigator, use_param, use_pathname,
+};
 pub use registry::{LayoutFn, LayoutRegistry, RenderFn, RouteFragment, RouteRegistry, RouteSet};
 pub use transition::{Direction, Pose, PoseContext, Role, RouteTransition, Transition};
 // Re-exported for custom `Transition` authors (the return type of

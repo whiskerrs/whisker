@@ -1,0 +1,12 @@
+[package]
+name = "whisker-web-browser-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Desktop Host implementation for whisker-web-browser."
+
+[dependencies]
+open = "5"
+whisker-desktop = { workspace = true }

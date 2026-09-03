@@ -24,13 +24,15 @@
 //!
 //! [`start_log_capture`] must be called **before** any other code
 //! emits to stdout/stderr — earlier writes go to the original
-//! destination. The canonical entry is `whisker_driver::lynx::bootstrap`
-//! right after the driver attach.
+//! destination. Hosts should start it immediately after attaching the driver.
 
 use std::collections::VecDeque;
-use std::os::raw::c_int;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+
+#[cfg(unix)]
+use std::os::raw::c_int;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::Notify;
 
@@ -111,8 +113,8 @@ const BUFFER_CAPACITY: usize = 1024;
 /// `true` the first time, `false` on repeat calls.
 ///
 /// Failures inside the install (pipe / dup / dup2 / thread spawn) are
-/// logged through [`super::hot_reload::devlog`] but never panic. A
-/// failed install leaves the original fds intact.
+/// ignored. A failed install leaves the original fds intact.
+#[cfg(unix)]
 pub fn start_log_capture() -> bool {
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
     if INITIALIZED.swap(true, Ordering::AcqRel) {
@@ -126,13 +128,16 @@ pub fn start_log_capture() -> bool {
     });
     let _ = LOG_BUFFER.set(Arc::clone(&buffer));
 
-    if let Err(e) = install_pipe(libc::STDOUT_FILENO, Stream::Stdout, Arc::clone(&buffer)) {
-        super::hot_reload::devlog(&format!("stdout capture install failed: {e}"));
-    }
-    if let Err(e) = install_pipe(libc::STDERR_FILENO, Stream::Stderr, Arc::clone(&buffer)) {
-        super::hot_reload::devlog(&format!("stderr capture install failed: {e}"));
-    }
+    let _ = install_pipe(libc::STDOUT_FILENO, Stream::Stdout, Arc::clone(&buffer));
+    let _ = install_pipe(libc::STDERR_FILENO, Stream::Stderr, Arc::clone(&buffer));
     true
+}
+
+/// Windows does not expose POSIX file descriptors, so log forwarding is
+/// currently disabled there. Hot reload itself remains available.
+#[cfg(not(unix))]
+pub fn start_log_capture() -> bool {
+    false
 }
 
 /// Drain pending captured log lines, awaiting at least one if the
@@ -148,6 +153,7 @@ pub(crate) async fn drain_pending_logs() -> Vec<LogLine> {
     }
 }
 
+#[cfg(unix)]
 fn install_pipe(target_fd: c_int, stream: Stream, buffer: Arc<LogBuffer>) -> std::io::Result<()> {
     let mut fds: [c_int; 2] = [-1, -1];
     let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
@@ -193,6 +199,7 @@ fn install_pipe(target_fd: c_int, stream: Stream, buffer: Arc<LogBuffer>) -> std
     Ok(())
 }
 
+#[cfg(unix)]
 fn reader_loop(read_fd: c_int, original_fd: c_int, stream: Stream, buffer: Arc<LogBuffer>) {
     let mut read_buf = [0u8; 4096];
     // Carryover so a line straddling a read boundary surfaces as one
@@ -294,7 +301,7 @@ fn push_platform_log(stream: Stream, line: &str) {
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))]
 fn push_platform_log(_stream: Stream, _line: &str) {
     // The write to `original_fd` already lands on the terminal, which
     // is the only sink that matters off-device.

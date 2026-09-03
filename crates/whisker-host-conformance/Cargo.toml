@@ -1,0 +1,12 @@
+[package]
+name = "whisker-host-conformance"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Test-only schema and loader for cross-Host Whisker conformance fixtures."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

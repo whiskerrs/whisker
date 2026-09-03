@@ -63,6 +63,11 @@ struct Cli {
     #[arg(long, short = 'v', global = true)]
     verbose: bool,
 
+    /// Disable the inline progress UI for long-running build/run workflows.
+    /// Plain deterministic output is always used when piping or under CI.
+    #[arg(long, global = true)]
+    no_tui: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -76,7 +81,7 @@ enum Command {
     /// + subsecond hot patches over WebSocket.
     Run(run::Args),
     /// Scaffold a new Whisker module crate — Cargo.toml (with the
-    /// `[package.metadata.whisker]` marker), Package.swift,
+    /// `[package.metadata.whisker.module.platforms]` support map), Package.swift,
     /// build.gradle.kts, and skeleton Rust / Swift / Kotlin sources.
     /// See `docs/module-author-guide.md`.
     NewModule(new_module::NewModuleArgs),
@@ -140,10 +145,10 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     }
     match cli.command {
         Command::Doctor(a) => doctor::run(a),
-        Command::Run(a) => run::run(a),
+        Command::Run(a) => run::run(a, cli.no_tui),
         Command::NewModule(a) => new_module::run(a),
         Command::New(a) => new_app::run(a),
-        Command::Build(a) => build::run(a),
+        Command::Build(a) => build::run(a, cli.no_tui),
         Command::Credential(a) => credential::run(a),
         Command::Fmt(a) => fmt::run(a),
         Command::BuildIos(a) => build_dispatch::run_ios(a),
@@ -201,6 +206,29 @@ mod tests {
         // (Host was the previous default and has been removed).
         let res = parse(["whisker", "run"]);
         assert!(res.is_err(), "expected clap error, got {res:?}");
+    }
+
+    #[test]
+    fn parses_run_web() {
+        let cli = parse(["whisker", "run", "web"]).unwrap();
+        match cli.command {
+            Command::Run(args) => assert_eq!(args.target, run::CliTarget::Web),
+            other => panic!("expected Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_build_web() {
+        let cli = parse(["whisker", "build", "web"]).unwrap();
+        assert!(matches!(cli.command, Command::Build(_)));
+    }
+
+    #[test]
+    fn parses_global_no_tui_for_run_and_build() {
+        let run = parse(["whisker", "run", "web", "--no-tui"]).unwrap();
+        assert!(run.no_tui);
+        let build = parse(["whisker", "--no-tui", "build", "web"]).unwrap();
+        assert!(build.no_tui);
     }
 
     #[test]

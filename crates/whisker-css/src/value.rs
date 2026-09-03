@@ -10,8 +10,769 @@
 
 use core::fmt;
 
-use crate::data_type::{CssString, FitContent, Length, LengthPercentage, MaxContent, Percentage};
+use crate::data_type::{
+    Color, CssString, FitContent, Length, LengthPercentage, MaxContent, Number, Percentage,
+};
 use crate::to_css::{ToCss, write_number};
+
+// ---------- BackdropFilter ----------
+
+/// Supported value of `backdrop-filter`.
+///
+/// Whisker deliberately exposes only the app-oriented blur subset rather than
+/// the complete CSS filter-function list.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BackdropFilter {
+    /// `none` — do not alter pixels behind the element.
+    None,
+    /// `blur(<length>)` — blur pixels already painted behind the element.
+    Blur(crate::ValueOrVariable<Length>),
+}
+
+impl BackdropFilter {
+    /// Creates `blur(<radius>)`.
+    pub fn blur(radius: impl Into<crate::ValueOrVariable<Length>>) -> Self {
+        Self::Blur(radius.into())
+    }
+}
+
+impl ToCss for BackdropFilter {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::None => dest.write_str("none"),
+            Self::Blur(radius) => {
+                dest.write_str("blur(")?;
+                radius.to_css(dest)?;
+                dest.write_char(')')
+            }
+        }
+    }
+}
+
+// ---------- Box shadow ----------
+
+/// One structured `box-shadow` layer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoxShadow {
+    /// Horizontal offset.
+    pub offset_x: crate::ValueOrVariable<Length>,
+    /// Vertical offset.
+    pub offset_y: crate::ValueOrVariable<Length>,
+    /// Non-negative blur radius.
+    pub blur_radius: crate::ValueOrVariable<Length>,
+    /// Signed spread radius.
+    pub spread_radius: crate::ValueOrVariable<Length>,
+    /// Shadow color.
+    pub color: crate::ValueOrVariable<Color>,
+    /// Whether the shadow is painted inside the box.
+    pub inset: bool,
+}
+
+impl BoxShadow {
+    /// Creates an outer shadow.
+    pub fn outer(
+        offset_x: impl Into<crate::ValueOrVariable<Length>>,
+        offset_y: impl Into<crate::ValueOrVariable<Length>>,
+        blur_radius: impl Into<crate::ValueOrVariable<Length>>,
+        spread_radius: impl Into<crate::ValueOrVariable<Length>>,
+        color: impl Into<crate::ValueOrVariable<Color>>,
+    ) -> Self {
+        Self {
+            offset_x: offset_x.into(),
+            offset_y: offset_y.into(),
+            blur_radius: blur_radius.into(),
+            spread_radius: spread_radius.into(),
+            color: color.into(),
+            inset: false,
+        }
+    }
+
+    /// Creates an inset shadow.
+    pub fn inset(
+        offset_x: impl Into<crate::ValueOrVariable<Length>>,
+        offset_y: impl Into<crate::ValueOrVariable<Length>>,
+        blur_radius: impl Into<crate::ValueOrVariable<Length>>,
+        spread_radius: impl Into<crate::ValueOrVariable<Length>>,
+        color: impl Into<crate::ValueOrVariable<Color>>,
+    ) -> Self {
+        Self {
+            inset: true,
+            ..Self::outer(offset_x, offset_y, blur_radius, spread_radius, color)
+        }
+    }
+}
+
+impl ToCss for BoxShadow {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        if self.inset {
+            dest.write_str("inset ")?;
+        }
+        self.offset_x.to_css(dest)?;
+        dest.write_char(' ')?;
+        self.offset_y.to_css(dest)?;
+        dest.write_char(' ')?;
+        self.blur_radius.to_css(dest)?;
+        dest.write_char(' ')?;
+        self.spread_radius.to_css(dest)?;
+        dest.write_char(' ')?;
+        self.color.to_css(dest)
+    }
+}
+
+// ---------- Clip path ----------
+
+/// Reference box used by a structured clip path.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ClipBox {
+    /// Border box.
+    #[default]
+    BorderBox,
+    /// Padding box.
+    PaddingBox,
+    /// Content box.
+    ContentBox,
+    /// Object bounding box for vector content.
+    FillBox,
+    /// Stroke bounding box for vector content.
+    StrokeBox,
+    /// Nearest vector viewport box.
+    ViewBox,
+}
+
+impl ToCss for ClipBox {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        dest.write_str(match self {
+            Self::BorderBox => "border-box",
+            Self::PaddingBox => "padding-box",
+            Self::ContentBox => "content-box",
+            Self::FillBox => "fill-box",
+            Self::StrokeBox => "stroke-box",
+            Self::ViewBox => "view-box",
+        })
+    }
+}
+
+/// Fill rule used by a clip path.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ClipFillRule {
+    /// Non-zero winding rule.
+    #[default]
+    NonZero,
+    /// Even-odd winding rule.
+    EvenOdd,
+}
+
+/// One point in a structured clip path.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClipPoint {
+    /// Horizontal coordinate.
+    pub x: LengthPercentage,
+    /// Vertical coordinate.
+    pub y: LengthPercentage,
+}
+
+impl ClipPoint {
+    /// Creates a point.
+    pub fn new(x: impl Into<LengthPercentage>, y: impl Into<LengthPercentage>) -> Self {
+        Self {
+            x: x.into(),
+            y: y.into(),
+        }
+    }
+}
+
+/// One command in a structured clip path.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClipPathCommand {
+    /// Start a subpath.
+    MoveTo(ClipPoint),
+    /// Add a line.
+    LineTo(ClipPoint),
+    /// Add a quadratic Bezier segment.
+    QuadraticTo {
+        /// Quadratic control point.
+        control: ClipPoint,
+        /// Segment end point.
+        end: ClipPoint,
+    },
+    /// Add a cubic Bezier segment.
+    CubicTo {
+        /// First cubic control point.
+        control_1: ClipPoint,
+        /// Second cubic control point.
+        control_2: ClipPoint,
+        /// Segment end point.
+        end: ClipPoint,
+    },
+    /// Close the current subpath.
+    Close,
+}
+
+/// Typed `clip-path` value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClipPath {
+    /// Disable clipping.
+    None,
+    /// Inset rectangle.
+    Inset {
+        /// Coordinate box used to resolve percentages.
+        reference_box: ClipBox,
+        /// Top, right, bottom, and left inset offsets.
+        offsets: [LengthPercentage; 4],
+        /// Optional corner radii.
+        radii: Option<BorderRadius>,
+    },
+    /// Circle.
+    Circle {
+        /// Coordinate box used to resolve percentages.
+        reference_box: ClipBox,
+        /// Circle radius.
+        radius: LengthPercentage,
+        /// Horizontal center coordinate.
+        center_x: LengthPercentage,
+        /// Vertical center coordinate.
+        center_y: LengthPercentage,
+    },
+    /// Ellipse.
+    Ellipse {
+        /// Coordinate box used to resolve percentages.
+        reference_box: ClipBox,
+        /// Horizontal radius.
+        radius_x: LengthPercentage,
+        /// Vertical radius.
+        radius_y: LengthPercentage,
+        /// Horizontal center coordinate.
+        center_x: LengthPercentage,
+        /// Vertical center coordinate.
+        center_y: LengthPercentage,
+    },
+    /// Structured path.
+    Path {
+        /// Coordinate box used to resolve percentages.
+        reference_box: ClipBox,
+        /// Fill rule applied to the path.
+        fill_rule: ClipFillRule,
+        /// Ordered path commands.
+        commands: Vec<ClipPathCommand>,
+    },
+}
+
+impl ClipPath {
+    /// Creates a centered circle against the border box.
+    pub fn circle(radius: impl Into<LengthPercentage>) -> Self {
+        Self::Circle {
+            reference_box: ClipBox::BorderBox,
+            radius: radius.into(),
+            center_x: Percentage::new(50.0).into(),
+            center_y: Percentage::new(50.0).into(),
+        }
+    }
+
+    /// Creates a centered ellipse against the border box.
+    pub fn ellipse(
+        radius_x: impl Into<LengthPercentage>,
+        radius_y: impl Into<LengthPercentage>,
+    ) -> Self {
+        Self::Ellipse {
+            reference_box: ClipBox::BorderBox,
+            radius_x: radius_x.into(),
+            radius_y: radius_y.into(),
+            center_x: Percentage::new(50.0).into(),
+            center_y: Percentage::new(50.0).into(),
+        }
+    }
+
+    /// Creates an inset rectangle against the border box.
+    pub fn inset(offsets: [LengthPercentage; 4]) -> Self {
+        Self::Inset {
+            reference_box: ClipBox::BorderBox,
+            offsets,
+            radii: None,
+        }
+    }
+
+    /// Replaces the reference box of this shape.
+    pub fn with_reference_box(mut self, reference_box: ClipBox) -> Self {
+        match &mut self {
+            Self::None => {}
+            Self::Inset {
+                reference_box: box_value,
+                ..
+            }
+            | Self::Circle {
+                reference_box: box_value,
+                ..
+            }
+            | Self::Ellipse {
+                reference_box: box_value,
+                ..
+            }
+            | Self::Path {
+                reference_box: box_value,
+                ..
+            } => *box_value = reference_box,
+        }
+        self
+    }
+}
+
+impl ToCss for ClipPath {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        fn point(dest: &mut dyn fmt::Write, point: &ClipPoint) -> fmt::Result {
+            point.x.to_css(dest)?;
+            dest.write_char(' ')?;
+            point.y.to_css(dest)
+        }
+
+        let reference_box = match self {
+            Self::None => return dest.write_str("none"),
+            Self::Inset {
+                reference_box,
+                offsets,
+                radii,
+            } => {
+                dest.write_str("inset(")?;
+                write_four(dest, offsets)?;
+                if let Some(radii) = radii {
+                    dest.write_str(" round ")?;
+                    radii.to_css(dest)?;
+                }
+                dest.write_char(')')?;
+                reference_box
+            }
+            Self::Circle {
+                reference_box,
+                radius,
+                center_x,
+                center_y,
+            } => {
+                dest.write_str("circle(")?;
+                radius.to_css(dest)?;
+                dest.write_str(" at ")?;
+                center_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                center_y.to_css(dest)?;
+                dest.write_char(')')?;
+                reference_box
+            }
+            Self::Ellipse {
+                reference_box,
+                radius_x,
+                radius_y,
+                center_x,
+                center_y,
+            } => {
+                dest.write_str("ellipse(")?;
+                radius_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                radius_y.to_css(dest)?;
+                dest.write_str(" at ")?;
+                center_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                center_y.to_css(dest)?;
+                dest.write_char(')')?;
+                reference_box
+            }
+            Self::Path {
+                reference_box,
+                fill_rule,
+                commands,
+            } => {
+                dest.write_str("path(")?;
+                if matches!(fill_rule, ClipFillRule::EvenOdd) {
+                    dest.write_str("evenodd, ")?;
+                }
+                for (index, command) in commands.iter().enumerate() {
+                    if index > 0 {
+                        dest.write_char(' ')?;
+                    }
+                    match command {
+                        ClipPathCommand::MoveTo(value) => {
+                            dest.write_str("M ")?;
+                            point(dest, value)?;
+                        }
+                        ClipPathCommand::LineTo(value) => {
+                            dest.write_str("L ")?;
+                            point(dest, value)?;
+                        }
+                        ClipPathCommand::QuadraticTo { control, end } => {
+                            dest.write_str("Q ")?;
+                            point(dest, control)?;
+                            dest.write_char(' ')?;
+                            point(dest, end)?;
+                        }
+                        ClipPathCommand::CubicTo {
+                            control_1,
+                            control_2,
+                            end,
+                        } => {
+                            dest.write_str("C ")?;
+                            point(dest, control_1)?;
+                            dest.write_char(' ')?;
+                            point(dest, control_2)?;
+                            dest.write_char(' ')?;
+                            point(dest, end)?;
+                        }
+                        ClipPathCommand::Close => dest.write_char('Z')?,
+                    }
+                }
+                dest.write_char(')')?;
+                reference_box
+            }
+        };
+        dest.write_char(' ')?;
+        reference_box.to_css(dest)
+    }
+}
+
+// ---------- Motion path ----------
+
+/// One absolute point in an `offset-path: path()` value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MotionPathPoint {
+    /// Horizontal logical-pixel coordinate.
+    pub x: f32,
+    /// Vertical logical-pixel coordinate.
+    pub y: f32,
+}
+
+impl MotionPathPoint {
+    /// Creates an absolute motion-path point.
+    pub const fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+}
+
+/// One command in an absolute SVG `offset-path: path()` value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MotionPathCommand {
+    /// Start a new subpath.
+    MoveTo(MotionPathPoint),
+    /// Add a straight segment.
+    LineTo(MotionPathPoint),
+    /// Add a quadratic Bezier segment.
+    QuadraticTo {
+        /// Curve control point.
+        control: MotionPathPoint,
+        /// Segment endpoint.
+        to: MotionPathPoint,
+    },
+    /// Add a cubic Bezier segment.
+    CubicTo {
+        /// First curve control point.
+        control1: MotionPathPoint,
+        /// Second curve control point.
+        control2: MotionPathPoint,
+        /// Segment endpoint.
+        to: MotionPathPoint,
+    },
+    /// Add an absolute SVG elliptical arc segment.
+    ArcTo {
+        /// Horizontal ellipse radius.
+        radius_x: f32,
+        /// Vertical ellipse radius.
+        radius_y: f32,
+        /// Clockwise rotation of the ellipse x axis, in degrees.
+        x_axis_rotation: f32,
+        /// Select the arc spanning at least 180 degrees.
+        large_arc: bool,
+        /// Sweep through increasing angles.
+        sweep: bool,
+        /// Segment endpoint.
+        to: MotionPathPoint,
+    },
+    /// Close the current subpath.
+    Close,
+}
+
+/// A typed `inset()` motion path.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InsetPath {
+    /// Top, right, bottom, and left offsets from the border box.
+    pub offsets: [LengthPercentage; 4],
+    /// Optional per-corner radii in CSS border-radius order.
+    pub radii: Option<BorderRadius>,
+}
+
+/// Supported `offset-path` value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OffsetPath {
+    /// Disable motion-path positioning.
+    None,
+    /// Follow an absolute SVG path.
+    Path(Vec<MotionPathCommand>),
+    /// Follow a circle resolved against the node border box.
+    Circle {
+        /// Radius.
+        radius: LengthPercentage,
+        /// Horizontal center position.
+        center_x: LengthPercentage,
+        /// Vertical center position.
+        center_y: LengthPercentage,
+    },
+    /// Follow an ellipse resolved against the node border box.
+    Ellipse {
+        /// Horizontal radius.
+        radius_x: LengthPercentage,
+        /// Vertical radius.
+        radius_y: LengthPercentage,
+        /// Horizontal center position.
+        center_x: LengthPercentage,
+        /// Vertical center position.
+        center_y: LengthPercentage,
+    },
+    /// Follow a possibly-rounded rectangle inset from the node border box.
+    Inset(Box<InsetPath>),
+}
+
+impl OffsetPath {
+    /// Creates a `path()` from absolute SVG commands.
+    pub fn path(commands: impl Into<Vec<MotionPathCommand>>) -> Self {
+        Self::Path(commands.into())
+    }
+
+    /// Creates a centered `circle()` motion path.
+    pub fn circle(radius: impl Into<LengthPercentage>) -> Self {
+        Self::circle_at(radius, Percentage::new(50.0), Percentage::new(50.0))
+    }
+
+    /// Creates a positioned `circle()` motion path.
+    pub fn circle_at(
+        radius: impl Into<LengthPercentage>,
+        center_x: impl Into<LengthPercentage>,
+        center_y: impl Into<LengthPercentage>,
+    ) -> Self {
+        Self::Circle {
+            radius: radius.into(),
+            center_x: center_x.into(),
+            center_y: center_y.into(),
+        }
+    }
+
+    /// Creates a centered `ellipse()` motion path.
+    pub fn ellipse(
+        radius_x: impl Into<LengthPercentage>,
+        radius_y: impl Into<LengthPercentage>,
+    ) -> Self {
+        Self::ellipse_at(
+            radius_x,
+            radius_y,
+            Percentage::new(50.0),
+            Percentage::new(50.0),
+        )
+    }
+
+    /// Creates a positioned `ellipse()` motion path.
+    pub fn ellipse_at(
+        radius_x: impl Into<LengthPercentage>,
+        radius_y: impl Into<LengthPercentage>,
+        center_x: impl Into<LengthPercentage>,
+        center_y: impl Into<LengthPercentage>,
+    ) -> Self {
+        Self::Ellipse {
+            radius_x: radius_x.into(),
+            radius_y: radius_y.into(),
+            center_x: center_x.into(),
+            center_y: center_y.into(),
+        }
+    }
+
+    /// Creates a rectangular `inset()` motion path.
+    pub fn inset(
+        top: impl Into<LengthPercentage>,
+        right: impl Into<LengthPercentage>,
+        bottom: impl Into<LengthPercentage>,
+        left: impl Into<LengthPercentage>,
+    ) -> Self {
+        Self::Inset(Box::new(InsetPath {
+            offsets: [top.into(), right.into(), bottom.into(), left.into()],
+            radii: None,
+        }))
+    }
+
+    /// Creates a rounded `inset()` motion path.
+    pub fn inset_round(
+        top: impl Into<LengthPercentage>,
+        right: impl Into<LengthPercentage>,
+        bottom: impl Into<LengthPercentage>,
+        left: impl Into<LengthPercentage>,
+        radii: BorderRadius,
+    ) -> Self {
+        Self::Inset(Box::new(InsetPath {
+            offsets: [top.into(), right.into(), bottom.into(), left.into()],
+            radii: Some(radii),
+        }))
+    }
+}
+
+impl ToCss for OffsetPath {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::None => dest.write_str("none"),
+            Self::Path(commands) => {
+                dest.write_str("path(\"")?;
+                for (index, command) in commands.iter().enumerate() {
+                    if index > 0 {
+                        dest.write_char(' ')?;
+                    }
+                    match command {
+                        MotionPathCommand::MoveTo(point) => {
+                            dest.write_str("M ")?;
+                            write_number(dest, point.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, point.y)?;
+                        }
+                        MotionPathCommand::LineTo(point) => {
+                            dest.write_str("L ")?;
+                            write_number(dest, point.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, point.y)?;
+                        }
+                        MotionPathCommand::QuadraticTo { control, to } => {
+                            dest.write_str("Q ")?;
+                            write_number(dest, control.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, control.y)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.y)?;
+                        }
+                        MotionPathCommand::CubicTo {
+                            control1,
+                            control2,
+                            to,
+                        } => {
+                            dest.write_str("C ")?;
+                            write_number(dest, control1.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, control1.y)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, control2.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, control2.y)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.y)?;
+                        }
+                        MotionPathCommand::ArcTo {
+                            radius_x,
+                            radius_y,
+                            x_axis_rotation,
+                            large_arc,
+                            sweep,
+                            to,
+                        } => {
+                            dest.write_str("A ")?;
+                            write_number(dest, *radius_x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, *radius_y)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, *x_axis_rotation)?;
+                            dest.write_char(' ')?;
+                            dest.write_char(if *large_arc { '1' } else { '0' })?;
+                            dest.write_char(' ')?;
+                            dest.write_char(if *sweep { '1' } else { '0' })?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.y)?;
+                        }
+                        MotionPathCommand::Close => dest.write_char('Z')?,
+                    }
+                }
+                dest.write_str("\")")
+            }
+            Self::Circle {
+                radius,
+                center_x,
+                center_y,
+            } => {
+                dest.write_str("circle(")?;
+                radius.to_css(dest)?;
+                dest.write_str(" at ")?;
+                center_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                center_y.to_css(dest)?;
+                dest.write_char(')')
+            }
+            Self::Ellipse {
+                radius_x,
+                radius_y,
+                center_x,
+                center_y,
+            } => {
+                dest.write_str("ellipse(")?;
+                radius_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                radius_y.to_css(dest)?;
+                dest.write_str(" at ")?;
+                center_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                center_y.to_css(dest)?;
+                dest.write_char(')')
+            }
+            Self::Inset(value) => {
+                dest.write_str("inset(")?;
+                write_four(dest, &value.offsets)?;
+                if let Some(radii) = &value.radii {
+                    dest.write_str(" round ")?;
+                    radii.to_css(dest)?;
+                }
+                dest.write_char(')')
+            }
+        }
+    }
+}
+
+/// Supported `offset-distance` value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OffsetDistance {
+    /// Unitless normalized progress in the `0..=1` range.
+    Number(Number),
+    /// Percentage progress in the `0%..=100%` range.
+    Percentage(Percentage),
+}
+
+impl From<Number> for OffsetDistance {
+    fn from(value: Number) -> Self {
+        Self::Number(value)
+    }
+}
+
+impl From<Percentage> for OffsetDistance {
+    fn from(value: Percentage) -> Self {
+        Self::Percentage(value)
+    }
+}
+
+impl ToCss for OffsetDistance {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Number(value) => value.to_css(dest),
+            Self::Percentage(value) => value.to_css(dest),
+        }
+    }
+}
+
+/// Supported `offset-rotate` value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OffsetRotate {
+    /// Follow the path tangent.
+    Auto,
+    /// Use a fixed clockwise angle.
+    Angle(crate::Angle),
+}
+
+impl ToCss for OffsetRotate {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Auto => dest.write_str("auto"),
+            Self::Angle(angle) => angle.to_css(dest),
+        }
+    }
+}
 
 // ---------- Size (width / height / min-/max-) ----------
 
@@ -264,19 +1025,23 @@ fn write_four(dest: &mut dyn fmt::Write, v: &[LengthPercentage; 4]) -> fmt::Resu
     Ok(())
 }
 
-// ---------- GridLine, GridTemplate ----------
+// ---------- CSS Grid ----------
 
 /// Value for `grid-row-start`, `grid-row-end`, `grid-column-start`,
 /// `grid-column-end`. Lynx accepts numeric line references and
 /// `span <integer>`.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum GridLine {
     /// `auto` — let the layout algorithm decide.
     Auto,
     /// Numeric line reference; negative values count from the end.
-    Number(i32),
+    Number(i16),
     /// `span <integer>` — span N tracks from the opposite edge.
-    Span(u32),
+    Span(u16),
+    /// A named line, optionally selecting the nth occurrence.
+    Named(String, i16),
+    /// Span to a named line.
+    NamedSpan(String, u16),
 }
 
 impl ToCss for GridLine {
@@ -285,35 +1050,479 @@ impl ToCss for GridLine {
             GridLine::Auto => dest.write_str("auto"),
             GridLine::Number(n) => write!(dest, "{n}"),
             GridLine::Span(n) => write!(dest, "span {n}"),
+            GridLine::Named(name, occurrence) if *occurrence == 0 => dest.write_str(name),
+            GridLine::Named(name, occurrence) => write!(dest, "{occurrence} {name}"),
+            GridLine::NamedSpan(name, occurrence) if *occurrence == 0 => {
+                write!(dest, "span {name}")
+            }
+            GridLine::NamedSpan(name, occurrence) => write!(dest, "span {occurrence} {name}"),
         }
     }
 }
 
-/// Value for `grid-template-rows` / `grid-template-columns`. Lynx
-/// accepts a sequence of track-sizing values; this struct stores
-/// them as already-serialized track strings since the grammar is
-/// rich enough that a typed model is impractical.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct GridTemplate(pub String);
+/// Minimum sizing function accepted by `minmax()`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTrackMin {
+    /// A fixed length or percentage.
+    Fixed(LengthPercentage),
+    /// The minimum intrinsic contribution.
+    MinContent,
+    /// The maximum intrinsic contribution.
+    MaxContent,
+    /// Automatic minimum sizing.
+    Auto,
+}
+
+/// Maximum sizing function accepted by `minmax()`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTrackMax {
+    /// A fixed length or percentage.
+    Fixed(LengthPercentage),
+    /// The minimum intrinsic contribution.
+    MinContent,
+    /// The maximum intrinsic contribution.
+    MaxContent,
+    /// `fit-content(<limit>)`.
+    FitContent(LengthPercentage),
+    /// Automatic maximum sizing.
+    Auto,
+    /// A flexible share in `fr` units.
+    Fraction(f32),
+}
+
+/// One CSS Grid track sizing function.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridTrack {
+    pub(crate) min: GridTrackMin,
+    pub(crate) max: GridTrackMax,
+}
+
+impl GridTrack {
+    /// `auto`.
+    pub const fn auto() -> Self {
+        Self {
+            min: GridTrackMin::Auto,
+            max: GridTrackMax::Auto,
+        }
+    }
+
+    /// `min-content`.
+    pub const fn min_content() -> Self {
+        Self {
+            min: GridTrackMin::MinContent,
+            max: GridTrackMax::MinContent,
+        }
+    }
+
+    /// `max-content`.
+    pub const fn max_content() -> Self {
+        Self {
+            min: GridTrackMin::MaxContent,
+            max: GridTrackMax::MaxContent,
+        }
+    }
+
+    /// A fixed length or percentage.
+    pub fn fixed(value: impl Into<LengthPercentage>) -> Self {
+        let value = value.into();
+        Self {
+            min: GridTrackMin::Fixed(value.clone()),
+            max: GridTrackMax::Fixed(value),
+        }
+    }
+
+    /// A flexible `fr` track.
+    pub const fn fraction(value: f32) -> Self {
+        Self {
+            min: GridTrackMin::Auto,
+            max: GridTrackMax::Fraction(value),
+        }
+    }
+
+    /// `fit-content(<limit>)`.
+    pub fn fit_content(limit: impl Into<LengthPercentage>) -> Self {
+        Self {
+            min: GridTrackMin::Auto,
+            max: GridTrackMax::FitContent(limit.into()),
+        }
+    }
+
+    /// `minmax(<min>, <max>)`.
+    pub const fn minmax(min: GridTrackMin, max: GridTrackMax) -> Self {
+        Self { min, max }
+    }
+}
+
+impl From<Length> for GridTrack {
+    fn from(value: Length) -> Self {
+        Self::fixed(value)
+    }
+}
+
+impl From<Percentage> for GridTrack {
+    fn from(value: Percentage) -> Self {
+        Self::fixed(value)
+    }
+}
+
+impl From<LengthPercentage> for GridTrack {
+    fn from(value: LengthPercentage) -> Self {
+        Self::fixed(value)
+    }
+}
+
+impl From<Length> for GridTrackMin {
+    fn from(value: Length) -> Self {
+        Self::Fixed(value.into())
+    }
+}
+
+impl From<Percentage> for GridTrackMin {
+    fn from(value: Percentage) -> Self {
+        Self::Fixed(value.into())
+    }
+}
+
+impl From<LengthPercentage> for GridTrackMin {
+    fn from(value: LengthPercentage) -> Self {
+        Self::Fixed(value)
+    }
+}
+
+impl From<Length> for GridTrackMax {
+    fn from(value: Length) -> Self {
+        Self::Fixed(value.into())
+    }
+}
+
+impl From<Percentage> for GridTrackMax {
+    fn from(value: Percentage) -> Self {
+        Self::Fixed(value.into())
+    }
+}
+
+impl From<LengthPercentage> for GridTrackMax {
+    fn from(value: LengthPercentage) -> Self {
+        Self::Fixed(value)
+    }
+}
+
+impl ToCss for GridTrack {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match (&self.min, &self.max) {
+            (GridTrackMin::Auto, GridTrackMax::Auto) => dest.write_str("auto"),
+            (GridTrackMin::MinContent, GridTrackMax::MinContent) => dest.write_str("min-content"),
+            (GridTrackMin::MaxContent, GridTrackMax::MaxContent) => dest.write_str("max-content"),
+            (GridTrackMin::Fixed(min), GridTrackMax::Fixed(max)) if min == max => min.to_css(dest),
+            (GridTrackMin::Auto, GridTrackMax::Fraction(value)) => {
+                write_number(dest, *value)?;
+                dest.write_str("fr")
+            }
+            (GridTrackMin::Auto, GridTrackMax::FitContent(limit)) => {
+                dest.write_str("fit-content(")?;
+                limit.to_css(dest)?;
+                dest.write_char(')')
+            }
+            (min, max) => {
+                dest.write_str("minmax(")?;
+                min.to_css(dest)?;
+                dest.write_str(", ")?;
+                max.to_css(dest)?;
+                dest.write_char(')')
+            }
+        }
+    }
+}
+
+impl ToCss for GridTrackMin {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Fixed(value) => value.to_css(dest),
+            Self::MinContent => dest.write_str("min-content"),
+            Self::MaxContent => dest.write_str("max-content"),
+            Self::Auto => dest.write_str("auto"),
+        }
+    }
+}
+
+impl ToCss for GridTrackMax {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Fixed(value) => value.to_css(dest),
+            Self::MinContent => dest.write_str("min-content"),
+            Self::MaxContent => dest.write_str("max-content"),
+            Self::FitContent(limit) => {
+                dest.write_str("fit-content(")?;
+                limit.to_css(dest)?;
+                dest.write_char(')')
+            }
+            Self::Auto => dest.write_str("auto"),
+            Self::Fraction(value) => {
+                write_number(dest, *value)?;
+                dest.write_str("fr")
+            }
+        }
+    }
+}
+
+/// Count used by a Grid `repeat()` fragment.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GridRepeatCount {
+    /// Repeat a fixed number of times.
+    Count(u16),
+    /// Fill the available axis while retaining empty repeated tracks.
+    AutoFill,
+    /// Fill the available axis and collapse empty repeated tracks.
+    AutoFit,
+}
+
+/// One explicit track or repeated track fragment.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTemplateComponent {
+    /// One track.
+    Track(GridTrack),
+    /// A repeated fragment.
+    Repeat {
+        /// Fixed or automatic repetition count.
+        count: GridRepeatCount,
+        /// Tracks inside the repeated fragment.
+        tracks: Vec<GridTrack>,
+        /// Named lines before, between, and after repeated tracks.
+        line_names: Vec<Vec<String>>,
+    },
+}
+
+impl From<GridTrack> for GridTemplateComponent {
+    fn from(value: GridTrack) -> Self {
+        Self::Track(value)
+    }
+}
+
+/// Value for `grid-template-rows` / `grid-template-columns`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridTemplate {
+    pub(crate) components: Vec<GridTemplateComponent>,
+    pub(crate) line_names: Vec<Vec<String>>,
+}
 
 impl GridTemplate {
     /// Build from a list of track-sizing tokens. Each token is
     /// joined with a space.
-    pub fn tracks(tracks: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        let mut out = String::new();
-        for (i, t) in tracks.into_iter().enumerate() {
-            if i > 0 {
-                out.push(' ');
-            }
-            out.push_str(&t.into());
+    pub fn tracks(tracks: impl IntoIterator<Item = impl Into<GridTrack>>) -> Self {
+        let components: Vec<_> = tracks
+            .into_iter()
+            .map(|track| track.into().into())
+            .collect();
+        let line_names = vec![Vec::new(); components.len() + 1];
+        Self {
+            components,
+            line_names,
         }
-        Self(out)
+    }
+
+    /// Build a template from explicit track and `repeat()` components.
+    pub fn components(components: impl IntoIterator<Item = GridTemplateComponent>) -> Self {
+        let components: Vec<_> = components.into_iter().collect();
+        let line_names = vec![Vec::new(); components.len() + 1];
+        Self {
+            components,
+            line_names,
+        }
+    }
+
+    /// Build a template containing one `repeat()` fragment.
+    pub fn repeat(
+        count: GridRepeatCount,
+        tracks: impl IntoIterator<Item = impl Into<GridTrack>>,
+    ) -> Self {
+        let tracks: Vec<_> = tracks.into_iter().map(Into::into).collect();
+        let line_names = vec![Vec::new(); tracks.len() + 1];
+        Self::components([GridTemplateComponent::Repeat {
+            count,
+            tracks,
+            line_names,
+        }])
+    }
+
+    /// Attach names to the lines before, between, and after components.
+    /// Invalid line-name counts are rejected during style resolution.
+    pub fn line_names(
+        mut self,
+        line_names: impl IntoIterator<Item = impl IntoIterator<Item = impl Into<String>>>,
+    ) -> Self {
+        self.line_names = line_names
+            .into_iter()
+            .map(|names| names.into_iter().map(Into::into).collect())
+            .collect();
+        self
     }
 }
 
 impl ToCss for GridTemplate {
     fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
-        dest.write_str(&self.0)
+        for (index, component) in self.components.iter().enumerate() {
+            if index > 0 {
+                dest.write_char(' ')?;
+            }
+            write_grid_line_names(dest, self.line_names.get(index))?;
+            if !self.line_names.get(index).is_none_or(Vec::is_empty) {
+                dest.write_char(' ')?;
+            }
+            component.to_css(dest)?;
+        }
+        if !self
+            .line_names
+            .get(self.components.len())
+            .is_none_or(Vec::is_empty)
+        {
+            if !self.components.is_empty() {
+                dest.write_char(' ')?;
+            }
+            write_grid_line_names(dest, self.line_names.get(self.components.len()))?;
+        }
+        Ok(())
+    }
+}
+
+impl ToCss for GridTemplateComponent {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Track(track) => track.to_css(dest),
+            Self::Repeat {
+                count,
+                tracks,
+                line_names,
+            } => {
+                dest.write_str("repeat(")?;
+                count.to_css(dest)?;
+                dest.write_str(", ")?;
+                for (index, track) in tracks.iter().enumerate() {
+                    if index > 0 {
+                        dest.write_char(' ')?;
+                    }
+                    write_grid_line_names(dest, line_names.get(index))?;
+                    if !line_names.get(index).is_none_or(Vec::is_empty) {
+                        dest.write_char(' ')?;
+                    }
+                    track.to_css(dest)?;
+                }
+                if !line_names.get(tracks.len()).is_none_or(Vec::is_empty) {
+                    if !tracks.is_empty() {
+                        dest.write_char(' ')?;
+                    }
+                    write_grid_line_names(dest, line_names.get(tracks.len()))?;
+                }
+                dest.write_char(')')
+            }
+        }
+    }
+}
+
+impl ToCss for GridRepeatCount {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Count(value) => write!(dest, "{value}"),
+            Self::AutoFill => dest.write_str("auto-fill"),
+            Self::AutoFit => dest.write_str("auto-fit"),
+        }
+    }
+}
+
+fn write_grid_line_names(dest: &mut dyn fmt::Write, names: Option<&Vec<String>>) -> fmt::Result {
+    let Some(names) = names.filter(|names| !names.is_empty()) else {
+        return Ok(());
+    };
+    dest.write_char('[')?;
+    for (index, name) in names.iter().enumerate() {
+        if index > 0 {
+            dest.write_char(' ')?;
+        }
+        dest.write_str(name)?;
+    }
+    dest.write_char(']')
+}
+
+/// One rectangular named region in `grid-template-areas`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridArea {
+    pub(crate) name: String,
+    pub(crate) row_start: u16,
+    pub(crate) row_end: u16,
+    pub(crate) column_start: u16,
+    pub(crate) column_end: u16,
+}
+
+impl GridArea {
+    /// Defines a zero-based, end-exclusive rectangular area.
+    pub fn new(
+        name: impl Into<String>,
+        row_start: u16,
+        row_end: u16,
+        column_start: u16,
+        column_end: u16,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            row_start,
+            row_end,
+            column_start,
+            column_end,
+        }
+    }
+}
+
+/// Rectangular named regions for `grid-template-areas`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridTemplateAreas {
+    pub(crate) row_count: u16,
+    pub(crate) column_count: u16,
+    pub(crate) areas: Vec<GridArea>,
+}
+
+impl GridTemplateAreas {
+    /// Creates an empty named-area matrix with explicit dimensions.
+    pub const fn new(row_count: u16, column_count: u16) -> Self {
+        Self {
+            row_count,
+            column_count,
+            areas: Vec::new(),
+        }
+    }
+
+    /// Adds one named rectangular area.
+    pub fn area(mut self, area: GridArea) -> Self {
+        self.areas.push(area);
+        self
+    }
+}
+
+impl ToCss for GridTemplateAreas {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        for row in 0..self.row_count {
+            if row > 0 {
+                dest.write_char(' ')?;
+            }
+            dest.write_char('"')?;
+            for column in 0..self.column_count {
+                if column > 0 {
+                    dest.write_char(' ')?;
+                }
+                let name = self
+                    .areas
+                    .iter()
+                    .rev()
+                    .find(|area| {
+                        area.row_start <= row
+                            && row < area.row_end
+                            && area.column_start <= column
+                            && column < area.column_end
+                    })
+                    .map_or(".", |area| area.name.as_str());
+                dest.write_str(name)?;
+            }
+            dest.write_char('"')?;
+        }
+        Ok(())
     }
 }
 
@@ -409,7 +1618,7 @@ mod tests {
             ImageRef::Url(CssString::new("a.png")).to_css_string(),
             "url(\"a.png\")"
         );
-        let g = Gradient::linear_to_bottom([ColorStop::new(NamedColor::Red.into())]);
+        let g = Gradient::linear_to_bottom([ColorStop::new(crate::Color::Named(NamedColor::Red))]);
         let r: ImageRef = g.into();
         assert_eq!(r.to_css_string(), "linear-gradient(to bottom, red)");
     }
@@ -440,11 +1649,23 @@ mod tests {
         assert_eq!(GridLine::Number(1).to_css_string(), "1");
         assert_eq!(GridLine::Number(-1).to_css_string(), "-1");
         assert_eq!(GridLine::Span(2).to_css_string(), "span 2");
+        assert_eq!(
+            GridLine::Named("content".into(), 0).to_css_string(),
+            "content"
+        );
+        assert_eq!(
+            GridLine::NamedSpan("content".into(), 2).to_css_string(),
+            "span 2 content"
+        );
     }
 
     #[test]
     fn grid_template_joins_tracks() {
-        let t = GridTemplate::tracks(["1fr", "auto", "2fr"]);
+        let t = GridTemplate::tracks([
+            GridTrack::fraction(1.0),
+            GridTrack::auto(),
+            GridTrack::fraction(2.0),
+        ]);
         assert_eq!(t.to_css_string(), "1fr auto 2fr");
     }
 

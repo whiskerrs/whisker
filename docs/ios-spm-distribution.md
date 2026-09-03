@@ -1,129 +1,63 @@
-# iOS distribution & the remote SwiftPM package
+# iOS distribution and the remote Swift package
 
-How an iOS app consumes Whisker's native runtime, and the one caveat
-monorepo developers need to know.
+How an iOS app receives the Swift Host SDK and links its Rust application.
 
-## How it works
+## Two artifacts with different ownership
 
-iOS apps resolve Whisker's Swift runtime from a **remote SwiftPM
-package**, not from a local `platforms/ios` path. This is what lets an
-app created with `whisker new` (outside this repo) build without cloning
-the monorepo — the same "prebuilt, fetched by URL" model Android already
-uses with its Maven AARs.
+The iOS application combines two independently built artifacts:
 
-The pieces:
+| Artifact | Contents | Resolution |
+|---|---|---|
+| `WhiskerRuntime` / `WhiskerModule` / `WhiskerCBridge` | Checked-in Swift Host implementation, module API, and C declarations | SwiftPM package at the Whisker git tag |
+| `WhiskerDriver.framework` | The consuming application's Rust crate, including `whisker-runtime` and the iOS-only `whisker-driver` adapter | Built per application by the generated Xcode Run Script phase |
 
-| Artifact | Source |
-|---|---|
-| `WhiskerRuntime` / `WhiskerModule` / `WhiskerCBridge` / `WhiskerModuleCodegenPlugin` | The **`whisker` SwiftPM package** — the [`Package.swift`](../Package.swift) at the repo root, resolved by tagged git URL |
-| `Lynx*` / `PrimJS` xcframeworks | `binaryTarget(url:checksum:)` against `whiskerrs/lynx` GitHub Releases |
-| `WhiskerDriver.framework` | Built **per-app** during the Xcode build (it wraps the user's `#[whisker::main]` crate) by the "Whisker Generate" Run Script phase |
-| Each `whisker-*` module | Its own SwiftPM package; references the `whisker` package by the same URL so the build graph has one `WhiskerRuntime` identity |
-| Bridge headers (`whisker.h`, `whisker_bridge.h`, …) | Resolved from the `whisker-driver` / `whisker-driver-sys` crates via `cargo metadata` (registry extraction for external users, `crates/` in-repo) |
+The Swift package contains no copy of the user application and no generated
+Rust binding. Conversely, `WhiskerDriver.framework` contains no UIKit Host
+implementation. Their contract is the typed retained-runtime ABI owned by
+`whisker-driver-sys` and checked in as the generated `WhiskerCBridge` header.
+The Swift package consumes that header directly; an application build does not
+run Whisker's ABI generator.
 
-The root `Package.swift` **must** live at the repo root — SwiftPM only
-resolves a `Package.swift` at the root of a git URL, never a
-subdirectory. It re-paths into `platforms/ios/Sources/...` and
-`platforms/ios/macros/...` so the Swift sources stay in one place.
+The name `WhiskerDriver.framework` describes the link product, while the Rust
+`whisker-driver` crate is specifically the safe FFI adapter inside that product.
+Platform-independent runtime behavior lives in `whisker-runtime`. Web and
+Desktop link that runtime directly and do not link `whisker-driver`.
 
-### Single source of truth for the version
+## Build flow
 
-The remote URL + version are defined once, in Rust:
+The generated Xcode project has a Run Script phase that invokes
+`whisker build-ios`. That command cross-compiles the user's Cargo package for
+the active iOS target, wraps the result as `WhiskerDriver.framework`, and puts
+it where the app target's framework search path expects it. Xcode then links
+the framework together with the SwiftPM Host libraries.
 
-```rust
-// crates/whisker-build/src/ios.rs
-pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
-pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.1";
-```
+This keeps Xcode authoritative for application compilation: a developer can
+build from Xcode without first running `whisker run` or `whisker build` in a
+separate terminal. CNG is still responsible for materializing the Xcode project
+and its dependency graph after a clean checkout or Cargo dependency change.
 
-These drive the generated app's `XCRemoteSwiftPackageReference`
-(`whisker-cng`) and the generated module aggregator (`whisker-build`).
-**Every module's `Package.swift`** hardcodes the same URL + `exact:`
-version as a Swift literal — keep all of these, the constants, the root
-`Package.swift`, and the published git tag in lockstep. A unit test in
-`whisker-build` fails when a manifest falls behind the constant, and the
-`publish-ios` workflow re-checks them before it creates the tag; cut the
-tag with that workflow rather than by hand (see
-[the release skill](../.agents/skills/release-whisker/SKILL.md)).
+## Module resolution
 
-## ⚠️ Caveat for monorepo developers
+Whisker modules remain loosely coupled across the language boundary. CNG walks
+the app's Cargo dependency graph and adds each module's checked-in Swift source
+package to the generated native dependency graph. Rust and Swift/Kotlin match
+module, function, event, and element names at runtime. `WhiskerValue` is the
+only argument, result, property, and event-payload value model crossing the
+boundary; no generated per-module contract is required for compilation.
 
-Because iOS resolves the runtime **only** from the published git tag (no
-local path fallback anymore), **editing `platforms/ios/**` Swift sources
-and rebuilding an app will NOT pick up your local changes** — SwiftPM
-keeps using whatever is committed at the tag.
+## Version source of truth
 
-To iterate on the Swift runtime locally, use one of:
+The generated project's remote package reference is driven by
+`WHISKER_IOS_SPM_URL` and `WHISKER_IOS_SPM_VERSION` in
+`crates/whisker-build/src/ios.rs`. First-party module manifests pin the same
+version, and the build tests reject mismatches. Use the release workflow rather
+than creating the tag manually; see the release skill linked from
+`docs/README.md`.
 
-1. **Local URL redirect (recommended for quick iteration).** Point the
-   production HTTPS URL at your working copy via git, build, then unset:
+## Developing the Swift Host locally
 
-   ```sh
-   git config --global \
-     url."file://$(pwd)".insteadOf "https://github.com/whiskerrs/whisker.git"
-   # commit your platforms/ios changes on a branch + tag it v0.1.0 locally,
-   # then `whisker run ios` resolves against the local repo.
-   git config --global --unset \
-     url."file://$(pwd)".insteadOf
-   ```
-
-   > Note: Xcode's SwiftPM honours `insteadOf` for the `swift package`
-   > CLI but **not always** for `xcodebuild`. If `xcodebuild` ignores it,
-   > temporarily set `WHISKER_IOS_SPM_URL` to a `file://…` path in
-   > `crates/whisker-build/src/ios.rs` (and the module manifests) for the
-   > duration of your local testing — that is exactly how this feature
-   > was verified end-to-end.
-
-2. **Re-tag.** Commit your `platforms/ios` change and move the `v0.1.0`
-   tag (`git tag -f v0.1.0 && git push -f origin v0.1.0`), then clear the
-   SwiftPM cache so it re-fetches. Heavier; prefer (1) for tight loops.
-
-A dedicated local-override mechanism for monorepo development (a
-`.package(path:)` override that SwiftPM prefers over the same-identity
-remote) can be added later if this friction becomes painful.
-
-## Bumping the version
-
-When you publish a new `whisker` package version:
-
-1. Bump `WHISKER_IOS_SPM_VERSION` in `crates/whisker-build/src/ios.rs`.
-2. Bump the `exact:` version literal in **every** `packages/*/Package.swift`.
-3. Commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
-
-If the Lynx fork tag moves, also update the `binaryTarget` URLs +
-checksums in both the root `Package.swift` and
-`platforms/ios/Package.swift` (keep them identical).
-
-## Compatibility matrix
-
-Keep these aligned per release:
-
-| crates.io | iOS SwiftPM tag | Android SDK (Maven) | Gradle plugin | Lynx fork |
-|---|---|---|---|---|
-| `0.1.0` | `v0.1.0` | `0.1.1` | `0.4.0` | `3.8.0-whisker.7` |
-| `0.1.1` | `v0.1.1` | `0.1.2` | `0.4.0` | `3.8.0-whisker.8` |
-| `0.10.2` | `v0.1.4` | `0.1.15` | `0.4.1` | `3.8.0-whisker.13` |
-| `0.10.3` | `v0.1.5` | `0.1.16` | `0.4.1` | `4.0.1-whisker.1` |
-
-The `3.8.0-whisker.8` row bumps the Lynx fork on both platforms, raising
-the capi ABI to **v2** (list data source driven by real item-keys +
-per-item metadata; object-valued attributes for `item-snap`). The
-per-app WhiskerDriver bridge is built for ABI v2 and refuses to attach
-to an ABI v1 Lynx (`whisker_bridge_engine_attach` returns NULL), so apps
-must move to the new pins:
-
-- **iOS** — SwiftPM tag `v0.1.1` (`WHISKER_IOS_SPM_VERSION`).
-- **Android** — SDK `0.1.2` (`WHISKER_SDK_VERSION`), published by an
-  `sdk-v0.1.2` tag. Its POM rolls the transitive `lynx-android` pin
-  `3.8.0-whisker.7` → `.8` via the `lynxFork` default in
-  `platforms/android/{whisker-runtime,module}/build.gradle.kts`.
-
-The `4.0.1-whisker.1` row rebases the fork onto upstream Lynx 4.0.1 (898
-commits since 3.8.0). The capi is untouched, so the ABI stays **v3** and
-the engine handshake is not what forces the move — the PrimJS coordinate
-shipping in the same POM does (`org.lynxsdk.lynx:primjs` 3.7.0 → 4.0.0).
-On the Rust side the same release renames `Css::caret_width`'s output to
-`-x-caret-width`, which Lynx 4.0 requires and 3.8 does not accept.
-
-The iOS SwiftPM tag and the Android `sdk-v*` tag are independent version
-streams (hence `v0.1.1` vs `0.1.2`), aligned here only by the Lynx fork.
+A generated external app normally resolves the published SwiftPM tag, so local
+edits under `platforms/ios` are not picked up automatically. For framework
+development, run the package tests in this repository or temporarily redirect
+the package URL to the working copy. Do not commit a local path override to a
+generated application.

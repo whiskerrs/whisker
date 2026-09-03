@@ -8,32 +8,69 @@
 //! the read in `effect(...)` so the value re-applies whenever the
 //! signal source changes.
 
+use crate::event::Dataset;
 use crate::reactive::{Signal, effect};
 use crate::view::handle::Element;
 use crate::view::renderer::{
-    set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int, set_inline_styles,
+    set_accessibility, set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int,
+    set_dataset, set_element_id, set_text_max_lines,
 };
+use whisker_protocol::Accessibility;
 
-/// Apply an inline-styles value to `h`, picking a static vs reactive
-/// code path based on the [`Signal<T>`] variant. The `Dynamic` case
-/// wraps the read in an `effect` so the
-/// [`ReadSignal<T>::get`](crate::reactive::ReadSignal::get) call
-/// registers the source as a dependency.
-pub fn apply_styles<V, T>(h: Element, v: V)
+/// Applies a reactive framework-level element identifier.
+pub fn apply_element_id<V>(handle: Element, value: V)
 where
-    V: ::std::convert::Into<Signal<T>>,
-    T: ::std::string::ToString + ::std::clone::Clone + 'static,
+    V: Into<Signal<String>>,
 {
-    match v.into() {
-        Signal::Stored(sv) => sv.with(|t| set_inline_styles(h, &t.to_string())),
-        Signal::Dynamic(sig) => {
-            effect(move || set_inline_styles(h, &sig.get().to_string()));
+    match value.into() {
+        Signal::Stored(value) => value.with(|value| set_element_id(handle, value.clone())),
+        Signal::Dynamic(value) => {
+            effect(move || set_element_id(handle, value.get()));
+        }
+    }
+}
+
+/// Applies a reactive structured dataset.
+pub fn apply_dataset<V>(handle: Element, value: V)
+where
+    V: Into<Signal<Dataset>>,
+{
+    match value.into() {
+        Signal::Stored(value) => value.with(|value| set_dataset(handle, value.clone())),
+        Signal::Dynamic(value) => {
+            effect(move || set_dataset(handle, value.get()));
+        }
+    }
+}
+
+/// Applies reactive common accessibility semantics.
+pub fn apply_accessibility<V>(handle: Element, value: V)
+where
+    V: Into<Signal<Accessibility>>,
+{
+    match value.into() {
+        Signal::Stored(value) => value.with(|value| set_accessibility(handle, value.clone())),
+        Signal::Dynamic(value) => {
+            effect(move || set_accessibility(handle, value.get()));
+        }
+    }
+}
+
+/// Applies a reactive plain-text line limit (`0` means unlimited).
+pub fn apply_text_max_lines<V>(handle: Element, value: V)
+where
+    V: Into<Signal<u32>>,
+{
+    match value.into() {
+        Signal::Stored(value) => value.with(|value| set_text_max_lines(handle, *value)),
+        Signal::Dynamic(value) => {
+            effect(move || set_text_max_lines(handle, value.get()));
         }
     }
 }
 
 /// Apply a named attribute value to `h`. Same Stored / Dynamic
-/// dispatch as [`apply_styles`].
+/// dispatch as other reactive property helpers.
 pub fn apply_attr<V, T>(h: Element, name: &'static str, v: V)
 where
     V: ::std::convert::Into<Signal<T>>,
@@ -47,12 +84,12 @@ where
     }
 }
 
-/// Typed-attribute helpers — use these when the Lynx-side handler
-/// reads the value as anything other than a string. Lynx's prop
+/// Typed-attribute helpers — use these when the Host-side handler
+/// reads the value as anything other than a string. Host's prop
 /// dispatch on many UIs (`<list>`, `<scroll-view>`, …) gates
 /// branches on `value.IsNumber()` / `value.IsBool()`, so a
 /// stringified attr from [`apply_attr`] silently no-ops in those
-/// branches. See `crates/whisker-driver-sys/bridge/src/whisker_bridge_common.cc`
+/// branches. Retained Hosts receive the typed value through the frame protocol.
 /// for the bridge-side rationale.
 pub fn apply_attr_int<V>(h: Element, name: &'static str, v: V)
 where
@@ -69,7 +106,7 @@ where
 /// Same as [`apply_attr_int`] but for a signal whose element type
 /// isn't already `i32` — maps each read through `to_wire` first.
 /// Exists for typed attribute enums (e.g. `PanInterceptDirection`)
-/// whose Lynx-side prop setter is integer-typed but where the Rust
+/// whose Host-side prop setter is integer-typed but where the Rust
 /// API keeps the ergonomic enum type; see [`apply_attr_int`]'s doc
 /// comment for why the plain string [`apply_attr`] path silently
 /// no-ops for these.

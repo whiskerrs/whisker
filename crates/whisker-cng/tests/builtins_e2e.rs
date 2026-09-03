@@ -136,7 +136,6 @@ fn android_extra_permissions_reach_the_rendered_manifest() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();
@@ -145,8 +144,8 @@ fn android_extra_permissions_reach_the_rendered_manifest() {
 
     let manifest = std::fs::read_to_string(out.join("app/src/main/AndroidManifest.xml")).unwrap();
     assert!(
-        manifest.contains("<uses-permission android:name=\"android.permission.INTERNET\""),
-        "{manifest}",
+        !manifest.contains("android.permission.INTERNET"),
+        "{manifest}"
     );
     assert!(
         manifest.contains("<uses-permission android:name=\"android.permission.CAMERA\""),
@@ -175,7 +174,6 @@ fn android_duplicate_permissions_are_dedup_in_the_rendered_manifest() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();
@@ -205,7 +203,6 @@ fn android_meta_data_reaches_the_rendered_manifest_inside_application() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();
@@ -226,7 +223,7 @@ fn android_meta_data_reaches_the_rendered_manifest_inside_application() {
 }
 
 #[test]
-fn android_no_plugin_declared_means_only_baseline_internet_permission() {
+fn android_no_plugin_declared_means_no_permissions() {
     let app = base_android_app();
     let inputs = whisker_cng::android::inputs_from(
         &app,
@@ -236,7 +233,6 @@ fn android_no_plugin_declared_means_only_baseline_internet_permission() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();
@@ -244,7 +240,7 @@ fn android_no_plugin_declared_means_only_baseline_internet_permission() {
     whisker_cng::android::sync(&out, &inputs).unwrap();
 
     let manifest = std::fs::read_to_string(out.join("app/src/main/AndroidManifest.xml")).unwrap();
-    assert!(manifest.contains("android.permission.INTERNET"));
+    assert!(!manifest.contains("<uses-permission"));
     assert!(!manifest.contains("android.permission.CAMERA"));
     assert!(!manifest.contains("<meta-data"));
     let _ = std::fs::remove_dir_all(&tmp);

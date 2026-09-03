@@ -1,11 +1,11 @@
 # whisker-svg display-list binary format — SPEC v1
 
 This document is the **single source of truth** for the byte format
-transported through `WhiskerValue::Bytes` between
+transported as the base64-encoded `display-list` module Prop between
 `packages/whisker-svg` (Rust producer) and the per-platform
-replayers in `packages/whisker-svg/{ios,android}/`. All three
-implementations MUST validate against this document. Changes here
-require updating every implementation in lockstep.
+replayers in `packages/whisker-svg/{android,ios,web,desktop}/`.
+All host implementations MUST validate against this document.
+Changes here require updating every implementation in lockstep.
 
 ## Design goals
 
@@ -226,7 +226,7 @@ The replayer applies `[scale, 0, 0, scale, tx, ty]` as the
 CSS `color` on the host `<Svg>` element is the "tint". For
 `PAINT_FILL_TINT` / `PAINT_STROKE_TINT` opcodes, the replayer
 substitutes the tint colour (resolved from `style="color: …"` or
-the inherited Lynx text colour) as the paint. Producers compile
+the inherited Whisker text colour) as the paint. Producers compile
 SVG `fill="currentColor"` / `stroke="currentColor"` to these
 opcodes.
 

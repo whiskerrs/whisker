@@ -15,7 +15,7 @@
 //! uninstall_renderer(prev);                 // restore previous (None)
 //! ```
 //!
-//! In production the bridge driver installs the Lynx-backed renderer
+//! In production the bridge driver installs the Host renderer
 //! once at startup and keeps it for the life of the process.
 
 use std::cell::{Cell, RefCell};
@@ -24,12 +24,15 @@ use std::rc::Rc;
 
 use super::handle::Element;
 use crate::element::ElementTag;
+use crate::event::Dataset;
 use crate::value::WhiskerValue;
+use whisker_protocol::{Accessibility, ElementSchema, LayoutGeometry};
+use whisker_style::SpecifiedStyle;
 
-/// Event-handler propagation type — a faithful 1:1 mapping to Lynx's
-/// four handler kinds (`bind` / `catch` / `capture-bind` /
+/// Event-handler propagation type for the four supported handler kinds
+/// (`bind` / `catch` / `capture-bind` /
 /// `capture-catch`). The variant chosen when registering a listener is
-/// what drives Lynx's native event chain:
+/// what drives the Host event chain:
 ///
 ///   - **phase**: capture handlers fire on the way *down* (root →
 ///     target); bind/catch (bubble) handlers fire on the way *up*
@@ -37,8 +40,8 @@ use crate::value::WhiskerValue;
 ///   - **stop**: a `catch` handler stops propagation after it fires;
 ///     a `bind` handler lets the event continue along the chain.
 ///
-/// The discriminants match `lynx_event_bind_type_e` in the C bridge,
-/// so the value crosses the FFI as a plain `i32`.
+/// Discriminants are stable for renderer implementations that store the mode
+/// as an integer.
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BindType {
@@ -65,41 +68,23 @@ pub type EventFiring = (Rc<dyn Fn(WhiskerValue) + 'static>, WhiskerValue);
 /// released, since a handler may re-enter the renderer).
 #[derive(Default)]
 pub struct EventDispatchPlan {
-    /// Whether any listener matched — relayed to the platform reporter
-    /// so Lynx can skip its own native chain for this event.
+    /// Whether any listener matched.
     pub consumed: bool,
     /// Listeners to invoke, in propagation order.
     pub firings: Vec<EventFiring>,
-}
-
-/// One `<list>` diff-action entry as it crosses the renderer: the
-/// resolved (stable) item-key plus the per-item layout metadata Lynx's
-/// adapter ingests from the action stream. For inserts `position` is
-/// the ascending splice point into the post-removal list; for updates
-/// it is the item's index in the FINAL list.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListItemAction {
-    pub position: i32,
-    pub key: String,
-    /// Estimated main-axis size in px; `None` = native default.
-    pub estimated_size: Option<i32>,
-    pub full_span: bool,
-    pub sticky_top: bool,
-    pub sticky_bottom: bool,
-    pub recyclable: bool,
 }
 
 /// Object-safe renderer trait. The renderer owns whatever per-element
 /// state it needs and answers in [`Element`] IDs.
 ///
 /// All mutating methods take `&self`, not `&mut self`, so the renderer
-/// survives re-entrancy: a native event can fire *synchronously*
-/// during a renderer operation (e.g. Lynx teardown inside
+/// survives re-entrancy: a Host event can fire *synchronously*
+/// during a renderer operation (e.g. Host teardown inside
 /// [`remove_child`](Self::remove_child) triggering a UIKit callback
 /// that dispatches a custom event) and re-enter through
 /// [`dispatch_event`]. With `&self` methods the thread-local
-/// [`CURRENT_RENDERER`] is held by a *shared* borrow in
-/// [`with_renderer`], so the nested call is granted instead of
+/// the thread-local renderer is held by a *shared* borrow in the private
+/// `with_renderer` helper, so the nested call is granted instead of
 /// panicking with "RefCell already borrowed". Renderers own their
 /// mutable state behind per-field `RefCell`s and must scope each field
 /// borrow so it does **not** span a re-entrant FFI call.
@@ -108,20 +93,19 @@ pub trait DynRenderer {
     /// Tag-by-name dispatch for custom / xelement-style tags
     /// ("x-input", etc.) not in the built-in [`ElementTag`] enum.
     /// Returns a handle whose [`id`](Element::id) is `u32::MAX` when the
-    /// tag is unknown to Lynx's behaviour registry.
+    /// tag is unknown to the element registry.
     fn create_element_by_name(&self, tag_name: &str) -> Element;
+    /// Schema-carrying path used by `#[module_element]`. Renderers that
+    /// negotiate schemas out of band can keep the default name-only behavior.
+    fn create_element_by_schema(&self, schema: &ElementSchema) -> Element {
+        self.create_element_by_name(&schema.name)
+    }
     fn release_element(&self, handle: Element);
 
     fn set_attribute(&self, handle: Element, key: &str, value: &str);
-    /// Typed-attr variants. Lynx's prop dispatch on many UIs
-    /// (`<list>`, `<scroll-view>`, …) gates branches on
-    /// `value.IsNumber()` / `value.IsBool()` against the underlying
-    /// `lepus::Value`, so a stringified attr from
-    /// [`set_attribute`](Self::set_attribute) silently no-ops in
-    /// those branches. Use these for any prop whose Lynx handler
-    /// reads the value as anything other than a string. Default
-    /// impls forward to the string path (good enough for test
-    /// renderers that don't model the underlying type discrimination).
+    /// Typed attribute variants preserve value kind for module property
+    /// handlers. Default implementations serialize to the string path for
+    /// renderers that do not model type discrimination.
     fn set_attribute_int(&self, handle: Element, key: &str, value: i64) {
         self.set_attribute(handle, key, &value.to_string());
     }
@@ -131,83 +115,42 @@ pub trait DynRenderer {
     fn set_attribute_double(&self, handle: Element, key: &str, value: f64) {
         self.set_attribute(handle, key, &value.to_string());
     }
-    fn set_inline_styles(&self, handle: Element, css: &str);
-
-    /// Underlying Lynx sign (`impl_id`) for `handle`, or 0 if the
-    /// renderer doesn't model signs (test renderers) or the handle
-    /// is unknown. The list provider closure needs this to tell the
-    /// C++ list which FiberElement to bind to an `index`. Whisker's
-    /// own [`Element`] is a Vec index inside the renderer and is
-    /// **not** the same number as Lynx's `impl_id`.
-    fn element_sign(&self, _handle: Element) -> i32 {
-        0
+    /// Applies renderer-independent typed style and reports whether it was
+    /// accepted. The default `false` is useful for lightweight test renderers;
+    /// application-facing style APIs do not fall back to raw CSS.
+    fn set_specified_style(&self, _handle: Element, _style: &SpecifiedStyle) -> bool {
+        false
     }
 
-    /// Hand a `<list>` element its item count so the bridge can build
-    /// the `update-list-info` map (positional item-keys `w_<i>`) that
-    /// Lynx's decoupled native list reads its items from. `item_keys`
-    /// are the real (stable) item-keys in current order; `prev_count` is
-    /// the previous call's item count (for the remove+insert diff). The
-    /// `list` virtualizer calls this on every data update. Default no-op
-    /// for test renderers that don't model list virtualisation.
-    ///
-    /// This is the FULL-REPLACE form — it severs every native item's
-    /// identity, so the list cannot hold its scroll position across the
-    /// update. The virtualizer prefers [`update_list_actions`]
-    /// (Self::update_list_actions) and only falls back here.
-    fn set_update_list_info(&self, _handle: Element, _item_keys: &[String], _prev_count: usize) {}
+    /// Stores the framework-level identifier used in event metadata.
+    fn set_element_id(&self, _handle: Element, _id: String) {}
 
-    /// Explicit `<list>` diff actions — the minimal-action form.
-    /// `removals` are ascending indices into the PRE-update item-key
-    /// list (applied first); `inserts` splice into the post-removal
-    /// list at ascending positions, carrying the per-item layout
-    /// metadata (the action stream is the ONLY channel Lynx's adapter
-    /// ingests it from); `updates` refresh a SURVIVING item's metadata
-    /// in place (`position` = its index in the FINAL list). Items
-    /// mentioned in no action keep their native identity, which lets
-    /// the list hold its scroll position across appends.
-    ///
-    /// Returns whether the renderer delivered the actions — `false`
-    /// (the default, also reported when the loaded Lynx predates the
-    /// capi) tells the virtualizer to fall back to the full-replace
-    /// [`set_update_list_info`](Self::set_update_list_info).
-    fn update_list_actions(
-        &self,
-        _handle: Element,
-        _removals: &[i32],
-        _inserts: &[ListItemAction],
-        _updates: &[ListItemAction],
-    ) -> bool {
-        false
+    /// Stores structured metadata surfaced on event targets.
+    fn set_dataset(&self, _handle: Element, _dataset: Dataset) {}
+
+    /// Replaces common accessibility semantics independently of element schema.
+    fn set_accessibility(&self, _handle: Element, _accessibility: Accessibility) {}
+
+    /// Sets the maximum number of lines for a plain-text element (`0` clears).
+    fn set_text_max_lines(&self, _handle: Element, _max_lines: u32) {}
+
+    /// Returns the current typed style when the renderer owns a retained Rust
+    /// scene. Framework control flow uses this only for semantic validation;
+    /// Hosts do not need to expose native presentation state.
+    fn specified_style(&self, _handle: Element) -> Option<SpecifiedStyle> {
+        None
     }
 
     /// Set an object-valued attribute (`{obj[i].0: obj[i].1}` of doubles)
     /// — e.g. `<list>` `item-snap` {factor, offset}. Default no-op.
     fn set_attribute_object(&self, _handle: Element, _key: &str, _obj: &[(String, f64)]) {}
 
-    /// Install a native item provider on a `<list>` element. The
-    /// `provider`'s callbacks are invoked by Lynx's list machinery to
-    /// fetch / recycle item elements on demand. Returns `true` if the
-    /// install reached the bridge — `false` is reported when the
-    /// renderer has no live native handle for `_handle` or doesn't
-    /// model list virtualisation (test renderers default here).
-    /// The default drops `provider` so test code doesn't leak boxed
-    /// closures.
-    fn install_list_native_item_provider(
-        &self,
-        _handle: Element,
-        provider: super::list_provider::NativeItemProvider,
-    ) -> bool {
-        drop(provider);
-        false
-    }
-
     fn append_child(&self, parent: Element, child: Element);
     fn remove_child(&self, parent: Element, child: Element);
 
     /// Whether this renderer can insert a child before a reference
     /// sibling in one operation. When `false`, positioned insertion is
-    /// simulated by append + rotate (see [`bridge_insert_or_append`]).
+    /// simulated by append + rotate (see the private `insert_or_append`).
     /// Defaults to `false` so mock / host renderers opt in explicitly.
     fn supports_insert_before(&self) -> bool {
         false
@@ -223,10 +166,10 @@ pub trait DynRenderer {
 
     /// Register `callback` for `event_name` on `handle`.
     ///
-    /// The callback receives the event body Lynx hands the handler
+    /// The callback receives the event body Host hands the handler
     /// as a [`WhiskerValue`] tree (the same wire as module
     /// args/returns). A built-in builder's `on_<event>` method or a
-    /// `#[whisker::module_component]` `on_<event>` prop wraps a
+    /// `#[whisker::module_element]` `on_<event>` prop wraps a
     /// typed-event / unit / raw-value closure into this single
     /// shape, deserializing the payload as needed. An event with no
     /// body fires the callback with [`WhiskerValue::Null`].
@@ -237,6 +180,11 @@ pub trait DynRenderer {
         bind_type: BindType,
         callback: Box<dyn Fn(WhiskerValue) + 'static>,
     );
+
+    /// Observes resolved Rust layout for framework control primitives.
+    /// Ordinary renderers may ignore this; SurfaceRuntime reports after each
+    /// successful Taffy pass without involving a Host event.
+    fn observe_layout(&self, _handle: Element, _callback: Box<dyn Fn(LayoutGeometry) + 'static>) {}
 
     /// Plan how a reported event (`event_name` at `target_sign`,
     /// carrying `body`) propagates through Whisker's reconstructed
@@ -253,8 +201,8 @@ pub trait DynRenderer {
     /// because firing happens after the renderer borrow is released
     /// (a handler may mutate signals → effects → re-enter the
     /// renderer). [`dispatch_event`] does the firing. The default impl
-    /// plans nothing (renderers without a native event source); the
-    /// Lynx bridge renderer overrides it.
+    /// plans nothing (renderers without a Host event source); the
+    /// Host bridge renderer overrides it.
     fn plan_event_dispatch(
         &self,
         _target_sign: i32,
@@ -264,22 +212,19 @@ pub trait DynRenderer {
         EventDispatchPlan::default()
     }
 
-    fn set_root(&self, page: Element);
-    fn flush(&self);
-
-    /// Opaque platform pointer the C bridge associates with this
-    /// `Element` handle (cast from `*mut WhiskerElement` for the
-    /// Lynx bridge renderer; `0` for renderers without a native
-    /// backing).
-    ///
-    /// Used by `whisker-driver`'s `ElementRef::invoke` to call
-    /// `whisker_bridge_invoke_element_method` without the runtime
-    /// crate having to know about the bridge's C types. Renderers
-    /// that don't have a native pointer return `0`, which the
-    /// driver surfaces as `WhiskerValue::Error` to the caller.
-    fn module_component_ptr(&self, _handle: Element) -> usize {
-        0
+    /// Handles an element command through the retained semantic frame path.
+    /// Renderers without command support leave the default `None`.
+    fn invoke_element_command(
+        &self,
+        _handle: Element,
+        _command: &str,
+        _parameters: WhiskerValue,
+    ) -> Option<Result<(), String>> {
+        None
     }
+
+    fn set_root(&self, root: Element);
+    fn flush(&self);
 }
 
 thread_local! {
@@ -295,10 +240,8 @@ thread_local! {
     /// relationship the runtime has emitted. Maintained by
     /// [`append_child`] / [`remove_child`].
     ///
-    /// The mirror exists because Lynx's C API exposes no
-    /// child-position query, so sibling/index lookups (component
-    /// remount anchors, phantom hoisting) have nowhere else to read
-    /// child order from.
+    /// The mirror makes sibling/index queries deterministic without requiring
+    /// a reverse query API from each Host.
     static CHILDREN_OF: RefCell<HashMap<Element, Vec<Element>>> =
         RefCell::new(HashMap::new());
 
@@ -315,17 +258,45 @@ thread_local! {
 
     /// IDs allocated by [`create_phantom_element`]. A phantom is an
     /// Element that lives in [`CHILDREN_OF`] / [`PARENT_OF`] but is
-    /// **not** present in Lynx. It behaves like a *transparent
+    /// **not** present in Host. It behaves like a *transparent
     /// container*: any real child mounted under a phantom is hoisted
-    /// to the phantom's nearest non-phantom ancestor in Lynx; if
+    /// to the phantom's nearest non-phantom ancestor in Host; if
     /// there is no such ancestor yet (the phantom is still
     /// unattached), the real children stay in the mirror only and
-    /// land in Lynx when the phantom subtree is finally attached.
+    /// land in Host when the phantom subtree is finally attached.
     static PHANTOM_ELEMENTS: RefCell<HashSet<Element>> =
         RefCell::new(HashSet::new());
 
     /// Monotonic counter for phantom IDs, starting at [`PHANTOM_BASE`].
     static NEXT_PHANTOM_ID: Cell<u32> = const { Cell::new(PHANTOM_BASE) };
+}
+
+pub(crate) struct ViewRuntimeState {
+    children: HashMap<Element, Vec<Element>>,
+    parents: HashMap<Element, Element>,
+    phantoms: HashSet<Element>,
+    next_phantom_id: u32,
+}
+
+impl ViewRuntimeState {
+    pub(crate) fn new() -> Self {
+        Self {
+            children: HashMap::new(),
+            parents: HashMap::new(),
+            phantoms: HashSet::new(),
+            next_phantom_id: PHANTOM_BASE,
+        }
+    }
+}
+
+pub(crate) fn swap_runtime_state(state: &mut ViewRuntimeState) {
+    CHILDREN_OF.with_borrow_mut(|active| std::mem::swap(active, &mut state.children));
+    PARENT_OF.with_borrow_mut(|active| std::mem::swap(active, &mut state.parents));
+    PHANTOM_ELEMENTS.with_borrow_mut(|active| std::mem::swap(active, &mut state.phantoms));
+    NEXT_PHANTOM_ID.with(|active| {
+        let current = active.replace(state.next_phantom_id);
+        state.next_phantom_id = current;
+    });
 }
 
 /// Phantom IDs occupy the high half of `u32`; real IDs start at 0
@@ -357,12 +328,17 @@ pub fn uninstall_renderer(prev: Option<Box<dyn DynRenderer>>) {
 /// rendering.
 pub fn with_installed_renderer<R>(r: Box<dyn DynRenderer>, f: impl FnOnce() -> R) -> R {
     let prev = install_renderer(r);
-    let result = f();
-    let _new = CURRENT_RENDERER.with_borrow_mut(|slot| slot.take());
-    if let Some(p) = prev {
-        let _ = install_renderer(p);
+    struct Restore(Option<Option<Box<dyn DynRenderer>>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _current = CURRENT_RENDERER.with_borrow_mut(|slot| slot.take());
+            if let Some(previous) = self.0.take().flatten() {
+                let _ = install_renderer(previous);
+            }
+        }
     }
-    result
+    let _restore = Restore(Some(prev));
+    f()
 }
 
 /// Crate-internal sigil for "no renderer installed" diagnostics —
@@ -404,10 +380,29 @@ pub fn create_element_by_name(tag_name: &str) -> Element {
     let handle = with_renderer(|r| r.create_element_by_name(tag_name), Element(u32::MAX));
     if handle.id() != u32::MAX {
         crate::reactive::with_runtime(|rt| {
-            if let Some(owner_id) = rt.current_owner() {
-                if let Some(owner) = rt.owners.get_mut(owner_id) {
-                    owner.elements.push(handle);
-                }
+            if let Some(owner_id) = rt.current_owner()
+                && let Some(owner) = rt.owners.get_mut(owner_id)
+            {
+                owner.elements.push(handle);
+            }
+        });
+    }
+    handle
+}
+
+/// Allocate a module element while making its Host-independent schema
+/// available to the active retained renderer.
+pub fn create_element_by_schema(schema: &ElementSchema) -> Element {
+    let handle = with_renderer(
+        |renderer| renderer.create_element_by_schema(schema),
+        Element(u32::MAX),
+    );
+    if handle.id() != u32::MAX {
+        crate::reactive::with_runtime(|runtime| {
+            if let Some(owner_id) = runtime.current_owner()
+                && let Some(owner) = runtime.owners.get_mut(owner_id)
+            {
+                owner.elements.push(handle);
             }
         });
     }
@@ -417,15 +412,15 @@ pub fn create_element_by_name(tag_name: &str) -> Element {
 pub fn create_element(tag: ElementTag) -> Element {
     let handle = with_renderer(|r| r.create_element(tag), Element(u32::MAX));
     // Register with the current reactive owner so `Owner::dispose`
-    // releases it — otherwise the renderer's element map and Lynx's
-    // FiberElement refcounts accumulate across every `<Show>` flip,
+    // releases it — otherwise the renderer's element map and Host element
+    // records accumulate across every `<Show>` flip,
     // `<For>` removal, and component remount.
     if handle.id() != u32::MAX {
         crate::reactive::with_runtime(|rt| {
-            if let Some(owner_id) = rt.current_owner() {
-                if let Some(owner) = rt.owners.get_mut(owner_id) {
-                    owner.elements.push(handle);
-                }
+            if let Some(owner_id) = rt.current_owner()
+                && let Some(owner) = rt.owners.get_mut(owner_id)
+            {
+                owner.elements.push(handle);
             }
         });
     }
@@ -434,7 +429,7 @@ pub fn create_element(tag: ElementTag) -> Element {
 
 pub fn release_element(handle: Element) {
     if is_phantom(handle) {
-        // Phantom never reached Lynx; tear down mirror state only.
+        // Phantom never reached Host; tear down mirror state only.
         PHANTOM_ELEMENTS.with_borrow_mut(|s| {
             s.remove(&handle);
         });
@@ -449,21 +444,47 @@ pub fn release_element(handle: Element) {
     with_renderer(|r| r.release_element(handle), ())
 }
 
+/// Stores a framework-level element identifier.
+pub fn set_element_id(handle: Element, id: String) {
+    with_renderer(|renderer| renderer.set_element_id(handle, id), ())
+}
+
+/// Stores structured event metadata for an element.
+pub fn set_dataset(handle: Element, dataset: Dataset) {
+    with_renderer(|renderer| renderer.set_dataset(handle, dataset), ())
+}
+
+/// Replaces the common accessibility semantics for an element.
+pub fn set_accessibility(handle: Element, accessibility: Accessibility) {
+    with_renderer(
+        |renderer| renderer.set_accessibility(handle, accessibility),
+        (),
+    )
+}
+
+/// Sets the maximum number of lines for a plain-text element.
+pub fn set_text_max_lines(handle: Element, max_lines: u32) {
+    with_renderer(
+        |renderer| renderer.set_text_max_lines(handle, max_lines),
+        (),
+    )
+}
+
 /// Allocate a phantom element — an opaque positional marker the
-/// runtime registers in the mirror but **never** forwards to Lynx.
+/// runtime registers in the mirror but **never** forwards to Host.
 /// Phantoms behave as *transparent containers*: any real descendant
 /// attached under a phantom is hoisted to the phantom's nearest
-/// non-phantom mirror ancestor in Lynx, preserving source order.
+/// non-phantom mirror ancestor in Host, preserving source order.
 ///
 /// The phantom joins the current reactive owner's `elements` list like
 /// a real element, so the same dispose-cascade reaches it;
 /// [`release_element`] then clears its mirror state without touching
-/// Lynx.
+/// Host.
 ///
 /// **Use case**: the wrapper-less `fragment` builtin and the
 /// `For` / `Show` control-flow components — each allocates one
 /// phantom as its "transparent grouping" element so its reactive
-/// children appear in the mirror tree as a group while landing in Lynx
+/// children appear in the mirror tree as a group while landing in Host
 /// as flat siblings of the surrounding non-phantom container.
 pub fn create_phantom_element() -> Element {
     let id = NEXT_PHANTOM_ID.with(|c| {
@@ -476,10 +497,10 @@ pub fn create_phantom_element() -> Element {
         s.insert(handle);
     });
     crate::reactive::with_runtime(|rt| {
-        if let Some(owner_id) = rt.current_owner() {
-            if let Some(owner) = rt.owners.get_mut(owner_id) {
-                owner.elements.push(handle);
-            }
+        if let Some(owner_id) = rt.current_owner()
+            && let Some(owner) = rt.owners.get_mut(owner_id)
+        {
+            owner.elements.push(handle);
         }
     });
     handle
@@ -500,7 +521,7 @@ pub fn is_phantom(handle: Element) -> bool {
 /// has no parent or the entire chain to the root is phantoms.
 ///
 /// The hoisting path passes the *parent* of the just-mutated child:
-/// what determines the effective Lynx parent is the surrounding tree,
+/// what determines the effective Host parent is the surrounding tree,
 /// not the child's own type.
 fn nearest_real_ancestor(start: Element) -> Option<Element> {
     let mut current = start;
@@ -516,7 +537,7 @@ fn nearest_real_ancestor(start: Element) -> Option<Element> {
 /// Count the number of *real* (non-phantom) elements reachable from
 /// `root` through a strictly transparent path (phantom-only ancestors
 /// between `root` and the reached element) that appear in DFS
-/// pre-order before `target`. Used to compute the Lynx-side position
+/// pre-order before `target`. Used to compute the Host-side position
 /// at which a newly-attached real element should land in
 /// [`nearest_real_ancestor(target)`].
 ///
@@ -552,7 +573,7 @@ fn count_real_descendants_before(root: Element, target: Element) -> usize {
 /// DFS pre-order collect every real (non-phantom) descendant of
 /// `root` reachable through a strictly transparent chain (phantom-
 /// only ancestors). Used when a phantom subtree gets attached to a
-/// real parent — we walk it and hand the real descendants to Lynx
+/// real parent — we walk it and hand the real descendants to Host
 /// in the right order.
 fn collect_transparent_real_descendants(root: Element) -> Vec<Element> {
     let mut out = Vec::new();
@@ -572,7 +593,7 @@ fn collect_transparent_real_descendants(root: Element) -> Vec<Element> {
 
 pub fn set_attribute(handle: Element, key: &str, value: &str) {
     if is_phantom(handle) {
-        return; // phantoms carry no Lynx-side styling — silently no-op
+        return; // phantoms carry no Host-side styling — silently no-op
     }
     with_renderer(|r| r.set_attribute(handle, key, value), ())
 }
@@ -598,46 +619,23 @@ pub fn set_attribute_double(handle: Element, key: &str, value: f64) {
     with_renderer(|r| r.set_attribute_double(handle, key, value), ())
 }
 
-pub fn set_inline_styles(handle: Element, css: &str) {
+/// Attempts to apply renderer-independent typed style.
+pub fn set_specified_style(handle: Element, style: &SpecifiedStyle) -> bool {
     if is_phantom(handle) {
-        return;
-    }
-    with_renderer(|r| r.set_inline_styles(handle, css), ())
-}
-
-/// See [`DynRenderer::element_sign`]. Returns 0 when no renderer is
-/// installed (e.g. test setups using the mock renderer) or when
-/// `handle` is a phantom (phantoms have no Lynx `impl_id`).
-pub fn element_sign(handle: Element) -> i32 {
-    if is_phantom(handle) {
-        return 0;
-    }
-    with_renderer(|r| r.element_sign(handle), 0)
-}
-
-pub fn set_update_list_info(handle: Element, item_keys: &[String], prev_count: usize) {
-    if is_phantom(handle) {
-        return;
+        return true;
     }
     with_renderer(
-        |r| r.set_update_list_info(handle, item_keys, prev_count),
-        (),
-    )
-}
-
-pub fn update_list_actions(
-    handle: Element,
-    removals: &[i32],
-    inserts: &[ListItemAction],
-    updates: &[ListItemAction],
-) -> bool {
-    if is_phantom(handle) {
-        return false;
-    }
-    with_renderer(
-        |r| r.update_list_actions(handle, removals, inserts, updates),
+        |renderer| renderer.set_specified_style(handle, style),
         false,
     )
+}
+
+#[doc(hidden)]
+pub fn specified_style(handle: Element) -> Option<SpecifiedStyle> {
+    if is_phantom(handle) {
+        return None;
+    }
+    with_renderer(|renderer| renderer.specified_style(handle), None)
 }
 
 pub fn set_attribute_object(handle: Element, key: &str, obj: &[(String, f64)]) {
@@ -647,35 +645,21 @@ pub fn set_attribute_object(handle: Element, key: &str, obj: &[(String, f64)]) {
     with_renderer(|r| r.set_attribute_object(handle, key, obj), ())
 }
 
-pub fn install_list_native_item_provider(
-    handle: Element,
-    provider: super::list_provider::NativeItemProvider,
-) -> bool {
-    if is_phantom(handle) {
-        drop(provider);
-        return false;
-    }
-    with_renderer(
-        |r| r.install_list_native_item_provider(handle, provider),
-        false,
-    )
-}
-
-/// Append `child` as the last mirror child of `parent`. The Lynx-
+/// Append `child` as the last mirror child of `parent`. The Host-
 /// side effect depends on whether either end of the edge is a
 /// phantom:
 ///
 ///   - both real → the bridge sees `append_child(parent, child)`
 ///     exactly as before.
 ///   - phantom child → no FFI for `child` itself (it never reaches
-///     Lynx); if `child` brings a transparent subtree of real
+///     Host); if `child` brings a transparent subtree of real
 ///     descendants with it, they're replayed into the nearest real
 ///     ancestor at the position the parent's transparent layout
 ///     puts them.
 ///   - phantom parent → `child` is hoisted up the phantom chain to
 ///     the nearest real ancestor (if any); inserted there at the
 ///     position the mirror order puts it.
-///   - phantom parent with no real ancestor → no Lynx call at all;
+///   - phantom parent with no real ancestor → no Host call at all;
 ///     the subtree is queued in the mirror only. When the topmost
 ///     phantom is later attached to a real ancestor, the same
 ///     replay path handles the queued descendants in source order.
@@ -698,7 +682,7 @@ pub fn append_child(parent: Element, child: Element) {
 }
 
 /// Realize `child` — already placed in the mirror at its target
-/// position — into the real Lynx tree, hoisting/replaying real
+/// position — into the real Host tree, hoisting/replaying real
 /// descendants when either end is a phantom. Reads `child`'s *current*
 /// mirror position, so it serves both a tail append ([`append_child`])
 /// and a positioned insert ([`insert_child_at`]) unchanged.
@@ -706,13 +690,13 @@ pub fn append_child(parent: Element, child: Element) {
 /// Returns `true` when a phantom was involved (and handled here);
 /// `false` when both ends are real, leaving the caller to do the direct
 /// real-to-real attach (`r.append_child` for a tail append, or a
-/// positioned [`bridge_insert_or_append`] for a mid-list insert).
+/// positioned [`insert_or_append`] for a mid-list insert).
 fn realize_hoisted_child(parent: Element, child: Element) -> bool {
     let parent_is_phantom = is_phantom(parent);
     let child_is_phantom = is_phantom(child);
     if parent_is_phantom {
         // No real ancestor yet (topmost phantom still detached) means
-        // nothing to tell Lynx — the next attach replays this subtree.
+        // nothing to tell Host — the next attach replays this subtree.
         if let Some(real_anc) = nearest_real_ancestor(parent) {
             let to_attach: Vec<Element> = if child_is_phantom {
                 collect_transparent_real_descendants(child)
@@ -721,11 +705,11 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
             };
             // Back-to-front: each child's positioned-insert reference
             // is its next real sibling, so it must already be in the
-            // Lynx tree. A forward pass references batch-mates that
-            // aren't on-device yet and Lynx drops all but the last.
+            // Host tree. A forward pass references batch-mates that
+            // aren't on-device yet and Host drops all but the last.
             for real in to_attach.into_iter().rev() {
                 let pos = count_real_descendants_before(real_anc, real);
-                bridge_insert_or_append(real_anc, real, pos);
+                insert_or_append(real_anc, real, pos);
             }
         }
         true
@@ -736,7 +720,7 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
             .rev()
         {
             let pos = count_real_descendants_before(parent, real);
-            bridge_insert_or_append(parent, real, pos);
+            insert_or_append(parent, real, pos);
         }
         true
     } else {
@@ -744,7 +728,7 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
     }
 }
 
-/// Detach `child` from `parent` in the mirror. Lynx-side: any real
+/// Detach `child` from `parent` in the mirror. Host-side: any real
 /// descendants of `child` (or `child` itself if it's real) are
 /// removed from the nearest real ancestor.
 pub fn remove_child(parent: Element, child: Element) {
@@ -781,19 +765,19 @@ pub fn remove_child(parent: Element, child: Element) {
 }
 
 /// Internal helper: place `real_child` at `position` inside
-/// `real_parent`'s Lynx child list.
+/// `real_parent`'s Host child list.
 ///
 /// The mirror already includes `real_child` at `position` in the
 /// parent's real-only DFS pre-order, so the element that should sit
-/// *after* it in Lynx is the next real descendant (`position + 1`), if
+/// *after* it in Host is the next real descendant (`position + 1`), if
 /// any — that's the reference node for a positioned insert.
 ///
 /// A renderer reporting `supports_insert_before` gets one native call
 /// with no sibling churn. The append + rotate fallback (test mocks, a
-/// Lynx too old for the capi) detaches and re-appends every real
+/// Host too old for the capi) detaches and re-appends every real
 /// sibling that must sit after `real_child`, which re-anchors stateful
 /// native siblings — a focused `<input>` loses focus.
-fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: usize) {
+fn insert_or_append(real_parent: Element, real_child: Element, position: usize) {
     let real_descendants = collect_transparent_real_descendants(real_parent);
     let reference = real_descendants.get(position + 1).copied();
 
@@ -821,8 +805,8 @@ fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: 
 
 /// Places `child` at mirror `index` in `parent`'s child list (appends
 /// when `index >= len`). The following siblings are **not touched** on
-/// the Lynx side: `child` is realized with a positioned insert
-/// ([`bridge_insert_or_append`] → native `insert_before` on Lynx), so a
+/// the Host side: `child` is realized with a positioned insert
+/// (the private `insert_or_append` → native `insert_before` on Host), so a
 /// stateful native sibling (a focused `<input>`, a scrolled list) keeps
 /// its state.
 pub fn insert_child_at(parent: Element, child: Element, index: usize) {
@@ -840,7 +824,7 @@ pub fn insert_child_at(parent: Element, child: Element, index: usize) {
 
     if !realize_hoisted_child(parent, child) {
         let pos = count_real_descendants_before(parent, child);
-        bridge_insert_or_append(parent, child, pos);
+        insert_or_append(parent, child, pos);
     }
 
     crate::reactive::on_component_root_attached(parent, child);
@@ -894,13 +878,39 @@ pub fn set_event_listener(
     callback: Box<dyn Fn(WhiskerValue) + 'static>,
 ) {
     if is_phantom(handle) {
-        // Phantoms aren't in Lynx's event chain.
+        // Phantoms aren't in Host's event chain.
         drop(callback);
         return;
     }
     with_renderer(
         |r| r.set_event_listener(handle, event_name, bind_type, callback),
         (),
+    )
+}
+
+/// Registers an internal resolved-layout observer on one real element.
+pub fn observe_layout(handle: Element, callback: Box<dyn Fn(LayoutGeometry) + 'static>) {
+    if is_phantom(handle) {
+        drop(callback);
+        return;
+    }
+    with_renderer(|renderer| renderer.observe_layout(handle, callback), ())
+}
+
+/// Gives the installed renderer the first opportunity to handle an element
+/// command. `None` asks the driver to use its legacy bridge path.
+#[doc(hidden)]
+pub fn try_invoke_element_command(
+    handle: Element,
+    command: &str,
+    parameters: WhiskerValue,
+) -> Option<Result<(), String>> {
+    if is_phantom(handle) {
+        return None;
+    }
+    with_renderer(
+        |renderer| renderer.invoke_element_command(handle, command, parameters),
+        None,
     )
 }
 
@@ -923,25 +933,10 @@ pub fn dispatch_event(target_sign: i32, event_name: &str, body: WhiskerValue) ->
     plan.consumed
 }
 
-pub fn set_root(page: Element) {
-    with_renderer(|r| r.set_root(page), ())
+pub fn set_root(root: Element) {
+    with_renderer(|renderer| renderer.set_root(root), ())
 }
 
 pub fn flush() {
     with_renderer(|r| r.flush(), ())
-}
-
-/// Opaque platform pointer for `handle` — used by `whisker-driver`'s
-/// `ElementRef::invoke` to call the C bridge without leaking the
-/// bridge's `WhiskerElement*` type into the runtime crate's public
-/// surface. Returns `0` if no renderer is installed or the renderer
-/// doesn't have a native pointer for `handle`.
-pub fn module_component_ptr(handle: Element) -> usize {
-    if is_phantom(handle) {
-        return 0;
-    }
-    CURRENT_RENDERER.with_borrow(|slot| match slot.as_ref() {
-        Some(r) => r.module_component_ptr(handle),
-        None => 0,
-    })
 }

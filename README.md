@@ -3,15 +3,15 @@
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/whiskerrs/whisker/main/.github/assets/banner-dark.png" />
       <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/whiskerrs/whisker/main/.github/assets/banner-light.png" />
-      <img alt="Whisker — Build native mobile apps in Rust" src="https://raw.githubusercontent.com/whiskerrs/whisker/main/.github/assets/banner-dark.png" width="100%" />
+      <img alt="Whisker — Build cross-platform apps in Rust" src="https://raw.githubusercontent.com/whiskerrs/whisker/main/.github/assets/banner-dark.png" width="100%" />
     </picture>
   </a>
 </p>
 
 <p align="center">
-  Build native iOS and Android apps in Rust — a Leptos-style fine-grained
-  reactive API on the <a href="https://github.com/lynx-family/lynx">Lynx</a> engine.
-  No virtual DOM, no JavaScript runtime.
+  Build native iOS, Android, desktop, and web apps in Rust with a
+  fine-grained reactive runtime, Taffy layout, and native Host renderers.
+  No virtual DOM.
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@ fn app() -> Element {
 fn counter() -> Element {
     let count = signal(0);
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
@@ -45,11 +45,11 @@ fn counter() -> Element {
             gap: px(12),
             background_color: Color::hex(0x0B0B0F),
         )) {
-            text(
+            Text(
                 value: computed(move || format!("Count: {}", count.get())),
                 style: css!(color: Color::hex(0xFFFFFF), font_size: px(28)),
             )
-            view(
+            View(
                 style: css!(
                     padding: (px(10), px(20)),
                     border_radius: px(10),
@@ -57,7 +57,7 @@ fn counter() -> Element {
                 ),
                 on_tap: move |_| count.set(count.get() + 1),
             ) {
-                text(value: "+1", style: css!(color: Color::hex(0xFFFFFF)))
+                Text(value: "+1", style: css!(color: Color::hex(0xFFFFFF)))
             }
         }
     }
@@ -75,7 +75,7 @@ fn counter() -> Element {
 ```sh
 cargo install whisker-cli
 whisker new my-app && cd my-app
-whisker run ios          # or: whisker run android
+whisker run ios          # also: android, web, desktop
 ```
 
 `whisker run` watches your source and hot-patches the running app in under
@@ -88,9 +88,9 @@ reference — lives at **[whisker.rs/docs](https://whisker.rs/docs)**.
 
 ## Status
 
-Pre-alpha. The core runtime, `render!`, routing, hot reload, and the
-iOS/Android build pipelines work end-to-end. APIs may still change
-before `1.0`.
+Pre-alpha. The retained Rust runtime, typed styling, Host renderers, modules,
+routing, and hot reload work across iOS, Android, Web, and Desktop. APIs may
+still change before `1.0`.
 
 ## License
 

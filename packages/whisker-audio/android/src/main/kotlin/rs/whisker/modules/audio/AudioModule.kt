@@ -5,8 +5,8 @@
 // `PlayerInner::drop` removes it.
 //
 // Playback state flows back through a single `statusChanged` event whose
-// payload carries `playerId`, so the Rust side's global dispatch table
-// can route it to the matching handle.
+// payload carries `playerId`, so the owning Rust runtime can route it
+// to the matching handle.
 
 package rs.whisker.modules.audio
 
@@ -16,17 +16,20 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import rs.whisker.runtime.HostAttachedListener
+import rs.whisker.runtime.RuntimeAttachedListener
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 class AudioModule : Module() {
 
     /**
      * Live players, keyed by the id the Rust side allocates. A plain
      * `HashMap` suffices because every lookup is on the main thread —
-     * Lynx's bridge dispatch thread is the UI thread on Android.
+     * the Host bridge callback thread is the UI thread on Android.
      */
     private val players: MutableMap<Long, ExoPlayer> = mutableMapOf()
     private val loopFlags: MutableMap<Long, Boolean> = mutableMapOf()
@@ -35,7 +38,7 @@ class AudioModule : Module() {
      * `create` requests that arrived before any `WhiskerView` was attached
      * as a host. Rust's `Player::new` fires from the first render, which
      * runs inside `WhiskerView`'s constructor, so `currentActivity` is
-     * still `null` then. Drained by the [HostAttachedListener].
+     * still `null` then. Drained by the [RuntimeAttachedListener].
      */
     private val pendingCreates: MutableList<Pair<Long, String>> = mutableListOf()
 
@@ -44,7 +47,7 @@ class AudioModule : Module() {
      * then kept for the process lifetime so the queue drains on every
      * re-attach.
      */
-    private var hostListener: HostAttachedListener? = null
+    private var hostListener: RuntimeAttachedListener? = null
 
     /**
      * Per-player position timer, ticking at ~200 ms while playing so the
@@ -201,12 +204,12 @@ class AudioModule : Module() {
 
     /**
      * One-shot install of the listener that drains [pendingCreates].
-     * `addOnHostAttachedListener` fires synchronously when a host is
+     * `addOnRuntimeAttachedListener` fires synchronously when a host is
      * already attached, so a late call still lands correctly.
      */
     private fun ensureAttachListener() {
         if (hostListener != null) return
-        val listener = HostAttachedListener {
+        val listener = RuntimeAttachedListener {
             // Snapshot then clear, so a re-attach mid-drain (rotation)
             // can't see a half-drained queue.
             val pending = pendingCreates.toList()
@@ -218,6 +221,6 @@ class AudioModule : Module() {
             }
         }
         hostListener = listener
-        appContext.addOnHostAttachedListener(listener)
+        appContext.addOnRuntimeAttachedListener(listener)
     }
 }

@@ -1,20 +1,10 @@
 //! Layout-related keyword enums.
 //!
-//! References:
-//! - <https://lynxjs.org/api/css/properties/display>
-//! - <https://lynxjs.org/api/css/properties/position>
-//! - <https://lynxjs.org/api/css/properties/overflow>
-//! - <https://lynxjs.org/api/css/properties/visibility>
-//! - <https://lynxjs.org/api/css/properties/box-sizing>
-//! - <https://lynxjs.org/api/css/properties/pointer-events>
-
 use core::fmt;
 
 use crate::to_css::ToCss;
 
-/// The `display` keyword. Lynx's default for `<view>` is
-/// [`Display::Linear`] (Lynx's vertical/horizontal stacking layout);
-/// `flex` is required to opt into CSS flexbox semantics.
+/// Layout modes supported by Whisker's Taffy integration.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Display {
     /// `none` — element is removed from the layout tree.
@@ -23,10 +13,10 @@ pub enum Display {
     Flex,
     /// `grid` — CSS grid layout.
     Grid,
-    /// `linear` — Lynx's linear layout (default for `<view>`).
-    Linear,
-    /// `relative` — Lynx's relative-positioning container.
-    Relative,
+    /// `block` — CSS block layout.
+    Block,
+    /// `flow-root` — block layout with an independent formatting context.
+    FlowRoot,
 }
 
 impl ToCss for Display {
@@ -35,15 +25,60 @@ impl ToCss for Display {
             Display::None => "none",
             Display::Flex => "flex",
             Display::Grid => "grid",
-            Display::Linear => "linear",
-            Display::Relative => "relative",
+            Display::Block => "block",
+            Display::FlowRoot => "flow-root",
         })
     }
 }
 
-/// The `position` keyword. **Lynx does not support `static`** — the
-/// default in Lynx is `relative`, so a `static` value is meaningless
-/// and is omitted from this enum.
+/// The CSS `float` property.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Float {
+    /// Do not float the box.
+    #[default]
+    None,
+    /// Float to the physical left side.
+    Left,
+    /// Float to the physical right side.
+    Right,
+}
+
+impl ToCss for Float {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        dest.write_str(match self {
+            Self::None => "none",
+            Self::Left => "left",
+            Self::Right => "right",
+        })
+    }
+}
+
+/// The CSS `clear` property.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Clear {
+    /// Do not add clearance.
+    #[default]
+    None,
+    /// Clear preceding left floats.
+    Left,
+    /// Clear preceding right floats.
+    Right,
+    /// Clear preceding floats on both sides.
+    Both,
+}
+
+impl ToCss for Clear {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        dest.write_str(match self {
+            Self::None => "none",
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Both => "both",
+        })
+    }
+}
+
+/// Positioning modes supported by Whisker's Taffy integration.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PositionKind {
     /// `relative` — positioned with normal flow as origin (default).
@@ -68,9 +103,8 @@ impl ToCss for PositionKind {
     }
 }
 
-/// The `overflow` keyword. **Lynx supports only two values** —
-/// `visible` (default) and `hidden`. CSS's `scroll` and `auto` are
-/// **not** supported; use a `<scroll-view>` element for scrolling.
+/// Descendant paint overflow. Scrolling is represented by a ScrollView
+/// element rather than `overflow: scroll`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Overflow {
     /// `visible` — content overflows the box. Default.
@@ -153,8 +187,8 @@ mod tests {
             (Display::None, "none"),
             (Display::Flex, "flex"),
             (Display::Grid, "grid"),
-            (Display::Linear, "linear"),
-            (Display::Relative, "relative"),
+            (Display::Block, "block"),
+            (Display::FlowRoot, "flow-root"),
         ];
         for (k, expected) in cases {
             assert_eq!(k.to_css_string(), expected);

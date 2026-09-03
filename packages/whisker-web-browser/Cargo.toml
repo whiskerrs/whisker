@@ -24,7 +24,11 @@ include = [
 [lib]
 crate-type = ["rlib"]
 
-[package.metadata.whisker]
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { manifest = "Package.swift" }
+web = { manifest = "web/Cargo.toml" }
+desktop = { manifest = "desktop/Cargo.toml" }
 
 [dependencies]
 whisker = { workspace = true }

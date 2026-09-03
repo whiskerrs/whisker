@@ -13,7 +13,9 @@
 use anyhow::{Context, Result, anyhow};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use whisker_dev_server::{AndroidParams, Config, DevServer, HotPatchMode, IosParams, Target};
+use whisker_dev_server::{
+    AndroidParams, Config, DevServer, HotPatchMode, IosParams, Target, WebParams,
+};
 
 use crate::manifest;
 
@@ -26,13 +28,14 @@ pub struct Args {
     pub manifest_path: Option<PathBuf>,
 
     /// Where to deploy the rebuilt artifact. Positional so the
-    /// common case (`whisker run android` / `whisker run ios`) reads
+    /// common case (`whisker run android` / `whisker run ios` /
+    /// `whisker run desktop`) reads
     /// naturally without a `--target=` prefix.
     #[arg(value_enum)]
     pub target: CliTarget,
 
-    /// WebSocket bind address. The Whisker app on the device dials this
-    /// (via `WHISKER_DEV_ADDR`) to receive patches.
+    /// Development bind address. Mobile uses it for the hot-reload WebSocket;
+    /// Web uses it for the local HTTP server.
     #[arg(long, default_value = "127.0.0.1:9876")]
     pub bind: SocketAddr,
 
@@ -48,28 +51,14 @@ pub struct Args {
     /// the resolved manifest's parent dir.
     #[arg(long)]
     pub workspace_root: Option<PathBuf>,
-
-    /// Show every line of the device's stdout/stderr stream, including
-    /// Lynx C++ engine chatter (`s_glBindAttribLocation: …` and
-    /// friends) that the curated default suppresses. Useful when
-    /// triaging engine-level issues; noisy for typical app
-    /// development. Pair with `WHISKER_VERBOSE=1` for the full picture.
-    #[arg(long)]
-    pub show_native_logs: bool,
-
-    /// Disable the inline ratatui status bar at the bottom of the
-    /// terminal. On by default when stderr is a TTY; auto-off when
-    /// piping to a file or running under CI. Use this when running
-    /// against a tmux pane that doesn't like inline viewports, or
-    /// when you specifically want grep'able scrollback-only output.
-    #[arg(long)]
-    pub no_tui: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CliTarget {
     Android,
     Ios,
+    Desktop,
+    Web,
 }
 
 impl From<CliTarget> for Target {
@@ -77,20 +66,14 @@ impl From<CliTarget> for Target {
         match t {
             CliTarget::Android => Target::Android,
             CliTarget::Ios => Target::IosSimulator,
+            CliTarget::Desktop => Target::Macos,
+            CliTarget::Web => Target::Web,
         }
     }
 }
 
-pub fn run(args: Args) -> Result<()> {
-    // Set the cross-crate TUI signal before any `whisker_build::ui::*`
-    // call fires — `whisker_build::ui::mode()` caches its lookup in a
-    // `OnceLock` on the first call, so flipping this env later doesn't
-    // unstick a `Curated` cache.
-    let tui_enabled = !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stderr());
-    if tui_enabled {
-        // FIXME: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::set_var("WHISKER_TUI", "1") };
-    }
+pub fn run(args: Args, no_tui: bool) -> Result<()> {
+    let tui_enabled = crate::tui::should_start(no_tui);
 
     // Resolve the user-facing manifest before doing anything UI-y so
     // that the TUI header can display the bundle id from the moment
@@ -107,6 +90,11 @@ pub fn run(args: Args) -> Result<()> {
         })?,
     };
     let target: Target = args.target.into();
+    if target == Target::Macos && !cfg!(target_os = "macos") {
+        return Err(anyhow!(
+            "`whisker run desktop` currently supports the macOS Host only"
+        ));
+    }
     let target_label = target_label(target);
     let bundle = m
         .config
@@ -118,15 +106,16 @@ pub fn run(args: Args) -> Result<()> {
     // long setup steps (sync, plugin build, initial build, install)
     // render with a proper progress indicator instead of leaking
     // ahead of an inline status bar.
-    let tui_pieces = if tui_enabled {
-        match crate::tui::Tui::start(target_label.to_string(), bundle.clone()) {
-            Ok((tui, handle)) => {
+    let tui_session = if tui_enabled {
+        match crate::tui::TuiSession::start(
+            crate::tui::WorkflowKind::Run,
+            target_label.to_string(),
+            bundle.clone(),
+        ) {
+            Ok(session) => {
+                let handle = session.handle();
                 handle.set_phase(crate::tui::AppPhase::Setup);
-                let render_handle = std::thread::Builder::new()
-                    .name("whisker-tui-render".into())
-                    .spawn(move || run_tui_render_loop(tui))
-                    .ok();
-                Some((handle, render_handle))
+                Some(session)
             }
             Err(e) => {
                 eprintln!("couldn't start TUI ({e:#}); falling back to plain output");
@@ -136,7 +125,7 @@ pub fn run(args: Args) -> Result<()> {
     } else {
         None
     };
-    let tui_handle = tui_pieces.as_ref().map(|(h, _)| h.clone());
+    let tui_handle = tui_session.as_ref().map(crate::tui::TuiSession::handle);
 
     // Run the rest of the cli pipeline. Each phase pushes its progress
     // through `tui_handle`. If the TUI isn't running, every step is
@@ -146,36 +135,10 @@ pub fn run(args: Args) -> Result<()> {
 
     // Stop the render thread + restore the terminal. Use should_quit
     // as the signal so the render thread exits cleanly.
-    if let Some((handle, render_thread)) = tui_pieces {
-        handle.request_quit();
-        if let Some(t) = render_thread {
-            let _ = t.join();
-        }
+    if let Some(session) = tui_session {
+        session.finish();
     }
     result
-}
-
-fn run_tui_render_loop(mut tui: crate::tui::Tui) {
-    let _ = tui.render_until_quit();
-    let user_quit = tui.was_user_quit();
-    let _ = tui.shutdown();
-    if user_quit {
-        // The dev-server runs to completion (i.e. forever) inside
-        // `rt.block_on(server.run())` on the cli thread, so simply
-        // tearing the TUI down here would leave a headless `whisker
-        // run` process alive after `q`. Hard-exit with a normal
-        // status; tokio sockets / file watchers get reaped by the
-        // kernel. cli-initiated shutdowns (build failed, etc.) take
-        // the other branch and let `run()`'s normal return path
-        // surface the error.
-        //
-        // `exit` skips destructors, so an in-flight cargo / gradle /
-        // xcodebuild would be orphaned — SIGTERM the tracked build
-        // children first (the gradle daemon, in its own session, is
-        // spared).
-        whisker_build::child_guard::kill_all();
-        std::process::exit(0);
-    }
 }
 
 fn run_inner(
@@ -188,10 +151,8 @@ fn run_inner(
     // `set_phase(Setup)` already fired in `run()`; re-issuing it here
     // would duplicate the "▶ Setup" scrollback entry.
     //
-    // Lynx needs no pre-fetch: xcodebuild resolves the four
-    // xcframeworks through SPM's `binaryTarget(url:checksum:)`, and
-    // Android pulls its aar from `whiskerrs.github.io/lynx/maven`
-    // transitively via the SDK pom.
+    // Android and iOS generation is self-contained. Their bootstrap projects
+    // are plain platform applications backed by the Whisker Host SDK.
 
     // cng templates are `include_str!`-baked into this binary, so a CLI
     // older than the sources under `crates/whisker-cng/src` renders
@@ -205,7 +166,7 @@ fn run_inner(
         &workspace_root,
         &m.package,
     )
-    .context("sync native project (gen/{android,ios}/)")?;
+    .context("sync generated platform project (gen/<platform>/)")?;
     // Always say which path was taken: a template edit that didn't bump
     // cng's `template_version` leaves the old gen/ tree on disk, and a
     // silent "reused" makes that undiagnosable.
@@ -225,6 +186,17 @@ fn run_inner(
         ));
     }
 
+    if target == Target::Macos {
+        return run_macos(
+            &m,
+            &workspace_root,
+            &sync.gen_dir,
+            &watch_paths_for(&m),
+            args.bind,
+            args.no_hot_patch,
+            tui,
+        );
+    }
     let android = match target {
         Target::Android => Some(android_params_from(&m, &sync.gen_dir)?),
         _ => None,
@@ -233,8 +205,17 @@ fn run_inner(
         Target::IosSimulator => Some(ios_params_from(&m, &sync.gen_dir)?),
         _ => None,
     };
+    let web = match target {
+        Target::Web => Some(WebParams {
+            project_dir: sync.gen_dir.clone(),
+            target_dir: workspace_root.join("target/.whisker/web"),
+            dist_dir: sync.gen_dir.join("dist"),
+            generated_package: format!("{}-whisker-web", m.package),
+        }),
+        _ => None,
+    };
 
-    let watch_paths = vec![m.crate_dir.join("src"), m.crate_dir.join("whisker.rs")];
+    let watch_paths = watch_paths_for(&m);
 
     let config = Config {
         workspace_root,
@@ -248,7 +229,9 @@ fn run_inner(
         // receives, so without this an unauthenticated peer on a
         // LAN-exposed bind could push arbitrary native code; the gate
         // also defends an accidental `--bind 0.0.0.0`.
-        dev_token: Some(generate_dev_token()),
+        // Web clients share this server's HTTP origin with the patch socket.
+        // Native-code patch transport keeps its random per-session token.
+        dev_token: (target != Target::Web).then(generate_dev_token),
         hot_patch_mode: if args.no_hot_patch {
             HotPatchMode::FullReloadOnly
         } else {
@@ -256,6 +239,8 @@ fn run_inner(
         },
         android,
         ios,
+        macos: None,
+        web,
     };
 
     let watching_paths: Vec<String> = watch_paths
@@ -263,7 +248,7 @@ fn run_inner(
         .map(|p| p.display().to_string())
         .collect();
     if let Some(t) = tui {
-        t.set_dev_server(config.bind_addr.to_string(), watching_paths);
+        t.set_dev_server(target_destination(&config), watching_paths);
         t.set_phase(crate::tui::AppPhase::Initializing);
     }
 
@@ -271,7 +256,6 @@ fn run_inner(
         .enable_all()
         .build()
         .context("build tokio runtime")?;
-    let show_native_logs = args.show_native_logs;
     let tui_for_events = tui.cloned();
 
     // Reload shortcuts (`r` / `R` in the TUI) flow through this
@@ -292,11 +276,121 @@ fn run_inner(
                 // `ui::info` captured back through stderr).
                 h.apply_event(&e);
             } else {
-                forward_event_to_ui(e, show_native_logs);
+                forward_event_to_ui(e);
             }
         });
 
     rt.block_on(server.run())
+}
+
+fn watch_paths_for(manifest: &manifest::ResolvedManifest) -> Vec<PathBuf> {
+    vec![
+        manifest.crate_dir.join("src"),
+        manifest.crate_dir.join("Cargo.toml"),
+        manifest.crate_dir.join("whisker.rs"),
+    ]
+}
+
+/// Drive the first Desktop development loop. The generated Cargo project is
+/// exactly the one `whisker build macos` consumes; development adds only file
+/// watching and process supervision around its Debug build.
+fn run_macos(
+    manifest: &manifest::ResolvedManifest,
+    workspace_root: &Path,
+    gen_dir: &Path,
+    explicit_watch_paths: &[PathBuf],
+    bind_addr: SocketAddr,
+    no_hot_patch: bool,
+    tui: Option<&crate::tui::TuiHandle>,
+) -> Result<()> {
+    let app_name = manifest
+        .config
+        .name
+        .as_deref()
+        .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required for macOS"))?;
+    let binary_name = format!("{}-whisker-macos", manifest.package);
+    let target_dir = workspace_root.join("target/.whisker/macos");
+
+    let watch_roots = explicit_watch_paths.to_vec();
+    if let Some(tui) = tui {
+        tui.set_dev_server(
+            format!("{app_name} · local application"),
+            watch_roots
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+        );
+        tui.set_phase(crate::tui::AppPhase::Initializing);
+    }
+    let config = Config {
+        workspace_root: workspace_root.to_path_buf(),
+        crate_dir: manifest.crate_dir.clone(),
+        package: manifest.package.clone(),
+        target: Target::Macos,
+        watch_paths: watch_roots,
+        bind_addr,
+        dev_token: Some(generate_dev_token()),
+        hot_patch_mode: if no_hot_patch {
+            HotPatchMode::FullReloadOnly
+        } else {
+            HotPatchMode::HotReload
+        },
+        android: None,
+        ios: None,
+        macos: Some(whisker_dev_server::MacosParams {
+            project_dir: gen_dir.to_path_buf(),
+            target_dir,
+            app_name: app_name.to_string(),
+            binary_name,
+        }),
+        web: None,
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("build macOS development runtime")?;
+    let tui_for_events = tui.cloned();
+    let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    if let Some(tui) = tui {
+        tui.set_command_sender(command_sender);
+    }
+    let server = DevServer::new(config)?
+        .with_command_receiver(command_receiver)
+        .on_event(move |event| {
+            if let Some(tui) = &tui_for_events {
+                tui.apply_event(&event);
+            } else {
+                forward_event_to_ui(event);
+            }
+        });
+    runtime.block_on(server.run())
+}
+
+fn target_destination(config: &Config) -> String {
+    match config.target {
+        Target::Android => config
+            .android
+            .as_ref()
+            .map(|params| params.application_id.clone())
+            .unwrap_or_else(|| "Android application".into()),
+        Target::IosSimulator => config
+            .ios
+            .as_ref()
+            .map(|params| {
+                format!(
+                    "{} · {}",
+                    params.device_override.as_deref().unwrap_or("iOS Simulator"),
+                    params.bundle_id
+                )
+            })
+            .unwrap_or_else(|| "iOS Simulator".into()),
+        Target::Macos => config
+            .macos
+            .as_ref()
+            .map(|params| format!("{} · local application", params.app_name))
+            .unwrap_or_else(|| "Desktop application".into()),
+        Target::Web => format!("http://127.0.0.1:{}/", config.bind_addr.port()),
+    }
 }
 
 /// Generate a random hex token for the hot-reload session.
@@ -337,6 +431,8 @@ fn target_label(target: Target) -> &'static str {
     match target {
         Target::Android => "Android",
         Target::IosSimulator => "iOS Simulator",
+        Target::Macos => "Desktop (macOS)",
+        Target::Web => "Web",
     }
 }
 
@@ -345,10 +441,7 @@ fn target_label(target: Target) -> &'static str {
 /// here; everything else is already covered by `whisker_build::ui`
 /// calls inside the dev loop.
 ///
-/// When `show_native_logs` is false (the default), device lines that
-/// match [`is_native_engine_noise`] are dropped silently. The escape
-/// hatch is `whisker run --show-native-logs`.
-fn forward_event_to_ui(event: whisker_dev_server::Event, show_native_logs: bool) {
+fn forward_event_to_ui(event: whisker_dev_server::Event) {
     use whisker_dev_server::Event;
     if let Event::DeviceLog {
         stream,
@@ -356,9 +449,6 @@ fn forward_event_to_ui(event: whisker_dev_server::Event, show_native_logs: bool)
         ts_micros: _,
     } = event
     {
-        if !show_native_logs && is_native_engine_noise(&line) {
-            return;
-        }
         // Short prefix so the column alignment stays compact next to
         // `whisker_build::ui::info`'s own output.
         let tag = match stream.as_str() {
@@ -366,81 +456,6 @@ fn forward_event_to_ui(event: whisker_dev_server::Event, show_native_logs: bool)
             _ => "device",
         };
         whisker_build::ui::info(format!("[{tag}] {line}"));
-    }
-}
-
-/// Identify lines that come from the Lynx C++ engine's debug stderr
-/// rather than the user's own Rust code. Lynx's Skia/GL backend
-/// prints per-program attribute-binding traces (`s_glBindAttribLocation:
-/// bind attrib N name X`) on every frame draw and a handful of other
-/// engine-internal log lines that are not actionable from app code.
-///
-/// The filter intentionally errs toward letting unknown lines through
-/// — these patterns are bounded to specific known-noisy Lynx prefixes,
-/// so genuine error output and user `eprintln!`s are never silenced.
-fn is_native_engine_noise(line: &str) -> bool {
-    let t = line.trim_start();
-    // The `s_gl<CamelCase>(` form is Skia-internal only, and shows up
-    // dozens of times per frame on first paint.
-    const LYNX_NOISE_PREFIXES: &[&str] = &[
-        "s_glBindAttribLocation:",
-        "s_glGetUniformLocation:",
-        "s_glGetAttribLocation:",
-    ];
-    for prefix in LYNX_NOISE_PREFIXES {
-        if t.starts_with(prefix) {
-            return true;
-        }
-    }
-    false
-}
-
-#[cfg(test)]
-mod device_log_filter_tests {
-    use super::is_native_engine_noise;
-
-    #[test]
-    fn drops_lynx_skia_bind_attrib_traces() {
-        assert!(is_native_engine_noise(
-            "s_glBindAttribLocation: bind attrib 0 name position"
-        ));
-        assert!(is_native_engine_noise(
-            "s_glBindAttribLocation: bind attrib 2 name inTextureCoords"
-        ));
-        assert!(is_native_engine_noise(
-            "s_glGetUniformLocation: query uniform u_mvp"
-        ));
-    }
-
-    #[test]
-    fn drops_indented_lynx_traces() {
-        // Belt-and-braces: native printf output sometimes lands with a
-        // leading space or tab from libc buffering.
-        assert!(is_native_engine_noise("  s_glBindAttribLocation: bind 1"));
-        assert!(is_native_engine_noise(
-            "\ts_glGetAttribLocation: query in_color"
-        ));
-    }
-
-    #[test]
-    fn preserves_user_println_output() {
-        assert!(!is_native_engine_noise("podcast: app() starting"));
-        assert!(!is_native_engine_noise("info: loaded 12 items from cache"));
-        // Even patterns that touch `gl` but aren't Lynx's known
-        // tracers should pass through — the filter list is precise
-        // by design.
-        assert!(!is_native_engine_noise("openglRenderer: skia init OK"));
-        assert!(!is_native_engine_noise(
-            "warning: glsl shader compilation took 42ms"
-        ));
-    }
-
-    #[test]
-    fn preserves_panics_and_errors() {
-        assert!(!is_native_engine_noise(
-            "thread 'main' panicked at 'index out of bounds'"
-        ));
-        assert!(!is_native_engine_noise("error: failed to parse JSON"));
     }
 }
 
@@ -597,6 +612,8 @@ mod tests {
     fn cli_target_maps_to_dev_server_target() {
         assert_eq!(Target::from(CliTarget::Android), Target::Android);
         assert_eq!(Target::from(CliTarget::Ios), Target::IosSimulator);
+        assert_eq!(Target::from(CliTarget::Desktop), Target::Macos);
+        assert_eq!(Target::from(CliTarget::Web), Target::Web);
     }
 
     fn unique_tempdir() -> PathBuf {

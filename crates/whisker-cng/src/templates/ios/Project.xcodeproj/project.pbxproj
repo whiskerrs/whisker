@@ -3,20 +3,25 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 56;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		46E97003F6597438A0AC93C0 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BCE /* AppDelegate.swift */; };
-		E5C85D1F07153227204F81D6 /* WhiskerRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = F920EEBD91D9E8039DA5A3F9 /* WhiskerRuntime */; };
-		8B41E0C2B6A95E8F70D2A38B /* WhiskerModules in Frameworks */ = {isa = PBXBuildFile; productRef = A4F2BE0925D17CE83AB061F7 /* WhiskerModules */; };
+		46E97003F6597438A0AC93C2 /* WhiskerDriver.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BD0 /* WhiskerDriver.framework */; };
+		46E97003F6597438A0AC93C3 /* WhiskerDriver.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BD0 /* WhiskerDriver.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		46E97003F6597438A0AC93C4 /* WhiskerModules in Frameworks */ = {isa = PBXBuildFile; productRef = 4BEF20C6F91CCD1A10D66BD2 /* WhiskerModules */; };
+		46E97003F6597438A0AC93C5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BD3 /* Assets.xcassets */; };
+		46E97003F6597438A0AC93C6 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BD4 /* LaunchScreen.storyboard */; };
 {{extra_pbxproj_build_file_entries}}
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		35D466DB8920E7A52C599EBC /* {{ios_scheme}}.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "{{ios_scheme}}.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		35D466DB8920E7A52C599EBC /* {{ios_scheme}}.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "{{ios_scheme}}.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		4BEF20C6F91CCD1A10D66BCE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		D3F08A1D5C9B6E7A2F104B59 /* whisker_modules */ = {isa = PBXFileReference; lastKnownFileType = folder; name = whisker_modules; path = "{{whisker_modules_ios_path}}"; sourceTree = "<absolute>"; };
+		4BEF20C6F91CCD1A10D66BD0 /* WhiskerDriver.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = Frameworks/WhiskerDriver.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		4BEF20C6F91CCD1A10D66BD3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		4BEF20C6F91CCD1A10D66BD4 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 {{extra_pbxproj_file_reference_entries}}
 /* End PBXFileReference section */
 
@@ -25,13 +30,27 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E5C85D1F07153227204F81D6 /* WhiskerRuntime in Frameworks */,
-				8B41E0C2B6A95E8F70D2A38B /* WhiskerModules in Frameworks */,
+				46E97003F6597438A0AC93C2 /* WhiskerDriver.framework in Frameworks */,
+				46E97003F6597438A0AC93C4 /* WhiskerModules in Frameworks */,
 {{extra_pbxproj_frameworks_phase_files}}
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		D4C57884A372C8EC69F16CAE /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				46E97003F6597438A0AC93C3 /* WhiskerDriver.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXGroup section */
 		00961668E9C919BF4554CF95 /* Products */ = {
@@ -50,22 +69,23 @@
 			path = Sources;
 			sourceTree = "<group>";
 		};
+		2AFB6256646F5C748E027F5F /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				4BEF20C6F91CCD1A10D66BD3 /* Assets.xcassets */,
+				4BEF20C6F91CCD1A10D66BD4 /* LaunchScreen.storyboard */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		E8630311BAB2B628B85BC5D2 = {
 			isa = PBXGroup;
 			children = (
-				E8E7FE2E076C1851BADE1012 /* Packages */,
 				2AFB6256646F5C748E027F5E /* Sources */,
+				2AFB6256646F5C748E027F5F /* Resources */,
 				F1F2F3F4F5F6F7F8F9FAFBFC /* Whisker Plugin Files */,
 				00961668E9C919BF4554CF95 /* Products */,
 			);
-			sourceTree = "<group>";
-		};
-		E8E7FE2E076C1851BADE1012 /* Packages */ = {
-			isa = PBXGroup;
-			children = (
-				D3F08A1D5C9B6E7A2F104B59 /* whisker_modules */,
-			);
-			name = Packages;
 			sourceTree = "<group>";
 		};
 		F1F2F3F4F5F6F7F8F9FAFBFC /* Whisker Plugin Files */ = {
@@ -83,11 +103,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 39A71CFC79D014E76D4445EB /* Build configuration list for PBXNativeTarget "{{ios_scheme}}" */;
 			buildPhases = (
-				7E2B91D0F46A1C73B5A5DE91 /* Whisker Generate */,
+				7E2B91D0F46A1C73B5A5DE91 /* Whisker Build Rust App */,
 				4A590CB0D847DB4C38DDCDFC /* Sources */,
 				A1A2A3A4A5A6A7A8A9AAAB00 /* Resources */,
 				D4C57884A372C8EC69F16CAD /* Frameworks */,
-				3F69E4C8A2D75B6E81C094BB /* Whisker Embed Framework */,
+				D4C57884A372C8EC69F16CAE /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -95,8 +115,7 @@
 			);
 			name = "{{ios_scheme}}";
 			packageProductDependencies = (
-				F920EEBD91D9E8039DA5A3F9 /* WhiskerRuntime */,
-				A4F2BE0925D17CE83AB061F7 /* WhiskerModules */,
+				4BEF20C6F91CCD1A10D66BD2 /* WhiskerModules */,
 			);
 			productName = "{{ios_scheme}}";
 			productReference = 35D466DB8920E7A52C599EBC /* {{ios_scheme}}.app */;
@@ -105,7 +124,7 @@
 /* End PBXNativeTarget section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		7E2B91D0F46A1C73B5A5DE91 /* Whisker Generate */ = {
+		7E2B91D0F46A1C73B5A5DE91 /* Whisker Build Rust App */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -115,7 +134,7 @@
 			);
 			inputPaths = (
 			);
-			name = "Whisker Generate";
+			name = "Whisker Build Rust App";
 			outputFileListPaths = (
 			);
 			outputPaths = (
@@ -123,28 +142,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\n# Step-7 Build Phase: produces WhiskerDriver.framework into\n# $BUILT_PRODUCTS_DIR/Frameworks/ before Xcode's link step runs.\n# The framework wraps the Rust user crate + C++ bridge — it can't\n# be pre-built because it contains user `#[whisker::main]` code,\n# so the per-app pbxproj invokes `whisker build-ios` here. The CLI\n# itself fetches Lynx, runs cargo, runs install_name_tool, copies\n# headers, and writes Info.plist.\nWORKSPACE=\"{{whisker_workspace_root}}\"\nif ! command -v whisker >/dev/null 2>&1; then\n  echo \"error: 'whisker' not on PATH. Run 'cargo install whisker-cli' from the workspace root.\" >&2\n  exit 1\nfi\nif [ ! -d \"$WORKSPACE\" ]; then\n  echo \"error: Whisker workspace path baked into this pbxproj no longer exists: $WORKSPACE\" >&2\n  echo \"This usually means the project was moved or renamed after \\`whisker run ios\\` first generated gen/ios.\" >&2\n  echo \"Re-run \\`whisker run ios\\` from the (new) workspace root to refresh the gen tree.\" >&2\n  exit 1\nfi\n# `whisker run` sets WHISKER_FEATURES=whisker/hot-reload (space-separated\n# if multiple) so the user dylib carries the dev-runtime WebSocket\n# client. Direct `xcodebuild` invocations (e.g. CI Release builds)\n# leave it unset; production binaries skip the dev-runtime entirely.\nFEATURE_ARGS=\"\"\nif [ -n \"${WHISKER_FEATURES:-}\" ]; then\n  for feat in $WHISKER_FEATURES; do\n    FEATURE_ARGS=\"$FEATURE_ARGS --features $feat\"\n  done\nfi\nwhisker build-ios \\\n  --workspace=\"$WORKSPACE\" \\\n  --package=\"{{whisker_user_package}}\" \\\n  --configuration=\"$CONFIGURATION\" \\\n  --platform=\"$PLATFORM_NAME\" \\\n  --archs=\"$ARCHS\" \\\n  --built-products-dir=\"$BUILT_PRODUCTS_DIR\" \\\n  $FEATURE_ARGS\n";
-		};
-		3F69E4C8A2D75B6E81C094BB /* Whisker Embed Framework */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/Frameworks/WhiskerDriver.framework/WhiskerDriver",
-			);
-			name = "Whisker Embed Framework";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/Frameworks/WhiskerDriver.framework/WhiskerDriver",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\n# Step-7 Embed: copies WhiskerDriver.framework from the build-products\n# search path into the .app bundle's Frameworks/. The earlier\n# 'Whisker Generate' phase dropped it at $BUILT_PRODUCTS_DIR/Frameworks/\n# so FRAMEWORK_SEARCH_PATHS picks it up for the linker; this phase\n# completes the journey by placing it where dyld looks at app launch\n# (via LD_RUNPATH_SEARCH_PATHS=@executable_path/Frameworks).\nSRC=\"$BUILT_PRODUCTS_DIR/Frameworks/WhiskerDriver.framework\"\nDST_DIR=\"$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/Frameworks\"\nmkdir -p \"$DST_DIR\"\nrm -rf \"$DST_DIR/WhiskerDriver.framework\"\ncp -R \"$SRC\" \"$DST_DIR/\"\n# Codesign — required on device builds; harmless on simulator.\nif [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n  /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --preserve-metadata=identifier,entitlements --timestamp=none \"$DST_DIR/WhiskerDriver.framework\"\nfi\n";
+			shellScript = "set -euo pipefail\nWORKSPACE=\"{{whisker_workspace_root}}\"\nWHISKER_CLI=\"${WHISKER_CLI:-whisker}\"\nif ! command -v \"$WHISKER_CLI\" >/dev/null 2>&1; then\n  echo \"error: Whisker CLI not found: $WHISKER_CLI. Install with: cargo install whisker-cli\" >&2\n  exit 1\nfi\nif [ ! -d \"$WORKSPACE\" ]; then\n  echo \"error: Whisker workspace no longer exists: $WORKSPACE\" >&2\n  echo \"Re-run CNG generation after moving the project.\" >&2\n  exit 1\nfi\nBUILD_COMMAND=(\n  \"$WHISKER_CLI\" build-ios\n  --workspace=\"$WORKSPACE\"\n  --package=\"{{whisker_user_package}}\"\n  --configuration=\"$CONFIGURATION\"\n  --platform=\"$PLATFORM_NAME\"\n  --archs=\"$ARCHS\"\n  --built-products-dir=\"$BUILT_PRODUCTS_DIR\"\n)\nif [ -n \"${WHISKER_FEATURES:-}\" ]; then\n  for feat in $WHISKER_FEATURES; do\n    BUILD_COMMAND+=(--features \"$feat\")\n  done\nfi\n\"${BUILD_COMMAND[@]}\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -153,25 +151,23 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 				};
 			};
 			buildConfigurationList = 04EE2E1E635D92BC638F96E0 /* Build configuration list for PBXProject "{{ios_scheme}}" */;
+			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
-				Base,
 				en,
+				Base,
 			);
 			mainGroup = E8630311BAB2B628B85BC5D2;
-			minimizedProjectReferenceProxies = 1;
-			packageReferences = (
-				B25ED1A6F9E42E26D051E805 /* XCRemoteSwiftPackageReference "whisker" */,
-				C97DA5F310E249B0FCB72E81 /* XCLocalSwiftPackageReference "WhiskerModules" */,
-			);
-			preferredProjectObjectVersion = 77;
 			productRefGroup = 00961668E9C919BF4554CF95 /* Products */;
+			packageReferences = (
+				4BEF20C6F91CCD1A10D66BD1 /* XCLocalSwiftPackageReference "whisker_modules" */,
+			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -185,6 +181,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				46E97003F6597438A0AC93C5 /* Assets.xcassets in Resources */,
+				46E97003F6597438A0AC93C6 /* LaunchScreen.storyboard in Resources */,
 {{extra_pbxproj_resources_phase_files}}
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -208,58 +206,19 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
-				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
-				GCC_DYNAMIC_NO_PIC = NO;
-				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PREPROCESSOR_DEFINITIONS = (
-					"$(inherited)",
 					"DEBUG=1",
+					"$(inherited)",
 				);
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = "{{ios_deployment_target}}";
-				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
-				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -270,17 +229,13 @@
 		72DC351F8133C2EE79D7230F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				// Step-7: WhiskerDriver.framework is produced by the
-				// "Whisker Generate" Build Phase into
-				// $(BUILT_PRODUCTS_DIR)/Frameworks/. The linker needs to
-				// see it via -F + -framework at the Frameworks phase.
-				FRAMEWORK_SEARCH_PATHS = "$(inherited) $(BUILT_PRODUCTS_DIR)/Frameworks";
-				OTHER_LDFLAGS = "$(inherited) -framework WhiskerDriver";
 				INFOPLIST_FILE = Info.plist;
+				FRAMEWORK_SEARCH_PATHS = "$(BUILT_PRODUCTS_DIR)/Frameworks";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				OTHER_LDFLAGS = "$(inherited) -framework WhiskerDriver";
 				PRODUCT_BUNDLE_IDENTIFIER = "{{ios_bundle_id}}";
+				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 {{extra_pbxproj_target_build_settings}}
@@ -290,14 +245,13 @@
 		91C02734642ACB1BD6BF3AE6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				// See the matching Debug config for the rationale.
-				FRAMEWORK_SEARCH_PATHS = "$(inherited) $(BUILT_PRODUCTS_DIR)/Frameworks";
-				OTHER_LDFLAGS = "$(inherited) -framework WhiskerDriver";
 				INFOPLIST_FILE = Info.plist;
+				FRAMEWORK_SEARCH_PATHS = "$(BUILT_PRODUCTS_DIR)/Frameworks";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				OTHER_LDFLAGS = "$(inherited) -framework WhiskerDriver";
 				PRODUCT_BUNDLE_IDENTIFIER = "{{ios_bundle_id}}";
+				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 {{extra_pbxproj_target_build_settings}}
@@ -308,51 +262,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
-				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = "{{ios_deployment_target}}";
-				MTL_ENABLE_DEBUG_INFO = NO;
-				MTL_FAST_MATH = YES;
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
@@ -384,31 +300,16 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		C97DA5F310E249B0FCB72E81 /* XCLocalSwiftPackageReference "WhiskerModules" */ = {
+		4BEF20C6F91CCD1A10D66BD1 /* XCLocalSwiftPackageReference "whisker_modules" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "{{whisker_modules_ios_path}}";
 		};
 /* End XCLocalSwiftPackageReference section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		B25ED1A6F9E42E26D051E805 /* XCRemoteSwiftPackageReference "whisker" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "{{whisker_ios_spm_url}}";
-			requirement = {
-				kind = exactVersion;
-				version = "{{whisker_ios_spm_version}}";
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
 /* Begin XCSwiftPackageProductDependency section */
-		F920EEBD91D9E8039DA5A3F9 /* WhiskerRuntime */ = {
+		4BEF20C6F91CCD1A10D66BD2 /* WhiskerModules */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B25ED1A6F9E42E26D051E805 /* XCRemoteSwiftPackageReference "whisker" */;
-			productName = WhiskerRuntime;
-		};
-		A4F2BE0925D17CE83AB061F7 /* WhiskerModules */ = {
-			isa = XCSwiftPackageProductDependency;
+			package = 4BEF20C6F91CCD1A10D66BD1 /* XCLocalSwiftPackageReference "whisker_modules" */;
 			productName = WhiskerModules;
 		};
 /* End XCSwiftPackageProductDependency section */

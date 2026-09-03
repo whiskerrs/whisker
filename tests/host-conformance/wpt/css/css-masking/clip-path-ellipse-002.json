@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "id": "wpt.css-masking.clip-path-ellipse-002",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-masking/clip-path/clip-path-ellipse-002.html",
+    "reference_path": "css/css-masking/clip-path/reference/clip-path-ellipse-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "Percentage ellipse radii and center coordinates resolve against the selected reference box.",
+    "adaptation": "The upstream box is reduced to 120x80 with an off-center ellipse, and a red child crosses its left edge to verify descendant clipping."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 160.0, "height": 120.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 160.0, 120.0],
+            "background": { "kind": "named", "value": "white" }
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [20.0, 20.0, 120.0, 80.0],
+            "background": { "kind": "named", "value": "green" },
+            "clip_path": {
+              "reference_box": "border",
+              "shape": {
+                "kind": "ellipse",
+                "radii": [
+                  { "length": 0.0, "fraction": 0.4 },
+                  { "length": 0.0, "fraction": 0.35 }
+                ],
+                "center": [
+                  { "length": 0.0, "fraction": 0.6 },
+                  { "length": 0.0, "fraction": 0.5 }
+                ]
+              }
+            }
+          },
+          {
+            "id": 3,
+            "parent": 2,
+            "rect": [0.0, 30.0, 40.0, 20.0],
+            "background": { "kind": "named", "value": "red" }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.visual-effects.clip-path-ellipse",
+        "samples": [
+          { "point": [35.0, 60.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 },
+          { "point": [50.0, 60.0], "color": { "kind": "named", "value": "red" }, "tolerance": 5 },
+          { "point": [92.0, 60.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [45.0, 35.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 },
+          { "point": [92.0, 35.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

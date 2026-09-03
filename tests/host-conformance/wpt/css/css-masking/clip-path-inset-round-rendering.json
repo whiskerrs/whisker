@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "id": "wpt.css-masking.clip-path-inset-round-rendering",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-masking/clip-path/clip-path-inset-round-rendering.html",
+    "reference_path": "css/css-masking/clip-path/clip-path-inset-round-rendering-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "An inset clip-path with rounded corners clips both the element's own paint and its descendants.",
+    "adaptation": "The upstream large floating-point inset is reduced to a deterministic 100px border box using inset(20px round 20px). A red child crosses the left shape edge so direct samples verify descendant clipping as well as the rounded parent paint clip."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 140.0, "height": 140.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 140.0, 140.0],
+            "background": { "kind": "named", "value": "white" }
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [20.0, 20.0, 100.0, 100.0],
+            "background": { "kind": "named", "value": "green" },
+            "clip_path": {
+              "reference_box": "border",
+              "shape": {
+                "kind": "inset",
+                "edges": [
+                  { "length": 20.0, "fraction": 0.0 },
+                  { "length": 20.0, "fraction": 0.0 },
+                  { "length": 20.0, "fraction": 0.0 },
+                  { "length": 20.0, "fraction": 0.0 }
+                ],
+                "radii": [20.0, 20.0, 20.0, 20.0]
+              }
+            }
+          },
+          {
+            "id": 3,
+            "parent": 2,
+            "rect": [-10.0, 40.0, 40.0, 20.0],
+            "background": { "kind": "named", "value": "red" }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.visual-effects.clip-path-inset",
+        "samples": [
+          { "point": [30.0, 70.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 },
+          { "point": [45.0, 70.0], "color": { "kind": "named", "value": "red" }, "tolerance": 5 },
+          { "point": [70.0, 70.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [42.0, 42.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 },
+          { "point": [60.0, 42.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [105.0, 105.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

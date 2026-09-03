@@ -144,7 +144,7 @@ pub trait ArcSubscription {
 /// nodes allocated inside it (so they can be freed on disposal) and
 /// the child scopes (so disposal cascades).
 ///
-/// The public-facing API surface is the [`super::owner::Owner`]
+/// The public-facing API surface is the [`Owner`]
 /// handle (a `Copy` slotmap key); `Scope` is the data record that
 /// handle dereferences to via the runtime's `owners` slotmap. Users
 /// (and even framework extension authors) never name `Scope`
@@ -229,14 +229,14 @@ pub struct ReactiveRuntime {
     /// against it.
     pub current_tracker: Option<NodeId>,
     /// Queue of effect/computed nodes scheduled to re-run on the next flush.
-    /// Populated by signal writes; drained by [`flush_pending`].
+    /// Populated by signal writes; drained by [`super::scheduler::flush`].
     pub pending: Vec<NodeId>,
     /// Nodes that were scheduled to run but whose owner is `paused`.
     /// Sit here until their owner is resumed; on resume, drain back
     /// into [`Self::pending`] so the deferred work fires. See
     /// `Owner::pause` / `Owner::resume` for the lifecycle.
     pub deferred: Vec<NodeId>,
-    /// True while [`flush_pending`] is actively draining `pending`.
+    /// True while [`super::scheduler::flush`] is actively draining `pending`.
     /// Used to avoid recursive flushes (signal writes inside a running
     /// effect just enqueue; we keep draining the queue until empty
     /// rather than recursing).

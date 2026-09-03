@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use whisker::css::ToCss;
 use whisker::runtime::reactive::Owner;
 
 use crate::core::{
@@ -53,26 +54,33 @@ fn registry() -> RouteRegistry {
 
 /// root Stack { Route("", home)  Route("detail/:id", detail) }
 fn simple_handle() -> RouterHandle {
-    let tree = CompiledTree::new(RouteTree::stack(vec![
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
         RouteTree::route("", "home"),
         RouteTree::route("detail/:id", "detail"),
     ]));
     RouterHandle::new((tree, registry()))
 }
 
-/// root Stack { Switch(tabs) { Stack{home, detail} Stack{list, detail} } }
+/// root Stack { Switch(tabs) { (home){Stack{home, detail}}
+///                             (search){Stack{list, detail}} } }
 fn tabbed_handle() -> RouterHandle {
-    let tree = CompiledTree::new(RouteTree::stack(vec![RouteTree::switch(
+    let tree = CompiledTree::new(RouteTree::Stack(vec![RouteTree::Switch(
         SwitchDef::new("tabs", 0),
         vec![
-            RouteTree::stack(vec![
-                RouteTree::route("", "home"),
-                RouteTree::route("detail/:id", "detail"),
-            ]),
-            RouteTree::stack(vec![
-                RouteTree::route("list", "list"),
-                RouteTree::route("detail/:id", "detail"),
-            ]),
+            RouteTree::route_with(
+                RouteDef::new("(home)", "home_group"),
+                vec![RouteTree::Stack(vec![
+                    RouteTree::route("", "home"),
+                    RouteTree::route("detail/:id", "detail"),
+                ])],
+            ),
+            RouteTree::route_with(
+                RouteDef::new("(search)", "search_group"),
+                vec![RouteTree::Stack(vec![
+                    RouteTree::route("list", "list"),
+                    RouteTree::route("detail/:id", "detail"),
+                ])],
+            ),
         ],
     )]));
     RouterHandle::new((tree, registry()))
@@ -173,7 +181,7 @@ fn reset_clears_stack_to_target() {
 fn layout_wrapped_handle() -> RouterHandle {
     let tree = CompiledTree::new(RouteTree::route_with(
         RouteDef::new("", "layout"),
-        vec![RouteTree::stack(vec![
+        vec![RouteTree::Stack(vec![
             RouteTree::route("", "home"),
             RouteTree::route("detail/:id", "detail"),
         ])],
@@ -222,7 +230,7 @@ fn stack_ops_work_under_a_layout_route() {
 }
 
 #[test]
-fn select_switches_tab_and_keeps_history() {
+fn group_navigation_switches_tab_and_keeps_history() {
     with_runtime(|| {
         let h = tabbed_handle();
         let switch_path = NodePath(vec![0]);
@@ -230,23 +238,23 @@ fn select_switches_tab_and_keeps_history() {
         assert_eq!(selected.get(), Some(0));
 
         h.navigate("/detail/1").unwrap();
-        h.select("/list").unwrap();
+        h.navigate("/(search)").unwrap();
         flush();
         assert_eq!(selected.get(), Some(1));
-        // Tab 1 shows its own home (list), depth 1.
+        // Tab 1 shows its own Home (list), depth 1.
         assert_eq!(
             h.current().get().path,
             // tab 1 = branch index 1 under the switch; its stack's first
             // child (list) is path [0,1,0].
-            NodePath(vec![0, 1, 0])
+            NodePath(vec![0, 1, 0, 0])
         );
 
         // Switch back to tab 0 — its pushed detail is retained.
-        h.select("/").unwrap();
+        h.navigate("/(home)").unwrap();
         flush();
         assert_eq!(selected.get(), Some(0));
         // Back in tab 0 on the detail we pushed (path [0,0,1]).
-        assert_eq!(h.current().get().path, NodePath(vec![0, 0, 1]));
+        assert_eq!(h.current().get().path, NodePath(vec![0, 0, 0, 1]));
     });
 }
 
@@ -254,8 +262,8 @@ fn select_switches_tab_and_keeps_history() {
 fn slice_only_changes_for_touched_tab() {
     with_runtime(|| {
         let h = tabbed_handle();
-        let tab_a = NodePath(vec![0, 0]); // tab 0's stack
-        let tab_b = NodePath(vec![0, 1]); // tab 1's stack
+        let tab_a = NodePath(vec![0, 0, 0]); // tab 0's stack
+        let tab_b = NodePath(vec![0, 1, 0]); // tab 1's stack
         let slice_a = h.slice_at(tab_a);
         let slice_b = h.slice_at(tab_b);
 
@@ -284,14 +292,14 @@ fn state_at_walks_to_active_child() {
             state_at(&root, &NodePath(vec![0])),
             Some(RouteState::Switch(_))
         ));
-        // [0,0] is tab 0's stack.
+        // [0,0] is the group; [0,0,0] is tab 0's stack.
         assert!(matches!(
-            state_at(&root, &NodePath(vec![0, 0])),
+            state_at(&root, &NodePath(vec![0, 0, 0])),
             Some(RouteState::Stack(_))
         ));
-        // [0,0,1] is the pushed detail leaf.
+        // [0,0,0,1] is the pushed detail leaf.
         assert!(matches!(
-            state_at(&root, &NodePath(vec![0, 0, 1])),
+            state_at(&root, &NodePath(vec![0, 0, 0, 1])),
             Some(RouteState::Route(_))
         ));
     });
@@ -303,14 +311,14 @@ fn state_at_walks_to_active_child() {
 type Counts = Rc<RefCell<HashMap<&'static str, usize>>>;
 
 fn counting_tabbed_handle(counts: Counts) -> RouterHandle {
-    let tree = CompiledTree::new(RouteTree::switch(
+    let tree = CompiledTree::new(RouteTree::Switch(
         SwitchDef::new("tabs", 0),
         vec![
-            RouteTree::stack(vec![
+            RouteTree::Stack(vec![
                 RouteTree::route("", "home"),
                 RouteTree::route("detail/:id", "detail"),
             ]),
-            RouteTree::stack(vec![
+            RouteTree::Stack(vec![
                 RouteTree::route("list", "list"),
                 RouteTree::route("detail/:id", "detail"),
             ]),
@@ -343,7 +351,7 @@ fn tree_is_drawn_once_no_double_mount() {
         let _slot = mount_node(&h, NodePath::root());
         flush();
 
-        // home (the selected tab's leaf) mounts exactly once; the List
+        // Home (the selected tab's leaf) mounts exactly once; the list
         // tab's `list` also mounts once (Switch keeps all branches alive),
         // but neither mounts twice.
         let c = counts.borrow();
@@ -374,7 +382,7 @@ fn navigate_mounts_new_leaf_exactly_once() {
 /// A single root Stack with mount-counting leaves (`home` at `""`, `detail`
 /// at `detail/:id`).
 fn counting_simple_handle(counts: Counts) -> RouterHandle {
-    let tree = CompiledTree::new(RouteTree::stack(vec![
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
         RouteTree::route("", "home"),
         RouteTree::route("detail/:id", "detail"),
     ]));
@@ -424,7 +432,7 @@ fn reset_to_different_route_reinstantiates_revealed_top() {
         };
         assert_eq!(s.history.len(), 1, "reset collapses to a single entry");
 
-        // The revealed top is a NEW detail leaf (mounted for /2), so detail
+        // The revealed top is a NEW detail Leaf (mounted for /2), so detail
         // mounted twice total.
         assert_eq!(
             counts.borrow().get("detail").copied(),
@@ -437,7 +445,7 @@ fn reset_to_different_route_reinstantiates_revealed_top() {
 /// A single-stack handle with Slide routes so a push/pop runs a real
 /// transition we can step to completion.
 fn slide_stack_handle() -> RouterHandle {
-    let tree = CompiledTree::new(RouteTree::stack(vec![
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
         RouteTree::route("", "home"),
         RouteTree::route("detail/:id", "detail"),
     ]));
@@ -451,13 +459,13 @@ fn slide_stack_handle() -> RouterHandle {
     RouterHandle::new((tree, registry))
 }
 
-/// `Route(layout) { Stack { home(slide), detail/:id(slide) } }` — the same
+/// `Route(layout) { Stack { Home(slide), detail/:id(slide) } }` — the same
 /// layout-Route-above-a-stack shape as the tabbed example, with slide
 /// transitions so animation is observable.
 fn layout_slide_handle() -> RouterHandle {
     let tree = CompiledTree::new(RouteTree::route_with(
         RouteDef::new("", "layout"),
-        vec![RouteTree::stack(vec![
+        vec![RouteTree::Stack(vec![
             RouteTree::route("", "home"),
             RouteTree::route("detail/:id", "detail"),
         ])],
@@ -502,7 +510,7 @@ fn push_pauses_the_covered_under_once_the_slide_finishes() {
 
         let under_owner = h
             .active_stack_bridge()
-            .and_then(|b| b.under_owner)
+            .and_then(|b| b.under_content_owner)
             .expect("under owner present after push");
         assert!(
             under_owner.is_paused(),
@@ -585,7 +593,8 @@ fn pop_settles_survivor_to_active_pose() {
             crate::render::transition::Direction::Push,
         ));
         assert_eq!(
-            pose.transform, "translateX(0%)",
+            pose.transform.to_css_string(),
+            "translateX(0%)",
             "survivor settled to active 0% pose; role={role:?} progress={progress}"
         );
     });
@@ -721,7 +730,7 @@ fn back_after_replace_animates_the_revealed_survivor() {
     owner.dispose();
 }
 
-/// Same as above but with a layout Route above the stack (the tabbed example's
+/// Same as above but with a layout Route above the Stack (the tabbed example's
 /// shape). Reproduces the "Home doesn't animate on back after replace" report.
 #[test]
 fn back_after_replace_animates_under_a_layout_route() {
@@ -764,14 +773,12 @@ fn back_after_replace_animates_under_a_layout_route() {
     owner.dispose();
 }
 
-/// After a `replace`, the revealed under is a paused buried entry (the settle
-/// freezes it because its pose controller is idle — unlike a push, whose under
-/// is mid-animation and so stays live). An interactive swipe-back must resume
-/// it so its pose effect follows the finger through the scrub; the gesture can
-/// only re-point the bridge's pose bindings, so the bridge carries the under's
-/// owner for exactly this.
+/// An interactive swipe-back keeps buried route content paused while its
+/// independent presentation binding follows the finger. Resuming the whole
+/// subtree would let a repeated static route (`detail/:id`) adopt the current
+/// top entry's params during the preview.
 #[test]
-fn swipe_back_resumes_the_paused_under_after_replace() {
+fn swipe_back_animates_under_presentation_without_resuming_its_content() {
     whisker::runtime::reactive::__reset_for_tests();
     whisker_animation::__reset_for_tests();
     let owner = Owner::new(None);
@@ -788,10 +795,10 @@ fn swipe_back_resumes_the_paused_under_after_replace() {
         flush();
         settle_animations();
 
-        let under_owner = h
-            .active_stack_bridge()
-            .and_then(|b| b.under_owner)
-            .expect("under owner present after replace");
+        let bridge = h.active_stack_bridge().expect("bridge after replace");
+        let under_owner = bridge
+            .under_content_owner
+            .expect("under content owner present after replace");
 
         // The replace settle freezes (pauses) the buried under.
         assert!(
@@ -799,12 +806,28 @@ fn swipe_back_resumes_the_paused_under_after_replace() {
             "precondition: the under is paused after a replace"
         );
 
-        // Starting a swipe-back must resume it so the scrub animates it.
-        crate::render::gesture::begin(&h, crate::render::transition::SwipeEdge::Left)
-            .expect("swipe-back begins (stack can pop)");
+        // Starting a swipe-back re-points only presentation. Content remains
+        // frozen, while the under binding follows the top controller.
+        let active = crate::render::platform_navigation::begin(
+            &h,
+            crate::render::transition::SwipeEdge::Left,
+        )
+        .expect("swipe-back begins (stack can pop)");
+        crate::render::platform_navigation::scrub(&active, 0.4);
         assert!(
-            !under_owner.is_paused(),
-            "swipe-back must resume the under so it follows the finger"
+            under_owner.is_paused(),
+            "swipe-back must not resume routed content before navigation commits"
+        );
+        let top_value = active.top_ctrl.expect("top ctrl").value().get_untracked();
+        let under = active.under_pose.expect("under pose");
+        assert_eq!(
+            under.role.get_untracked(),
+            crate::render::transition::Role::Under
+        );
+        assert_eq!(
+            under.ctrl.get_untracked().value().get_untracked(),
+            top_value,
+            "under presentation follows the scrubbed top controller",
         );
     });
     owner.dispose();
@@ -861,7 +884,7 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
         // Detail's render fn registers an `on_cleanup` bumping a counter,
         // so we can observe exactly WHEN its content subtree is disposed.
         let cleanups = Rc::new(RefCell::new(0usize));
-        let tree = CompiledTree::new(RouteTree::stack(vec![
+        let tree = CompiledTree::new(RouteTree::Stack(vec![
             RouteTree::route("", "home"),
             RouteTree::route("detail/:id", "detail"),
         ]));
@@ -918,12 +941,12 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
     owner.dispose();
 }
 
-// The native module delivery can't run headless, but the mapping the
-// `AndroidPredictiveBack` component performs — `backProgressed{progress}`
+// The native module delivery can't run headless, but the mapping Android's
+// internal platform driver performs — `backProgressed{progress}`
 // -> scrub the top controller, `backInvoked` -> commit -> `back()` — is
 // the shared `begin`/`scrub`/`settle` logic, which IS testable.
 
-use crate::render::gesture::{back_progress, begin, scrub, settle};
+use crate::render::platform_navigation::{back_progress, begin, scrub, settle};
 use crate::render::transition::SwipeEdge;
 use whisker::platform_module::WhiskerValue;
 
@@ -1116,7 +1139,7 @@ fn predictive_back_works_with_grouped_tabs() {
                 component: Some("tabs_layout".into()),
                 is_group: false,
             },
-            vec![RouteTree::switch(
+            vec![RouteTree::Switch(
                 SwitchDef::new("tabs", 0),
                 vec![
                     RouteTree::route_with(
@@ -1127,7 +1150,7 @@ fn predictive_back_works_with_grouped_tabs() {
                             component: None,
                             is_group: true,
                         },
-                        vec![RouteTree::stack(vec![
+                        vec![RouteTree::Stack(vec![
                             RouteTree::route("", "home"),
                             RouteTree::route("detail/:id", "detail"),
                         ])],
@@ -1140,7 +1163,7 @@ fn predictive_back_works_with_grouped_tabs() {
                             component: None,
                             is_group: true,
                         },
-                        vec![RouteTree::stack(vec![
+                        vec![RouteTree::Stack(vec![
                             RouteTree::route("list", "list"),
                             RouteTree::route("detail/:id", "detail"),
                         ])],
@@ -1217,7 +1240,10 @@ fn back_edge_decodes_payload() {
     assert_eq!(SwipeEdge::from_android(1), SwipeEdge::Right);
     // Unknown / missing → Left default.
     assert_eq!(SwipeEdge::from_android(7), SwipeEdge::Left);
-    assert_eq!(crate::render::gesture::back_progress(&mk(1)), 0.0); // no progress key
+    assert_eq!(
+        crate::render::platform_navigation::back_progress(&mk(1)),
+        0.0
+    ); // no progress key
 }
 
 #[test]
@@ -1232,8 +1258,9 @@ fn predictive_pose_material_shape() {
 
     // At rest (value 1.0): identity, square.
     let rest = predictive_pose(Role::Top, 1.0, SwipeEdge::Left);
+    let rest_transform = rest.transform.to_css_string();
     assert!(
-        rest.transform.contains("scale(1)"),
+        rest_transform.contains("scale(1, 1)"),
         "scale 1 at rest: {rest:?}"
     );
     assert_eq!(rest.radius_px, 0.0, "square at rest");
@@ -1241,8 +1268,9 @@ fn predictive_pose_material_shape() {
     // Preview max (value 0.5): top shrunk to 0.9 (shared-element card),
     // rounded to the device radius, shifted toward the swipe edge.
     let preview = predictive_pose(Role::Top, 0.5, SwipeEdge::Left);
+    let preview_transform = preview.transform.to_css_string();
     assert!(
-        preview.transform.contains("scale(0.9)"),
+        preview_transform.contains("scale(0.9, 0.9)"),
         "shrinks to 0.9 at preview max: {preview:?}"
     );
     assert!(
@@ -1250,13 +1278,16 @@ fn predictive_pose_material_shape() {
         "rounds to the device radius at preview max: {preview:?}"
     );
     assert!(
-        preview.transform.contains("translateX(6%)"),
+        preview_transform.contains("translateX(6%)"),
         "left-edge swipe shifts the card right: {preview:?}"
     );
     // Right-edge swipe shifts the card the other way (negative translateX).
     let preview_right = predictive_pose(Role::Top, 0.5, SwipeEdge::Right);
     assert!(
-        preview_right.transform.contains("translateX(-6%)"),
+        preview_right
+            .transform
+            .to_css_string()
+            .contains("translateX(-6%)"),
         "right-edge swipe shifts the card left: {preview_right:?}"
     );
     // The shrink is DECELERATED (more apparent early): at value 0.75 the
@@ -1274,32 +1305,37 @@ fn predictive_pose_material_shape() {
         "top fades out on commit: {committed:?}"
     );
 
-    // Under (entering) scales together with the top card (down to 0.9) and
+    // Under (entering) scales together with the top Card (down to 0.9) and
     // peeks from the left during the drag, then slides in to fully present
     // and grows back to full size on commit.
     let under_preview = predictive_pose(Role::Under, 0.5, SwipeEdge::Left);
+    let under_preview_transform = under_preview.transform.to_css_string();
     assert!(
-        under_preview.transform.contains("scale(0.9)"),
+        under_preview_transform.contains("scale(0.9, 0.9)"),
         "under scales with the card to 0.9 at preview: {under_preview:?}"
     );
     assert!(
-        under_preview.transform.contains("translateX(-60%)"),
+        under_preview_transform.contains("translateX(-60%)"),
         "under peeks from the left: {under_preview:?}"
     );
     // Mid-drag (value 0.75) the under screen is held at the SAME -60% peek —
     // it only scales while the finger is down, it does not slide.
     let under_mid = predictive_pose(Role::Under, 0.75, SwipeEdge::Left);
     assert!(
-        under_mid.transform.contains("translateX(-60%)"),
+        under_mid
+            .transform
+            .to_css_string()
+            .contains("translateX(-60%)"),
         "under is fixed at the peek mid-drag (scale only, no slide): {under_mid:?}"
     );
     let under_committed = predictive_pose(Role::Under, 0.0, SwipeEdge::Left);
+    let under_committed_transform = under_committed.transform.to_css_string();
     assert!(
-        under_committed.transform.contains("translateX(0%)"),
+        under_committed_transform.contains("translateX(0%)"),
         "under slides to present on commit: {under_committed:?}"
     );
     assert!(
-        under_committed.transform.contains("scale(1)"),
+        under_committed_transform.contains("scale(1, 1)"),
         "under grows back to full size on commit: {under_committed:?}"
     );
     assert!(
@@ -1401,6 +1437,9 @@ fn one_transition_poses_all_four_directional_slots() {
         Direction, Pose, PoseContext, PoseMode, Role, RouteTransition, Transition, pose_for,
     };
 
+    use whisker::css::TransformFn;
+    use whisker::css::ext::percent;
+
     // A single asymmetric transition that tags each (role × direction) case —
     // the four Jetpack-Compose slots expressed by ONE `Transition`.
     struct Asym;
@@ -1410,12 +1449,12 @@ fn one_transition_poses_all_four_directional_slots() {
         }
         fn pose(&self, ctx: PoseContext) -> Pose {
             let slot = match (ctx.role, ctx.direction) {
-                (Role::Top, Direction::Push) => "enter",
-                (Role::Under, Direction::Push) => "exit",
-                (Role::Top, Direction::Pop) => "pop_exit",
-                (Role::Under, Direction::Pop) => "pop_enter",
+                (Role::Top, Direction::Push) => 1.0,
+                (Role::Under, Direction::Push) => 2.0,
+                (Role::Top, Direction::Pop) => 3.0,
+                (Role::Under, Direction::Pop) => 4.0,
             };
-            Pose::new(slot.to_string(), 1.0)
+            Pose::new(TransformFn::TranslateX(percent(slot).into()), 1.0)
         }
     }
 
@@ -1423,18 +1462,30 @@ fn one_transition_poses_all_four_directional_slots() {
     let push = PoseMode::Transition(t.clone(), Direction::Push);
     let pop = PoseMode::Transition(t, Direction::Pop);
 
-    assert_eq!(pose_for(&push, Role::Top, 0.5).transform, "enter");
-    assert_eq!(pose_for(&push, Role::Under, 0.5).transform, "exit");
-    assert_eq!(pose_for(&pop, Role::Top, 0.5).transform, "pop_exit");
-    assert_eq!(pose_for(&pop, Role::Under, 0.5).transform, "pop_enter");
+    assert_eq!(
+        pose_for(&push, Role::Top, 0.5).transform.to_css_string(),
+        "translateX(1%)"
+    );
+    assert_eq!(
+        pose_for(&push, Role::Under, 0.5).transform.to_css_string(),
+        "translateX(2%)"
+    );
+    assert_eq!(
+        pose_for(&pop, Role::Top, 0.5).transform.to_css_string(),
+        "translateX(3%)"
+    );
+    assert_eq!(
+        pose_for(&pop, Role::Under, 0.5).transform.to_css_string(),
+        "translateX(4%)"
+    );
 }
 
 // Renderer-level reproduction of the `replace` content-attach path.
 //
 // The tests above run without a renderer, so they never exercise the
-// real Lynx op sequence. This block installs a recording renderer that
-// mints real element ids and models `insert_child_before` the way Lynx's
-// `FiberElement::InsertNodeBefore` behaves — a positioned insert whose
+// real native op sequence. This block installs a recording renderer that
+// mints real element ids and models `insert_child_before` the way a native Host
+// does — a positioned insert whose
 // reference node MUST already be a live child of the parent, else the
 // insert is dropped. That drop is exactly the on-device "next chapter is
 // blank after a `replace`" symptom, so it lets us reproduce it in-process.
@@ -1457,18 +1508,6 @@ mod replace_repro {
         /// A positioned insert whose reference wasn't a live child — the
         /// on-device silent drop. Non-empty = the bug is reproduced.
         violations: Vec<String>,
-    }
-
-    /// Pull the `display` value out of an inline-style string, if present.
-    fn parse_display(css: &str) -> Option<String> {
-        for decl in css.split(';') {
-            let mut it = decl.splitn(2, ':');
-            let k = it.next()?.trim();
-            if k == "display" {
-                return it.next().map(|v| v.trim().to_string());
-            }
-        }
-        None
     }
 
     #[derive(Clone, Default)]
@@ -1511,6 +1550,22 @@ mod replace_repro {
                 .iter()
                 .filter(|(_, a)| a.get("cid").map(String::as_str) == Some(id))
                 .count()
+        }
+        /// The direct child of `root` whose subtree contains `target`.
+        fn direct_child_ancestor(&self, root: Element, target: Element) -> Option<Element> {
+            let inner = self.0.borrow();
+            fn contains(inner: &Inner, node: Element, target: Element) -> bool {
+                node == target
+                    || inner.children.get(&node).is_some_and(|kids| {
+                        kids.iter().any(|child| contains(inner, *child, target))
+                    })
+            }
+            inner
+                .children
+                .get(&root)?
+                .iter()
+                .copied()
+                .find(|child| contains(&inner, *child, target))
         }
         /// The `display` values recorded along the path `root..=el`, or
         /// `None` if `el` isn't reachable from `root`. Used to assert
@@ -1566,16 +1621,31 @@ mod replace_repro {
                 .or_default()
                 .insert(key.to_string(), value.to_string());
         }
-        fn set_inline_styles(&self, handle: Element, css: &str) {
-            // Record `display` transitions so tests can assert Switch
-            // branch visibility + mount ordering.
-            if let Some(d) = parse_display(css) {
+        fn set_specified_style(
+            &self,
+            handle: Element,
+            style: &whisker_style::SpecifiedStyle,
+        ) -> bool {
+            use whisker_style::{DisplayValue, StyleProperty, StyleValue};
+
+            let display = style.resolved().iter().find_map(|declaration| {
+                if declaration.property() != StyleProperty::Display {
+                    return None;
+                }
+                match declaration.value() {
+                    StyleValue::Display(DisplayValue::Flex) => Some("flex".to_string()),
+                    StyleValue::Display(DisplayValue::None) => Some("none".to_string()),
+                    _ => None,
+                }
+            });
+            if let Some(d) = display {
                 let mut inner = self.0.borrow_mut();
                 inner
                     .ops
                     .push(format!("style {} display={}", handle.id(), d));
                 inner.display.insert(handle, d);
             }
+            true
         }
         fn append_child(&self, parent: Element, child: Element) {
             let mut inner = self.0.borrow_mut();
@@ -1615,7 +1685,7 @@ mod replace_repro {
                     match kids.iter().position(|c| *c == r) {
                         Some(pos) => kids.insert(pos, child),
                         None => {
-                            // Lynx drops an insert whose reference isn't a
+                            // a native Host drops an insert whose reference isn't a
                             // live child — the child never enters the tree.
                             inner.violations.push(format!(
                                 "insert {}->{} before dead ref {}",
@@ -1644,7 +1714,11 @@ mod replace_repro {
     /// leaves render a REAL `view` tagged with the route param `id` as a
     /// `cid` attribute, so the recorder can locate each screen's content.
     fn real_leaf_handle() -> RouterHandle {
-        let tree = CompiledTree::new(RouteTree::stack(vec![
+        real_leaf_handle_with_transition(RouteTransition::slide())
+    }
+
+    fn real_leaf_handle_with_transition(transition: RouteTransition) -> RouterHandle {
+        let tree = CompiledTree::new(RouteTree::Stack(vec![
             RouteTree::route("", "home"),
             RouteTree::route("detail/:id", "detail"),
         ]));
@@ -1662,10 +1736,46 @@ mod replace_repro {
         };
         let registry = RouteRegistry::new().route("home", mk("home")).route_with(
             "detail",
-            RouteTransition::slide(),
+            transition,
             mk("detail"),
         );
         RouterHandle::new((tree, registry))
+    }
+
+    #[test]
+    fn instant_back_removes_the_popped_screen_and_accepts_the_next_push() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle_with_transition(RouteTransition::none());
+                let slot = mount_node(&h, NodePath::root());
+                flush();
+
+                h.push("/detail/1").unwrap();
+                flush();
+                h.push("/detail/2").unwrap();
+                flush();
+                let detail_2 = rec.by_cid("2").expect("detail/2 mounted");
+
+                h.back().unwrap();
+                flush();
+
+                let detail_1 = rec.by_cid("1").expect("detail/1 remains mounted");
+                assert!(rec.reachable(slot, detail_1), "detail/1 is revealed");
+                assert!(
+                    !rec.reachable(slot, detail_2),
+                    "the instant pop must detach detail/2"
+                );
+
+                h.push("/detail/3").unwrap();
+                flush();
+                let detail_3 = rec.by_cid("3").expect("detail/3 mounted");
+                assert!(
+                    rec.reachable(slot, detail_3),
+                    "navigation must remain live after an instant pop"
+                );
+            });
+        });
     }
 
     #[test]
@@ -1677,7 +1787,7 @@ mod replace_repro {
                 let slot = mount_node(&h, NodePath::root());
                 flush();
 
-                // Push detail/1 over home (group -> reader).
+                // Push detail/1 over Home (group -> reader).
                 h.navigate("/detail/1").unwrap();
                 flush();
                 let c1 = rec.by_cid("1").expect("detail/1 content created");
@@ -1708,7 +1818,7 @@ mod replace_repro {
         });
     }
 
-    /// On a `replace`, the OUTGOING screen (kept mounted as the
+    /// On a `replace`, the OUTGOING Screen (kept mounted as the
     /// slide-out `Under`) must be FROZEN showing its own route. It shares the
     /// leaf's static path with the incoming wrapper, so when `replace` swaps
     /// the top instance the outgoing leaf's `instance` computed also flips to
@@ -1754,17 +1864,109 @@ mod replace_repro {
         });
     }
 
+    #[test]
+    fn predictive_back_keeps_the_revealed_route_instance_frozen_during_preview() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle();
+                let _slot = mount_node(&h, NodePath::root());
+                flush();
+
+                h.navigate("/detail/1").unwrap();
+                flush();
+                settle_animations();
+                h.navigate("/detail/2").unwrap();
+                flush();
+                settle_animations();
+
+                let bridge = begin(&h, SwipeEdge::Left).expect("detail/2 can reveal detail/1");
+                scrub(&bridge, 0.4);
+                flush();
+
+                assert_eq!(
+                    rec.count_cid("1"),
+                    1,
+                    "the revealed under screen must keep its own route params during preview",
+                );
+                assert_eq!(
+                    rec.count_cid("2"),
+                    1,
+                    "the current route must not be mounted into both wrappers",
+                );
+
+                settle(&h, &bridge, /* commit = */ false, None);
+                settle_animations();
+            });
+        });
+    }
+
+    #[test]
+    fn consecutive_predictive_backs_keep_the_dim_behind_the_current_top() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle();
+                let slot = mount_node(&h, NodePath::root());
+                flush();
+
+                h.navigate("/detail/1").unwrap();
+                flush();
+                settle_animations();
+                h.navigate("/detail/2").unwrap();
+                flush();
+                settle_animations();
+
+                let first = begin(&h, SwipeEdge::Left).expect("detail/2 can reveal detail/1");
+                scrub(&first, 0.4);
+                settle(&h, &first, /* commit = */ true, None);
+                settle_animations();
+
+                let second = begin(&h, SwipeEdge::Left).expect("detail/1 can reveal home");
+                scrub(&second, 0.4);
+                flush();
+
+                let home = rec.by_cid("home").expect("home remains mounted");
+                let detail = rec.by_cid("1").expect("detail/1 is current");
+                let home_wrapper = rec
+                    .direct_child_ancestor(slot, home)
+                    .expect("home stack wrapper");
+                let detail_wrapper = rec
+                    .direct_child_ancestor(slot, detail)
+                    .expect("detail stack wrapper");
+                let children = rec.0.borrow().children[&slot].clone();
+                let dim = children
+                    .iter()
+                    .copied()
+                    .find(|child| *child != home_wrapper && *child != detail_wrapper)
+                    .expect("stack backdrop dim");
+                let dim_index = children.iter().position(|child| *child == dim).unwrap();
+                let detail_index = children
+                    .iter()
+                    .position(|child| *child == detail_wrapper)
+                    .unwrap();
+                assert!(
+                    dim_index < detail_index,
+                    "the dim must paint below the current top; child order={children:?}",
+                );
+
+                settle(&h, &second, /* commit = */ false, None);
+                settle_animations();
+            });
+        });
+    }
+
     /// Two-tab `Switch`; the NON-first branch's leaf renders a
     /// `create_element_by_name` element (standing in for a
-    /// `module_component` / `whisker-svg` `SvgRenderer`, i.e. what
+    /// `module_element` / `whisker-svg` `SvgRenderer`, i.e. what
     /// `whisker-icons::Icon` mounts), tagged `cid=native-b` and given a
     /// `display-list` attr (a stand-in for the native prop).
     fn switch_with_native_second_branch() -> RouterHandle {
-        let tree = CompiledTree::new(RouteTree::switch(
+        let tree = CompiledTree::new(RouteTree::Switch(
             SwitchDef::new("tabs", 0),
             vec![
-                RouteTree::stack(vec![RouteTree::route("", "a")]),
-                RouteTree::stack(vec![RouteTree::route("b", "b")]),
+                RouteTree::Stack(vec![RouteTree::route("", "a")]),
+                RouteTree::Stack(vec![RouteTree::route("b", "b")]),
             ],
         ));
         let mk_a = move |_: &RouteInstance| {
@@ -1773,7 +1975,7 @@ mod replace_repro {
             el
         };
         let mk_b = move |_: &RouteInstance| {
-            // A named (module_component) element, like `whisker-svg:Svg`.
+            // A named (module_element) element, like `whisker-svg:Svg`.
             let el = whisker::runtime::view::create_element_by_name("whisker-svg:Svg");
             whisker::runtime::view::set_attribute(el, "cid", "native-b");
             // The prop the native view needs to paint — dispatched here,
@@ -1785,7 +1987,7 @@ mod replace_repro {
         RouterHandle::new((tree, registry))
     }
 
-    /// #306: a `module_component` (native) leaf in a Switch branch OTHER
+    /// #306: a `module_element` (native) leaf in a Switch branch OTHER
     /// than the first-declared one is eager-mounted — and has its props
     /// dispatched — while its branch wrapper is `display: none`, because
     /// `mount_switch` sets the wrapper hidden BEFORE mounting descendants
@@ -1837,18 +2039,18 @@ mod replace_repro {
                     rec.0.borrow().ops.join("\n")
                 );
 
-                // After selecting the branch, its wrapper flips visible —
+                // After navigating to the branch, its wrapper flips visible —
                 // nothing on the path to the leaf stays hidden. (A native
                 // view must repaint on this 0→real resize; that's the
                 // whisker-svg fix, not observable through this renderer.)
-                h.select("/b").unwrap();
+                h.navigate("/b").unwrap();
                 flush();
                 let displays = rec
                     .path_displays(root, native_b)
-                    .expect("native leaf still reachable after select");
+                    .expect("native leaf still reachable after group navigation");
                 assert!(
                     displays.iter().all(|d| d.as_deref() != Some("none")),
-                    "after selecting branch b, no ancestor of its leaf stays display:none\nops:\n{}",
+                    "after navigating to branch b, no ancestor of its leaf stays display:none\nops:\n{}",
                     rec.0.borrow().ops.join("\n")
                 );
             });

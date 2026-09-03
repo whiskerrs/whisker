@@ -4,20 +4,12 @@
 //!
 //! Three phases:
 //!
-//! 1. [`cargo_build_dylib`] — cross-compile the user crate as a Mach-O
-//!    `.so` via `cargo rustc --crate-type dylib --target <triple>`.
-//!    Why `dylib` (and not `cdylib`)? rustc unconditionally injects
-//!    `-Wl,--exclude-libs,ALL` for `cdylib`, which strips every
-//!    mangled Rust symbol from `.dynsym`. The `dylib` flavour keeps
-//!    them — `System.loadLibrary` doesn't care which flavour, but
-//!    the symmetric hot-reload patch path (dev mode) does. Production
-//!    builds use the same shape for consistency.
+//! 1. [`cargo_build_dylib`] — cross-compile the user crate as an ELF
+//!    `.so`. Production uses a stripped, LTO'd `cdylib`; hot reload uses a
+//!    `dylib` so its Rust symbols remain available to the patcher.
 //!
-//! 2. [`stage_jni_libs`] — drop the `.so` plus the matching
-//!    `libc++_shared.so` from the NDK sysroot into the gen tree's
-//!    `app/src/main/jniLibs/<abi>/`. The bridge is dynamically linked
-//!    against `libc++_shared`; without it `System.loadLibrary` fails
-//!    with `dlopen failed: cannot locate symbol _ZNSt6__ndk1…`.
+//! 2. [`stage_jni_libs`] — drop the self-contained Rust `.so` into the gen
+//!    tree's `app/src/main/jniLibs/<abi>/`.
 //!
 //! 3. [`run_gradle_assemble`] — invoke `gradle :app:assemble{Release,Debug}`
 //!    against the generated project. Output is `app-{release,debug}.apk`
@@ -38,12 +30,9 @@ use crate::capture::{CaptureShims, capture_env_vars};
 
 /// NDK versions Whisker is known to link against, newest first.
 ///
-/// Newest wins because `libc++_shared.so` is copied out of whichever
-/// NDK this resolves to, and the copy shipped before r27 is laid out
-/// for 4 KB pages — unloadable on a 16 KB-page device, and rejected by
-/// Play. The older entries stay as a fallback for machines that have
-/// nothing newer installed; such a build still runs, but only on 4 KB
-/// devices.
+/// Newest wins so the bare-clang toolchain follows current Android ABI and
+/// page-alignment behavior. Older entries remain supported for existing
+/// development machines; Whisker supplies the 16 KB linker flag itself.
 const PREFERRED_NDKS: &[&str] = &[
     "27.1.12297006",
     "27.0.12077973",
@@ -90,10 +79,10 @@ pub fn resolve_toolchain(abi: &str, api: u32) -> Result<AndroidToolchain> {
 }
 
 fn android_home() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("ANDROID_HOME").map(PathBuf::from) {
-        if p.is_dir() {
-            return Ok(p);
-        }
+    if let Some(p) = std::env::var_os("ANDROID_HOME").map(PathBuf::from)
+        && p.is_dir()
+    {
+        return Ok(p);
     }
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
         let cand = home.join("Library/Android/sdk");
@@ -107,10 +96,10 @@ fn android_home() -> Result<PathBuf> {
 }
 
 fn ndk_home() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("ANDROID_NDK_HOME").map(PathBuf::from) {
-        if p.is_dir() {
-            return Ok(p);
-        }
+    if let Some(p) = std::env::var_os("ANDROID_NDK_HOME").map(PathBuf::from)
+        && p.is_dir()
+    {
+        return Ok(p);
     }
     let ndk_dir = android_home()?.join("ndk");
     for v in PREFERRED_NDKS {
@@ -175,7 +164,7 @@ pub struct CargoBuild<'a> {
     pub capture: Option<&'a CaptureShims>,
 }
 
-/// Run `cargo rustc --crate-type dylib --target <triple>` against the
+/// Run `cargo rustc --crate-type {cdylib,dylib} --target <triple>` against the
 /// user crate. Returns the absolute path to the produced `.so`.
 pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     // Version-script: rustc auto-generates one that lists Rust-mangled
@@ -190,7 +179,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     let vs_path = vs_dir.join("android-jni-exports.ver");
     std::fs::write(
         &vs_path,
-        b"{\n  global:\n    Java_*;\n    JNI_OnLoad;\n};\n",
+        b"{\n  global:\n    Java_*;\n    JNI_OnLoad;\n    whisker_view_create;\n    whisker_view_tick;\n    whisker_view_pause;\n    whisker_view_resume;\n    whisker_view_destroy;\n    whisker_view_dispatch_event;\n    whisker_view_dispatch_pointer;\n    whisker_view_dispatch_module_event;\n    whisker_view_dispatch_resource_event;\n};\n",
     )
     .with_context(|| format!("write {}", vs_path.display()))?;
 
@@ -198,11 +187,19 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     let triple_env = triple.replace('-', "_");
     let triple_upper = triple_env.to_uppercase();
 
+    let crate_type = if b.capture.is_some() {
+        "dylib"
+    } else {
+        "cdylib"
+    };
     let mut cmd = Command::new("cargo");
+    if b.profile == Profile::Debug {
+        configure_development_profile(&mut cmd, b.package);
+    }
     cmd.arg("rustc")
         .args(["--target", triple])
         .args(["-p", b.package])
-        .args(["--crate-type", "dylib"]);
+        .args(["--crate-type", crate_type]);
     if let Some(flag) = b.profile.cargo_flag() {
         cmd.arg(flag);
     }
@@ -232,6 +229,9 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         cmd.env(&linker_env, &b.toolchain.clang);
     }
     cmd.env("ANDROID_NDK_HOME", &b.toolchain.ndk);
+    if b.profile == Profile::Release {
+        configure_minimum_release_profile(&mut cmd);
+    }
     cmd.current_dir(b.workspace_root);
 
     // hot reload capture shims (rustc-shim + linker-shim + cache dirs).
@@ -263,7 +263,10 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     let so_mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
     let before = so_mtime(&so_path);
 
-    let cargo_step = crate::ui::step("compile", format!("{} ({triple})", b.package));
+    let cargo_step = crate::ui::step(
+        crate::ui::OperationKind::Compile,
+        format!("{} ({triple})", b.package),
+    );
     let status = cargo_step
         .pipe(&mut cmd)
         .with_context(|| format!("spawn cargo for {triple}"))?;
@@ -287,16 +290,34 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     Ok(so_path)
 }
 
+/// Keep the app crate quick to compile and hot-patch while running framework
+/// and dependency code at a speed suitable for a UI event loop.
+fn configure_development_profile(cmd: &mut Command, package: &str) {
+    cmd.args(["--config", "profile.dev.opt-level=2"]);
+    cmd.args([
+        "--config",
+        &format!("profile.dev.package.{package:?}.opt-level=0"),
+    ]);
+}
+
+fn configure_minimum_release_profile(cmd: &mut Command) {
+    cmd.env("CARGO_PROFILE_RELEASE_LTO", "fat")
+        .env("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1")
+        .env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "z")
+        .env("CARGO_PROFILE_RELEASE_STRIP", "symbols")
+        .env("CARGO_PROFILE_RELEASE_PANIC", "abort");
+}
+
 // ----- jniLibs staging ------------------------------------------------------
 
-/// Copy `so` plus the NDK-shipped `libc++_shared.so` into `abi_dir`.
+/// Copy the retained runtime `so` into `abi_dir`.
 /// Lower-level than [`stage_jni_libs`] — the caller hands in the
 /// already-resolved abi leaf directory rather than the gen-android
 /// root. Used by the `whisker build-android` binary path, where the
 /// Gradle plugin computes the destination as
 /// `<buildDir>/intermediates/whisker_jni_libs/<variant>/<abi>/` and
 /// passes it in via `--jni-libs-dir`.
-pub fn stage_so_files(abi_dir: &Path, so: &Path, tc: &AndroidToolchain, abi: &str) -> Result<()> {
+pub fn stage_so_files(abi_dir: &Path, so: &Path, _tc: &AndroidToolchain, _abi: &str) -> Result<()> {
     std::fs::create_dir_all(abi_dir).with_context(|| format!("mkdir -p {}", abi_dir.display()))?;
 
     let so_name = so
@@ -306,19 +327,14 @@ pub fn stage_so_files(abi_dir: &Path, so: &Path, tc: &AndroidToolchain, abi: &st
     std::fs::copy(so, &dst_so)
         .with_context(|| format!("copy {} → {}", so.display(), dst_so.display()))?;
 
-    let libcxx = find_libcxx_shared(&tc.ndk, abi)?;
-    let dst_libcxx = abi_dir.join("libc++_shared.so");
-    std::fs::copy(&libcxx, &dst_libcxx)
-        .with_context(|| format!("copy {} → {}", libcxx.display(), dst_libcxx.display()))?;
-
-    for staged in [&dst_so, &dst_libcxx] {
-        warn_if_not_16k_aligned(staged);
+    let stale_libcxx = abi_dir.join("libc++_shared.so");
+    if stale_libcxx.is_file() {
+        std::fs::remove_file(&stale_libcxx)
+            .with_context(|| format!("remove stale {}", stale_libcxx.display()))?;
     }
+    warn_if_not_16k_aligned(&dst_so);
 
-    crate::ui::info(format!(
-        "stage jniLibs ({} + libc++_shared.so)",
-        so_name.to_string_lossy(),
-    ));
+    crate::ui::info(format!("stage jniLibs ({})", so_name.to_string_lossy()));
     Ok(())
 }
 
@@ -394,9 +410,8 @@ fn max_load_align(so: &Path) -> Option<u64> {
         .max()
 }
 
-/// Copy `so` plus the NDK-shipped `libc++_shared.so` into
-/// `gen/android/app/src/main/jniLibs/<abi>/`. Used by the cng-driven
-/// legacy non-gradle CLI path; the Gradle-plugin path goes through
+/// Copy `so` into `gen/android/app/src/main/jniLibs/<abi>/`. The
+/// Gradle-plugin path goes through
 /// [`stage_so_files`] directly.
 pub fn stage_jni_libs(
     gen_android: &Path,
@@ -406,203 +421,6 @@ pub fn stage_jni_libs(
 ) -> Result<()> {
     let dst_dir = gen_android.join("app/src/main/jniLibs").join(abi);
     stage_so_files(&dst_dir, so, tc, abi)
-}
-
-/// Generate the per-app Gradle module-aggregator artefacts under
-/// `gen/android/`. Each Whisker module package is its own Android
-/// library subproject with a hand-written `build.gradle.kts`; three
-/// emitted files wire those subprojects into the user app's composite
-/// Gradle build:
-///
-/// 1. `whisker_modules.settings.gradle.kts` — `include(":<crate>")` +
-///    `project(...).projectDir = file("...")` calls. Applied by the
-///    cng-generated `settings.gradle.kts` via `apply(from = ...)`.
-///
-/// 2. `whisker_module_deps.gradle.kts` —
-///    `dependencies { implementation(project(":<crate>")) }`. Applied
-///    by the cng-generated `app/build.gradle.kts` so the user app
-///    picks up each module's library AAR.
-///
-/// 3. `app/src/main/whisker_generated/.../WhiskerModuleBehaviors.kt`
-///    — the aggregator object whose `registerAll()` imports each
-///    subproject's per-module `<ModuleName>Behaviors` object and calls
-///    its `registerAll()`. The aggregator's FQN matches what the user
-///    app's `Application.onCreate()` already invokes, so the
-///    user-facing surface is unchanged.
-///
-/// Each module's KSP plugin emits its own `<ModuleName>Behaviors`
-/// object into its subproject's generated-source set; the
-/// aggregator stitches them together. Discovery signal:
-/// presence of a `build.gradle.kts` at the module's package root.
-/// The build script points its Kotlin source set at the package's
-/// `android/` directory (Expo-style layout — native code lives in
-/// `android/` / `ios/`, manifests stay at the package root).
-pub fn stage_module_kotlin_sources(
-    gen_android: &Path,
-    modules: &[crate::modules::ResolvedModule],
-) -> Result<()> {
-    let android_modules: Vec<&crate::modules::ResolvedModule> = modules
-        .iter()
-        .filter(|m| m.manifest_dir.join("build.gradle.kts").is_file())
-        .collect();
-
-    let settings_include_path = gen_android.join("whisker_modules.settings.gradle.kts");
-    std::fs::write(
-        &settings_include_path,
-        render_module_settings_include(&android_modules),
-    )
-    .with_context(|| format!("write {}", settings_include_path.display()))?;
-
-    let deps_script_path = gen_android.join("whisker_module_deps.gradle.kts");
-    std::fs::write(
-        &deps_script_path,
-        render_module_deps_script(&android_modules),
-    )
-    .with_context(|| format!("write {}", deps_script_path.display()))?;
-
-    // Both directories are wiped and recreated so a removed module
-    // can't leave a stale aggregator or `.kt` file behind for gradle
-    // to compile.
-    let aggregator_dir =
-        gen_android.join("app/src/main/whisker_generated/rs/whisker/runtime/generated");
-    let legacy_staging = gen_android.join("app/src/main/whisker_modules");
-    if legacy_staging.exists() {
-        std::fs::remove_dir_all(&legacy_staging)
-            .with_context(|| format!("rm -rf {}", legacy_staging.display()))?;
-    }
-    if aggregator_dir.exists() {
-        std::fs::remove_dir_all(&aggregator_dir)
-            .with_context(|| format!("rm -rf {}", aggregator_dir.display()))?;
-    }
-    std::fs::create_dir_all(&aggregator_dir)
-        .with_context(|| format!("mkdir -p {}", aggregator_dir.display()))?;
-    let aggregator_path = aggregator_dir.join("WhiskerModuleBehaviors.kt");
-    std::fs::write(&aggregator_path, render_aggregator_kt(&android_modules))
-        .with_context(|| format!("write {}", aggregator_path.display()))?;
-
-    if !android_modules.is_empty() {
-        crate::ui::info(format!(
-            "wire {n} module gradle subproject(s) into the app build",
-            n = android_modules.len()
-        ));
-    }
-    Ok(())
-}
-
-fn render_module_settings_include(modules: &[&crate::modules::ResolvedModule]) -> String {
-    let mut out = String::new();
-    out.push_str(
-        "// AUTO-GENERATED by whisker-build. Do NOT edit — re-run\n\
-         // `whisker run` to refresh.\n\
-         //\n\
-         // `apply(from = ...)`'d by the cng-generated\n\
-         // settings.gradle.kts. Each `include` + `projectDir` pair\n\
-         // wires a Whisker module package into the user app's\n\
-         // composite Gradle build as a normal subproject.\n\n",
-    );
-    if modules.is_empty() {
-        out.push_str("// (no Whisker module deps)\n");
-        return out;
-    }
-    for m in modules {
-        // The Gradle library subproject is rooted at the package
-        // directory (build.gradle.kts lives there); its Kotlin
-        // source set points at the package's `android/` subdir.
-        let path = m.manifest_dir.display().to_string();
-        out.push_str(&format!("include(\":{name}\")\n", name = m.package));
-        out.push_str(&format!(
-            "project(\":{name}\").projectDir = file({path:?})\n",
-            name = m.package
-        ));
-    }
-    out
-}
-
-fn render_module_deps_script(modules: &[&crate::modules::ResolvedModule]) -> String {
-    let mut out = String::new();
-    out.push_str(
-        "// AUTO-GENERATED by whisker-build. Do NOT edit — re-run\n\
-         // `whisker run` to refresh.\n\
-         //\n\
-         // `apply(from = ...)`'d by the cng-generated\n\
-         // app/build.gradle.kts. Adds an `implementation(project(...))`\n\
-         // entry for every Whisker module subproject so the user\n\
-         // app links against their AARs.\n\n",
-    );
-    if modules.is_empty() {
-        out.push_str("// (no Whisker module deps)\n");
-        return out;
-    }
-    out.push_str("dependencies {\n");
-    for m in modules {
-        out.push_str(&format!(
-            "    \"implementation\"(project(\":{name}\"))\n",
-            name = m.package
-        ));
-    }
-    out.push_str("}\n");
-    out
-}
-
-fn render_aggregator_kt(modules: &[&crate::modules::ResolvedModule]) -> String {
-    let mut out = String::new();
-    out.push_str(
-        "// AUTO-GENERATED by whisker-build. Do NOT edit — re-run\n\
-         // `whisker run` to refresh.\n\
-         //\n\
-         // Aggregates every Whisker module subproject's KSP-\n\
-         // generated `<ModuleName>Behaviors` object into a single\n\
-         // `rs.whisker.runtime.generated.WhiskerModuleBehaviors`\n\
-         // entry point. The user app's `WhiskerApplication.onCreate()`\n\
-         // (generated from the cng `Application.kt` template) calls\n\
-         // `registerAll()` once at launch — that fans out to each\n\
-         // subproject's per-module behaviors, which themselves wire\n\
-         // both `@WhiskerElement` Lynx registrations and\n\
-         // `@WhiskerModule` dispatch registrations.\n\n",
-    );
-    out.push_str("package rs.whisker.runtime.generated\n\n");
-    out.push_str("import java.util.concurrent.atomic.AtomicBoolean\n\n");
-    out.push_str("public object WhiskerModuleBehaviors {\n");
-    out.push_str("    private val registered = AtomicBoolean(false)\n\n");
-    out.push_str("    @JvmStatic\n");
-    out.push_str("    public fun registerAll() {\n");
-    out.push_str("        if (!registered.compareAndSet(false, true)) return\n");
-    if modules.is_empty() {
-        out.push_str("        // (no Whisker module deps)\n");
-    }
-    for m in modules {
-        let obj = crate::modules::crate_to_behaviors_class(&m.package);
-        out.push_str(&format!("        {obj}.registerAll()\n"));
-    }
-    out.push_str("    }\n");
-    out.push_str("}\n");
-    out
-}
-
-/// Locate `libc++_shared.so` inside the NDK sysroot for `abi`. NDKs
-/// place it under the host-prebuilt sysroot's lib/<triple>/ dir.
-fn find_libcxx_shared(ndk: &Path, abi: &str) -> Result<PathBuf> {
-    let host = host_tag()?;
-    let triple = match abi {
-        "arm64-v8a" => "aarch64-linux-android",
-        "armeabi-v7a" => "arm-linux-androideabi",
-        "x86_64" => "x86_64-linux-android",
-        "x86" => "i686-linux-android",
-        other => return Err(anyhow!("unknown ABI for libc++_shared lookup: {other}")),
-    };
-    let cand = ndk
-        .join("toolchains/llvm/prebuilt")
-        .join(host)
-        .join("sysroot/usr/lib")
-        .join(triple)
-        .join("libc++_shared.so");
-    if !cand.is_file() {
-        return Err(anyhow!(
-            "libc++_shared.so missing at {} (check NDK install)",
-            cand.display(),
-        ));
-    }
-    Ok(cand)
 }
 
 // ----- gradle ---------------------------------------------------------------
@@ -636,7 +454,7 @@ pub fn run_gradle_assemble(
         Profile::Release => ":app:assembleRelease",
         Profile::Debug => ":app:assembleDebug",
     };
-    let gradle_step = crate::ui::step("gradle", task.to_string());
+    let gradle_step = crate::ui::step(crate::ui::OperationKind::Gradle, task.to_string());
     let mut cmd = gradle_command(gen_android, task)?;
     if !features.is_empty() {
         cmd.env("WHISKER_FEATURES", features.join(" "));
@@ -708,10 +526,16 @@ fn gradle_command(gen_android: &Path, task: &str) -> Result<Command> {
         .arg("--no-daemon")
         .arg("--console=plain")
         .current_dir(gen_android)
-        .env("JAVA_HOME", &java_home);
-    if crate::ui::is_tui() {
-        cmd.env("WHISKER_TUI", "1");
-    }
+        .env("JAVA_HOME", &java_home)
+        // Keep Gradle's nested `modules` / `build-android` calls on the
+        // exact CLI that launched this build. This is essential for local
+        // `cargo run`: PATH may still contain an older installed Whisker.
+        // Android Studio builds do not pass this env and the plugins retain
+        // their normal PATH fallback.
+        .env(
+            "WHISKER_CLI",
+            std::env::current_exe().context("resolve current Whisker CLI executable")?,
+        );
     if crate::ui::is_verbose() {
         cmd.env("WHISKER_VERBOSE", "1");
     }
@@ -753,7 +577,7 @@ pub fn run_gradle_release(
             &["app-release.apk", "app-release-unsigned.apk"],
         ),
     };
-    let gradle_step = crate::ui::step("gradle", task.to_string());
+    let gradle_step = crate::ui::step(crate::ui::OperationKind::Gradle, task.to_string());
     let mut cmd = gradle_command(gen_android, task)?;
     for (k, v) in signing_env {
         cmd.env(k, v);
@@ -831,10 +655,10 @@ fn ensure_release_artifact_signed(artifact: ReleaseArtifact, path: &Path) -> Res
 /// locate `keytool` (`<java_home>/bin/keytool`) for upload-keystore
 /// generation — same JDK the gradle build will run under.
 pub fn resolve_java_home() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("JAVA_HOME").map(PathBuf::from) {
-        if p.is_dir() {
-            return Ok(p);
-        }
+    if let Some(p) = std::env::var_os("JAVA_HOME").map(PathBuf::from)
+        && p.is_dir()
+    {
+        return Ok(p);
     }
     #[cfg(target_os = "macos")]
     {
@@ -859,25 +683,46 @@ pub fn resolve_java_home() -> Result<PathBuf> {
 mod tests {
     use super::*;
 
-    /// Reads the alignment out of a real library rather than a
-    /// fixture: the point of the check is what the NDK's linker
-    /// actually emitted, and a hand-built ELF would only prove the
-    /// parser agrees with itself. Skipped when no NDK is installed.
     #[test]
-    fn load_alignment_is_read_from_a_real_library() {
-        let Ok(ndk) = ndk_home() else { return };
-        let Ok(libcxx) = find_libcxx_shared(&ndk, "arm64-v8a") else {
-            return;
-        };
-        let align = max_load_align(&libcxx).expect("libc++_shared.so is an ELF64 shared object");
-        assert!(
-            align.is_power_of_two(),
-            "p_align must be a power of two, got {align}"
+    fn development_profile_optimizes_dependencies_but_not_the_app_crate() {
+        let mut command = Command::new("cargo");
+        configure_development_profile(&mut command, "list-benchmark");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            [
+                "--config",
+                "profile.dev.opt-level=2",
+                "--config",
+                "profile.dev.package.\"list-benchmark\".opt-level=0",
+            ],
         );
-        assert!(
-            align >= 4096,
-            "no Android ABI pages smaller than 4 KB, got {align}"
+    }
+
+    #[test]
+    fn gradle_uses_the_current_whisker_cli_for_nested_builds() {
+        let tmp = std::env::temp_dir().join(format!(
+            "whisker-build-gradle-cli-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("gradlew"), "#!/bin/sh\n").unwrap();
+
+        let command = gradle_command(&tmp, ":app:assembleDebug").unwrap();
+        let configured = command
+            .get_envs()
+            .find_map(|(key, value)| (key == "WHISKER_CLI").then_some(value))
+            .flatten();
+        assert_eq!(
+            configured,
+            Some(std::env::current_exe().unwrap().as_os_str())
         );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting a `WhiskerSvgDrawingView`. Registration is
+// Whisker module view hosting a `WhiskerSvgDrawingView`. Registration is
 // driven by `SvgModule`'s `definition()`, not by annotations here.
 //
 // `WhiskerSvgDrawingView` is a plain UIView rather than a UIImageView:
@@ -57,7 +57,7 @@ public final class WhiskerSvgView: WhiskerUI<WhiskerSvgDrawingView> {
 }
 
 /// `UIView` that paints the cached display-list bytes inside its own
-/// bounds, kept separate from the LynxUI bookkeeping because Whisker's UI
+/// bounds, kept separate from the WhiskerUI bookkeeping because Whisker's UI
 /// owner expects a single `view()` accessor.
 @objc(WhiskerSvgDrawingView)
 public final class WhiskerSvgDrawingView: UIView {

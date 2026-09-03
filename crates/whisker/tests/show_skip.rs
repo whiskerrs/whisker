@@ -44,7 +44,6 @@ impl DynRenderer for Recorder {
     }
     fn release_element(&self, _h: Element) {}
     fn set_attribute(&self, _h: Element, _k: &str, _v: &str) {}
-    fn set_inline_styles(&self, _h: Element, _css: &str) {}
     fn append_child(&self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
             parent: p.id(),
@@ -85,11 +84,11 @@ fn unchanged_cond_does_not_rebuild_branch() {
     with_test_env(|log| {
         let s = RwSignal::new(0i32);
         let _tree = render! {
-            view() {
+            View() {
                 Show(when: move || s.get() < 10) {
-                    text(value: "branch")
+                    Text(value: "branch")
                 }
-                text(value: "sibling")
+                Text(value: "sibling")
             }
         };
         flush();
@@ -114,9 +113,9 @@ fn changed_cond_still_rebuilds_branch() {
     with_test_env(|log| {
         let s = RwSignal::new(0i32);
         let _tree = render! {
-            view() {
+            View() {
                 Show(when: move || s.get() < 10) {
-                    text(value: "branch")
+                    Text(value: "branch")
                 }
             }
         };

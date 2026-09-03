@@ -4,16 +4,19 @@
 // module's sources for any concrete `Module` subclass and emits the
 // registration block into `WhiskerImageBehaviors.registerAll()`.
 //
-// The `WhiskerImageView` Lynx UI subclass this references lives in
+// The `WhiskerImageView` module view this references lives in
 // `WhiskerImageView.kt`. Same split on iOS (`ImageModule.swift` +
 // `ImageView.swift`).
 
 package rs.whisker.elements.image
 
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 class ImageModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Image")
@@ -46,7 +49,7 @@ class ImageModule : Module() {
             }
             promise.resolve(WhiskerValue.Null)
         }
-        View(WhiskerImageView::class.java) {
+        View("whisker-image:Image", WhiskerImageView::class.java) {
             Prop("src") { view: WhiskerImageView, value ->
                 view.setSrc(value.asString() ?: "")
             }

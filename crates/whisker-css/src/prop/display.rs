@@ -4,41 +4,39 @@ use crate::css::Css;
 use crate::keyword::{Direction, Display};
 
 impl Css {
-    /// Sets `display`. Lynx default: `linear`.
-    /// <https://lynxjs.org/api/css/properties/display>
+    /// Sets `display`. Whisker defaults to flex layout.
     pub fn display(self, v: Display) -> Self {
-        self.push("display", v)
+        self.push_typed(crate::StyleProperty::Display, v)
     }
 
     /// Sets `display: none` — element is removed from the layout tree.
     pub fn display_none(self) -> Self {
-        self.push("display", Display::None)
+        self.push_typed(crate::StyleProperty::Display, Display::None)
     }
 
     /// Sets `display: flex` — opt into CSS flexbox.
     pub fn display_flex(self) -> Self {
-        self.push("display", Display::Flex)
+        self.push_typed(crate::StyleProperty::Display, Display::Flex)
     }
 
     /// Sets `display: grid` — opt into CSS grid.
     pub fn display_grid(self) -> Self {
-        self.push("display", Display::Grid)
+        self.push_typed(crate::StyleProperty::Display, Display::Grid)
     }
 
-    /// Sets `display: linear` — Lynx default linear layout.
-    pub fn display_linear(self) -> Self {
-        self.push("display", Display::Linear)
+    /// Sets `display: block`.
+    pub fn display_block(self) -> Self {
+        self.push_typed(crate::StyleProperty::Display, Display::Block)
     }
 
-    /// Sets `display: relative` — Lynx relative-positioning container.
-    pub fn display_relative(self) -> Self {
-        self.push("display", Display::Relative)
+    /// Sets `display: flow-root` to establish an independent block formatting context.
+    pub fn display_flow_root(self) -> Self {
+        self.push_typed(crate::StyleProperty::Display, Display::FlowRoot)
     }
 
-    /// Sets `direction`. Lynx default: `ltr`.
-    /// <https://lynxjs.org/api/css/properties/direction>
+    /// Sets `direction`. Default: `ltr`.
     pub fn direction(self, v: Direction) -> Self {
-        self.push("direction", v)
+        self.push_typed(crate::StyleProperty::Direction, v)
     }
 }
 
@@ -58,10 +56,10 @@ mod tests {
         assert_eq!(Css::new().display_none().to_string(), "display: none;");
         assert_eq!(Css::new().display_flex().to_string(), "display: flex;");
         assert_eq!(Css::new().display_grid().to_string(), "display: grid;");
-        assert_eq!(Css::new().display_linear().to_string(), "display: linear;");
+        assert_eq!(Css::new().display_block().to_string(), "display: block;");
         assert_eq!(
-            Css::new().display_relative().to_string(),
-            "display: relative;"
+            Css::new().display_flow_root().to_string(),
+            "display: flow-root;"
         );
     }
 

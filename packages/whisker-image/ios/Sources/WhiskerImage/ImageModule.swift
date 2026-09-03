@@ -2,17 +2,16 @@
 //
 // The codegen plugin scans this Swift target for any concrete subclass
 // of `Module` and emits a registration block in
-// `<Target>+Generated.swift` that registers
-// `definitionLazy.view!.viewClass` with `LynxComponentRegistry` under
-// "whisker-image:Image", then calls `module.registerWithLynx()` so the
-// props install via the Obj-C-runtime path.
+// `<Target>+Generated.swift`, which registers the view and module functions
+// with Whisker's Host registry.
 //
-// The `WhiskerImageView` Lynx UI subclass this references lives in
+// The `WhiskerImageView` module view this references lives in
 // `ImageView.swift`. Same split on Android (`ImageModule.kt` +
 // `WhiskerImageView.kt`).
 
 import WhiskerModule
 
+@WhiskerModule
 public final class ImageModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
@@ -32,7 +31,7 @@ public final class ImageModule: Module {
                     promise.resolve(.null)
                 }
             }
-            View(WhiskerImageView.self) {
+            View("whisker-image:Image", WhiskerImageView.self) {
                 Prop("src") { (view: WhiskerImageView, value: WhiskerValue) in
                     view.setSrc(value.asString ?? "")
                 }

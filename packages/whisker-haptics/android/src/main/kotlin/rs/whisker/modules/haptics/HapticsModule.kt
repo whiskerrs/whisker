@@ -23,10 +23,13 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerApplication
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 class HapticsModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("WhiskerHaptics")
@@ -65,7 +68,7 @@ class HapticsModule : Module() {
     }
 }
 
-/// Plain helper — no Whisker / Lynx types. Kept separate from
+/// Plain helper — no Whisker runtime types. Kept separate from
 /// `HapticsModule` so the vibration logic is testable on its own.
 private object Haptics {
     private fun context(): Context =

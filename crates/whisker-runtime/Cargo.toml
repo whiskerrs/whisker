@@ -9,7 +9,7 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Core runtime for Whisker: reactive primitives, element tree, Lynx integration."
+description = "Host-independent Whisker runtime: reactivity, retained elements, layout, and frames."
 
 [dependencies]
 # Generational slot map for reactive node / owner storage. Generational
@@ -19,7 +19,7 @@ description = "Core runtime for Whisker: reactive primitives, element tree, Lynx
 slotmap = "1"
 # Single-threaded futures executor (LocalPool) driven by Whisker's
 # tick callback. Used by the `tasks` module to host async work
-# (resource fetchers, user-spawned futures) on the TASM thread
+# (resource fetchers, user-spawned futures) on the runtime thread
 # without pulling in tokio's full IO/scheduler infrastructure.
 futures-executor = "0.3"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
@@ -27,9 +27,11 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # worker thread completing sync work and the main-thread future
 # awaiting the result.
 futures-channel = "0.3"
-# `WhiskerValue` carries `#[derive(Deserialize)]` event structs and
-# deserializes typed events out of the recursive value tree. The
-# `serde_json::Value` bridge is the conversion target for
-# `WhiskerValue::deserialize_into::<T>()`.
 serde = { workspace = true }
-serde_json = { workspace = true }
+whisker-style = { workspace = true }
+whisker-value = { workspace = true }
+whisker-protocol = { workspace = true }
+whisker-engine = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+linkme = { workspace = true }

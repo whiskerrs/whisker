@@ -6,16 +6,16 @@
 //! 1. **I/O on tokio's reactor** — `reqwest::get(...).await`. reqwest
 //!    registers its socket with `Handle::current()`; without an entered
 //!    runtime this panics. With the `tokio` feature, whisker-driver has
-//!    entered a multi-thread runtime on the TASM thread at bootstrap, so
+//!    entered a multi-thread runtime on the runtime thread at bootstrap, so
 //!    it resolves and the request progresses (reactor on tokio's bg
-//!    threads, future polled on the TASM thread → no `Send` needed).
+//!    threads, future polled on the runtime thread → no `Send` needed).
 //! 2. **CPU offload** — `tokio::task::spawn_blocking(...)`. Moves work to
 //!    tokio's blocking pool so the UI thread never stalls, then `.await`s
 //!    the result back.
 //!
 //! If the screen shows `OK · N bytes`, the whole chain worked: runtime
 //! entered → reqwest serviced → spawn_blocking joined → result marshalled
-//! back to the TASM thread and rendered. The `resource` state is read
+//! back to the runtime thread and rendered. The `resource` state is read
 //! reactively in a `move ||` text binding, so Loading → Ready/Error
 //! transitions repaint on their own.
 
@@ -47,7 +47,7 @@ pub fn app() -> Element {
     });
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             background_color: Color::hex(0x101012),
             flex_direction: FlexDirection::Column,
@@ -55,7 +55,7 @@ pub fn app() -> Element {
             justify_content: JustifyContent::Center,
             padding: px(24),
         )) {
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0xF5F5F7),
                     font_size: px(18),
@@ -64,7 +64,7 @@ pub fn app() -> Element {
                 ),
                 value: "tokio feature smoke",
             )
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0x9AA0AA),
                     font_size: px(14),
@@ -72,7 +72,7 @@ pub fn app() -> Element {
                 ),
                 value: "reqwest (I/O) + spawn_blocking (CPU offload)",
             )
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0x4ADE80),
                     font_size: px(16),
@@ -85,7 +85,7 @@ pub fn app() -> Element {
 }
 
 /// `resource()` fetcher: fetch the endpoint over HTTPS, then count the
-/// bytes off the TASM thread. Errors are stringified at this boundary to
+/// bytes off the runtime thread. Errors are stringified at this boundary to
 /// match `resource`'s `Result<T, String>` contract.
 async fn fetch_body_len() -> Result<usize, String> {
     // ① reqwest drives the request on tokio's reactor.

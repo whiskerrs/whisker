@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting a `WhiskerSvgDrawingView`. Registration is
+// Whisker module view hosting a `WhiskerSvgDrawingView`. Registration is
 // driven by `SvgModule`'s `definition()`, not by annotations here.
 
 package rs.whisker.modules.svg
@@ -25,7 +25,7 @@ open class WhiskerSvgView(context: WhiskerContext) : WhiskerUI<WhiskerSvgDrawing
      * (renders nothing).
      */
     fun setDisplayList(value: String) {
-        val v = view ?: return
+        val v = view()
         if (value.isEmpty()) {
             v.displayListBytes = null
             v.invalidate()
@@ -47,7 +47,7 @@ open class WhiskerSvgView(context: WhiskerContext) : WhiskerUI<WhiskerSvgDrawing
      * `stroke="currentColor"` — the `FILL_TINT` / `STROKE_TINT` opcodes.
      */
     fun setColor(value: String) {
-        val v = view ?: return
+        val v = view()
         v.tintArgb = parseCssColor(value)
         v.invalidate()
     }
@@ -55,7 +55,7 @@ open class WhiskerSvgView(context: WhiskerContext) : WhiskerUI<WhiskerSvgDrawing
 
 /**
  * `View` that paints the cached display-list bytes inside its own bounds,
- * kept separate from the LynxUI bookkeeping because Whisker's UI owner
+ * kept separate from the WhiskerUI bookkeeping because Whisker's UI owner
  * expects a single `view` accessor.
  */
 class WhiskerSvgDrawingView(context: Context) : View(context) {

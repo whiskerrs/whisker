@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "id": "core.resource-raster-lifecycle",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "load_raster_resource",
+        "id": 1,
+        "generation": 1,
+        "source": {
+          "kind": "bytes",
+          "media_type": "image/png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAF0lEQVR4nAXBAQEAAACCIKb33EBkQpUOQdYIeRyCeLsAAAAASUVORK5CYII="
+        }
+      },
+      {
+        "type": "checkpoint_resource",
+        "id": 1,
+        "generation": 1,
+        "state": "ready",
+        "width": 2,
+        "height": 2
+      },
+      {
+        "type": "load_raster_resource",
+        "id": 1,
+        "generation": 2,
+        "source": {
+          "kind": "url",
+          "value": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAF0lEQVR4nAXBAQEAAACCIKb33EBkQpUOQdYIeRyCeLsAAAAASUVORK5CYII="
+        }
+      },
+      {
+        "type": "checkpoint_resource",
+        "id": 1,
+        "generation": 2,
+        "state": "ready",
+        "width": 2,
+        "height": 2
+      },
+      { "type": "release_raster_resource", "id": 1, "generation": 1 },
+      { "type": "checkpoint_resource", "id": 1, "generation": 1, "state": "released" },
+      {
+        "type": "checkpoint_resource",
+        "id": 1,
+        "generation": 2,
+        "state": "ready",
+        "width": 2,
+        "height": 2
+      },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 100.0],
+            "background": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 },
+            "background_layers": [
+              {
+                "geometry": {
+                  "position": [
+                    { "length": 10.0, "fraction": 0.0 },
+                    { "length": 10.0, "fraction": 0.0 }
+                  ],
+                  "size": [
+                    { "length": 80.0, "fraction": 0.0 },
+                    { "length": 80.0, "fraction": 0.0 }
+                  ],
+                  "repeat_x": "no_repeat",
+                  "repeat_y": "no_repeat"
+                },
+                "image": { "resource": 1 }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.resource-lifecycle",
+        "samples": [
+          { "point": [5.0, 5.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [25.0, 25.0], "color": { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [75.0, 25.0], "color": { "kind": "srgba", "red": 0, "green": 128, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [25.0, 75.0], "color": { "kind": "srgba", "red": 0, "green": 0, "blue": 255, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [75.0, 75.0], "color": { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

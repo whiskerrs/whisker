@@ -1,23 +1,19 @@
-// `whisker-input` ModuleDefinition (Android).
-//
-// KSP scans this module's sources for any concrete `Module` subclass
-// and emits the registration block into
-// `WhiskerInputBehaviors.registerAll()`.
-//
-// The `WhiskerInputView` Lynx UI subclass this references lives in
-// `WhiskerInputView.kt`. Matching iOS files live under
-// `packages/whisker-input/ios/Sources/WhiskerInput/`.
+// `whisker-input` ModuleDefinition (Android). KSP discovers the annotated
+// module and generates its registration entry.
 
 package rs.whisker.elements.input
 
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 class InputModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Input")
-        View(WhiskerInputView::class.java) {
+        View("whisker-input:Input", WhiskerInputView::class.java) {
             // ---- text-content props ----------------------------------------
 
             Prop("value") { view: WhiskerInputView, value ->
@@ -39,22 +35,22 @@ class InputModule : Module() {
             // ---- behaviour props -------------------------------------------
 
             Prop("multiline") { view: WhiskerInputView, value ->
-                view.setMultiline(value.asString() ?: "false")
+                view.setMultiline(value.asBool() ?: false)
             }
             Prop("lines") { view: WhiskerInputView, value ->
-                view.setLines(value.asString() ?: "0")
+                view.setLines(value.asInt() ?: 0)
             }
             Prop("secure") { view: WhiskerInputView, value ->
-                view.setSecure(value.asString() ?: "false")
+                view.setSecure(value.asBool() ?: false)
             }
             Prop("editable") { view: WhiskerInputView, value ->
-                view.setEditable(value.asString() ?: "true")
+                view.setEditable(value.asBool() ?: true)
             }
             Prop("auto-focus") { view: WhiskerInputView, value ->
-                view.setAutoFocus(value.asString() ?: "false")
+                view.setAutoFocus(value.asBool() ?: false)
             }
             Prop("max-length") { view: WhiskerInputView, value ->
-                view.setMaxLength(value.asString() ?: "0")
+                view.setMaxLength(value.asInt() ?: 0)
             }
             Prop("keyboard-type") { view: WhiskerInputView, value ->
                 view.setKeyboardType(value.asString() ?: "default")
@@ -66,10 +62,10 @@ class InputModule : Module() {
                 view.setAutoCapitalize(value.asString() ?: "sentences")
             }
             Prop("autocorrect") { view: WhiskerInputView, value ->
-                view.setAutocorrect(value.asString() ?: "true")
+                view.setAutocorrect(value.asBool() ?: true)
             }
             Prop("spell-check") { view: WhiskerInputView, value ->
-                view.setSpellCheck(value.asString() ?: "true")
+                view.setSpellCheck(value.asBool() ?: true)
             }
 
             // Declaration-only metadata (parity with the iOS module);
@@ -77,41 +73,29 @@ class InputModule : Module() {
             // inside WhiskerInputView. Documents the emittable set.
             Events("input", "change", "focus", "blur", "submit")
 
-            // ---- callable UI methods ---------------------------------------
-
-            Function("focus") { view: WhiskerInputView, _ ->
-                view.focusField()
-                WhiskerValue.Null
+            TextStyle { view: WhiskerInputView, style ->
+                view.applyTextStyle(style)
             }
-            Function("blur") { view: WhiskerInputView, _ ->
+
+            // ---- one-way View commands -------------------------------------
+
+            Command("focus") { view: WhiskerInputView, _ ->
+                view.focusField()
+            }
+            Command("blur") { view: WhiskerInputView, _ ->
                 view.blurField()
-                WhiskerValue.Null
             }
             // `clear` fires `input` so the bound signal sees the change as
             // though the user had typed it.
-            Function("clear") { view: WhiskerInputView, _ ->
+            Command("clear") { view: WhiskerInputView, _ ->
                 view.clearField()
-                WhiskerValue.Null
             }
             // The view applies the cursor-diff guard and suppresses the
             // resulting afterTextChanged, which is not a user edit.
-            Function("setValue") { view: WhiskerInputView, args ->
-                // The Lynx bridge packs args as { "args": [map] }; the map
-                // carries { "value": "<text>" }.
-                val map = (args.getOrNull(0) as? WhiskerValue.Map)?.value
+            Command("setValue") { view: WhiskerInputView, parameters ->
+                val map = (parameters as? WhiskerValue.Map)?.value
                 val text = map?.get("value")?.asString() ?: ""
                 view.setValueExternal(text)
-                WhiskerValue.Null
-            }
-            // TODO: Android result-returning custom element methods need
-            // the `invoke_async` bridge path in `lynx_native_renderer.cc`,
-            // compiled iOS-only in Lynx 3.8.0-whisker.1 (memory note
-            // `whisker_element_method_results_need_async`). Until the fork
-            // wires it, Rust receives a DispatchFailed error here.
-            Function("getValue") { view: WhiskerInputView, _ ->
-                WhiskerValue.Map(
-                    mapOf("value" to WhiskerValue.Str(view.currentText()))
-                )
             }
         }
     }

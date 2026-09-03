@@ -2,7 +2,7 @@
 // (named "WhiskerLocalStore"), persists across launches, doesn't
 // sync across devices.
 //
-// Plain helper — no Whisker / Lynx types. The DSL module that
+// Plain helper — no Whisker runtime types. The DSL module that
 // exposes it to Rust lives in `LocalStoreModule.kt`.
 
 package rs.whisker.modules.localstore

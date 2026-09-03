@@ -2,19 +2,17 @@
 //!
 //! Covers:
 //! - `ElementRef::new()` allocates an unbound ref.
-//! - Passing `ref:` on a `#[module_component]` call site binds the
+//! - Passing `element_ref:` on a `#[module_element]` call site binds the
 //!   ref to the freshly-created element on mount.
 //! - Disposing the surrounding owner clears the binding (the macro
 //!   emits `on_cleanup(move || r.__unbind())`).
 //! - `bound()` is reactive: an `effect(...)` observing it re-runs on
 //!   mount and on unmount.
-//! - `RefError::NotBound` is returned by `try_invoke` when unbound.
-//! - `invoke_typed::<T>` round-trips primitives through `TryFrom<
-//!   WhiskerValue>` (the bridge path is stubbed below — the typed
-//!   conversion is exercised in isolation).
+//! - `RefError::NotBound` is returned by `command` when unbound.
+//! - Primitive `WhiskerValue` conversions remain independently tested.
 //!
 //! No real C bridge: the in-memory `Recorder` swallows element ops,
-//! and `invoke_element_method` returns an Error for unmounted refs,
+//! and element-command dispatch returns an Error for unmounted refs,
 //! so we focus on the binding-state machinery rather than dispatch.
 
 use std::cell::RefCell;
@@ -55,7 +53,6 @@ impl DynRenderer for Recorder {
     }
     fn release_element(&self, _h: Element) {}
     fn set_attribute(&self, _h: Element, _k: &str, _v: &str) {}
-    fn set_inline_styles(&self, _h: Element, _css: &str) {}
     fn append_child(&self, _p: Element, _c: Element) {}
     fn remove_child(&self, _p: Element, _c: Element) {}
     fn set_event_listener(
@@ -83,7 +80,7 @@ fn with_test_env<R>(f: impl FnOnce() -> R) -> R {
 
 // ---- Platform component declaration ---------------------------------------
 
-#[whisker::module_component("x-ref-target")]
+#[whisker::module_element("x-ref-target")]
 pub fn x_ref_target(value: Signal<String>) {}
 
 // ---- Tests -----------------------------------------------------------------
@@ -104,7 +101,7 @@ fn passing_ref_at_call_site_binds_on_mount() {
         assert!(!r.is_bound());
 
         let _h = render! {
-            XRefTarget(ref: r, value: "hello")
+            XRefTarget(element_ref: r, value: "hello")
         };
 
         assert!(r.is_bound(), "ref should be bound after mount");
@@ -126,7 +123,7 @@ fn disposing_owner_unbinds_ref() {
 
     let inner = Owner::new(None);
     inner.with(|| {
-        let _h = render! { XRefTarget(ref: r, value: "x") };
+        let _h = render! { XRefTarget(element_ref: r, value: "x") };
     });
     assert!(r.is_bound(), "ref should bind on mount");
 
@@ -160,7 +157,7 @@ fn bound_signal_is_reactive() {
 
     let inner = Owner::new(None);
     inner.with(|| {
-        let _h = render! { XRefTarget(ref: r, value: "x") };
+        let _h = render! { XRefTarget(element_ref: r, value: "x") };
     });
     flush();
     assert_eq!(
@@ -182,20 +179,14 @@ fn bound_signal_is_reactive() {
 }
 
 #[test]
-fn invoke_on_unbound_ref_returns_error_variant() {
+fn command_on_unbound_ref_returns_not_bound() {
     use whisker::platform_module::WhiskerValue;
     with_test_env(|| {
         let r = ElementRef::new();
-        let v = r.invoke("play", WhiskerValue::Null);
-        match v {
-            WhiskerValue::Error(msg) => {
-                assert!(
-                    msg.contains("not bound"),
-                    "error message should mention not-bound: got {msg:?}"
-                );
-            }
-            other => panic!("expected Error variant, got {other:?}"),
-        }
+        assert_eq!(
+            r.command("play", WhiskerValue::Null),
+            Err(RefError::NotBound)
+        );
     });
 }
 
@@ -203,8 +194,7 @@ fn invoke_on_unbound_ref_returns_error_variant() {
 fn try_from_whisker_value_f64_rejects_string() {
     use whisker::platform_module::WhiskerValue;
     // `TryFrom<WhiskerValue>`'s primitive conversions are a public
-    // surface even though `invoke_typed::<T>` goes through serde: a
-    // String must not silently coerce to f64.
+    // module-result surface: a String must not silently coerce to f64.
     let bad_payload = WhiskerValue::String("not-a-number".into());
     let result: Result<f64, _> = f64::try_from(bad_payload);
     let msg = result.expect_err("String can't convert to f64");

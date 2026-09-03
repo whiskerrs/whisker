@@ -1,7 +1,7 @@
 // Resolves the app's per-directory sandbox paths from the Android
 // Context.
 //
-// Plain helper — no Whisker / Lynx types. The DSL module that exposes
+// Plain helper — no Whisker runtime types. The DSL module that exposes
 // it to Rust lives in `PathsModule.kt`. Returns plain filesystem paths
 // so the Rust side can use them with std::fs directly.
 //

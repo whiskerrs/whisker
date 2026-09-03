@@ -11,7 +11,10 @@ pub mod hot_reload;
 pub mod log_capture;
 
 #[cfg(feature = "hot-reload")]
-pub use hot_reload::{devlog, start_receiver, take_pending_patch};
+pub use hot_reload::{
+    NativeCodeUpdate, NativeHotReload, NativeHotReloadRegistration, register_native_runtime,
+    start_receiver,
+};
 
 #[cfg(feature = "hot-reload")]
 pub use log_capture::start_log_capture;

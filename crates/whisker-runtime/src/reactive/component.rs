@@ -9,9 +9,8 @@
 //! 3. Returns the resulting view, leaving the owner alive (the parent
 //!    keeps the handle; disposing the parent will cascade).
 //!
-//! The macro also passes its own fn pointer to
-//! [`register_component`] so the hot-reload path can map
-//! subsecond-patched fn pointers back to live owners.
+//! The macro also passes its own fn pointer into the mount registry so the
+//! hot-reload path can map subsecond-patched fn pointers back to live owners.
 //!
 //! Lifecycle hooks:
 //!
@@ -122,7 +121,7 @@ pub fn owners_for_fn(fn_ptr: *const ()) -> Vec<Owner> {
 // Per-component remount. `mount_component_remountable` returns the
 // body's root element directly — no wrapper element sits between a
 // component body and its parent, so the Whisker component tree maps
-// 1:1 onto the Lynx element tree.
+// 1:1 onto the Host element tree.
 //
 // With no wrapper to serve as a stable placeholder, each mount's
 // `(parent, previous_sibling)` is captured lazily: the mount stashes
@@ -149,6 +148,14 @@ thread_local! {
     /// inner `view::append_child` calls drain the inner pending
     /// mounts before this function's own value is stashed.
     static PENDING_MOUNT: Cell<Option<(MountId, Element)>> = const { Cell::new(None) };
+}
+
+pub(crate) fn swap_pending_mount(pending: &mut Option<(MountId, Element)>) {
+    PENDING_MOUNT.with(|active| {
+        let current = active.take();
+        active.set(pending.take());
+        *pending = current;
+    });
 }
 
 /// Stable identifier for a remountable mount site. Generationless on
@@ -236,12 +243,12 @@ pub fn __reset_pending_mount_for_tests() {
 ///
 /// Runs `body` inside a fresh owner and returns the body's root
 /// element directly to the caller. No wrapper element is created, so
-/// the Whisker component tree maps 1:1 with the Lynx element tree.
+/// the Whisker component tree maps 1:1 with the Host element tree.
 ///
 /// To make remount work without a stable wrapper handle in the
 /// parent's child list, the function stashes a pending-mount entry
 /// in a thread-local just before returning. The next
-/// [`view::append_child`] call that sees this body_root being
+/// next `view::append_child` call that sees this body root being
 /// attached finalises the MountSite (recording parent + previous
 /// sibling). The [`on_component_root_attached`] callback handles
 /// that side of the handshake.
@@ -253,7 +260,7 @@ pub fn __reset_pending_mount_for_tests() {
 /// (using the recorded anchor).
 ///
 /// `props_hash_fn` reads the component's props-layout hash through
-/// subsecond dispatch (see [`MountSite::props_hash_fn`]); the value
+/// subsecond dispatch (through the internal `MountSite::props_hash_fn`); the value
 /// it returns *now* is recorded as the layout this site's `body`
 /// closure was built against. Non-hot-reload callers (tests) can
 /// pass `Box::new(|| 0)`.
@@ -360,10 +367,10 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
                     None => return false,
                 };
                 while let Some(parent) = rt.owners.get(cursor).and_then(|o| o.parent) {
-                    if let Some(mf) = rt.owners.get(parent).and_then(|o| o.mount_fn) {
-                        if patched_set.contains(&mf) {
-                            return false;
-                        }
+                    if let Some(mf) = rt.owners.get(parent).and_then(|o| o.mount_fn)
+                        && patched_set.contains(&mf)
+                    {
+                        return false;
                     }
                     cursor = parent;
                 }
@@ -439,7 +446,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
 
     // Detach every old body_root *before* any dispose runs.
     // `Owner::dispose` invalidates element handles, after which
-    // `remove_child` silently no-ops against Lynx and the stale subtree
+    // `remove_child` silently no-ops after the handle is invalid and the stale subtree
     // stays on screen.
     let mut by_parent: std::collections::HashMap<Element, Vec<(Element, Option<Element>)>> =
         std::collections::HashMap::new();
@@ -487,13 +494,12 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         // caller's `append_child`.
         PENDING_MOUNT.with(|cell| cell.set(None));
 
-        if let Some(list) = by_parent.get_mut(&info.parent) {
-            if let Some(entry) = list
+        if let Some(list) = by_parent.get_mut(&info.parent)
+            && let Some(entry) = list
                 .iter_mut()
                 .find(|(o, n)| *o == info.old_body_root && n.is_none())
-            {
-                entry.1 = Some(new_body_root);
-            }
+        {
+            entry.1 = Some(new_body_root);
         }
 
         results.push((
@@ -564,8 +570,8 @@ pub struct RemountStats {
     /// Mount sites disposed and re-mounted in place.
     pub remounted: usize,
     /// Mount sites *refused* because their props layout changed
-    /// between the stored body closure and the patched code (see
-    /// [`MountSite::props_hash`]). Non-zero means the on-screen
+    /// between the stored body closure and the patched code (see the internal
+    /// `MountSite::props_hash`). Non-zero means the on-screen
     /// subtree for those sites is stale and only a full remount can
     /// safely rebuild it.
     pub layout_changed: usize,

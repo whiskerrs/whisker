@@ -49,8 +49,6 @@ pub enum TextDecorationLine {
     None,
     /// `underline` — line below the text.
     Underline,
-    /// `overline` — line above the text.
-    Overline,
     /// `line-through` — line through the middle of the text.
     LineThrough,
 }
@@ -60,7 +58,6 @@ impl ToCss for TextDecorationLine {
         dest.write_str(match self {
             TextDecorationLine::None => "none",
             TextDecorationLine::Underline => "underline",
-            TextDecorationLine::Overline => "overline",
             TextDecorationLine::LineThrough => "line-through",
         })
     }
@@ -190,12 +187,6 @@ pub enum WhiteSpace {
     Normal,
     /// `nowrap` — collapse whitespace, no wrapping.
     Nowrap,
-    /// `pre` — preserve whitespace, no wrapping.
-    Pre,
-    /// `pre-wrap` — preserve whitespace, allow wrapping.
-    PreWrap,
-    /// `pre-line` — collapse whitespace, preserve line breaks.
-    PreLine,
 }
 
 impl ToCss for WhiteSpace {
@@ -203,9 +194,6 @@ impl ToCss for WhiteSpace {
         dest.write_str(match self {
             WhiteSpace::Normal => "normal",
             WhiteSpace::Nowrap => "nowrap",
-            WhiteSpace::Pre => "pre",
-            WhiteSpace::PreWrap => "pre-wrap",
-            WhiteSpace::PreLine => "pre-line",
         })
     }
 }
@@ -277,7 +265,6 @@ mod tests {
         assert_keyword_set!([
             (TextDecorationLine::None, "none"),
             (TextDecorationLine::Underline, "underline"),
-            (TextDecorationLine::Overline, "overline"),
             (TextDecorationLine::LineThrough, "line-through"),
         ]);
     }
@@ -333,9 +320,6 @@ mod tests {
         assert_keyword_set!([
             (WhiteSpace::Normal, "normal"),
             (WhiteSpace::Nowrap, "nowrap"),
-            (WhiteSpace::Pre, "pre"),
-            (WhiteSpace::PreWrap, "pre-wrap"),
-            (WhiteSpace::PreLine, "pre-line"),
         ]);
     }
 

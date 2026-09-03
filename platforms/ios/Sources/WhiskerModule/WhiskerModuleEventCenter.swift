@@ -1,41 +1,27 @@
-// iOS event subscription wiring.
-//
-// Sits between the Rust subscription API
-// (`PlatformModule::on_event`) and the `Module` author's
-// `Events("name")` + `OnStartObserving` / `OnStopObserving` DSL
-// surface.
-//
-// ## Roles
-//
-// 1. **sendEvent dispatch.** `Module.sendEvent(name, payload)` calls
-//    `dispatchSend(...)`, which encodes the payload as a heap-owned
-//    `WhiskerValueRaw`, hands it to the bridge, and releases the
-//    allocations once the bridge returns. The bridge synchronously
-//    fans the payload out to every Rust subscriber registered against
-//    `(module.qualifiedName, event)`.
-//
-// 2. **Observer-hook routing.** The bridge's
-//    `whisker_bridge_module_register_observer_hooks` takes a pair of
-//    `void(*)(const char*, const char*)` callbacks. C function
-//    pointers can't capture state, so we install ONE shared C
-//    trampoline pair (`sharedStartHook` / `sharedStopHook`) at
-//    process startup and route the (module, event) arguments through
-//    this center's `[qualifiedName: Module]` registry to reach the
-//    right `OnStartObserving` / `OnStopObserving` closure.
-//
-//    The codegen-emitted registration block calls
-//    `register(_ module:)` once per `Module` subclass after assigning
-//    its `qualifiedName`; each call also points that module's bridge
-//    hooks at the shared trampolines.
+// iOS module event routing. The active Host installs a Swift closure rather
+// than exposing its renderer or FFI implementation to module authors.
 
 import Foundation
-@_exported import WhiskerCBridge
 
 /// Shared dispatcher + observer-hook router. All state is internal
 /// to the `WhiskerModule` framework; `Module.sendEvent` and the
 /// codegen-emitted registration call are the only public entry
 /// points.
 public enum WhiskerModuleEventCenter {
+
+    private struct EventKey: Hashable {
+        let module: String
+        let event: String
+    }
+
+    private final class SurfaceSink {
+        var dispatch: (String, String, WhiskerValue) -> Void
+        var observed: Set<EventKey> = []
+
+        init(dispatch: @escaping (String, String, WhiskerValue) -> Void) {
+            self.dispatch = dispatch
+        }
+    }
 
     // MARK: - Registry
 
@@ -44,6 +30,7 @@ public enum WhiskerModuleEventCenter {
     /// OnStop closure for an incoming `(module, event)` event.
     private static let lock = NSLock()
     private static var modulesByName: [String: Module] = [:]
+    private static var eventSinks: [ObjectIdentifier: SurfaceSink] = [:]
 
     // MARK: - Module registration
 
@@ -65,17 +52,64 @@ public enum WhiskerModuleEventCenter {
         modulesByName[qname] = module
         lock.unlock()
 
-        // Wire the shared observer-hook trampolines into the bridge
-        // for this module. The bridge keeps one (started, stopped)
-        // pair per module name; passing the same shared pair for
-        // every module is what lets the trampoline route by module
-        // name back through `modulesByName`.
-        qname.withCString { moduleC in
-            whisker_bridge_module_register_observer_hooks(
-                moduleC,
-                sharedStartHook,
-                sharedStopHook
-            )
+    }
+
+    /// Install or remove the event sink owned by one Host surface.
+    /// Keeping these as Swift closures avoids a second, legacy C registration
+    /// ABI beside WhiskerView's runtime ABI.
+    public static func installEventSink(
+        owner: AnyObject,
+        _ sink: ((String, String, WhiskerValue) -> Void)?
+    ) {
+        lock.lock()
+        let key = ObjectIdentifier(owner)
+        var stopped: [EventKey] = []
+        if let sink {
+            if let existing = eventSinks[key] {
+                existing.dispatch = sink
+            } else {
+                eventSinks[key] = SurfaceSink(dispatch: sink)
+            }
+        } else {
+            let removed = eventSinks.removeValue(forKey: key)
+            stopped = removed?.observed.filter { event in
+                !eventSinks.values.contains { $0.observed.contains(event) }
+            } ?? []
+        }
+        lock.unlock()
+        for event in stopped {
+            fireStop(module: event.module, event: event.event)
+        }
+    }
+
+    /// Update one surface's first/last Rust-side subscription.
+    public static func setObserving(
+        owner: AnyObject,
+        module: String,
+        event: String,
+        observing: Bool
+    ) {
+        let key = EventKey(module: module, event: event)
+        lock.lock()
+        guard let surface = eventSinks[ObjectIdentifier(owner)] else {
+            lock.unlock()
+            return
+        }
+        let changed: Bool
+        let transition: Bool
+        if observing {
+            changed = surface.observed.insert(key).inserted
+            transition = changed && eventSinks.values.filter { $0.observed.contains(key) }.count == 1
+        } else {
+            changed = surface.observed.remove(key) != nil
+            transition = changed && !eventSinks.values.contains { $0.observed.contains(key) }
+        }
+        lock.unlock()
+        guard transition else { return }
+        if observing {
+            fireStart(module: module, event: event)
+        } else {
+            fireStop(module: module, event: event)
         }
     }
 
@@ -88,15 +122,15 @@ public enum WhiskerModuleEventCenter {
         event: String,
         payload: WhiskerValue
     ) {
-        var raw = payload.toRaw()
-        module.withCString { moduleC in
-            event.withCString { eventC in
-                whisker_bridge_module_send_event(moduleC, eventC, &raw)
-            }
+        let key = EventKey(module: module, event: event)
+        lock.lock()
+        let sinks = eventSinks.values
+            .filter { $0.observed.contains(key) }
+            .map(\.dispatch)
+        lock.unlock()
+        for sink in sinks {
+            sink(module, event, payload)
         }
-        // Bridge fans out synchronously inside `module_send_event` and
-        // doesn't retain `raw`; safe to release now.
-        whisker_bridge_value_release(&raw)
     }
 
     // MARK: - Observer hook routing
@@ -104,7 +138,7 @@ public enum WhiskerModuleEventCenter {
     /// Look up the Module + event-name pair and fire any matching
     /// `OnStartObserving` closures. Called by the shared C
     /// trampoline below.
-    fileprivate static func fireStart(module: String, event: String) {
+    private static func fireStart(module: String, event: String) {
         lock.lock()
         let m = modulesByName[module]
         lock.unlock()
@@ -115,7 +149,7 @@ public enum WhiskerModuleEventCenter {
     }
 
     /// Counterpart to `fireStart`.
-    fileprivate static func fireStop(module: String, event: String) {
+    private static func fireStop(module: String, event: String) {
         lock.lock()
         let m = modulesByName[module]
         lock.unlock()
@@ -124,25 +158,4 @@ public enum WhiskerModuleEventCenter {
             hook.handler()
         }
     }
-}
-
-// MARK: - Shared C trampolines
-
-/// Bridge's `started` callback. Decodes the (module, event) pair and
-/// fires every `OnStartObserving("event")` block declared on the
-/// matching module. Process-global because the bridge stores the
-/// function pointer directly; one shared trampoline is enough since
-/// the `module` argument is the routing key.
-private let sharedStartHook: WhiskerModuleObserverHook = { moduleC, eventC in
-    guard let moduleC, let eventC else { return }
-    let module = String(cString: moduleC)
-    let event = String(cString: eventC)
-    WhiskerModuleEventCenter.fireStart(module: module, event: event)
-}
-
-private let sharedStopHook: WhiskerModuleObserverHook = { moduleC, eventC in
-    guard let moduleC, let eventC else { return }
-    let module = String(cString: moduleC)
-    let event = String(cString: eventC)
-    WhiskerModuleEventCenter.fireStop(module: module, event: event)
 }

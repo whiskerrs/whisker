@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/border-radius-sum-of-radii-001.htm",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "Overlapping adjacent corner radii are reduced proportionally until they fit the border box.",
+    "adaptation": "WPT test1 and reference1 are represented as separate Host frames with their resolved 100 by 100 border boxes; table layout and overlap-by-margin are omitted."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [0.0, 0.0, 100.0, 100.0],
+        "background": { "kind": "named", "value": "transparent" },
+        "border": {
+          "widths": [10.0, 10.0, 10.0, 10.0],
+          "colors": [
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" }
+          ],
+          "styles": ["solid", "solid", "solid", "solid"],
+          "radii": [60.0, 150.0, 30.0, 30.0]
+        }
+      },
+      { "type": "checkpoint", "name": "paint.box" }
+    ]
+  },
+  "reference": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [0.0, 0.0, 100.0, 100.0],
+        "background": { "kind": "named", "value": "transparent" },
+        "border": {
+          "widths": [10.0, 10.0, 10.0, 10.0],
+          "colors": [
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" }
+          ],
+          "styles": ["solid", "solid", "solid", "solid"],
+          "radii": [30.0, 75.0, 15.0, 15.0]
+        }
+      },
+      { "type": "checkpoint", "name": "paint.box" }
+    ]
+  }
+}

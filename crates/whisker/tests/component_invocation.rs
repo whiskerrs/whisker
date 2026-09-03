@@ -1,7 +1,7 @@
 //! Integration tests for the unified component invocation syntax:
 //! `render! { MyComponent(…) }` lowers to
-//! `MyComponent(MyComponentProps::builder().…build())`, and the
-//! auto-generated `Props` struct exposes the expected setter
+//! `MyComponent::builder().…build()`, and the auto-generated builder
+//! exposes the expected setter
 //! behaviours — `Into` coercion, `Option<T>` strip, `Children` default,
 //! and generics.
 //!
@@ -17,7 +17,9 @@ use std::rc::Rc;
 use whisker::Owner;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, __reset_pending_mount_for_tests};
-use whisker::runtime::view::{DynRenderer, Element, View, install_renderer, uninstall_renderer};
+use whisker::runtime::view::{
+    DynRenderer, Element, View as RuntimeView, install_renderer, uninstall_renderer,
+};
 
 // ----- Recording renderer ----------------------------------------------------
 
@@ -25,7 +27,6 @@ use whisker::runtime::view::{DynRenderer, Element, View, install_renderer, unins
 enum Op {
     Create { id: u32, tag: ElementTag },
     SetAttr { id: u32, key: String, value: String },
-    SetStyles { id: u32, css: String },
     Append { parent: u32, child: u32 },
 }
 
@@ -57,12 +58,6 @@ impl DynRenderer for Recorder {
             id: h.id(),
             key: k.into(),
             value: v.into(),
-        });
-    }
-    fn set_inline_styles(&self, h: Element, css: &str) {
-        self.log.borrow_mut().push(Op::SetStyles {
-            id: h.id(),
-            css: css.into(),
         });
     }
     fn append_child(&self, p: Element, c: Element) {
@@ -118,19 +113,19 @@ pub(crate) fn push_capture(s: impl Into<String>) {
 #[component]
 fn no_props_component() -> Element {
     push_capture("no_props_component:invoked");
-    render! { view() }
+    render! { View() }
 }
 
 #[component]
 fn one_string_prop(label: String) -> Element {
     push_capture(format!("one_string_prop:label={label}"));
-    render! { view() }
+    render! { View() }
 }
 
 #[component]
 fn two_props(title: String, count: i32) -> Element {
     push_capture(format!("two_props:title={title},count={count}"));
-    render! { view() }
+    render! { View() }
 }
 
 #[component]
@@ -143,23 +138,22 @@ fn option_prop(alt: Option<String>) -> Element {
         .map(str::to_owned)
         .unwrap_or_else(|| "default".to_string());
     push_capture(format!("option_prop:alt={v}"));
-    render! { view() }
+    render! { View() }
 }
 
 #[component]
 fn with_default_prop(#[prop(default = 5)] count: i32) -> Element {
     push_capture(format!("with_default_prop:count={count}"));
-    render! { view() }
+    render! { View() }
 }
 
 #[component]
 fn with_children(label: String, children: Children) -> Element {
     push_capture(format!("with_children:label={label}"));
-    // `children()` lowers to `view::mount_children(&children)`, which
-    // borrows the Rc so the surrounding FnMut can re-run.
+    let projected = children.clone();
     render! {
-        view() {
-            children()
+        View() {
+            Fragment { { projected() } }
         }
     }
 }
@@ -167,7 +161,7 @@ fn with_children(label: String, children: Children) -> Element {
 #[component]
 fn generic_label<T: std::fmt::Display + Clone + 'static>(value: T) -> Element {
     push_capture(format!("generic_label:value={value}"));
-    render! { view() }
+    render! { View() }
 }
 
 // ----- Tests -----------------------------------------------------------------
@@ -264,8 +258,8 @@ fn children_prop_receives_wrapped_closure() {
     with_test_env(|log| {
         let _h = render! {
             WithChildren(label: "wrapper") {
-                text(value: "child-1")
-                text(value: "child-2")
+                Text(value: "child-1")
+                Text(value: "child-2")
             }
         };
 
@@ -357,94 +351,84 @@ fn nested_component_invocations() {
 }
 
 #[test]
-#[should_panic(expected = "required field `label` was not set")]
-fn build_panics_when_required_field_missing() {
-    // The builder checks required fields at runtime, so the panic
-    // message must name the field for the user to find the call site.
-    fresh();
-    let _ = OneStringPropProps::builder().build();
-}
-
-#[test]
 fn build_default_field_uses_user_supplied_default() {
-    // Covers the build_assignment path for
-    // `PropKind::Default { is_generic: false }`.
-    fresh();
-    let props = WithDefaultPropProps::builder().build();
-    assert_eq!(props.count, 5);
+    with_test_env(|_| {
+        WithDefaultProp::builder().build();
+        assert_eq!(captures(), vec!["with_default_prop:count=5"]);
+    });
 }
 
 #[test]
 fn build_default_field_override_replaces_default() {
-    fresh();
-    let props = WithDefaultPropProps::builder().count(99).build();
-    assert_eq!(props.count, 99);
+    with_test_env(|_| {
+        WithDefaultProp::builder().count(99).build();
+        assert_eq!(captures(), vec!["with_default_prop:count=99"]);
+    });
 }
 
 #[test]
 fn build_option_field_defaults_to_none() {
-    fresh();
-    let props = OptionPropProps::builder().build();
-    assert_eq!(props.alt, None);
+    with_test_env(|_| {
+        OptionProp::builder().build();
+        assert_eq!(captures(), vec!["option_prop:alt=default"]);
+    });
 }
 
 #[test]
 fn build_option_field_strips_outer_option_in_setter() {
     // Setter takes `impl Into<String>` and wraps to `Some(_)` at build
     // — the strip-option ergonomics.
-    fresh();
-    let props = OptionPropProps::builder().alt("hi").build();
-    assert_eq!(props.alt.as_deref(), Some("hi"));
+    with_test_env(|_| {
+        OptionProp::builder().alt("hi").build();
+        assert_eq!(captures(), vec!["option_prop:alt=hi"]);
+    });
 }
 
 #[test]
 fn build_children_defaults_to_empty_view_closure() {
-    fresh();
-    let props = WithChildrenProps::builder().label("x").build();
-    let v = (props.children)();
-    assert!(matches!(v, whisker::runtime::view::View::Empty));
+    with_test_env(|_| {
+        WithChildren::builder().label("x").build();
+        assert_eq!(captures(), vec!["with_children:label=x"]);
+    });
 }
 
 #[test]
 fn build_into_setter_accepts_str_literal_for_string_field() {
-    fresh();
-    let props = OneStringPropProps::builder().label("from str").build();
-    assert_eq!(props.label, "from str");
+    with_test_env(|_| {
+        OneStringProp::builder().label("from str").build();
+        assert_eq!(captures(), vec!["one_string_prop:label=from str"]);
+    });
 }
 
 #[test]
 fn build_into_setter_accepts_owned_string() {
-    fresh();
-    let owned: String = "from owned".into();
-    let props = OneStringPropProps::builder().label(owned).build();
-    assert_eq!(props.label, "from owned");
+    with_test_env(|_| {
+        let owned: String = "from owned".into();
+        OneStringProp::builder().label(owned).build();
+        assert_eq!(captures(), vec!["one_string_prop:label=from owned"]);
+    });
 }
 
 #[test]
 fn build_generic_setter_accepts_concrete_type() {
     // A generic prop's setter takes `T` directly: the call site picks
     // `T` at the chain head.
-    fresh();
-    let props = GenericLabelProps::builder().value(7_i32).build();
-    assert_eq!(props.value, 7);
+    with_test_env(|_| {
+        GenericLabel::builder().value(7_i32).build();
+        assert_eq!(captures(), vec!["generic_label:value=7"]);
+    });
 }
 
 #[test]
-fn props_struct_is_constructable_directly() {
-    // The builder must stay reachable as `XxxProps::builder()` even
-    // though `render!` is the recommended path.
+fn component_builder_is_usable_without_render_macro() {
     fresh();
     let owner = Owner::new(None);
     let rec = Recorder::default();
     let prev = install_renderer(Box::new(rec));
     owner.with(|| {
-        // The snake_case fn is private inside its inner module, so a
-        // direct call must go through the PascalCase alias.
-        let _h = OneStringProp(
-            OneStringPropProps::builder()
-                .label("direct construction")
-                .build(),
-        );
+        let _h = OneStringProp::builder()
+            .label("direct construction")
+            .build();
     });
     uninstall_renderer(prev);
 
@@ -457,14 +441,13 @@ fn props_struct_is_constructable_directly() {
 #[test]
 fn view_module_exposes_children_alias() {
     fn _accepts(_: whisker::Children) {}
-    let c: whisker::Children = ::std::rc::Rc::new(|| View::Empty);
+    let c: whisker::Children = ::std::rc::Rc::new(|| RuntimeView::Empty);
     _accepts(c);
 }
 
-// A component whose module exports ONLY its PascalCase alias. The
-// macro emits a same-named type alias in the type namespace alongside
-// the value-namespace fn, so `render!` can lower `Card(...)` to
-// `Card::builder()` without a separate `CardProps` import.
+// A component whose module exports only its generated PascalCase marker, so
+// `render!` can lower `Card(...)` to `Card::builder()` without importing
+// implementation details.
 mod alias_only {
     use whisker::prelude::*;
     use whisker::runtime::view::Element;
@@ -474,14 +457,13 @@ mod alias_only {
     #[component]
     pub fn card(title: String) -> Element {
         push_capture(format!("card:title={title}"));
-        render! { view() }
+        render! { View() }
     }
 }
 
 #[test]
 fn component_usable_in_render_with_only_pascal_alias_imported() {
-    // Imported by PascalCase name only — NOT `alias_only::CardProps`.
-    // Without the type-namespace alias this file would not compile.
+    // Imported by PascalCase name only — not `alias_only::CardProps`.
     use alias_only::Card;
 
     with_test_env(|_log| {

@@ -1,0 +1,211 @@
+{
+  "schema": 2,
+  "policy": {
+    "layout": {
+      "basis": "taffy-0.13",
+      "rule": "Support the CSS layout semantics represented by Taffy 0.13; unsupported browser layout modes and values are out of scope."
+    },
+    "non_layout": {
+      "basis": "lynx-4.0",
+      "rule": "Follow the standard, non-vendor Lynx property grammar and semantics."
+    },
+    "extensions": [
+      {
+        "property": "backdrop-filter",
+        "basis": "css-filter-effects-level-2",
+        "supported_subset": ["none", "single-blur-length"],
+        "reason": "Native app chrome commonly requires backdrop blur; general filter chains remain out of scope."
+      }
+    ]
+  },
+  "target": {
+    "feature_count": 155,
+    "property_count": 154,
+    "registered_property_count": 177,
+    "target_registered_property_count": 154,
+    "pending_registry_properties": [],
+    "excluded_registered_property_count": 23,
+    "non_property_features": ["custom-properties"],
+    "lynx_inventory": {
+      "revision": "18a0a91009809de1d52a5637b82f573dc924e32a",
+      "property_count": 191
+    }
+  },
+  "statuses": ["implemented", "partial", "protocol-only", "planned", "not-applicable"],
+  "excluded_registered_properties": [
+    {"property": "backface-visibility", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "background-attachment", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "background-position-x", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "background-position-y", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "caret-color", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "font-variant", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "mask", "reason": "excluded-from-core-to-avoid-offscreen-mask-compositing"},
+    {"property": "mask-composite", "reason": "excluded-from-core-to-avoid-offscreen-mask-compositing"},
+    {"property": "mask-image", "reason": "excluded-from-core-to-avoid-offscreen-mask-compositing"},
+    {"property": "outline-color", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "outline-offset", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "outline-style", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "outline-width", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "overflow-wrap", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "perspective-origin", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "text-decoration-color", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "text-decoration-line", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "text-decoration-style", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "text-decoration-thickness", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "text-transform", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "transform-box", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "transform-style", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "vertical-align", "reason": "requires-inline-or-table-layout-not-supported-by-taffy"}
+  ],
+  "capabilities": [
+    {
+      "id": "layout.core",
+      "basis": "taffy-0.13",
+      "properties": ["align-content", "align-items", "align-self", "aspect-ratio", "bottom", "box-sizing", "column-gap", "direction", "display", "flex", "flex-basis", "flex-direction", "flex-flow", "flex-grow", "flex-shrink", "flex-wrap", "gap", "height", "inset-inline-end", "inset-inline-start", "justify-content", "left", "margin", "margin-bottom", "margin-inline-end", "margin-inline-start", "margin-left", "margin-right", "margin-top", "max-height", "max-width", "min-height", "min-width", "order", "padding", "padding-bottom", "padding-inline-end", "padding-inline-start", "padding-left", "padding-right", "padding-top", "position", "right", "row-gap", "top", "width"],
+      "supported_subset": ["block-flex-grid", "relative-absolute-position", "length-percentage-auto-sizing", "content-border-box", "ltr-rtl", "inherited-direction-drives-layout-and-text", "overflow-visible-hidden-automatic-minimums", "host-measured-replaced-leaves"],
+      "unsupported_browser_subset": ["display-contents-inline-table", "static-fixed-sticky-position", "intrinsic-size-keywords"],
+      "protocol": ["SetLayout"],
+      "rust": "implemented",
+      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+    },
+    {
+      "id": "layout.grid",
+      "basis": "taffy-0.13",
+      "properties": ["grid-auto-columns", "grid-auto-flow", "grid-auto-rows", "grid-column", "grid-column-end", "grid-column-start", "grid-row", "grid-row-end", "grid-row-start", "grid-template-areas", "grid-template-columns", "grid-template-rows", "justify-items", "justify-self"],
+      "supported_subset": ["explicit-implicit-tracks", "fr-minmax-fit-content-repeat", "auto-fill-auto-fit", "row-column-dense-flow", "line-span-named-placement", "named-areas"],
+      "unsupported_browser_subset": ["subgrid", "masonry"],
+      "protocol": ["SetLayout"],
+      "rust": "implemented",
+      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+    },
+    {
+      "id": "layout.float",
+      "basis": "taffy-0.13-float-layout",
+      "properties": ["clear", "float"],
+      "supported_subset": ["block-formatting-context-floats"],
+      "protocol": ["SetLayout"],
+      "rust": "implemented",
+      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+    },
+    {
+      "id": "paint.box",
+      "basis": "lynx-4.0",
+      "properties": ["background-color", "border", "border-bottom", "border-bottom-color", "border-bottom-left-radius", "border-bottom-right-radius", "border-bottom-style", "border-bottom-width", "border-color", "border-end-end-radius", "border-end-start-radius", "border-inline-end-color", "border-inline-end-style", "border-inline-end-width", "border-inline-start-color", "border-inline-start-style", "border-inline-start-width", "border-left", "border-left-color", "border-left-style", "border-left-width", "border-radius", "border-right", "border-right-color", "border-right-style", "border-right-width", "border-start-end-radius", "border-start-start-radius", "border-style", "border-top", "border-top-color", "border-top-left-radius", "border-top-right-radius", "border-top-style", "border-top-width", "border-width"],
+      "supported_subset": ["asymmetric-rounded-border-joins", "rounded-border-styles", "zero-radius-axis-squares-corner", "proportional-overlapping-radius-normalization"],
+      "protocol": ["SetBoxPaint"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+    },
+    {
+      "id": "paint.background-layers",
+      "basis": "lynx-4.0",
+      "properties": ["background", "background-clip", "background-image", "background-origin", "background-position", "background-repeat", "background-size"],
+      "supported_subset": ["url-resource-lifecycle", "linear-radial-conic-gradients", "multiple-layers-with-independent-geometry", "background-clip-border-area"],
+      "pending_subset": [],
+      "protocol": ["SetBackgroundLayers"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+    },
+    {
+      "id": "paint.visual-effects",
+      "basis": "lynx-4.0",
+      "properties": ["box-shadow", "clip-path", "image-rendering"],
+      "supported_subset": ["box-shadow-outer-offset-spread-and-blur", "box-shadow-inset-offset-spread-and-blur", "multiple-box-shadows", "clip-path-inset", "clip-path-circle-and-ellipse", "clip-path-path", "image-rendering-auto-pixelated-crisp-edges"],
+      "pending_subset": [],
+      "compatibility_notes": ["Web preserves the crisp-edges keyword; native Hosts implement its contrast-preserving scaling requirement with nearest-neighbor sampling while retaining the distinct protocol value."],
+      "protocol": ["SetVisualEffects"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+    },
+    {
+      "id": "paint.backdrop-filter",
+      "basis": "css-filter-effects-level-2",
+      "properties": ["backdrop-filter"],
+      "supported_subset": ["none", "single-blur-length", "android-api-31-plus"],
+      "unsupported_browser_subset": ["filter-function-chains", "brightness", "contrast", "drop-shadow", "grayscale", "hue-rotate", "invert", "opacity", "saturate", "sepia", "url-filter"],
+      "protocol": ["SetVisualEffects"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+    },
+    {
+      "id": "paint.transform",
+      "basis": "lynx-4.0",
+      "properties": ["offset-distance", "offset-path", "offset-rotate", "perspective", "transform", "transform-origin"],
+      "supported_subset": ["transform-2d-functions", "flat-plane-3d-functions", "matrix", "projective-matrix3d", "length-percentage-translate", "border-box-transform-origin", "lynx-current-node-perspective", "motion-path-polyline", "motion-path-quadratic-and-cubic", "motion-path-svg-arc", "motion-path-circle", "motion-path-ellipse", "motion-path-inset", "offset-distance-number-and-percentage", "offset-rotate-auto-or-angle", "flat-at-each-node"],
+      "pending_subset": [],
+      "compatibility_notes": ["ellipse is resolved in Rust on all Hosts; unlike Lynx iOS it is supported, and vertical percentages use border-box height rather than Lynx Android's width-based implementation", "inset follows the CSS Motion Path clockwise starting point after the top-left radius, avoiding Lynx Android/iOS path-library start-point divergence", "SVG elliptical arcs use the standard endpoint-to-center conversion, including absolute negative radii, radii correction, and zero-radius line fallback"],
+      "unsupported_browser_subset": ["web-parent-perspective-semantics", "perspective-origin", "preserve-3d"],
+      "protocol": ["SetTransform", "SetVisualEffects"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+    },
+    {
+      "id": "paint.compositing",
+      "basis": "lynx-4.0",
+      "properties": ["opacity", "visibility", "z-index"],
+      "supported_subset": ["element-group-opacity", "visibility-descendant-override", "signed-32-bit-z-order", "sibling-document-order-tiebreak"],
+      "protocol": ["SetOpacity", "SetVisibility", "SetZOrder"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+    },
+    {
+      "id": "paint.clip-scroll",
+      "basis": "taffy-0.13-layout-and-lynx-4.0-paint",
+      "properties": ["overflow", "overflow-x", "overflow-y"],
+      "supported_subset": ["visible", "hidden"],
+      "unsupported_browser_subset": ["clip", "scroll", "auto"],
+      "protocol": ["SetClip"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+    },
+    {
+      "id": "paint.text",
+      "basis": "lynx-4.0",
+      "properties": ["color", "font-family", "font-feature-settings", "font-optical-sizing", "font-size", "font-style", "font-variation-settings", "font-weight", "letter-spacing", "line-height", "text-align", "text-decoration", "text-indent", "text-overflow", "text-shadow", "white-space", "word-break"],
+      "supported_subset": ["basic-font-metrics-and-color", "font-family-fallback-font-style-line-height-letter-spacing-all-hosts", "intrinsic-measurement-uses-paint-typography-all-hosts", "intrinsic-measurement-opentype-features-and-weight-axis-all-hosts", "intrinsic-measurement-white-space-word-break-line-limit-overflow-all-hosts", "intrinsic-measurement-direction-alignment-indent-all-hosts", "text-direction-paint-all-hosts", "single-text-shadow", "lynx-single-line-text-decoration", "lynx-text-align", "lynx-text-indent-length-percentage", "lynx-white-space-word-break-text-overflow", "opentype-feature-settings-all-hosts", "variable-font-axes-web-android-ios", "font-weight-axis-desktop", "lynx-optical-sizing-web-android-ios"],
+      "pending_subset": [],
+      "unsupported_browser_subset": ["desktop-arbitrary-variable-font-axes-and-optical-sizing"],
+      "compatibility_notes": ["Desktop supports the variable font weight axis but deliberately excludes arbitrary variation axes and automatic optical sizing from its declared text subset."],
+      "protocol": ["SetText"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+    },
+    {
+      "id": "interaction.pointer",
+      "basis": "lynx-4.0",
+      "properties": ["cursor", "pointer-events"],
+      "supported_subset": ["pointer-events-auto-none", "keyword-only-cursors-web-desktop-android", "ios-hidden-text-vertical-text-crosshair-and-resize-shapes", "resolved-value-inheritance", "host-normalized-pointer-down-move-up-cancel-all-hosts", "mouse-touch-pen-kind-protocol-preservation-all-hosts", "native-mouse-and-touch-acquisition-desktop"],
+      "pending_subset": [],
+      "unsupported_browser_subset": ["resource-backed-cursors", "cursor-hotspots", "svg-pointer-events-values", "ios-semantic-cursors-without-public-uikit-shapes", "desktop-native-pen-classification"],
+      "compatibility_notes": ["Lynx pointer-events accepts auto and none; Whisker resolves the documented inheritance effect before emitting SetHitTest", "UIKit provides hidden, text beams, and custom geometric pointer shapes, which iOS uses for none, text, vertical-text, crosshair, and resize keywords", "UIKit has no public platform glyphs for link, context-menu, help, progress, wait, cell, alias, copy, move, no-drop, not-allowed, grab, grabbing, or zoom cursors; iOS preserves those keywords and deliberately retains the system pointer instead of conflating distinct semantics", "The shared Desktop adapter preserves every protocol pointer kind, while winit currently classifies native mouse and touch events but does not expose a portable stylus kind"],
+      "protocol": ["SetCursor", "SetHitTest"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+    },
+    {
+      "id": "motion.rust",
+      "basis": "lynx-4.0",
+      "properties": ["animation", "animation-delay", "animation-direction", "animation-duration", "animation-fill-mode", "animation-iteration-count", "animation-name", "animation-play-state", "animation-timing-function", "transition", "transition-delay", "transition-duration", "transition-property", "transition-timing-function"],
+      "implemented_subset": ["typed-shorthand-longhand-normalization", "builder-defined-typed-keyframes", "time-unit-normalization", "timing-function-validation", "css-list-cycling", "lynx-transition-property-validation", "runtime-opacity-transition-sampling", "runtime-layout-transition-sampling", "runtime-srgb-hsl-named-box-color-transition-sampling", "runtime-inherited-text-color-transition-sampling", "runtime-compatible-transform-function-transition-sampling", "runtime-transform-origin-transition-sampling", "keyframe-delay-direction-fill-iteration-and-play-state", "per-keyframe-timing-functions", "multiple-animation-composition", "transform-identity-list-padding", "css-color-4-named-color-canonicalization", "premultiplied-alpha-color-interpolation", "taffy-layout-resampling", "host-independent-frame-delta-emission", "transform-matrix-decomposition-fallback", "motion-lifecycle-events"],
+      "pending_subset": [],
+      "unsupported_browser_subset": ["transition-filter"],
+      "compatibility_notes": ["Typed Keyframes values are embedded in the Rust style graph; legacy string animation names remain a compatibility-only path and do not resolve a Host registry", "Layout motion is sampled before Taffy and therefore emits ordinary SetLayout deltas", "Box and inherited text foreground color motion is sampled in premultiplied sRGB after canonicalizing rgb/rgba/hsl/hsla and all 148 CSS Color 4 named colors", "Compatible translate/rotate/scale/skew transform prefixes interpolate directly in Rust with CSS identity padding; matrix functions and incompatible suffixes use common 4x4 matrix decomposition, with only singular matrices falling back to discrete midpoint sampling", "Animation and transition lifecycle events are emitted by the Rust timeline through the ordinary capture/bubble event path and require no Host protocol operations", "Auto and intrinsic layout keywords use discrete keyframe sampling and do not start transitions"],
+      "protocol": [],
+      "rust": "implemented",
+      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+    },
+    {
+      "id": "style.custom-properties",
+      "basis": "lynx-4.0",
+      "features": ["custom-properties"],
+      "properties": [],
+      "supported_subset": ["case-sensitive-inherited-typed-values", "whole-value-var-references", "typed-fallbacks", "forward-references", "cycle-invalidation", "computed-value-time-declaration-invalidation", "typed-var-substitution-inside-length-percentage-calc", "typed-var-substitution-inside-color-angle-number-and-length-components"],
+      "pending_subset": [],
+      "unsupported_browser_subset": ["arbitrary-css-token-stream-values-and-substitution"],
+      "compatibility_notes": ["Whisker resolves typed custom-property values entirely in Rust and sends only the resulting layout or paint value to Hosts", "Typed var() references compose inside length-percentage calc expressions and inside supported color, angle, number, and length slots in gradients, transforms, text paint, backgrounds, and backdrop blur", "Whisker intentionally does not retain or reparse arbitrary CSS token streams; application code constructs semantic values through the typed Rust API"],
+      "protocol": [],
+      "rust": "implemented",
+      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+    }
+  ]
+}

@@ -1,14 +1,15 @@
-//! `whisker-input` — native text-input component.
+//! `whisker-input` — cross-platform text-input component.
 //!
 //! **API shape — 2 (Component + ref-bound handle).** A native UI
-//! element ([`Input`]) backed by `UITextField` / `UITextView` on iOS
-//! and `EditText` on Android, with a Leptos-style **two-way binding**
+//! element ([`Input`]) backed by native controls on iOS, Android, and Web,
+//! plus Whisker's GPU-rendered editable-text implementation on Desktop,
+//! with a Leptos-style **two-way binding**
 //! as the headline API plus a typed imperative handle ([`InputRef`])
-//! bound on mount via `ref:` for `focus` / `blur` / `clear` /
-//! `setValue` / `getValue`.
+//! bound on mount via `element_ref:` for `focus` / `blur` / `clear` /
+//! `setValue`.
 //!
-//! The Lynx tag is `whisker-input:Input` (the crate name is
-//! auto-prepended by `#[whisker::module_component]`).
+//! The native element tag is `whisker-input:Input` (the crate name is
+//! auto-prepended by `#[whisker::module_element]`).
 //!
 //! ## Usage
 //!
@@ -22,14 +23,14 @@
 //! fn app() -> Element {
 //!     let text = RwSignal::new(String::new());
 //!     render! {
-//!         view(style: "flex-direction: column;") {
+//!         View(style: css!(flex_direction: FlexDirection::Column)) {
 //!             Input(
 //!                 text: text,
 //!                 placeholder: "Type something…",
-//!                 style: "height: 44px; font-size: 16px;",
+//!                 style: css!(height: px(44), font_size: px(16)),
 //!             )
 //!             // The bound signal updates on every keystroke.
-//!             text(value: move || format!("You typed: {}", text.get()))
+//!             Text(value: computed(move || format!("You typed: {}", text.get())))
 //!         }
 //!     }
 //! }
@@ -55,7 +56,7 @@
 //! ```ignore
 //! Input(text: notes, multiline: true, lines: 4,
 //!       placeholder: "Notes…",
-//!       style: "min-height: 96px;")
+//!       style: css!(min_height: px(96)))
 //! ```
 //!
 //! ### Secure (password)
@@ -69,9 +70,9 @@
 //! ```ignore
 //! let field = InputRef::new();
 //! render! {
-//!     view(style: "flex-direction: row;") {
+//!     View(style: css!(flex_direction: FlexDirection::Row)) {
 //!         Input(text: text, input_ref: field.clone())
-//!         text(value: "Clear", on_tap: {
+//!         Text(value: "Clear", on_tap: {
 //!             let field = field.clone();
 //!             move |_| field.clear()
 //!         })
@@ -93,7 +94,7 @@
 //! | `placeholder`      | `Signal<String>`                      | `""`          | Placeholder text shown when empty. |
 //! | `multiline`        | `bool`                                | `false`       | Single-line field vs multiline area. |
 //! | `lines`            | `u32`                                 | unset (`0`)   | Fixed visible line count (multiline only). |
-//! | `secure`           | `bool`                                | `false`       | Mask input (password entry). |
+//! | `secure`           | `bool`                                | `false`       | Mask Input (password entry). |
 //! | `editable`         | `bool`                                | `true`        | Allow editing. |
 //! | `auto_focus`       | `bool`                                | `false`       | Focus + raise keyboard on mount. |
 //! | `max_length`       | `u32`                                 | unset (`0`)   | Maximum character count. |
@@ -105,7 +106,7 @@
 //! | `caret_color`      | `Signal<String>`                      | `""`          | Cursor color (CSS color string). |
 //! | `placeholder_color`| `Signal<String>`                      | `""`          | Placeholder text color. |
 //! | `selection_color`  | `Signal<String>`                      | `""`          | Selection-highlight color. |
-//! | `style`            | `Signal<String>`                      | `""`          | Standard Whisker CSS style string. |
+//! | `style`            | `Style`                              | empty          | Structured Whisker CSS declarations. |
 //! | `input_ref`        | [`InputRef`]                          | —             | Imperative handle (see [Methods](#methods)). |
 //!
 //! ## Styling
@@ -118,9 +119,9 @@
 //!
 //! The cursor / placeholder / selection colors are **explicit props**
 //! ([`caret_color`](InputProps), [`placeholder_color`](InputProps),
-//! [`selection_color`](InputProps)) rather than CSS, because Lynx's CSS
-//! engine doesn't reach the internals of a custom UI element — the
-//! parsed style cascade only sets generic view properties, so these
+//! [`selection_color`](InputProps)) rather than CSS, because the shared
+//! style cascade only controls the module element's generic presentation;
+//! it does not reach private subviews, so these
 //! sub-element colors must be passed as attributes the native view
 //! reads directly.
 //!
@@ -132,9 +133,9 @@
 //! - [`InputRef::blur`] — resign focus + dismiss the keyboard.
 //! - [`InputRef::clear`] — clear the text to empty.
 //! - [`InputRef::set_value`] — replace the text imperatively.
-//! - [`InputRef::get_value`] — async read of the current text.
-//!   Reliable on iOS; Android result-returning element methods may
-//!   require a Lynx fork release (see the method docs).
+//!
+//! Read the current text from the bound `text` signal or from an input event.
+//! Component commands are deliberately one-way and do not return state.
 //!
 //! ## Native source
 //!
@@ -144,12 +145,14 @@
 //!   (view: `InputView.swift`)
 //! - Android: `packages/whisker-input/android/src/main/kotlin/rs/whisker/elements/input/InputModule.kt`
 //!   (view: `WhiskerInputView.kt`)
-
-use std::rc::Rc;
+//! - Web: `packages/whisker-input/web/src/lib.rs`
+//! - Desktop: `packages/whisker-input/desktop/src/lib.rs` (shared by macOS,
+//!   Windows, and Linux; OS keyboard/IME events enter through
+//!   `platforms/desktop`)
 
 use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
-use whisker::{ElementRef, RefError, Signal, Style};
+use whisker::{Callback, ElementRef, Signal, Style};
 
 /// Payload of an input event (`input` / `change` / `submit`).
 ///
@@ -184,49 +187,6 @@ impl InputEvent {
     /// Take ownership of the field's current text.
     pub fn into_value(self) -> String {
         self.detail.value
-    }
-}
-
-/// A cloneable user callback for an [`Input`] event prop.
-///
-/// Wraps `Rc<dyn Fn(A)>` so it's `Clone` (required: `#[component]`
-/// re-clones every prop for the hot-reload remount path) and so a
-/// bare closure coerces into it via `Into` at the call site
-/// (`on_input: move |s| …`). `A` is `String` for value-carrying
-/// events (`on_input` / `on_change` / `on_submit`) and `()` for the
-/// bare focus / blur events.
-#[derive(Clone)]
-pub struct InputCallback<A>(Rc<dyn Fn(A) + 'static>);
-
-impl<A> InputCallback<A> {
-    /// Invoke the wrapped callback.
-    pub fn call(&self, arg: A) {
-        (self.0)(arg)
-    }
-}
-
-impl<A, F: Fn(A) + 'static> From<F> for InputCallback<A> {
-    fn from(f: F) -> Self {
-        InputCallback(Rc::new(f))
-    }
-}
-
-/// A cloneable no-argument user callback for an [`Input`] event prop
-/// (`on_focus` / `on_blur`). Same rationale as [`InputCallback`] — a
-/// `Clone`, `Into`-from-closure wrapper around `Rc<dyn Fn()>`.
-#[derive(Clone)]
-pub struct InputAction(Rc<dyn Fn() + 'static>);
-
-impl InputAction {
-    /// Invoke the wrapped callback.
-    pub fn call(&self) {
-        (self.0)()
-    }
-}
-
-impl<F: Fn() + 'static> From<F> for InputAction {
-    fn from(f: F) -> Self {
-        InputAction(Rc::new(f))
     }
 }
 
@@ -347,14 +307,13 @@ impl AutoCapitalize {
 ///
 /// Wraps the framework-internal `ElementRef` bound on mount when
 /// passed as the component's `input_ref:` prop. Methods dispatch the
-/// matching platform UI method through `ElementRef::invoke` /
-/// `invoke_typed`. The fire-and-forget methods swallow "not mounted"
-/// / platform errors — these are UI controls; use [`InputRef::get_value`]
-/// (which returns a [`RefError`]) when you need to inspect failures.
+/// matching platform command through `ElementRef::command`. Commands
+/// are ordered, one-way operations; these convenience methods swallow
+/// "not mounted" / platform errors.
 ///
 /// `Clone` produces a shared handle (same backing arena slot), so the
 /// same handle can drive multiple event closures.
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct InputRef {
     r: ElementRef,
 }
@@ -369,7 +328,7 @@ impl InputRef {
     }
 
     /// The underlying `ElementRef`. Framework-internal — the [`input`]
-    /// component reads it to wire the element's `ref:`. App code holds
+    /// component reads it to wire the element's `element_ref:`. App code holds
     /// the `InputRef` and calls the methods below.
     #[doc(hidden)]
     pub fn r(&self) -> ElementRef {
@@ -379,13 +338,13 @@ impl InputRef {
     /// Focus the field and raise the keyboard. No-op if the element
     /// isn't mounted yet.
     pub fn focus(&self) {
-        let _ = self.r.invoke("focus", WhiskerValue::Null);
+        let _ = self.r.command("focus", WhiskerValue::Null);
     }
 
     /// Resign focus and dismiss the keyboard. No-op if the element
     /// isn't mounted or isn't focused.
     pub fn blur(&self) {
-        let _ = self.r.invoke("blur", WhiskerValue::Null);
+        let _ = self.r.command("blur", WhiskerValue::Null);
     }
 
     /// Clear the text to empty. No-op if the element isn't mounted.
@@ -395,7 +354,7 @@ impl InputRef {
     /// event (if the platform emits one) drives the signal update.
     /// For a guaranteed signal update prefer `text.set(String::new())`.
     pub fn clear(&self) {
-        let _ = self.r.invoke("clear", WhiskerValue::Null);
+        let _ = self.r.command("clear", WhiskerValue::Null);
     }
 
     /// Replace the field's text imperatively. No-op if the element
@@ -405,25 +364,10 @@ impl InputRef {
     /// change: it only re-sets its text when `v` differs from what it
     /// currently shows, so the cursor doesn't jump on a no-op write.
     pub fn set_value(&self, v: &str) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "setValue",
             WhiskerValue::map([("value", WhiskerValue::String(v.to_string()))]),
         );
-    }
-
-    /// Async read of the field's current text.
-    ///
-    /// **iOS:** reliable — the result arrives over Lynx's UI-method
-    /// callback. **Android:** result-returning custom element methods
-    /// may require a Lynx fork release (the result-method plumbing is
-    /// iOS-only-compiled upstream). On an unforked Android runtime this
-    /// resolves to [`RefError::DispatchFailed`] or `NotBound`; prefer
-    /// reading a bound `text` signal there.
-    pub async fn get_value(&self) -> Result<String, RefError> {
-        self.r
-            .invoke_typed::<GetValueResult>("getValue", WhiskerValue::Null)
-            .await
-            .map(|r| r.value)
     }
 }
 
@@ -433,46 +377,51 @@ impl Default for InputRef {
     }
 }
 
-/// Decode target for `getValue` — the native side returns
-/// `{ "value": "<text>" }`; [`InputRef::get_value`] unwraps it to the
-/// bare `String`.
-#[derive(Debug, Default, serde::Deserialize)]
-struct GetValueResult {
-    #[serde(default)]
-    value: String,
-}
-
-// Bool / number / enum props reach the native side pre-stringified ("true" /
-// "false", a decimal string, the enum's `as_attr`), so it reads one stable
-// string form per attr. Attr names are the kebab-cased field names
-// (`placeholder-color`, `caret-color`, `selection-color`).
-
 #[doc(hidden)]
-#[whisker::module_component("Input")]
+#[whisker::module_element(
+    name = "whisker-input:Input",
+    measurement = None,
+    text_style = true,
+    commands = [
+        ("focus", Null),
+        ("blur", Null),
+        ("clear", Null),
+        ("setValue", Map),
+    ],
+)]
 pub fn native_input(
     value: Signal<String>,
     placeholder: Signal<String>,
     placeholder_color: Signal<String>,
     caret_color: Signal<String>,
     selection_color: Signal<String>,
-    multiline: Signal<String>,
-    lines: Signal<String>,
-    secure: Signal<String>,
-    editable: Signal<String>,
-    auto_focus: Signal<String>,
-    max_length: Signal<String>,
+    multiline: Signal<bool>,
+    lines: Signal<i32>,
+    secure: Signal<bool>,
+    editable: Signal<bool>,
+    auto_focus: Signal<bool>,
+    max_length: Signal<i32>,
     keyboard_type: Signal<String>,
     return_key: Signal<String>,
     auto_capitalize: Signal<String>,
-    autocorrect: Signal<String>,
-    spell_check: Signal<String>,
+    autocorrect: Signal<bool>,
+    spell_check: Signal<bool>,
     style: Style,
     on_input: InputEvent,
     on_change: InputEvent,
-    on_focus: InputEvent,
-    on_blur: InputEvent,
+    on_focus: (),
+    on_blur: (),
     on_submit: InputEvent,
 ) {
+}
+
+/// Element schema exported for generated Host bootstrap.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        [native_input_schema::element_provider()],
+    )
 }
 
 /// `whisker-input:Input` — a native text field with Leptos-style
@@ -488,15 +437,15 @@ pub fn input(
     /// Controlled read (escape hatch). Ignored when `text` is set.
     value: Option<Signal<String>>,
     /// Fires every keystroke with the new full text.
-    on_input: Option<InputCallback<String>>,
+    on_input: Option<Callback<String>>,
     /// Fires when editing ends / the value is committed.
-    on_change: Option<InputCallback<String>>,
+    on_change: Option<Callback<String>>,
     /// Field gained focus.
-    on_focus: Option<InputAction>,
+    on_focus: Option<Callback<()>>,
     /// Field lost focus.
-    on_blur: Option<InputAction>,
+    on_blur: Option<Callback<()>>,
     /// Return / done key pressed; carries the current text.
-    on_submit: Option<InputCallback<String>>,
+    on_submit: Option<Callback<String>>,
     /// Placeholder text shown when the field is empty.
     placeholder: Option<Signal<String>>,
     /// Multiline area vs single-line field.
@@ -504,7 +453,7 @@ pub fn input(
     multiline: bool,
     /// Fixed visible line count (multiline only).
     lines: Option<u32>,
-    /// Mask input (password entry).
+    /// Mask Input (password entry).
     #[prop(default = false)]
     secure: bool,
     /// Allow editing.
@@ -550,9 +499,7 @@ pub fn input(
     placeholder_color: Option<Signal<String>>,
     /// Selection-highlight color (CSS color string).
     selection_color: Option<Signal<String>>,
-    /// Standard Whisker style. Accepts a `Css` builder, a raw string,
-    /// or a reactive signal of either — same as a built-in element's
-    /// `style:`.
+    /// Standard structured Whisker style.
     style: Option<Style>,
     /// Imperative handle ([`InputRef`]).
     input_ref: Option<InputRef>,
@@ -576,22 +523,20 @@ pub fn input(
     // Update the bound `text` signal BEFORE calling the user's `on_input`, so
     // reads inside that callback already see the new value.
     let on_input_cb = {
-        let on_input = on_input.clone();
         move |ev: InputEvent| {
             let new = ev.into_value();
             if let Some(t) = text {
                 t.set(new.clone());
             }
-            if let Some(cb) = &on_input {
-                cb.call(new);
+            if let Some(cb) = on_input {
+                cb.run(new);
             }
         }
     };
     let on_change_cb = {
-        let on_change = on_change.clone();
         move |ev: InputEvent| {
-            if let Some(cb) = &on_change {
-                cb.call(ev.into_value());
+            if let Some(cb) = on_change {
+                cb.run(ev.into_value());
             }
         }
     };
@@ -603,30 +548,27 @@ pub fn input(
         .unwrap_or_else(ElementRef::new);
 
     let on_focus_cb = {
-        let on_focus = on_focus.clone();
-        move |_ev: InputEvent| {
+        move || {
             // `whisker-router` reads this registry to blur/restore this exact
             // input across a navigation.
             whisker::focus::note_focused(element_ref);
-            if let Some(cb) = &on_focus {
+            if let Some(cb) = on_focus {
                 cb.call();
             }
         }
     };
     let on_blur_cb = {
-        let on_blur = on_blur.clone();
-        move |_ev: InputEvent| {
+        move || {
             whisker::focus::note_blurred(element_ref);
-            if let Some(cb) = &on_blur {
+            if let Some(cb) = on_blur {
                 cb.call();
             }
         }
     };
     let on_submit_cb = {
-        let on_submit = on_submit.clone();
         move |ev: InputEvent| {
-            if let Some(cb) = &on_submit {
-                cb.call(ev.into_value());
+            if let Some(cb) = on_submit {
+                cb.run(ev.into_value());
             }
         }
     };
@@ -637,36 +579,29 @@ pub fn input(
     let selection_color_prop: Signal<String> = selection_color.unwrap_or_default();
     let style_prop: Style = style.clone().unwrap_or_default();
 
-    let multiline_attr = bool_attr(multiline);
-    let secure_attr = bool_attr(secure);
-    let editable_attr = bool_attr(editable);
-    let auto_focus_attr = bool_attr(auto_focus);
     // `0` is the "unset" sentinel for `lines` / `max_length`.
-    let lines_attr = lines.unwrap_or(0).to_string();
-    let max_length_attr = max_length.unwrap_or(0).to_string();
+    let lines_attr = i32::try_from(lines.unwrap_or(0)).unwrap_or(i32::MAX);
+    let max_length_attr = i32::try_from(max_length.unwrap_or(0)).unwrap_or(i32::MAX);
     let keyboard_type_attr = keyboard_type.as_attr().to_string();
     let return_key_attr = return_key.as_attr().to_string();
     let auto_capitalize_attr = auto_capitalize.as_attr().to_string();
-    let autocorrect_attr = bool_attr(autocorrect);
-    let spell_check_attr = bool_attr(spell_check);
-
     let mut builder = NativeInput::builder()
         .value(value_prop)
         .placeholder(placeholder_prop)
         .placeholder_color(placeholder_color_prop)
         .caret_color(caret_color_prop)
         .selection_color(selection_color_prop)
-        .multiline(multiline_attr)
+        .multiline(multiline)
         .lines(lines_attr)
-        .secure(secure_attr)
-        .editable(editable_attr)
-        .auto_focus(auto_focus_attr)
+        .secure(secure)
+        .editable(editable)
+        .auto_focus(auto_focus)
         .max_length(max_length_attr)
         .keyboard_type(keyboard_type_attr)
         .return_key(return_key_attr)
         .auto_capitalize(auto_capitalize_attr)
-        .autocorrect(autocorrect_attr)
-        .spell_check(spell_check_attr)
+        .autocorrect(autocorrect)
+        .spell_check(spell_check)
         .style(style_prop)
         .on_input(on_input_cb)
         .on_change(on_change_cb)
@@ -674,19 +609,28 @@ pub fn input(
         .on_blur(on_blur_cb)
         .on_submit(on_submit_cb);
 
-    builder = builder.with_ref(element_ref);
+    builder = builder.element_ref(element_ref);
 
-    NativeInput(builder.build())
-}
-
-/// `true` / `false` wire string for a bool attr.
-fn bool_attr(b: bool) -> String {
-    if b { "true" } else { "false" }.to_string()
+    builder.build()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn component_schema_declares_only_one_way_commands() {
+        let schema = native_input_schema::schema();
+        assert_eq!(schema.name, "whisker-input:Input");
+        assert_eq!(
+            schema
+                .commands
+                .iter()
+                .map(|command| command.name.as_str())
+                .collect::<Vec<_>>(),
+            ["focus", "blur", "clear", "setValue"]
+        );
+    }
 
     #[test]
     fn keyboard_type_wire_strings() {
@@ -724,12 +668,6 @@ mod tests {
     }
 
     #[test]
-    fn bool_attr_strings() {
-        assert_eq!(bool_attr(true), "true");
-        assert_eq!(bool_attr(false), "false");
-    }
-
-    #[test]
     fn input_event_deserializes_detail_value() {
         // Mirrors the native event body: { detail: { value: "<text>" } }.
         let v = WhiskerValue::map([(
@@ -757,12 +695,5 @@ mod tests {
         // serde refuses to build a struct from a bare `null`, so `bind_typed`
         // falls back to `E::default()` for a null body.
         assert_eq!(InputEvent::default().value(), "");
-    }
-
-    #[test]
-    fn get_value_result_unwraps_value() {
-        let v = WhiskerValue::map([("value", WhiskerValue::String("abc".into()))]);
-        let r: GetValueResult = v.deserialize_into().expect("deserialize getValue");
-        assert_eq!(r.value, "abc");
     }
 }

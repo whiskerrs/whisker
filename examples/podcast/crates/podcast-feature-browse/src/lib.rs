@@ -17,9 +17,9 @@
 //!
 //! ```text
 //!   ┌───────────────────────────┐
-//!   │   top_nav  (fixed top)    │
+//!   │   TopNav  (fixed top)    │
 //!   ├───────────────────────────┤
-//!   │   scroll_view (vertical)  │
+//!   │   ScrollView (vertical)  │
 //!   │   ┌─ section ─────────┐   │
 //!   │   │  section_header   │   │
 //!   │   │  horizontal_row   │   │
@@ -91,14 +91,14 @@ pub fn browse_screen() -> Element {
         .unwrap_or_else(|| Rc::new(|| {}));
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_shrink: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             position: PositionKind::Relative,
         )) {
-            top_nav(
+            TopNav(
                 title: "Podcasts",
                 action_label: "Search",
                 on_action_tap: on_search_tap,
@@ -106,7 +106,7 @@ pub fn browse_screen() -> Element {
             Show(
                 when: move || sections.get().is_some(),
                 fallback: move || render! {
-                    status_pane(
+                    StatusPane(
                         message: if sections.error().is_some() {
                             "Couldn't load podcasts.".to_string()
                         } else {
@@ -115,7 +115,7 @@ pub fn browse_screen() -> Element {
                     )
                 },
             ) {
-                browse_body(
+                BrowseBody(
                     sections: sections.get().unwrap_or_default(),
                 )
             }
@@ -142,8 +142,9 @@ async fn fetch_sections() -> Result<Vec<ChartSection>, String> {
 /// the layout doesn't shift when state transitions.
 #[component]
 fn status_pane(message: String) -> Element {
+    let message = StoredValue::new(message.clone());
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_shrink: 1.0,
             display: Display::Flex,
@@ -151,12 +152,12 @@ fn status_pane(message: String) -> Element {
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
         )) {
-            text(
+            Text(
                 style: css!(
                     font_size: px(14),
                     color: theme::TEXT_SECONDARY,
                 ),
-                value: message.clone(),
+                value: message.get(),
             )
         }
     }
@@ -166,6 +167,7 @@ fn status_pane(message: String) -> Element {
 /// horizontal sections.
 #[component]
 fn browse_body(sections: Vec<ChartSection>) -> Element {
+    let sections = StoredValue::new(sections.clone());
     // `each:` value computes a fresh clone INSIDE its own scope so
     // the surrounding render! Fn closure doesn't lose ownership of
     // `sections` to the each-closure's `move ||`. Bare
@@ -173,21 +175,19 @@ fn browse_body(sections: Vec<ChartSection>) -> Element {
     // restored prop) from the render closure on first invocation
     // and break re-render correctness.
     render! {
-        scroll_view(
+        ScrollView(
             style: css!(
                 flex_grow: 1.0,
                 flex_shrink: 1.0,
                 width: percent(100),
             ),
-            scroll_orientation: ScrollOrientation::Vertical,
-            scroll_bar_enable: false,
-            bounces: true,
+            axis: ScrollAxis::Vertical,
         ) {
             // The vertical column inside the scroll-view. Bottom
             // padding = mini-player height + bottom inset + a
             // small breath so the last section's card row doesn't
             // hide behind the floating player.
-            view(style: css!(
+            View(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 padding_top: px(8),
@@ -195,11 +195,11 @@ fn browse_body(sections: Vec<ChartSection>) -> Element {
             )) {
                 ForEach(
                     each: {
-                        let items = sections.clone();
+                        let items = sections.get();
                         move || items.clone()
                     },
                     key: |s: &ChartSection| s.title.clone(),
-                    children: |s: ChartSection| render! { section_block(section: s) },
+                    children: |s: ChartSection| render! { SectionBlock(section: s) },
                 )
             }
         }
@@ -216,18 +216,18 @@ fn section_block(section: ChartSection) -> Element {
     let items_for_each = section.items.clone();
 
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             margin_top: theme::SECTION_GAP,
             padding_top: px(4),
         )) {
-            section_header(title: title, show_chevron: layout == SectionLayout::Ranked)
-            view(style: css!(
+            SectionHeader(title: title, show_chevron: layout == SectionLayout::Ranked)
+            View(style: css!(
                 height: theme::HEADER_GAP,
                 width: percent(100),
             ))
-            horizontal_row {
+            HorizontalRow {
                 ForEach(
                     each: {
                         let items = items_for_each.clone();
@@ -235,7 +235,7 @@ fn section_block(section: ChartSection) -> Element {
                     },
                     key: |(_, p): &(u32, Podcast)| p.id,
                     children: move |(rank, podcast): (u32, Podcast)| render! {
-                        card_with_gap(podcast: podcast, rank: rank, layout: layout)
+                        CardWithGap(podcast: podcast, rank: rank, layout: layout)
                     },
                 )
             }
@@ -266,7 +266,7 @@ fn card_with_gap(podcast: Podcast, rank: u32, layout: SectionLayout) -> Element 
         .map(|n| n.show_detail)
         .unwrap_or_else(|| Rc::new(|_| {}));
     render! {
-        view(
+        View(
             style: css!(
                 margin_right: theme::CARD_GAP,
                 display: Display::Flex,
@@ -274,11 +274,11 @@ fn card_with_gap(podcast: Podcast, rank: u32, layout: SectionLayout) -> Element 
             ),
             on_tap: move |_| (on_show)(podcast_id),
         ) {
-            Show(when: move || layout == SectionLayout::Featured, fallback: || render! { fragment() }) {
-                featured_card(podcast: podcast_for_featured.clone())
+            Show(when: move || layout == SectionLayout::Featured, fallback: || render! { Fragment() }) {
+                FeaturedCard(podcast: podcast_for_featured.clone())
             }
-            Show(when: move || layout == SectionLayout::Ranked, fallback: || render! { fragment() }) {
-                ranked_card(podcast: podcast_for_ranked.clone(), rank: rank)
+            Show(when: move || layout == SectionLayout::Ranked, fallback: || render! { Fragment() }) {
+                RankedCard(podcast: podcast_for_ranked.clone(), rank: rank)
             }
         }
     }

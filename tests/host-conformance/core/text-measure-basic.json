@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "id": "host.measure.text.basic",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 280.0, "height": 120.0, "scale": 1.0 },
+      {
+        "type": "measure_text",
+        "key": 1,
+        "text": "Whisker",
+        "font_families": ["Whisker Fixture Missing", "system"],
+        "font_size": 20.0,
+        "font_weight": 650,
+        "font_style": "italic",
+        "line_height": 28.0,
+        "letter_spacing": 1.5,
+        "available_width": 260.0
+      },
+      {
+        "type": "checkpoint_measurement",
+        "key": 1,
+        "min_width": 10.0,
+        "max_width": 260.0,
+        "min_height": 20.0,
+        "max_height": 100.0
+      }
+    ]
+  }
+}

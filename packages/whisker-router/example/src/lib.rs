@@ -25,29 +25,29 @@
 //! - **Group routes**: `Route(path: "(home)")` and `Route(path: "(search)")`
 //!   are pathless groups (expo-router's `(group)` folders). They don't add a
 //!   URL segment but organize children under a Switch branch.
-//! - **Custom tab bar**: built with `use_pathname` + `navigator.select("/(home)")` —
+//! - **Custom tab bar**: built with `use_group` + `navigator.navigate("/(home)")` —
 //!   no built-in TabBar component needed.
-//! - **Back gestures**: `SwipeBack` (iOS) and `AndroidPredictiveBack` (Android 13+).
+//! - **Platform back**: iOS edge swipe, Android predictive back, and Web
+//!   History are installed by `Router`.
 
-use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent};
+use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent, TextAlign};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_router::render::{
-    AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, use_navigator, use_param,
-    use_pathname,
-};
-use whisker_router::routes;
+use whisker_router::render::{Outlet, Router, RouterHandle, use_group, use_navigator, use_param};
+use whisker_router::{ReselectBehavior, routes};
+use whisker_safe_area::{SafeAreaInsets, safe_area_insets};
 
 /// Tab bar layout: an `Outlet` for the active branch above a custom tab bar.
 #[component]
 fn tabs_layout() -> Element {
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
+            flex_shrink: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
         )) {
-            view(style: css!(
+            View(style: css!(
                 flex_grow: 1.0,
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
@@ -62,19 +62,38 @@ fn tabs_layout() -> Element {
 #[component]
 fn my_tab_bar() -> Element {
     let nav = use_navigator();
-    let pathname = use_pathname();
+    let active_group = use_group();
+    let insets = safe_area_insets();
 
     render! {
-        view(style: css!(
-            display: Display::Flex,
-            flex_direction: FlexDirection::Row,
-            justify_content: JustifyContent::SpaceAround,
-            align_items: AlignItems::Center,
-            height: px(56),
-            background_color: Color::hex(0x16161D),
-        )) {
-            TabBarItem(label: "Home", url: "/(home)", pathname: pathname, nav: nav.clone())
-            TabBarItem(label: "List", url: "/(search)", pathname: pathname, nav: nav.clone())
+        View(style: computed(move || {
+            let insets = insets.get();
+            css!(
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceAround,
+                align_items: AlignItems::Center,
+                height: px(56.0 + insets.bottom as f32),
+                padding_right: px(insets.trailing as f32),
+                padding_bottom: px(insets.bottom as f32),
+                padding_left: px(insets.leading as f32),
+                background_color: Color::hex(0x16161D),
+            )
+        })) {
+            TabBarItem(
+                label: "Home",
+                group: "home",
+                url: "/(home)",
+                active_group: active_group,
+                nav: nav.clone(),
+            )
+            TabBarItem(
+                label: "List",
+                group: "search",
+                url: "/(search)",
+                active_group: active_group,
+                nav: nav.clone(),
+            )
         }
     }
 }
@@ -82,22 +101,15 @@ fn my_tab_bar() -> Element {
 #[component]
 fn tab_bar_item(
     label: &'static str,
+    group: &'static str,
     url: &'static str,
-    pathname: ReadSignal<String>,
+    active_group: ReadSignal<Option<String>>,
     nav: RouterHandle,
 ) -> Element {
-    let is_home = label == "Home";
-    let is_active = computed(move || {
-        let p = pathname.get();
-        if is_home {
-            !p.contains("/list")
-        } else {
-            p.contains("/list")
-        }
-    });
+    let is_active = computed(move || active_group.get().as_deref() == Some(group));
     let nav = nav.clone();
     render! {
-        view(
+        View(
             style: computed(move || {
                 let opacity = if is_active.get() { 1.0 } else { 0.5 };
                 css!(
@@ -110,10 +122,10 @@ fn tab_bar_item(
                 )
             }),
             on_tap: move |_| {
-                let _ = nav.select(url);
+                let _ = nav.navigate(url);
             },
         ) {
-            text(
+            Text(
                 value: label.to_string(),
                 style: css!(color: Color::hex(0xFFFFFF), font_size: px(13)),
             )
@@ -126,7 +138,10 @@ fn app() -> Element {
     render! {
         Router(routes: routes! {
             Route(component: TabsLayout) {
-                Switch {
+                Switch(
+                    initial: "(home)",
+                    reselect: ReselectBehavior::PopToRoot,
+                ) {
                     Route(path: "(home)") {
                         Stack {
                             Route(path: "", component: Home)
@@ -143,8 +158,6 @@ fn app() -> Element {
             }
         }) {
             Outlet {}
-            AndroidPredictiveBack {}
-            SwipeBack {}
         }
     }
 }
@@ -156,17 +169,18 @@ fn app() -> Element {
 #[component]
 fn home() -> Element {
     let nav = use_navigator();
+    let insets = safe_area_insets();
     render! {
-        view(style: screen_style(0x101018)) {
-            text(value: "Home", style: title_style())
-            text(value: "Tab 0 · its own stack", style: subtitle_style())
-            view(
+        View(style: computed(move || screen_style(0x101018, insets.get()))) {
+            Text(value: "Home", style: title_style())
+            Text(value: "Tab 0 · its own stack", style: subtitle_style())
+            View(
                 style: button_style(),
                 on_tap: move |_| {
-                    let _ = nav.navigate("/detail/1");
+                    let _ = nav.push("/detail/1");
                 },
             ) {
-                text(value: "Open Detail 1", style: button_label_style())
+                Text(value: "Open Detail 1", style: button_label_style())
             }
         }
     }
@@ -175,28 +189,29 @@ fn home() -> Element {
 #[component]
 fn list_screen() -> Element {
     let nav = use_navigator();
+    let insets = safe_area_insets();
     render! {
-        view(style: screen_style(0x0E1414)) {
-            text(value: "List", style: title_style())
-            text(value: "Tab 1 · its own stack", style: subtitle_style())
-            view(
+        View(style: computed(move || screen_style(0x0E1414, insets.get()))) {
+            Text(value: "List", style: title_style())
+            Text(value: "Tab 1 · its own stack", style: subtitle_style())
+            View(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
                     move |_| {
-                        let _ = nav.navigate("/detail/42");
+                        let _ = nav.push("/detail/42");
                     }
                 },
             ) {
-                text(value: "Open Detail 42", style: button_label_style())
+                Text(value: "Open Detail 42", style: button_label_style())
             }
-            view(
+            View(
                 style: button_style(),
                 on_tap: move |_| {
-                    let _ = nav.navigate("/detail/99");
+                    let _ = nav.push("/detail/99");
                 },
             ) {
-                text(value: "Open Detail 99", style: button_label_style())
+                Text(value: "Open Detail 99", style: button_label_style())
             }
         }
     }
@@ -205,75 +220,76 @@ fn list_screen() -> Element {
 #[component]
 fn detail() -> Element {
     let nav = use_navigator();
+    let insets = safe_area_insets();
     // Read this route's `:id` param from context — the macro-free analogue
     // of `routes! { Route("detail/:id", Detail) }` + `use_param`.
     let id = use_param("id");
     let cur = id.get().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
     let next = cur + 1;
     render! {
-        view(style: screen_style(0x1A1422)) {
-            text(value: format!("Detail #{cur}"), style: title_style())
-            text(
+        View(style: computed(move || screen_style(0x1A1422, insets.get()))) {
+            Text(value: format!("Detail #{cur}"), style: title_style())
+            Text(
                 value: "Try the stack ops below. Push/Back are the baseline; \
                         Replace and Reset are what #265 / #264 fixed.",
                 style: subtitle_style(),
             )
 
             // Push (baseline): grows the stack — slides in.
-            view(
+            View(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
-                    move |_| { let _ = nav.navigate(&format!("/detail/{next}")); }
+                    move |_| { let _ = nav.push(&format!("/detail/{next}")); }
                 },
             ) {
-                text(value: format!("Push → Detail #{next}"), style: button_label_style())
+                Text(value: format!("Push → Detail #{next}"), style: button_label_style())
             }
 
             // Replace (#265): swaps the top in place. Must SLIDE the new
             // screen in like a push, not snap instantly.
-            view(
+            View(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
                     move |_| { let _ = nav.replace(&format!("/detail/{next}")); }
                 },
             ) {
-                text(value: format!("Replace → Detail #{next}"), style: button_label_style())
+                Text(value: format!("Replace → Detail #{next}"), style: button_label_style())
             }
 
             // Reset to a NEW route (not in the back stack): global reset
             // collapses every stack to `[detail/5]`. Direction would be a
             // push once reset animates.
-            view(
+            View(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
                     move |_| { let _ = nav.reset("/detail/5"); }
                 },
             ) {
-                text(value: "Reset → Detail #5", style: button_label_style())
+                Text(value: "Reset → Detail #5", style: button_label_style())
             }
 
             // Reset to the Home tab. "/" resolves to the home index screen
             // (the "" route inside the "(home)" group), even from another tab.
-            view(
+            View(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
                     move |_| { let _ = nav.reset("/"); }
                 },
             ) {
-                text(value: "Reset → Home", style: button_label_style())
+                Text(value: "Reset → Home", style: button_label_style())
             }
 
-            view(
+            View(
                 style: button_style(),
                 on_tap: move |_| {
                     let _ = nav.back();
                 },
             ) {
-                text(value: "Back (or swipe from the left edge)", style: button_label_style())
+                Text(value: "Back (or swipe from the left edge)", style: button_label_style())
             }
         }
     }
@@ -296,21 +312,34 @@ fn button_label_style() -> Css {
     css!(color: Color::hex(0xFFFFFF), font_size: px(16))
 }
 
-fn screen_style(bg: u32) -> Css {
+fn screen_style(bg: u32, insets: SafeAreaInsets) -> Css {
     css!(
         flex_grow: 1.0,
+        flex_shrink: 1.0,
         display: Display::Flex,
         flex_direction: FlexDirection::Column,
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
+        padding_top: px(insets.top as f32),
+        padding_right: px(insets.trailing as f32),
+        padding_left: px(insets.leading as f32),
         background_color: Color::hex(bg),
     )
 }
 
 fn title_style() -> Css {
-    css!(color: Color::hex(0xFFFFFF), font_size: px(28))
+    css!(
+        color: Color::hex(0xFFFFFF),
+        font_size: px(28),
+        text_align: TextAlign::Center,
+    )
 }
 
 fn subtitle_style() -> Css {
-    css!(color: Color::hex(0x9A9AB0), font_size: px(14), margin_top: px(8))
+    css!(
+        color: Color::hex(0x9A9AB0),
+        font_size: px(14),
+        text_align: TextAlign::Center,
+        margin_top: px(8),
+    )
 }

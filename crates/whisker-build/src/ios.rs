@@ -38,9 +38,8 @@ use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Remote SwiftPM source for the `Whisker` package — provides
-/// `WhiskerRuntime`, the `Lynx*` binary frameworks, and the
-/// `WhiskerModuleCodegenPlugin`. The generated aggregator `Package.swift`
+/// Remote SwiftPM source for the `Whisker` package — provides the native
+/// module authoring API and `WhiskerModuleCodegenPlugin`. The generated aggregator `Package.swift`
 /// and every module manifest reference this single identity (`whisker`,
 /// the lowercased last URL path component) so the SwiftPM build graph has
 /// one `WhiskerRuntime`. This is what lets iOS apps build outside the
@@ -48,70 +47,30 @@ use std::process::Command;
 ///
 /// Keep in lockstep with the `Package.swift` at the repo root and the
 /// `v<version>` git tag published for SwiftPM to resolve.
-pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
-pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.10";
+pub use whisker_cng::ios_modules::{WHISKER_IOS_SPM_URL, WHISKER_IOS_SPM_VERSION};
 
 use crate::capture::{CaptureShims, capture_env_vars_for_triple};
 
 const FRAMEWORK_NAME: &str = "WhiskerDriver";
 
-/// `extern "C"` bridge entry points that need to land in the dylib's
-/// `.dynsym` so Swift can call them across the framework boundary.
-/// Keep in sync with the `WHISKER_BRIDGE_EXPORT`-tagged declarations
-/// in `crates/whisker-driver-sys/bridge/include/whisker_bridge.h`. If
-/// you add a new bridge function there without listing it here, Swift
-/// linking will fail with `Undefined symbols: _<name>`.
+/// Retained mobile entry points Swift calls across the framework boundary.
 ///
 /// Leading underscore is the Mach-O C-symbol prefix; `ld64`'s
 /// `-exported_symbol` flag expects it.
 const BRIDGE_EXPORTS: &[&str] = &[
-    "_whisker_bridge_engine_attach",
-    "_whisker_bridge_engine_release",
-    "_whisker_bridge_dispatch",
-    "_whisker_bridge_create_element",
-    "_whisker_bridge_create_element_by_name",
-    "_whisker_bridge_release_element",
-    "_whisker_bridge_set_attribute",
-    "_whisker_bridge_set_inline_styles",
-    "_whisker_bridge_append_child",
-    "_whisker_bridge_remove_child",
-    "_whisker_bridge_set_event_listener",
-    "_whisker_bridge_set_event_listener_with_value",
-    // Rust-side event propagation: the driver registers a dispatcher
-    // the reporter hook forwards to, and queries element signs to key
-    // its tree + listener maps.
-    "_whisker_bridge_register_event_dispatcher",
-    "_whisker_bridge_element_sign",
-    "_whisker_bridge_set_native_event_handler",
-    "_whisker_bridge_set_root",
-    "_whisker_bridge_flush",
-    "_whisker_bridge_invoke_module",
-    "_whisker_bridge_invoke_module_async",
-    "_whisker_bridge_value_release",
-    // The `@WhiskerModule` Swift macro emits one `@_cdecl` dispatch
-    // shim per module, and the generated `WhiskerModuleBehaviors.swift`
-    // calls this to register it against the C-side dispatch table.
-    "_whisker_bridge_register_module_dispatch",
-    // The `AsyncFunction` half of the same table. The codegen plugin
-    // emits a call to this in EVERY module's register fn — including
-    // modules that declare no async function — so leaving it out fails
-    // the link for any app with any module at all, not just async ones.
-    "_whisker_bridge_register_module_dispatch_async",
-    // whisker-module event system. `add/remove_event_listener`
-    // is consumed by Rust subscribers (e.g. AndroidPredictiveBack);
-    // `send_event` is the native module → Rust fan-out;
-    // `register_observer_hooks` drives OnStart/StopObserving. Without
-    // these in the whitelist iOS link drops them and
-    // `WhiskerModuleEventCenter.swift` fails to resolve at link time.
-    "_whisker_bridge_module_add_event_listener",
-    "_whisker_bridge_module_remove_event_listener",
-    "_whisker_bridge_module_send_event",
-    "_whisker_bridge_module_register_observer_hooks",
-    "_whisker_bridge_log_hello",
-    "_whisker_bridge_log_info",
+    "_whisker_view_create",
+    "_whisker_view_tick",
+    "_whisker_view_pause",
+    "_whisker_view_resume",
+    "_whisker_view_destroy",
+    "_whisker_view_dispatch_event",
+    "_whisker_view_dispatch_pointer",
+    "_whisker_view_dispatch_module_event",
+    "_whisker_view_dispatch_resource_event",
+    "_whisker_aslr_anchor",
 ];
 
-/// `cargo rustc --release --crate-type dylib --target <triple>` for one
+/// `cargo rustc --release --crate-type {cdylib,dylib} --target <triple>` for one
 /// iOS triple. Appends `-Wl,-exported_symbol,<sym>` for every entry in
 /// [`BRIDGE_EXPORTS`] so Swift can dlsym them across the framework
 /// boundary.
@@ -130,6 +89,10 @@ fn cargo_build_ios_dylib(
     step: &crate::ui::Step,
 ) -> Result<()> {
     let mut cmd = Command::new("cargo");
+    let hot_reload = features
+        .iter()
+        .any(|feature| feature.contains("hot-reload"));
+    let crate_type = if hot_reload { "dylib" } else { "cdylib" };
     cmd.args([
         "rustc",
         "--release",
@@ -138,8 +101,15 @@ fn cargo_build_ios_dylib(
         "--target",
         triple,
         "--crate-type",
-        "dylib",
+        crate_type,
     ]);
+    if !hot_reload {
+        cmd.env("CARGO_PROFILE_RELEASE_LTO", "fat")
+            .env("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1")
+            .env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "z")
+            .env("CARGO_PROFILE_RELEASE_STRIP", "symbols")
+            .env("CARGO_PROFILE_RELEASE_PANIC", "abort");
+    }
     for feat in features {
         cmd.args(["--features", feat]);
     }
@@ -175,12 +145,7 @@ fn cargo_build_ios_dylib(
 /// resolves it at runtime.
 ///
 /// Returns the path to the constructed `.framework` directory.
-fn build_framework_dir(
-    parent: &Path,
-    dylib_src: &Path,
-    rust_headers_src: &Path,
-    bridge_headers_src: &Path,
-) -> Result<PathBuf> {
+fn build_framework_dir(parent: &Path, dylib_src: &Path) -> Result<PathBuf> {
     let fw_dir = parent.join(format!("{FRAMEWORK_NAME}.framework"));
     crate::ui::debug(format!("stage {}", fw_dir.display()));
     if fw_dir.exists() {
@@ -212,13 +177,9 @@ fn build_framework_dir(
 
     let hdr_dir = fw_dir.join("Headers");
     std::fs::create_dir_all(&hdr_dir)?;
-    std::fs::copy(
-        rust_headers_src.join("whisker.h"),
+    std::fs::write(
         hdr_dir.join("whisker.h"),
-    )?;
-    std::fs::copy(
-        bridge_headers_src.join("whisker_bridge.h"),
-        hdr_dir.join("whisker_bridge.h"),
+        "#pragma once\n\n/*\n * Link-only application framework. The stable typed Host ABI is declared by\n * WhiskerCBridge/whisker_mobile.h so this wrapper cannot drift from it.\n */\n",
     )?;
 
     // The repo-level modulemap is a plain `module …` declaration; a
@@ -231,7 +192,6 @@ fn build_framework_dir(
         format!(
             "framework module {FRAMEWORK_NAME} {{\n    \
              header \"whisker.h\"\n    \
-             header \"whisker_bridge.h\"\n    \
              export *\n\
              }}\n"
         ),
@@ -258,8 +218,7 @@ pub struct XcodeRunScriptInputs<'a> {
     pub workspace_root: &'a Path,
     pub package: &'a str,
     /// `PLATFORM_NAME` — `"iphoneos"` or `"iphonesimulator"`. Drives
-    /// the (arch → rust triple) mapping inside
-    /// [`map_arch_to_triple`].
+    /// the internal arch-to-Rust-triple mapping.
     pub platform: &'a str,
     /// `ARCHS`, split on whitespace by the caller. Each entry is
     /// `"arm64"` or `"x86_64"`. Multi-arch is only meaningful when
@@ -271,46 +230,6 @@ pub struct XcodeRunScriptInputs<'a> {
     /// dylib carries the dev-runtime WebSocket client; direct `xcodebuild` invocations
     /// leaves this empty for prod.
     pub features: &'a [String],
-}
-
-/// Resolve the `include` dirs of `whisker-driver` (`whisker.h` +
-/// `module.modulemap`) and `whisker-driver-sys` (`whisker_bridge.h`).
-///
-/// Uses `cargo metadata` against `workspace_root` so the paths point at
-/// wherever cargo actually placed each crate: the monorepo
-/// `crates/whisker-driver*/…` in-workspace, or the registry extraction
-/// (`~/.cargo/registry/src/index.crates.io-*/whisker-driver-<v>/…`)
-/// for a `cargo install`-only user. Falls back to the in-workspace
-/// layout when metadata can't be read (e.g. cargo missing from the Run
-/// Script env).
-fn resolve_bridge_header_dirs(workspace_root: &Path) -> (PathBuf, PathBuf) {
-    let legacy = || {
-        (
-            workspace_root.join("crates/whisker-driver/include"),
-            workspace_root.join("crates/whisker-driver-sys/bridge/include"),
-        )
-    };
-    let Ok(meta) = cargo_metadata::MetadataCommand::new()
-        .current_dir(workspace_root)
-        .exec()
-    else {
-        return legacy();
-    };
-    let crate_dir = |name: &str| -> Option<PathBuf> {
-        meta.packages
-            .iter()
-            .find(|p| p.name == name)
-            .and_then(|p| p.manifest_path.parent())
-            .map(|d| d.as_std_path().to_path_buf())
-    };
-    match (crate_dir("whisker-driver"), crate_dir("whisker-driver-sys")) {
-        (Some(driver), Some(driver_sys)) => {
-            (driver.join("include"), driver_sys.join("bridge/include"))
-        }
-        // Either crate absent from the graph (shouldn't happen — both
-        // are transitive deps of `whisker`) → legacy layout.
-        _ => legacy(),
-    }
 }
 
 /// Cross-compile + framework-wrap path for the Xcode Run Script
@@ -330,36 +249,16 @@ pub fn build_framework_for_xcode_run_script(
         return Err(anyhow!("--archs is empty; Xcode passed no ARCHS"));
     }
 
-    // Header trees the framework's `Headers/` dir copies from. Resolve
-    // the owning crates' on-disk locations via `cargo metadata` so this
-    // works both in-workspace (monorepo `crates/…`) and for a crates.io
-    // user (the registry extraction, `~/.cargo/registry/src/…`). The
-    // headers ship in both `whisker-driver` and `whisker-driver-sys`
-    // (no `exclude`, so every git-tracked file is published).
-    let (rust_headers_src, bridge_headers_src) = resolve_bridge_header_dirs(inputs.workspace_root);
-    for required in ["whisker.h", "module.modulemap"] {
-        if !rust_headers_src.join(required).is_file() {
-            return Err(anyhow!(
-                "missing header {} (expected at {})",
-                required,
-                rust_headers_src.display(),
-            ));
-        }
-    }
-    if !bridge_headers_src.join("whisker_bridge.h").is_file() {
-        return Err(anyhow!(
-            "missing whisker_bridge.h (expected at {})",
-            bridge_headers_src.display(),
-        ));
-    }
-
     let lib_stem = inputs.package.replace('-', "_");
     let cargo_dylib_name = format!("lib{lib_stem}.dylib");
 
     let mut slice_paths: Vec<PathBuf> = Vec::with_capacity(inputs.archs.len());
     for arch in inputs.archs {
         let triple = map_arch_to_triple(inputs.platform, arch)?;
-        let s = crate::ui::step("compile", format!("{} ({triple})", inputs.package));
+        let s = crate::ui::step(
+            crate::ui::OperationKind::Compile,
+            format!("{} ({triple})", inputs.package),
+        );
         cargo_build_ios_dylib(
             inputs.workspace_root,
             inputs.package,
@@ -411,12 +310,7 @@ pub fn build_framework_for_xcode_run_script(
         fat
     };
 
-    let staged_fw = build_framework_dir(
-        &out_dir,
-        &combined_dylib,
-        &rust_headers_src,
-        &bridge_headers_src,
-    )?;
+    let staged_fw = build_framework_dir(&out_dir, &combined_dylib)?;
 
     // Xcode's embed-frameworks phase scans `Frameworks/` at link time.
     let frameworks_dst = built_products_dir.join("Frameworks");
@@ -527,286 +421,6 @@ fn framework_info_plist(min_os: &str) -> String {
 
 /// Configuration for an `xcodebuild` invocation against the
 /// CNG-generated `gen/ios/<scheme>.xcodeproj`.
-pub struct XcodebuildArgs<'a> {
-    pub gen_ios: &'a Path,
-    pub scheme: &'a str,
-    /// `iphonesimulator` (Simulator) or `iphoneos` (device).
-    pub sdk: &'a str,
-    /// `Release` everywhere today; kept a free string so a caller can
-    /// ask for another xcodebuild configuration.
-    pub configuration: &'a str,
-    /// Almost always `<scheme>.xcodeproj` (XcodeGen output). Tests
-    /// override it to point at fixtures.
-    pub xcodeproj_name: &'a str,
-    /// `-derivedDataPath` value. Picked by the caller so the gen
-    /// tree stays drift-free for the next sync.
-    pub derived_data: &'a Path,
-    /// Absolute path to Whisker's `platforms/ios` SwiftPM package.
-    /// Exported to `xcodebuild` as `WHISKER_IOS_RUNTIME` so each
-    /// module's `Package.swift` resolves its `WhiskerRuntime`
-    /// dependency by env (with a relative fallback) instead of a
-    /// hardcoded `../../platforms/ios` — which only works when the
-    /// module sits at a fixed depth in the monorepo. Mirrors how the
-    /// Android side injects each module's `projectDir`. `None` skips
-    /// the export (the module then relies on its relative fallback).
-    pub whisker_runtime_path: Option<&'a Path>,
-    /// Absolute path to Whisker's `platforms/ios/macros` SwiftPM
-    /// package. Exported as `WHISKER_IOS_MACROS`. Sibling of
-    /// [`Self::whisker_runtime_path`].
-    pub whisker_ios_macros_path: Option<&'a Path>,
-}
-
-/// Generate the iOS module-aggregator SwiftPM package under
-/// `gen/ios/whisker_modules/`. Module sources stay in their own
-/// package directories — each module ships a hand-written
-/// `Package.swift` — and the aggregator depends on them via
-/// `.package(path: …)`, importing each one's per-target register fn.
-///
-/// Mirror of [`crate::android::generate_module_aggregator`] for
-/// iOS. The Android path generates `settings.gradle.kts` includes;
-/// the iOS equivalent produces a tiny SwiftPM package the user
-/// app declares as a local Swift Package Dependency.
-///
-/// Layout produced (within `gen/ios/whisker_modules/`):
-///
-/// ```text
-/// whisker_modules/
-/// ├── Package.swift                       ← generated (aggregator)
-/// └── Sources/WhiskerModules/
-///     └── RegisterAll.swift               ← generated
-/// ```
-///
-/// `Package.swift` declares one product (`WhiskerModules`) depending
-/// on `WhiskerRuntime` + each discovered module's local-path
-/// SwiftPM package. The user app's pbxproj template references
-/// both `native/ios` (WhiskerRuntime) and `gen/ios/whisker_modules`
-/// (the aggregator) as `XCLocalSwiftPackageReference` entries —
-/// SwiftPM resolves the transitive deps to each module package.
-///
-/// `RegisterAll.swift` imports every module's SwiftPM library and
-/// exposes the `@objc WhiskerModuleBehaviors.registerAll()` entry
-/// point the AppDelegate calls at launch. The actual registration
-/// work happens inside the per-module
-/// `_whiskerRegisterModules_<TargetName>()` fns that the
-/// `WhiskerModuleCodegenPlugin` emits into each module target.
-///
-/// Empty / non-Swift-contributing module list still writes a
-/// no-op aggregator so the pbxproj reference always resolves
-/// and `AppDelegate.swift` compiles.
-pub fn stage_module_swift_sources(
-    gen_ios: &Path,
-    modules: &[crate::modules::ResolvedModule],
-) -> Result<()> {
-    let root = gen_ios.join("whisker_modules");
-    let sources_root = root.join("Sources/WhiskerModules");
-
-    // Wipe the previous tree so a removed-or-renamed module doesn't
-    // leave behind a stale Package.swift / RegisterAll.swift entry.
-    if root.exists() {
-        std::fs::remove_dir_all(&root).with_context(|| format!("rm -rf {}", root.display()))?;
-    }
-    std::fs::create_dir_all(&sources_root)
-        .with_context(|| format!("mkdir -p {}", sources_root.display()))?;
-
-    // A `Package.swift` next to the crate's `Cargo.toml` is the
-    // discovery signal, which skips Android-only modules for free.
-    let ios_modules: Vec<&crate::modules::ResolvedModule> = modules
-        .iter()
-        .filter(|m| m.manifest_dir.join("Package.swift").is_file())
-        .collect();
-
-    let package_path = root.join("Package.swift");
-    std::fs::write(&package_path, render_modules_package_swift(&ios_modules))
-        .with_context(|| format!("write {}", package_path.display()))?;
-
-    let register_all_path = sources_root.join("RegisterAll.swift");
-    std::fs::write(&register_all_path, render_register_all_swift(&ios_modules))
-        .with_context(|| format!("write {}", register_all_path.display()))?;
-
-    if !ios_modules.is_empty() {
-        crate::ui::info(format!(
-            "stage {n} module SPM package(s) under whisker_modules/",
-            n = ios_modules.len()
-        ));
-    }
-    Ok(())
-}
-
-/// Convention: SwiftPM library product / target name is the
-/// `PascalCase`-ised cargo crate name. So `whisker-local-store` →
-/// `WhiskerLocalStore`. Module authors MUST follow this convention
-/// in their hand-written `Package.swift` for the aggregator's
-/// `.product(name:, package:)` lookups to resolve.
-///
-/// Deterministic + reversible — same input always yields same
-/// output, no separator chars beyond `-` are touched.
-fn crate_to_spm_target(crate_name: &str) -> String {
-    let mut out = String::new();
-    let mut next_upper = true;
-    for ch in crate_name.chars() {
-        if ch == '-' || ch == '_' {
-            next_upper = true;
-            continue;
-        }
-        if next_upper {
-            out.extend(ch.to_uppercase());
-            next_upper = false;
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-/// iOS floor for the aggregator when no module asks for more.
-const DEFAULT_IOS_PLATFORM_MAJOR: u32 = 13;
-
-/// `.iOS(.v15)` → `15`, read from the `platforms:` list. `None` for a
-/// manifest that declares no iOS floor or spells it some other way
-/// (e.g. the `.iOS("16.4")` string form) — such a module just doesn't
-/// raise the aggregator's floor.
-fn parse_ios_platform_major(manifest: &str) -> Option<u32> {
-    const NEEDLE: &str = ".iOS(.v";
-    let rest = &manifest[manifest.find(NEEDLE)? + NEEDLE.len()..];
-    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().ok()
-}
-
-/// The aggregator's iOS floor: the highest any module package declares.
-///
-/// SwiftPM refuses to resolve a dependency whose minimum platform is
-/// higher than its consumer's, so pinning one version here caps what a
-/// module may require — `whisker-revenuecat` needs iOS 15 (RevenueCatUI's
-/// Customer Center) and could never resolve against a hardcoded `.v13`.
-/// Reading it back off the modules keeps that a module-local decision.
-fn ios_platform_major(modules: &[&crate::modules::ResolvedModule]) -> u32 {
-    modules
-        .iter()
-        .filter_map(|m| std::fs::read_to_string(m.manifest_dir.join("Package.swift")).ok())
-        .filter_map(|manifest| parse_ios_platform_major(&manifest))
-        .chain(std::iter::once(DEFAULT_IOS_PLATFORM_MAJOR))
-        .max()
-        .unwrap_or(DEFAULT_IOS_PLATFORM_MAJOR)
-}
-
-/// Render `Package.swift` for the generated `WhiskerModules`
-/// aggregator. Depends on `WhiskerRuntime` + each discovered
-/// module package via local-path SwiftPM dependency.
-fn render_modules_package_swift(modules: &[&crate::modules::ResolvedModule]) -> String {
-    let mut out = String::new();
-    out.push_str(
-        "// swift-tools-version:5.9\n\
-         //\n\
-         // AUTO-GENERATED by whisker-build. Do NOT edit — re-run\n\
-         // `whisker run` to refresh.\n\
-         //\n\
-         // Phase 7-Φ.G aggregator. Each Whisker module ships its\n\
-         // own SwiftPM package (with hand-written Package.swift),\n\
-         // and this file just lists them as local-path dependencies.\n\
-         // SwiftPM resolves the transitive build graph; the user\n\
-         // app's pbxproj only references THIS aggregator package\n\
-         // via `XCLocalSwiftPackageReference`.\n\
-         //\n\
-         // RegisterAll.swift (next to this file) imports each\n\
-         // module and calls its per-target register fn from a\n\
-         // top-level `WhiskerModuleBehaviors.registerAll()`.\n\n",
-    );
-    out.push_str("import PackageDescription\n\n");
-    out.push_str("let package = Package(\n");
-    out.push_str("    name: \"WhiskerModules\",\n");
-    out.push_str(&format!(
-        "    platforms: [.iOS(.v{})],\n",
-        ios_platform_major(modules)
-    ));
-    out.push_str("    products: [\n");
-    out.push_str("        .library(name: \"WhiskerModules\", targets: [\"WhiskerModules\"]),\n");
-    out.push_str("    ],\n");
-    out.push_str("    dependencies: [\n");
-    // WhiskerRuntime + Lynx + the codegen plugin all come from the one
-    // remote `whisker` package (no monorepo `platforms/ios` path).
-    out.push_str(&format!(
-        "        .package(url: {url:?}, exact: {ver:?}),\n",
-        url = WHISKER_IOS_SPM_URL,
-        ver = WHISKER_IOS_SPM_VERSION,
-    ));
-    for m in modules {
-        // The module's SwiftPM package is rooted at the package
-        // directory (Package.swift lives there, identity = the
-        // crate's dir name — unique). Its target sources live under
-        // the package's `ios/` subdir (Expo-style layout).
-        let path = m.manifest_dir.display().to_string();
-        out.push_str(&format!(
-            "        .package(name: {pkg:?}, path: {path:?}),\n",
-            pkg = m.package
-        ));
-    }
-    out.push_str("    ],\n");
-    out.push_str("    targets: [\n");
-    out.push_str("        .target(\n");
-    out.push_str("            name: \"WhiskerModules\",\n");
-    out.push_str("            dependencies: [\n");
-    out.push_str("                .product(name: \"WhiskerRuntime\", package: \"whisker\"),\n");
-    out.push_str("                .product(name: \"Lynx\", package: \"whisker\"),\n");
-    for m in modules {
-        let target = crate_to_spm_target(&m.package);
-        out.push_str(&format!(
-            "                .product(name: {target:?}, package: {pkg:?}),\n",
-            pkg = m.package
-        ));
-    }
-    out.push_str("            ],\n");
-    out.push_str("            path: \"Sources/WhiskerModules\"\n");
-    out.push_str("        ),\n");
-    out.push_str("    ]\n");
-    out.push_str(")\n");
-    out
-}
-
-/// Render `RegisterAll.swift` for the aggregator. Imports every
-/// module's SwiftPM library and exposes the top-level
-/// `WhiskerModuleBehaviors.registerAll()` entry point the
-/// AppDelegate calls. Per-target work happens inside each
-/// module's plugin-emitted `_whiskerRegisterModules_<TargetName>()`.
-fn render_register_all_swift(modules: &[&crate::modules::ResolvedModule]) -> String {
-    let mut out = String::new();
-    out.push_str(
-        "// AUTO-GENERATED by whisker-build. Do NOT edit — re-run\n\
-         // `whisker run` to refresh.\n\
-         //\n\
-         // Aggregates every Whisker module's per-target register fn\n\
-         // (emitted by the `WhiskerModuleCodegenPlugin` SwiftPM\n\
-         // build-tool plugin into each module's compilation) into a\n\
-         // single `WhiskerModuleBehaviors.registerAll()` entry point.\n\
-         // The user app's AppDelegate calls this once at launch —\n\
-         // the actual per-module registration work runs inside each\n\
-         // `_whiskerRegisterModules_<TargetName>()`.\n\n",
-    );
-    out.push_str("import Foundation\n");
-    for m in modules {
-        let target = crate_to_spm_target(&m.package);
-        out.push_str(&format!("import {target}\n"));
-    }
-    out.push('\n');
-    out.push_str("@objc public final class WhiskerModuleBehaviors: NSObject {\n");
-    out.push_str("    private static var registered = false\n");
-    out.push_str("    private static let lock = NSLock()\n");
-    out.push('\n');
-    out.push_str("    @objc public static func registerAll() {\n");
-    out.push_str("        lock.lock()\n");
-    out.push_str("        defer { lock.unlock() }\n");
-    out.push_str("        if registered { return }\n");
-    out.push_str("        registered = true\n");
-    if modules.is_empty() {
-        out.push_str("        // (no Whisker module dependencies)\n");
-    }
-    for m in modules {
-        let target = crate_to_spm_target(&m.package);
-        out.push_str(&format!("        _whiskerRegisterModules_{target}()\n"));
-    }
-    out.push_str("    }\n}\n");
-    out
-}
-
 /// Run `xcodebuild -configuration <configuration>` and return the
 /// produced `.app` directory.
 pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
@@ -820,7 +434,10 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
         ));
     }
 
-    let _xc_step = crate::ui::step("xcodebuild", args.xcodeproj_name.to_string());
+    let xc_step = crate::ui::step(
+        crate::ui::OperationKind::Xcodebuild,
+        args.xcodeproj_name.to_string(),
+    );
     let destination = match args.sdk {
         "iphonesimulator" => "generic/platform=iOS Simulator".to_string(),
         "iphoneos" => "generic/platform=iOS".to_string(),
@@ -847,10 +464,12 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
     if let Some(p) = args.whisker_ios_macros_path {
         cmd.env("WHISKER_IOS_MACROS", p);
     }
-    let status = cmd.status().context("spawn xcodebuild")?;
+    let status = xc_step.pipe(&mut cmd).context("spawn xcodebuild")?;
     if !status.success() {
+        xc_step.fail(status.to_string());
         return Err(anyhow!("xcodebuild failed ({status})"));
     }
+    xc_step.done("");
 
     let product_subdir = match args.sdk {
         "iphonesimulator" => format!("{}-iphonesimulator", args.configuration),
@@ -958,7 +577,10 @@ pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
     let archive_path = out_root.join(format!("{scheme}.xcarchive"));
 
     // ---- archive ---------------------------------------------------
-    let archive_step = crate::ui::step("xcodebuild", format!("archive {scheme}"));
+    let archive_step = crate::ui::step(
+        crate::ui::OperationKind::Xcodebuild,
+        format!("archive {scheme}"),
+    );
     let mut cmd = Command::new("xcodebuild");
     cmd.arg("-project")
         .arg(&xcode_project)
@@ -1001,7 +623,10 @@ pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
     .with_context(|| format!("write {}", options_path.display()))?;
     let export_dir = out_root.join("export");
 
-    let export_step = crate::ui::step("xcodebuild", format!("export {}", method.plist_value()));
+    let export_step = crate::ui::step(
+        crate::ui::OperationKind::Xcodebuild,
+        format!("export {}", method.plist_value()),
+    );
     let mut cmd = Command::new("xcodebuild");
     cmd.arg("-exportArchive")
         .arg("-archivePath")
@@ -1069,197 +694,12 @@ fn export_options_plist(method: ExportMethod, team_id: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests;
 
-    /// Every module package pins the runtime `exact:`, and all of them
-    /// are resolved by path alongside the app, which pins
-    /// [`WHISKER_IOS_SPM_VERSION`]. One manifest left on the old
-    /// version makes the whole graph unresolvable for every consumer
-    /// ("root depends on 0.1.4 and X depends on 0.1.5"), and nothing
-    /// else in the workspace notices — the manifests are data to Rust.
-    #[test]
-    fn module_packages_pin_the_runtime_version_the_cli_generates() {
-        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|p| p.parent())
-            .expect("crates/<name> sits two levels under the workspace root")
-            .to_path_buf();
-        let packages = workspace.join("packages");
-        // Absent when this crate is built from its published .crate,
-        // which carries no sibling packages to check.
-        let Ok(entries) = std::fs::read_dir(&packages) else {
-            return;
-        };
+mod swift_modules;
 
-        let expected = format!(
-            "\"https://github.com/whiskerrs/whisker.git\", exact: \"{WHISKER_IOS_SPM_VERSION}\""
-        );
-        let mut stale = Vec::new();
-        for entry in entries.flatten() {
-            let manifest = entry.path().join("Package.swift");
-            let Ok(source) = std::fs::read_to_string(&manifest) else {
-                continue;
-            };
-            if source.contains("whiskerrs/whisker.git") && !source.contains(&expected) {
-                stale.push(manifest.display().to_string());
-            }
-        }
-        assert!(
-            stale.is_empty(),
-            "these manifests do not pin {WHISKER_IOS_SPM_VERSION}: {stale:#?}"
-        );
-    }
-
-    #[test]
-    fn bridge_exports_have_leading_underscore() {
-        // ld64's `-exported_symbol` expects the Mach-O C symbol form.
-        // Dropping the underscore would silently leave the symbol
-        // out of `.dynsym` and Swift would fail to link the bridge.
-        for sym in BRIDGE_EXPORTS {
-            assert!(
-                sym.starts_with('_'),
-                "BRIDGE_EXPORTS entry missing leading underscore: {sym}",
-            );
-        }
-    }
-
-    #[test]
-    fn framework_info_plist_contains_executable_name() {
-        let plist = framework_info_plist(DEFAULT_MIN_OS);
-        assert!(plist.contains("<string>WhiskerDriver</string>"));
-        assert!(plist.contains("FMWK"));
-    }
-
-    /// The app and its embedded framework have to agree on the minimum,
-    /// or App Store validation rejects the upload (90208).
-    #[test]
-    fn framework_minimum_os_follows_the_apps_deployment_target() {
-        assert!(framework_info_plist("15.0").contains("<string>15.0</string>"));
-    }
-
-    #[test]
-    fn missing_xcodeproj_errors() {
-        let tmp = std::env::temp_dir().join("whisker-cli-build_ios-test");
-        let _ = std::fs::create_dir_all(&tmp);
-        let dd = tmp.join("derived");
-        let args = XcodebuildArgs {
-            gen_ios: &tmp,
-            scheme: "X",
-            sdk: "iphonesimulator",
-            configuration: "Release",
-            xcodeproj_name: "X",
-            derived_data: &dd,
-            whisker_runtime_path: None,
-            whisker_ios_macros_path: None,
-        };
-        let err = run_xcodebuild_app(&args).unwrap_err();
-        assert!(
-            err.to_string().contains("Xcode project missing"),
-            "got: {err:#}",
-        );
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn unknown_sdk_errors() {
-        let tmp = std::env::temp_dir().join("whisker-cli-build_ios-sdk-test");
-        let _ = std::fs::create_dir_all(&tmp);
-        let proj = tmp.join("X.xcodeproj");
-        let _ = std::fs::create_dir_all(&proj);
-        let dd = tmp.join("derived");
-        let args = XcodebuildArgs {
-            gen_ios: &tmp,
-            scheme: "X",
-            sdk: "bogus",
-            configuration: "Release",
-            xcodeproj_name: "X",
-            derived_data: &dd,
-            whisker_runtime_path: None,
-            whisker_ios_macros_path: None,
-        };
-        let err = run_xcodebuild_app(&args).unwrap_err();
-        assert!(err.to_string().contains("unknown SDK"), "got: {err:#}");
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn ios_platform_major_reads_the_declared_floor() {
-        assert_eq!(
-            parse_ios_platform_major("    platforms: [.iOS(.v15), .macOS(.v13)],"),
-            Some(15)
-        );
-    }
-
-    #[test]
-    fn ios_platform_major_ignores_a_manifest_without_an_ios_floor() {
-        assert_eq!(
-            parse_ios_platform_major("    platforms: [.macOS(.v13)],"),
-            None
-        );
-    }
-
-    /// Every bridge function Swift *calls* has to be in
-    /// [`BRIDGE_EXPORTS`], or it never lands in the dylib's `.dynsym`
-    /// and the app fails to link. The list is hand-maintained, so this
-    /// enforces it mechanically.
-    #[test]
-    fn swift_call_sites_are_all_exported() {
-        fn swift_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-            let Ok(entries) = std::fs::read_dir(dir) else {
-                return;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    swift_files(&path, out);
-                } else if path.extension().is_some_and(|e| e == "swift") {
-                    out.push(path);
-                }
-            }
-        }
-
-        // Monorepo layout only — a published crate has no `platforms/`.
-        let ios = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../platforms/ios");
-        if !ios.is_dir() {
-            return;
-        }
-        let mut files = Vec::new();
-        swift_files(&ios, &mut files);
-        assert!(!files.is_empty(), "no .swift files under {}", ios.display());
-
-        let mut missing: Vec<String> = Vec::new();
-        for file in &files {
-            let Ok(contents) = std::fs::read_to_string(file) else {
-                continue;
-            };
-            for line in contents.lines() {
-                let code = line.split("//").next().unwrap_or("");
-                let mut rest = code;
-                while let Some(at) = rest.find("whisker_bridge_") {
-                    let tail = &rest[at..];
-                    let name: String = tail
-                        .chars()
-                        .take_while(|c| c.is_ascii_lowercase() || *c == '_' || c.is_ascii_digit())
-                        .collect();
-                    // Only call sites — a bare mention in a type
-                    // signature or a string isn't a link dependency.
-                    if tail[name.len()..].starts_with('(') {
-                        let exported = format!("_{name}");
-                        if !BRIDGE_EXPORTS.contains(&exported.as_str())
-                            && !missing.contains(&exported)
-                        {
-                            missing.push(exported);
-                        }
-                    }
-                    rest = &tail[name.len().max(1)..];
-                }
-            }
-        }
-        assert!(
-            missing.is_empty(),
-            "Swift calls these bridge functions but BRIDGE_EXPORTS omits them, \
-             so the dylib won't export them and the app won't link: {missing:?}",
-        );
-    }
-}
+pub use swift_modules::XcodebuildArgs;
+#[cfg(test)]
+use whisker_cng::ios_modules::{
+    parse_ios_platform_major, render_modules_package_swift, render_register_all_swift,
+};

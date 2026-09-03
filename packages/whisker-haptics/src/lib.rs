@@ -14,6 +14,9 @@
 //!
 //! Mirrors [`expo-haptics`](https://docs.expo.dev/versions/latest/sdk/haptics/)'s
 //! three functions exactly.
+//! Web maps these calls to the Vibration API when the browser permits it.
+//! Desktop currently exposes the same API as a successful no-op because
+//! desktop machines do not have a generally available haptic device.
 //!
 //! Deliberately **not async**: the native module DSL only supports
 //! synchronous `Function`s today (no `AsyncFunction` yet). Firing a
@@ -31,7 +34,7 @@
 //! ## Android permission
 //!
 //! Requires `android.permission.VIBRATE` — injected automatically by
-//! this crate's [`plugin`] when the consuming app opts in via
+//! this crate's build plugin when the consuming app opts in via
 //! `app.plugin::<WhiskerHaptics>(|c| c)` in `whisker.rs`.
 //!
 //! ## Native source
@@ -48,7 +51,7 @@ pub use plugin::*;
 
 /// `WhiskerHaptics` runtime API. Gated behind the default-on
 /// `runtime` feature so the config probe build path can skip the
-/// heavyweight `whisker` umbrella crate (Lynx bridge, driver, render
+/// heavyweight `whisker` umbrella crate (mobile Host bridge, driver, render
 /// layer). Apps depending on `whisker-haptics` for actual haptic
 /// calls get this re-exported automatically; the probe only sees the
 /// plugin types.
@@ -56,3 +59,13 @@ pub use plugin::*;
 mod runtime;
 #[cfg(feature = "runtime")]
 pub use runtime::{ImpactStyle, NotificationType};
+
+/// Empty visual schema paired with the service-only Web haptics Host module.
+#[cfg(feature = "runtime")]
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        std::iter::empty::<whisker::ElementProviderMetadata>(),
+    )
+}

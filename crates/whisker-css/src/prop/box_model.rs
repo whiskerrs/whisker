@@ -15,37 +15,37 @@ impl Css {
     /// Sets `width`. Lynx default: `auto`.
     /// <https://lynxjs.org/api/css/properties/width>
     pub fn width(self, v: impl Into<Size>) -> Self {
-        self.push("width", v.into())
+        self.push_typed(crate::StyleProperty::Width, v.into())
     }
 
     /// Sets `height`. Lynx default: `auto`.
     /// <https://lynxjs.org/api/css/properties/height>
     pub fn height(self, v: impl Into<Size>) -> Self {
-        self.push("height", v.into())
+        self.push_typed(crate::StyleProperty::Height, v.into())
     }
 
     /// Sets `min-width`. Lynx default: `0`.
     /// <https://lynxjs.org/api/css/properties/min-width>
     pub fn min_width(self, v: impl Into<Size>) -> Self {
-        self.push("min-width", v.into())
+        self.push_typed(crate::StyleProperty::MinWidth, v.into())
     }
 
     /// Sets `min-height`. Lynx default: `0`.
     /// <https://lynxjs.org/api/css/properties/min-height>
     pub fn min_height(self, v: impl Into<Size>) -> Self {
-        self.push("min-height", v.into())
+        self.push_typed(crate::StyleProperty::MinHeight, v.into())
     }
 
     /// Sets `max-width`. Lynx default: `none`.
     /// <https://lynxjs.org/api/css/properties/max-width>
     pub fn max_width(self, v: impl Into<Size>) -> Self {
-        self.push("max-width", v.into())
+        self.push_typed(crate::StyleProperty::MaxWidth, v.into())
     }
 
     /// Sets `max-height`. Lynx default: `none`.
     /// <https://lynxjs.org/api/css/properties/max-height>
     pub fn max_height(self, v: impl Into<Size>) -> Self {
-        self.push("max-height", v.into())
+        self.push_typed(crate::StyleProperty::MaxHeight, v.into())
     }
 
     // ---------- box-sizing / aspect-ratio ----------
@@ -53,13 +53,19 @@ impl Css {
     /// Sets `box-sizing`. Lynx default: `border-box`.
     /// <https://lynxjs.org/api/css/properties/box-sizing>
     pub fn box_sizing(self, v: BoxSizing) -> Self {
-        self.push("box-sizing", v)
+        self.push_typed(crate::StyleProperty::BoxSizing, v)
     }
 
     /// Sets `aspect-ratio` to `<width> / <height>`.
     /// <https://lynxjs.org/api/css/properties/aspect-ratio>
     pub fn aspect_ratio(self, width: f32, height: f32) -> Self {
-        self.push_raw("aspect-ratio", format!("{width} / {height}"))
+        self.push_semantic(
+            crate::StyleProperty::AspectRatio,
+            whisker_style::StyleValue::AspectRatio(whisker_style::AspectRatioValue::new(
+                width, height,
+            )),
+            format!("{width} / {height}"),
+        )
     }
 
     // ---------- Padding longhand ----------
@@ -67,25 +73,35 @@ impl Css {
     /// Sets `padding-top`. Negative values are clamped to zero by Lynx.
     /// <https://lynxjs.org/api/css/properties/padding-top>
     pub fn padding_top(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("padding-top", v.into())
+        self.push_typed(crate::StyleProperty::PaddingTop, v.into())
     }
 
     /// Sets `padding-right`. Negative values are clamped to zero by Lynx.
     /// <https://lynxjs.org/api/css/properties/padding-right>
     pub fn padding_right(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("padding-right", v.into())
+        self.push_typed(crate::StyleProperty::PaddingRight, v.into())
     }
 
     /// Sets `padding-bottom`. Negative values are clamped to zero by Lynx.
     /// <https://lynxjs.org/api/css/properties/padding-bottom>
     pub fn padding_bottom(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("padding-bottom", v.into())
+        self.push_typed(crate::StyleProperty::PaddingBottom, v.into())
     }
 
     /// Sets `padding-left`. Negative values are clamped to zero by Lynx.
     /// <https://lynxjs.org/api/css/properties/padding-left>
     pub fn padding_left(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("padding-left", v.into())
+        self.push_typed(crate::StyleProperty::PaddingLeft, v.into())
+    }
+
+    /// Sets `padding-inline-start` on the logical start edge.
+    pub fn padding_inline_start(self, v: impl Into<LengthPercentage>) -> Self {
+        self.push_typed(crate::StyleProperty::PaddingInlineStart, v.into())
+    }
+
+    /// Sets `padding-inline-end` on the logical end edge.
+    pub fn padding_inline_end(self, v: impl Into<LengthPercentage>) -> Self {
+        self.push_typed(crate::StyleProperty::PaddingInlineEnd, v.into())
     }
 
     // ---------- Margin longhand ----------
@@ -93,25 +109,35 @@ impl Css {
     /// Sets `margin-top`. Lynx allows negative values and `auto`.
     /// <https://lynxjs.org/api/css/properties/margin-top>
     pub fn margin_top(self, v: impl Into<MarginValue>) -> Self {
-        self.push("margin-top", v.into())
+        self.push_typed(crate::StyleProperty::MarginTop, v.into())
     }
 
     /// Sets `margin-right`. Lynx allows negative values and `auto`.
     /// <https://lynxjs.org/api/css/properties/margin-right>
     pub fn margin_right(self, v: impl Into<MarginValue>) -> Self {
-        self.push("margin-right", v.into())
+        self.push_typed(crate::StyleProperty::MarginRight, v.into())
     }
 
     /// Sets `margin-bottom`. Lynx allows negative values and `auto`.
     /// <https://lynxjs.org/api/css/properties/margin-bottom>
     pub fn margin_bottom(self, v: impl Into<MarginValue>) -> Self {
-        self.push("margin-bottom", v.into())
+        self.push_typed(crate::StyleProperty::MarginBottom, v.into())
     }
 
     /// Sets `margin-left`. Lynx allows negative values and `auto`.
     /// <https://lynxjs.org/api/css/properties/margin-left>
     pub fn margin_left(self, v: impl Into<MarginValue>) -> Self {
-        self.push("margin-left", v.into())
+        self.push_typed(crate::StyleProperty::MarginLeft, v.into())
+    }
+
+    /// Sets `margin-inline-start` on the logical start edge.
+    pub fn margin_inline_start(self, v: impl Into<MarginValue>) -> Self {
+        self.push_typed(crate::StyleProperty::MarginInlineStart, v.into())
+    }
+
+    /// Sets `margin-inline-end` on the logical end edge.
+    pub fn margin_inline_end(self, v: impl Into<MarginValue>) -> Self {
+        self.push_typed(crate::StyleProperty::MarginInlineEnd, v.into())
     }
 
     // ---------- Gap ----------
@@ -120,29 +146,30 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/gap>
     pub fn gap(self, v: impl Into<LengthPercentage>) -> Self {
         let v = v.into();
-        self.push("row-gap", v.clone()).push("column-gap", v)
+        self.push_typed(crate::StyleProperty::RowGap, v.clone())
+            .push_typed(crate::StyleProperty::ColumnGap, v)
     }
 
     /// Sets `row-gap` — inline gap between rows in flex/grid layouts.
     /// <https://lynxjs.org/api/css/properties/row-gap>
     pub fn row_gap(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("row-gap", v.into())
+        self.push_typed(crate::StyleProperty::RowGap, v.into())
     }
 
     /// Sets `column-gap` — gap between columns in flex/grid layouts.
     /// <https://lynxjs.org/api/css/properties/column-gap>
     pub fn column_gap(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("column-gap", v.into())
+        self.push_typed(crate::StyleProperty::ColumnGap, v.into())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::Css;
     use crate::data_type::{FitContent, MaxContent};
     use crate::ext::*;
     use crate::keyword::BoxSizing;
     use crate::value::Size;
+    use crate::{Css, MarginValue};
 
     #[test]
     fn width_height_basic() {
@@ -211,6 +238,19 @@ mod tests {
         assert_eq!(
             s.to_string(),
             "margin-top: -4px; margin-right: 0%; margin-bottom: 8px; margin-left: -50%;"
+        );
+    }
+
+    #[test]
+    fn logical_margin_and_padding_builders_remain_typed() {
+        let style = Css::new()
+            .margin_inline_start(px(-4))
+            .margin_inline_end(MarginValue::Auto)
+            .padding_inline_start(px(6))
+            .padding_inline_end(percent(8));
+        assert_eq!(
+            style.to_string(),
+            "margin-inline-start: -4px; margin-inline-end: auto; padding-inline-start: 6px; padding-inline-end: 8%;"
         );
     }
 

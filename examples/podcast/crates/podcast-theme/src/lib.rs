@@ -84,14 +84,9 @@ pub const FEATURED_CARD_WIDTH: Length = Length::Px(300.0);
 /// Standard ranked card artwork side length.
 pub const RANKED_CARD_SIDE: Length = Length::Px(144.0);
 
-/// Corner radius for all artwork. Apple-style soft-rounded. The
-/// `Length` form drops into `css!(border_radius: …)`; the `f64`
-/// form is what `whisker-image:Image`'s `corner_radius` prop wants
-/// (Lynx's CSS cascade doesn't reach custom UI elements' image
-/// bitmap layer on Android, so the typed prop is the consistent
-/// path — see `whisker_image::image`'s docs).
+/// Corner radius for all artwork. The `Length` form drops directly into
+/// `css!(border_radius: …)` and is applied by common Host presentation.
 pub const ARTWORK_RADIUS: Length = Length::Px(8.0);
-pub const ARTWORK_RADIUS_PX: f64 = 8.0;
 
 // ----- Top nav ------------------------------------------------------------
 

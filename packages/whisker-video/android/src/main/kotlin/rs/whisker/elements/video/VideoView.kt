@@ -1,10 +1,12 @@
-// Lynx UI subclass that hosts the AndroidX Media3 ExoPlayer +
+// Whisker module view that hosts the AndroidX Media3 ExoPlayer +
 // PlayerView. Registration is driven by `VideoModule`'s `definition()`,
 // not by annotations here.
 
 package rs.whisker.elements.video
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
@@ -16,6 +18,7 @@ open class VideoView(context: WhiskerContext) : WhiskerUI<View>(context) {
 
     private var player: ExoPlayer? = null
     private var playerView: PlayerView? = null
+    private val cleanupHandler = Handler(Looper.getMainLooper())
 
     override fun createView(context: Context): View {
         val view = PlayerView(context)
@@ -31,8 +34,11 @@ open class VideoView(context: WhiskerContext) : WhiskerUI<View>(context) {
         // Media3 requires `release()` before the last reference is
         // dropped, or the audio session leaks.
         player?.release()
+        player = null
+        playerView?.player = null
+        if (value.isEmpty()) return
 
-        val ctx = view?.context ?: return
+        val ctx = view().context
         val p = ExoPlayer.Builder(ctx).build()
         playerView?.player = p
         p.setMediaItem(MediaItem.fromUri(value))
@@ -46,6 +52,15 @@ open class VideoView(context: WhiskerContext) : WhiskerUI<View>(context) {
     fun play() { player?.play() }
     fun pause() { player?.pause() }
     fun seek(seconds: Double) {
-        player?.seekTo((seconds * 1000.0).toLong())
+        player?.seekTo((seconds.coerceAtLeast(0.0) * 1000.0).toLong())
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        // Reparenting can detach and attach synchronously in one Host batch.
+        // Defer cleanup one main-loop turn so that path keeps its player.
+        cleanupHandler.post {
+            if (!isAttachedToWindow) setSrc("")
+        }
     }
 }

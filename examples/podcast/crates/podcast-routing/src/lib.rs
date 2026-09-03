@@ -9,13 +9,13 @@
 //! The route *tree* itself now lives in the shell's `routes! { … }` (the new
 //! `whisker-router` macro); this crate only carries the thin navigation facade
 //! the features call. The shell wires each closure to the underlying
-//! [`whisker_router::RouterHandle`] (URL navigation: `/`, `/podcast/:id`,
+//! `whisker_router::RouterHandle` (URL navigation: `/`, `/podcast/:id`,
 //! `/search`), so Browse / Detail / Search stay unaware of the router entirely.
 
 use std::rc::Rc;
 
 /// Navigation surface the feature crates see. Each field is a thin closure the
-/// shell wires to the underlying [`whisker_router::RouterHandle`] — keeps
+/// shell wires to the underlying `whisker_router::RouterHandle` — keeps
 /// Browse / Detail / Search off `whisker-router` and lets the shell swap the
 /// routing layer without touching the features.
 ///

@@ -134,8 +134,7 @@ pub fn build_link_plan(
             // has none of the `whisker_*` symbols, so naming them
             // here would fail the link); populated by
             // `Patcher::build_patch` with
-            // `_whisker_aslr_anchor` + `_whisker_app_main` +
-            // `_whisker_tick`, which `subsecond::apply_patch`
+            // `_whisker_aslr_anchor`, which `subsecond::apply_patch`
             // needs in the patch's `.dynsym` (it does
             // `dlsym(patch, "whisker_aslr_anchor").unwrap()` and
             // aborts the host app on None).
@@ -152,11 +151,14 @@ pub fn build_link_plan(
             // / `-target ...-ios*` in the captured args, then ask
             // xcrun for the SDK path.
             if !args.iter().any(|a| a == "-isysroot") {
-                if let Some(sdk_kind) = detect_apple_sdk(&args) {
-                    if let Some(sdk_path) = xcrun_sdk_path(sdk_kind) {
-                        args.push("-isysroot".into());
-                        args.push(sdk_path);
-                    }
+                // A native macOS rustc link commonly carries only `-arch`
+                // and `-mmacosx-version-min`, not an explicit `-target`.
+                // Macos is therefore the correct default; iOS invocations
+                // include a target triple and are detected above.
+                let sdk_kind = detect_apple_sdk(&args).unwrap_or("macosx");
+                if let Some(sdk_path) = xcrun_sdk_path(sdk_kind) {
+                    args.push("-isysroot".into());
+                    args.push(sdk_path);
                 }
             }
         }
@@ -230,7 +232,7 @@ fn xcrun_sdk_path(kind: &str) -> Option<String> {
 /// For cross-target hot-patch (e.g. macOS host → Android device),
 /// callers should pass the target OS explicitly rather than rely on
 /// this convenience.
-pub fn linker_os_for_host() -> LinkerOs {
+pub fn linker_os_for_current_platform() -> LinkerOs {
     if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
         LinkerOs::Macos
     } else if cfg!(target_os = "linux") || cfg!(target_os = "android") {
@@ -307,9 +309,9 @@ fn filter_captured_linker_args(args: &[String]) -> Vec<String> {
         // We deliberately DO keep per-symbol `-Wl,-exported_symbol,…`
         // directives (which rustc also emits, one per `#[no_mangle]
         // pub extern "C"` symbol). Those name symbols the user's
-        // crate actually defines — `whisker_aslr_anchor`,
-        // `whisker_app_main`, `whisker_tick`, the bridge entry
-        // points — and `subsecond::apply_patch` needs at least
+        // crate actually defines — `whisker_aslr_anchor` and the
+        // retained mobile bridge entry points — and
+        // `subsecond::apply_patch` needs at least
         // `whisker_aslr_anchor` to be in the patch dylib's `.dynsym`
         // so its dlsym lookup hits. Filtering them out would land
         // us with a patch dylib that loads fine but panics inside
@@ -802,11 +804,11 @@ mod tests {
         assert!(plan.args.iter().any(|a| a.ends_with("demo.obj")));
     }
 
-    // ----- linker_os_for_host ------------------------------------------
+    // ----- linker_os_for_current_platform ------------------------------------------
 
     #[test]
-    fn linker_os_for_host_picks_an_os_consistent_with_cfg() {
-        let os = linker_os_for_host();
+    fn linker_os_for_current_platform_picks_an_os_consistent_with_cfg() {
+        let os = linker_os_for_current_platform();
         if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
             assert_eq!(os, LinkerOs::Macos);
         } else if cfg!(target_os = "linux") || cfg!(target_os = "android") {

@@ -27,11 +27,13 @@ include = [
 [lib]
 crate-type = ["rlib"]
 
-# Module-system opt-in marker. The bare table identifies this cargo
-# crate as a Whisker module; `whisker-build` walks the consuming app's
-# dep tree, picks out every dep carrying it, and wires the Android
-# Gradle subproject + iOS SwiftPM package into the host build.
-[package.metadata.whisker]
+# Safe area is native on mobile. Web and desktop intentionally use the
+# parent Rust crate's all-zero fallback and need no Host adapter.
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { manifest = "Package.swift" }
+web = { kind = "common" }
+desktop = { kind = "common" }
 
 [dependencies]
 whisker = { workspace = true }

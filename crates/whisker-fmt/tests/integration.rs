@@ -22,17 +22,17 @@ fn full_pipeline_formats_rust_and_macro() {
         return;
     }
     let messy =
-        "fn   ui()->Element{ render!{view(style:\"x\",class:\"y\"){text(value:\"hi\")}} }\n";
+        "fn   ui()->Element{ render!{View(style:\"x\",class:\"y\"){Text(value:\"hi\")}} }\n";
     let out = format_source(messy, &opts(4, 100)).expect("format_source");
 
     assert!(out.contains("fn ui() -> Element {"), "rust pass:\n{out}");
     assert!(out.contains("    render! {"), "macro indent:\n{out}");
     assert!(
-        out.contains("        view(style: \"x\", class: \"y\") {"),
+        out.contains("        View(style: \"x\", class: \"y\") {"),
         "kwargs formatted:\n{out}"
     );
     assert!(
-        out.contains("            text(value: \"hi\")"),
+        out.contains("            Text(value: \"hi\")"),
         "child indent:\n{out}"
     );
 }
@@ -42,7 +42,7 @@ fn full_pipeline_idempotent() {
     if !rustfmt_available() {
         return;
     }
-    let messy = "fn ui()->Element{render!{view(style:\"x\"){text(value:\"hi\")}}}\n";
+    let messy = "fn ui()->Element{render!{View(style:\"x\"){Text(value:\"hi\")}}}\n";
     let once = format_source(messy, &opts(4, 100)).unwrap();
     let twice = format_source(&once, &opts(4, 100)).unwrap();
     assert_eq!(
@@ -56,7 +56,7 @@ fn check_reports_diff_then_clean() {
     if !rustfmt_available() {
         return;
     }
-    let messy = "fn ui()->Element{render!{view(style:\"x\")}}\n";
+    let messy = "fn ui()->Element{render!{View(style:\"x\")}}\n";
     let diff = check_source(messy, &opts(4, 100)).unwrap();
     assert!(diff.is_some(), "expected a diff for messy input");
     let formatted = format_source(messy, &opts(4, 100)).unwrap();
@@ -75,7 +75,7 @@ fn formats_embedded_format_macro_expr() {
         return;
     }
     let src =
-        "fn ui() -> Element {\n    render! { text(value: format!(\"count: {}\",c.get())) }\n}\n";
+        "fn ui() -> Element {\n    render! { Text(value: format!(\"count: {}\",c.get())) }\n}\n";
     let out = format_source(src, &opts(4, 100)).unwrap();
     assert!(
         out.contains("format!(\"count: {}\", c.get())"),
@@ -89,7 +89,7 @@ fn long_kwarg_value_wraps_at_max_width() {
         return;
     }
     let long = "some_function_with_a_fairly_long_name(argument_one, argument_two, argument_three, argument_four)";
-    let src = format!("fn ui() -> Element {{\n    render! {{ text(value: {long}) }}\n}}\n");
+    let src = format!("fn ui() -> Element {{\n    render! {{ Text(value: {long}) }}\n}}\n");
     let narrow = format_source(&src, &opts(4, 40)).unwrap();
     let wide = format_source(&src, &opts(4, 200)).unwrap();
     // Narrow max_width must wrap the expr where wide keeps it inline,
@@ -105,7 +105,7 @@ fn multi_statement_closure_handler_reindented() {
     if !rustfmt_available() {
         return;
     }
-    let src = "fn ui() -> Element {\n    render! { view(on_tap: move |_| { let x=1;do_thing(x); }) }\n}\n";
+    let src = "fn ui() -> Element {\n    render! { View(on_tap: move |_| { let x=1;do_thing(x); }) }\n}\n";
     let out = format_source(src, &opts(4, 100)).unwrap();
     assert!(out.contains("let x = 1;"), "statement formatted:\n{out}");
     assert!(out.contains("do_thing(x);"), "statement formatted:\n{out}");
@@ -122,7 +122,7 @@ fn comment_inside_expr_preserved() {
     }
     // A comment inside the expr only survives if the SOURCE SLICE is
     // formatted rather than the comment-stripped AST.
-    let src = "fn ui() -> Element {\n    render! { text(value: foo(/* keep me */ x)) }\n}\n";
+    let src = "fn ui() -> Element {\n    render! { Text(value: foo(/* keep me */ x)) }\n}\n";
     let out = format_source(src, &opts(4, 100)).unwrap();
     assert!(
         out.contains("/* keep me */"),
@@ -135,7 +135,7 @@ fn full_pipeline_idempotent_with_exprs() {
     if !rustfmt_available() {
         return;
     }
-    let src = "fn ui() -> Element {\n    render! { view(on_tap: move |_| { let x=1;do_thing(x); }, style: \"flex:1;\") { text(value: format!(\"count: {}\",c.get())) } }\n}\n";
+    let src = "fn ui() -> Element {\n    render! { View(on_tap: move |_| { let x=1;do_thing(x); }, style: \"flex:1;\") { Text(value: format!(\"count: {}\",c.get())) } }\n}\n";
     let once = format_source(src, &opts(4, 100)).unwrap();
     let twice = format_source(&once, &opts(4, 100)).unwrap();
     assert_eq!(
@@ -152,7 +152,7 @@ fn tab_spaces_option_changes_output() {
     // rustfmt indents the *Rust* part from rustfmt.toml, not from
     // `opts`, so only the MACRO-BODY indentation reflects `tab_spaces`.
     let src =
-        "fn ui() -> Element {\n    render! { view(style: \"x\") { text(value: \"hi\") } }\n}\n";
+        "fn ui() -> Element {\n    render! { View(style: \"x\") { Text(value: \"hi\") } }\n}\n";
     let four = format_source(src, &opts(4, 100)).unwrap();
     let two = format_source(src, &opts(2, 100)).unwrap();
     assert_ne!(four, two, "tab_spaces must change macro indentation");
@@ -166,7 +166,7 @@ fn full_pipeline_nested_css_in_render_reformats() {
     // The macro pass must still reach into the nested `css!(...)` kwarg
     // after the real rustfmt pass has run over the file — exercising
     // `ExprFormatter` batching, not just the rustfmt-free core.
-    let messy = "fn   ui( )->Element{render!{view(style:css!(flex_grow:1.0,background_color:BG)){text(value:\"hi\")}}}\n";
+    let messy = "fn   ui( )->Element{render!{View(style:css!(flex_grow:1.0,background_color:BG)){Text(value:\"hi\")}}}\n";
     let out = format_source(messy, &opts(4, 100)).unwrap();
     assert!(out.contains("fn ui() -> Element {"), "rust pass:\n{out}");
     assert!(
@@ -180,7 +180,7 @@ fn full_pipeline_nested_routes_in_render_idempotent() {
     if !rustfmt_available() {
         return;
     }
-    let messy = "fn app()->Element{render!{view{Router(routes:routes!{Switch{Route(path:\"a\",component:A)Route(path:\"b\",component:B)}}){Outlet{}}}}}\n";
+    let messy = "fn app()->Element{render!{View{Router(routes:routes!{Switch{Route(path:\"a\",component:A)Route(path:\"b\",component:B)}}){Outlet{}}}}}\n";
     let once = format_source(messy, &opts(4, 100)).unwrap();
     let twice = format_source(&once, &opts(4, 100)).unwrap();
     assert_eq!(
@@ -198,7 +198,7 @@ fn statement_macro_in_closure_converges_in_one_call() {
     // The macro pass emits a multi-line `move || css!(…)`; a later
     // rustfmt round rewrites the closure body into a block. One
     // format_source call must already return that stable form.
-    let src = "fn ui() -> Element {\n    let style = computed(move || css!(flex_direction: FlexDirection::Column, gap: px(12.0), margin_bottom: px(16.0), padding_left: px(20.0)));\n    render! { view(style: style) }\n}\n";
+    let src = "fn ui() -> Element {\n    let style = computed(move || css!(flex_direction: FlexDirection::Column, gap: px(12.0), margin_bottom: px(16.0), padding_left: px(20.0)));\n    render! { View(style: style) }\n}\n";
     let once = format_source(src, &opts(4, 100)).unwrap();
     let twice = format_source(&once, &opts(4, 100)).unwrap();
     assert_eq!(
@@ -212,7 +212,7 @@ fn closure_wrapped_render_kwarg_converges_in_one_call() {
     if !rustfmt_available() {
         return;
     }
-    let src = "fn ui() -> Element {\n    render! { view { ForEach(each: move || rows(), key: |i: &usize| i.to_string(), children: move |_: usize| render! { view(style: row_style) }) } }\n}\n";
+    let src = "fn ui() -> Element {\n    render! { View { ForEach(each: move || rows(), key: |i: &usize| i.to_string(), children: move |_: usize| render! { View(style: row_style) }) } }\n}\n";
     let once = format_source(src, &opts(4, 100)).unwrap();
     let twice = format_source(&once, &opts(4, 100)).unwrap();
     assert_eq!(
@@ -233,7 +233,7 @@ fn closure_wrapped_render_stays_unblocked_through_rustfmt() {
     // rustfmt blocks a multi-line `|…| render! {…}` closure body in the
     // embedded-expr pass; inside a macro body the slot is whisker-fmt's,
     // so the sole-macro body must come back unblocked.
-    let src = "fn ui() -> Element {\n    render! {\n        ForEach(\n            each: move || rows(),\n            key: |i: &usize| i.to_string(),\n            children: move |_: usize| render! {\n                view(style: row_style, on_tap: move |_| handle_row_tap_for(row_identifier))\n            },\n        )\n    }\n}\n";
+    let src = "fn ui() -> Element {\n    render! {\n        ForEach(\n            each: move || rows(),\n            key: |i: &usize| i.to_string(),\n            children: move |_: usize| render! {\n                View(style: row_style, on_tap: move |_| handle_row_tap_for(row_identifier))\n            },\n        )\n    }\n}\n";
     let once = format_source(src, &opts(4, 100)).unwrap();
     assert!(
         once.contains("children: move |_: usize| render! {\n"),
@@ -294,7 +294,7 @@ fn full_pipeline_composite_podcast_like_tree() {
     }
     // A shape close to the real `examples/podcast` app, through the FULL
     // pipeline, checked for idempotency and the max_width budget.
-    let messy = "fn app()->Element{render!{view(style:css!(flex_grow:1.0,width:vw(100),height:vh(100),background_color:BG,display:Display::Flex)){Router(routes:routes!{Stack{Route(path:\"\",component:Home)Route(path:\"detail/:id\",component:Detail)}}){Outlet{}SwipeBack{}}}}}\n";
+    let messy = "fn app()->Element{render!{View(style:css!(flex_grow:1.0,width:vw(100),height:vh(100),background_color:BG,display:Display::Flex)){Router(routes:routes!{Stack{Route(path:\"\",component:Home)Route(path:\"detail/:id\",component:Detail)}}){Outlet{}}}}}\n";
     let once = format_source(messy, &opts(4, 100)).unwrap();
     let twice = format_source(&once, &opts(4, 100)).unwrap();
     assert_eq!(

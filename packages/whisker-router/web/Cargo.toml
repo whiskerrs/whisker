@@ -1,0 +1,20 @@
+[package]
+name = "whisker-router-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web History API Host adapter for whisker-router."
+
+[dependencies]
+whisker = { workspace = true }
+whisker-web = { workspace = true }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "EventTarget",
+    "History",
+    "Location",
+    "PopStateEvent",
+    "Window",
+] }

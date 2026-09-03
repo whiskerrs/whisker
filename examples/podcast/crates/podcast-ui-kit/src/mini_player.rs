@@ -100,14 +100,14 @@ pub fn mini_player() -> Element {
     // below builds each handler inline, cloning the (Rc-backed)
     // `Player` per build — cheap, and lets every re-mount get a
     // fresh closure.
-    let player_for_toggle = player.clone();
-    let player_for_skip = player.clone();
+    let player_for_toggle = StoredValue::new(player.clone());
+    let player_for_skip = StoredValue::new(player.clone());
 
     render! {
-        Show(when: visible, fallback: || render! { fragment() }) {
+        Show(when: visible, fallback: || render! { Fragment() }) {
             // Floats above content via absolute positioning. The
             // parent page must use `position: relative` (default).
-            view(style: css!(
+            View(style: css!(
                 position: PositionKind::Absolute,
                 left: theme::GUTTER,
                 right: theme::GUTTER,
@@ -121,22 +121,22 @@ pub fn mini_player() -> Element {
                 border_radius: px(12),
                 background_color: theme::MINI_PLAYER_BG,
             )) {
-                // Leading artwork. `aspect-ratio` keeps Lynx from
-                // collapsing the box before the image loads.
+                // Leading artwork. Explicit geometry keeps the box stable
+                // before the image loads.
                 Image(
                     style: css!(
                         width: px(40),
                         height: px(40),
                         border_radius: px(6),
                         background_color: Color::rgba(255, 255, 255, 0.15),
-                    ).raw("aspect-ratio", "1 / 1"),
+                    ).aspect_ratio(1.0, 1.0),
                     src: artwork_src,
                     mode: ImageMode::AspectFill,
                 )
                 // Stacked text — episode title on top, show title
                 // below. Flex-grow lets it absorb the slack so the
                 // trailing controls stay right-aligned.
-                view(style: css!(
+                View(style: css!(
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                     display: Display::Flex,
@@ -144,27 +144,27 @@ pub fn mini_player() -> Element {
                     margin_left: px(10),
                     margin_right: px(10),
                 )) {
-                    text(
+                    Text(
                         style: css!(
                             font_size: px(13),
                             color: theme::TEXT_PRIMARY,
                             font_weight: FontWeight::Numeric(600),
                             text_overflow: TextOverflow::Ellipsis,
-                        ).raw("text-maxline", "1"),
+                        ),
                         value: title_text,
                     )
-                    text(
+                    Text(
                         style: css!(
                             font_size: px(11),
                             color: theme::TEXT_SECONDARY,
                             margin_top: px(2),
                             text_overflow: TextOverflow::Ellipsis,
-                        ).raw("text-maxline", "1"),
+                        ),
                         value: show_text,
                     )
                 }
                 // Play / pause toggle.
-                view(
+                View(
                     style: css!(
                         width: px(36),
                         height: px(36),
@@ -174,7 +174,7 @@ pub fn mini_player() -> Element {
                         justify_content: JustifyContent::Center,
                     ),
                     on_tap: {
-                        let p = player_for_toggle.clone();
+                        let p = player_for_toggle.get();
                         move |_| {
                             if status.get().is_playing {
                                 p.pause();
@@ -187,7 +187,7 @@ pub fn mini_player() -> Element {
                     Icon(svg: play_icon, color: "#ffffff", size: "24")
                 }
                 // Skip-30s.
-                view(
+                View(
                     style: css!(
                         width: px(36),
                         height: px(36),
@@ -198,7 +198,7 @@ pub fn mini_player() -> Element {
                         margin_left: px(4),
                     ),
                     on_tap: {
-                        let p = player_for_skip.clone();
+                        let p = player_for_skip.get();
                         move |_| {
                             let pos = status.get().position;
                             p.seek_to(pos + 30.0);

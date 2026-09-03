@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.border-radius-style-003",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/border-radius-style-003.htm",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "A double border follows the rounded border curve and retains two visible bands.",
+    "adaptation": "The WPT box is reduced to a 120 by 80 logical-pixel box with an 18px double border and 36px radii. Samples distinguish the outer band, transparent middle gap, inner band, rounded outer corner, and unpainted content."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 140.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [10.0, 10.0, 120.0, 80.0],
+        "background": { "kind": "named", "value": "transparent" },
+        "border": {
+          "widths": [18.0, 18.0, 18.0, 18.0],
+          "colors": [
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" }
+          ],
+          "styles": ["double", "double", "double", "double"],
+          "radii": [36.0, 36.0, 36.0, 36.0]
+        }
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [70.0, 13.0], "color": { "kind": "named", "value": "black" }, "tolerance": 24 },
+          { "point": [70.0, 19.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 24 },
+          { "point": [70.0, 25.0], "color": { "kind": "named", "value": "black" }, "tolerance": 24 },
+          { "point": [11.0, 11.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 24 },
+          { "point": [70.0, 50.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 24 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

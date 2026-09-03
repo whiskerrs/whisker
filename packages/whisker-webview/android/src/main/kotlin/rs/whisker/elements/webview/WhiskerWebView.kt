@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting a native android.webkit.WebView. Registration
+// Whisker module view hosting a native android.webkit.WebView. Registration
 // is driven by `WebViewModule`'s `definition()`, not by annotations on
 // this class.
 //
@@ -20,27 +20,29 @@
 // ## Event dispatch
 //
 // WebViewClient / WebChromeClient callbacks fire on the UI thread and
-// dispatch SYNCHRONOUSLY. They can arrive while Lynx is mid-teardown, and
+// dispatch SYNCHRONOUSLY. They can arrive while the Host is mid-teardown, and
 // that is only safe because the Rust renderer is re-entrancy-safe
 // (whisker #3: `with_renderer` takes a shared borrow and every renderer
 // field borrow is scoped so it never spans a re-entrant FFI call).
 //
 // The ONE exception is `@JavascriptInterface`, which fires on JavaBridge,
 // a background thread. That path must hop to the UI thread via
-// `view?.post { … }` before touching any Android View / Lynx emitter
+// `view().post { … }` before touching any Android View / Host event emitter
 // state — a genuine thread transition, not a reentrancy guard.
 //
 // ## Teardown
 //
 // An OnAttachStateChangeListener tears the web process down on detach so
 // the renderer process is released promptly rather than leaking after
-// Lynx removes the element.
+// the Host removes the element.
 
 package rs.whisker.elements.webview
 
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -52,9 +54,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerCustomEvent
-import rs.whisker.runtime.WhiskerPromise
 import rs.whisker.runtime.WhiskerUI
-import rs.whisker.runtime.WhiskerValue
 
 open class WhiskerWebView(context: WhiskerContext) :
     WhiskerUI<android.webkit.WebView>(context) {
@@ -101,9 +101,9 @@ open class WhiskerWebView(context: WhiskerContext) :
     /** The current `html` prop value. Only rendered when `url` is empty. */
     private var pendingHtml: String = ""
 
-    private var jsEnabled: Boolean = false
-
     private var scrollEnabled: Boolean = true
+
+    private val cleanupHandler = Handler(Looper.getMainLooper())
 
     /** Glob patterns; an empty list means "allow all". */
     private var originWhitelist: List<String> = listOf("https://*", "http://*")
@@ -268,9 +268,16 @@ open class WhiskerWebView(context: WhiskerContext) :
 
                 override fun onViewDetachedFromWindow(v: android.view.View) {
                     val webView = v as? android.webkit.WebView ?: return
-                    webView.stopLoading()
-                    webView.removeJavascriptInterface("__whisker_android")
-                    webView.destroy()
+                    // A Host reparent can detach and attach synchronously in
+                    // one frame. Defer destruction so that path keeps the
+                    // live browsing context.
+                    cleanupHandler.post {
+                        if (!webView.isAttachedToWindow) {
+                            webView.stopLoading()
+                            webView.removeJavascriptInterface("__whisker_android")
+                            webView.destroy()
+                        }
+                    }
                 }
             }
         )
@@ -287,8 +294,14 @@ open class WhiskerWebView(context: WhiskerContext) :
      * re-render that touches an unrelated prop from re-loading the page.
      */
     fun setUrl(incoming: String) {
-        val wv = view ?: return
-        if (incoming.isEmpty()) return
+        val wv = view()
+        if (incoming.isEmpty()) {
+            if (lastLoadedUrl != null) {
+                lastLoadedUrl = null
+                loadInlineContent(wv)
+            }
+            return
+        }
         if (incoming == lastLoadedUrl) return
         lastLoadedUrl = incoming
         wv.loadUrl(incoming)
@@ -300,32 +313,30 @@ open class WhiskerWebView(context: WhiskerContext) :
      */
     fun setHtml(html: String) {
         pendingHtml = html
-        val wv = view ?: return
+        val wv = view()
         if (lastLoadedUrl != null && lastLoadedUrl!!.isNotEmpty()) return
-        if (html.isEmpty()) return
-        wv.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+        loadInlineContent(wv)
     }
 
     /** `user-agent` prop setter. Must be set before any load to take effect. */
     fun setUserAgent(ua: String) {
-        val wv = view ?: return
+        val wv = view()
         wv.settings.userAgentString = ua.ifEmpty { null }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    fun setJavascriptEnabled(flag: String) {
-        jsEnabled = flag == "true"
-        val wv = view ?: return
-        wv.settings.javaScriptEnabled = jsEnabled
+    fun setJavascriptEnabled(enabled: Boolean) {
+        val wv = view()
+        wv.settings.javaScriptEnabled = enabled
     }
 
     /**
      * `scroll-enabled` prop setter. Disabling only blocks touch-driven
      * scrolling; programmatic `scrollTo()` still works.
      */
-    fun setScrollEnabled(flag: String) {
-        scrollEnabled = flag != "false"
-        val wv = view ?: return
+    fun setScrollEnabled(enabled: Boolean) {
+        scrollEnabled = enabled
+        val wv = view()
         wv.isVerticalScrollBarEnabled = scrollEnabled
         wv.isHorizontalScrollBarEnabled = scrollEnabled
         if (!scrollEnabled) {
@@ -367,93 +378,38 @@ open class WhiskerWebView(context: WhiskerContext) :
     // -------------------------------------------------------------------------
 
     fun reload() {
-        view?.reload()
+        view().reload()
     }
 
     fun goBack() {
-        val wv = view ?: return
+        val wv = view()
         if (wv.canGoBack()) wv.goBack()
     }
 
     fun goForward() {
-        val wv = view ?: return
+        val wv = view()
         if (wv.canGoForward()) wv.goForward()
     }
 
     fun stopLoading() {
-        view?.stopLoading()
+        view().stopLoading()
     }
 
     /**
      * Rust → page message delivery, via `window.whisker._receive(data)`.
      */
     fun postMessageToPage(data: String) {
-        val wv = view ?: return
+        val wv = view()
         // Encode as a JSON string literal so the page receives a JS string
         // rather than a bare token that would break the injected expression.
-        val encoded = buildString {
-            append('"')
-            for (c in data) {
-                when (c) {
-                    '\\' -> append("\\\\")
-                    '"' -> append("\\\"")
-                    '\n' -> append("\\n")
-                    '\r' -> append("\\r")
-                    else -> append(c)
-                }
-            }
-            append('"')
-        }
+        val encoded = org.json.JSONObject.quote(data)
         wv.evaluateJavascript("window.whisker._receive($encoded)", null)
     }
 
-    /**
-     * Run [script] in the page and return the result as a
-     * `WhiskerValue.Map(mapOf("value" to …))`.
-     *
-     * One layer of JSON encoding is stripped so the Rust side gets a bare
-     * string; non-string results (numbers, booleans, null) come back as
-     * their token text ("42", "null").
-     *
-     * TODO: Android result-returning element methods need the invoke_async
-     * bridge path in lynx_native_renderer.cc, which is compiled iOS-only in
-     * Lynx 3.8.0-whisker.1 (memory note
-     * `whisker_element_method_results_need_async`). Until the fork wires
-     * that up, the returned value does not reach Rust — and the
-     * `evaluateJavascript` callback is not guaranteed to have run by the
-     * time this returns, so `result` may still be empty.
-     */
-    fun evaluateJs(script: String): WhiskerValue {
-        val wv = view ?: return WhiskerValue.Map(mapOf("value" to WhiskerValue.Str("")))
-        var result: String = ""
-        wv.evaluateJavascript(script) { jsonEncodedResult ->
-            // Null once the WebView has been destroyed.
-            val raw = jsonEncodedResult ?: "null"
-            result = jsonDecodeString(raw)
-        }
-        return WhiskerValue.Map(mapOf("value" to WhiskerValue.Str(result)))
+    /** Run [script] in the page for its side effects. */
+    fun evaluateJs(script: String) {
+        view().evaluateJavascript(script, null)
     }
-
-    /** Evaluate JavaScript and resolve [promise] from the WebView's
-     *  callback with the JSON-encoded result string (`"null"` when the
-     *  script yields no value — including on a JS exception, which
-     *  Android's `evaluateJavascript` does not report). */
-    fun evaluateJsWithResult(script: String, promise: WhiskerPromise) {
-        val wv = view
-        if (wv == null) {
-            promise.resolve(WhiskerValue.Str("null"))
-            return
-        }
-        wv.evaluateJavascript(script) { jsonEncodedResult ->
-            promise.resolve(WhiskerValue.Str(jsonEncodedResult ?: "null"))
-        }
-    }
-
-    fun queryCanGoBack(): WhiskerValue =
-        WhiskerValue.Bool(view?.canGoBack() ?: false)
-
-    fun queryCanGoForward(): WhiskerValue =
-        WhiskerValue.Bool(view?.canGoForward() ?: false)
 
     // -------------------------------------------------------------------------
     // Inner JS bridge interface
@@ -463,13 +419,13 @@ open class WhiskerWebView(context: WhiskerContext) :
      * Receives `window.whisker.postMessage(data)` calls from the page.
      *
      * `@JavascriptInterface` methods run on the JavaBridge background
-     * thread, so the hop back to the UI thread via `view?.post { … }` must
-     * happen before any View API or Lynx emitter state is touched.
+     * thread, so the hop back to the UI thread via `view().post { … }` must
+     * happen before any View API or Host event emitter state is touched.
      */
     private inner class WhiskerBridge {
         @JavascriptInterface
         fun postMessage(data: String) {
-            view?.post {
+            view().post {
                 WhiskerCustomEvent.dispatch(
                     ui = this@WhiskerWebView,
                     name = "message",
@@ -483,52 +439,12 @@ open class WhiskerWebView(context: WhiskerContext) :
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * Strip one layer of JSON string encoding from a value delivered by
-     * `evaluateJavascript`'s ValueCallback, which JSON-encodes the JS
-     * return value: a JS string `"hello"` arrives as the Java String
-     * `"\"hello\""`, while a number, boolean, or null arrives as its bare
-     * token. Only the former is unwrapped; malformed input is returned
-     * unchanged.
-     */
-    private fun jsonDecodeString(s: String): String {
-        if (s.length < 2 || !s.startsWith('"') || !s.endsWith('"')) {
-            return s
+    private fun loadInlineContent(webView: android.webkit.WebView) {
+        if (pendingHtml.isEmpty()) {
+            webView.loadUrl("about:blank")
+        } else {
+            webView.loadDataWithBaseURL(null, pendingHtml, "text/html", "utf-8", null)
         }
-        val inner = s.substring(1, s.length - 1)
-        val out = StringBuilder(inner.length)
-        var i = 0
-        while (i < inner.length) {
-            val c = inner[i]
-            if (c == '\\' && i + 1 < inner.length) {
-                when (val esc = inner[i + 1]) {
-                    '"', '\\', '/' -> { out.append(esc); i += 2 }
-                    'n' -> { out.append('\n'); i += 2 }
-                    'r' -> { out.append('\r'); i += 2 }
-                    't' -> { out.append('\t'); i += 2 }
-                    'b' -> { out.append('\b'); i += 2 }
-                    'u' -> {
-                        if (i + 5 < inner.length) {
-                            val hex = inner.substring(i + 2, i + 6)
-                            val code = hex.toIntOrNull(16)
-                            if (code != null) {
-                                out.append(code.toChar())
-                                i += 6
-                            } else {
-                                out.append(c); i++
-                            }
-                        } else {
-                            out.append(c); i++
-                        }
-                    }
-                    else -> { out.append(c); i++ }
-                }
-            } else {
-                out.append(c)
-                i++
-            }
-        }
-        return out.toString()
     }
 
     /**

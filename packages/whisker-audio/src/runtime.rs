@@ -1,10 +1,10 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use whisker::platform_module::WhiskerValue;
+use whisker::runtime::module::ModuleSubscription;
 use whisker::{ArcReadSignal, ArcRwSignal, ReadSignal, module};
 
 /// Current playback state. Updated by the native side and read
@@ -64,6 +64,8 @@ pub struct Player {
 // native player without manual book-keeping.
 struct PlayerInner {
     id: u64,
+    status: ArcRwSignal<PlaybackStatus>,
+    runtime: Rc<RefCell<AudioRuntimeState>>,
 }
 
 impl PlayerInner {
@@ -80,7 +82,7 @@ impl Drop for PlayerInner {
         // Best-effort: a bridge teardown before us turns this into a
         // silent `WhiskerValue::Error`; the OS reclaims at exit.
         let _ = module!("WhiskerAudio").invoke("release", vec![WhiskerValue::Int(self.id as i64)]);
-        unregister_status(self.id);
+        self.runtime.borrow_mut().entries.remove(&self.id);
     }
 }
 
@@ -96,12 +98,20 @@ impl Player {
     pub fn new(source: impl Into<String>) -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let source = source.into();
+        let runtime = whisker::runtime::runtime_local::state::<AudioRuntimeState>();
+        install_status_listener(&runtime);
+        let status = ArcRwSignal::new(PlaybackStatus::default());
+        runtime.borrow_mut().entries.insert(id, status.clone());
         module!("WhiskerAudio").invoke(
             "create",
             vec![WhiskerValue::Int(id as i64), WhiskerValue::String(source)],
         );
         Self {
-            inner: Rc::new(PlayerInner { id }),
+            inner: Rc::new(PlayerInner {
+                id,
+                status,
+                runtime,
+            }),
         }
     }
 
@@ -224,7 +234,8 @@ impl Player {
     /// `duration` — at that point `is_loaded` flips to `true`.
     /// All clones of the same `Player` see the identical signal.
     pub fn status(&self) -> ReadSignal<PlaybackStatus> {
-        register_status(self.inner.id)
+        let (read, _write): (ArcReadSignal<_>, _) = self.inner.status.clone().split();
+        read.into()
     }
 }
 
@@ -232,50 +243,23 @@ impl Player {
 // allocate; the dispatch path that consumes the id is main-thread-only.
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-// Shared between the bridge-callback closure and `register_status`
-// inserts. Wrapped in `MainThreadOnly` so `OnceLock<T>`'s `T: Sync`
-// bound passes — see [`MainThreadOnly`] below.
-type StatusEntries = Rc<RefCell<HashMap<u64, ArcRwSignal<PlaybackStatus>>>>;
-
-struct StatusTable {
-    entries: MainThreadOnly<StatusEntries>,
-}
-
-static STATUS_TABLE: OnceLock<StatusTable> = OnceLock::new();
-
-/// Install the global `statusChanged` listener (once) and return
-/// the per-player signal handle. Re-entering for the same id
-/// returns the existing signal so two clones of the same `Player`
-/// see identical updates.
-fn register_status(id: u64) -> ReadSignal<PlaybackStatus> {
-    let table = STATUS_TABLE.get_or_init(install_status_listener);
-    let entries = &table.entries.inner;
-    let mut entries = entries.borrow_mut();
-    let signal = entries
-        .entry(id)
-        .or_insert_with(|| ArcRwSignal::new(PlaybackStatus::default()));
-    let (read, _write): (ArcReadSignal<_>, _) = signal.clone().split();
-    read.into()
-}
-
-/// Remove `id` from the dispatch table on player drop so a long-
-/// lived process doesn't accumulate dead per-player slots.
-fn unregister_status(id: u64) {
-    if let Some(table) = STATUS_TABLE.get() {
-        if let Ok(mut entries) = table.entries.inner.try_borrow_mut() {
-            entries.remove(&id);
-        }
-    }
+#[derive(Default)]
+struct AudioRuntimeState {
+    entries: HashMap<u64, ArcRwSignal<PlaybackStatus>>,
+    subscription: Option<ModuleSubscription>,
 }
 
 /// One-shot install of the `statusChanged` subscription. Stale
 /// events for ids that were already released drop silently.
-fn install_status_listener() -> StatusTable {
-    let entries: StatusEntries = Rc::new(RefCell::new(HashMap::new()));
-    let entries_for_listener = MainThreadOnly {
-        inner: entries.clone(),
-    };
+fn install_status_listener(runtime: &Rc<RefCell<AudioRuntimeState>>) {
+    if runtime.borrow().subscription.is_some() {
+        return;
+    }
+    let weak_runtime = Rc::downgrade(runtime);
     let sub = module!("WhiskerAudio").on_event("statusChanged", move |payload| {
+        let Some(runtime) = weak_runtime.upgrade() else {
+            return;
+        };
         let WhiskerValue::Map(fields) = payload else {
             return;
         };
@@ -290,20 +274,12 @@ fn install_status_listener() -> StatusTable {
             is_loaded: read_bool(&fields, "isLoaded"),
             is_playing: read_bool(&fields, "isPlaying"),
         };
-        // Bind the wrapper (not `.inner`) so Rust 2021 disjoint
-        // captures move the `Send + Sync` impl as a whole.
-        let table = &entries_for_listener;
-        let borrow = table.inner.borrow();
-        if let Some(rw) = borrow.get(&id) {
+        let runtime = runtime.borrow();
+        if let Some(rw) = runtime.entries.get(&id) {
             rw.set(status);
         }
     });
-    // Leak: listener lives for the process; dropping the
-    // subscription would also drop the closure the bridge holds.
-    std::mem::forget(sub);
-    StatusTable {
-        entries: MainThreadOnly { inner: entries },
-    }
+    runtime.borrow_mut().subscription = Some(sub);
 }
 
 fn read_f64(fields: &BTreeMap<String, WhiskerValue>, key: &str) -> f64 {
@@ -317,16 +293,3 @@ fn read_f64(fields: &BTreeMap<String, WhiskerValue>, key: &str) -> f64 {
 fn read_bool(fields: &BTreeMap<String, WhiskerValue>, key: &str) -> bool {
     matches!(fields.get(key), Some(WhiskerValue::Bool(true)))
 }
-
-/// Main-thread-only wrapper. Asserts the Lynx TASM-thread contract so
-/// `OnceLock<T>`'s `T: Sync` bound passes without making `Rc` actually
-/// `Sync`.
-#[derive(Clone)]
-struct MainThreadOnly<T> {
-    inner: T,
-}
-// SAFETY: every consumer runs on the reactive thread by contract — the
-// bridge dispatches status events on the main thread. Misuse would corrupt
-// the arena.
-unsafe impl<T> Send for MainThreadOnly<T> {}
-unsafe impl<T> Sync for MainThreadOnly<T> {}
