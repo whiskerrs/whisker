@@ -391,7 +391,7 @@ class HostConformanceTest {
         instrumentation.runOnMainSync {
             val context = ApplicationProvider.getApplicationContext<android.content.Context>()
             view = WhiskerView(context)
-            view.observeRasterResourceEvents { event ->
+            view.observeRasterResourceEventsForTesting { event ->
                 received.set(event)
                 ready.countDown()
             }
@@ -420,7 +420,7 @@ class HostConformanceTest {
 
         val failed = CountDownLatch(1)
         instrumentation.runOnMainSync {
-            view.observeRasterResourceEvents { unsupported ->
+            view.observeRasterResourceEventsForTesting { unsupported ->
                 received.set(unsupported)
                 failed.countDown()
             }
@@ -982,33 +982,33 @@ private class Driver(
     }
 
     fun commitTransform(transform: FloatArray): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         check(stage(tag = 9, numbers = transform))
-        return view.commitFrameFromNative()
+        return view.commitFrameForTesting()
     }
 
     fun acceptsBackdropBlur(radius: Float): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         val accepted = stage(tag = 24, scalar = radius)
-        val committed = view.commitFrameFromNative()
+        val committed = view.commitFrameForTesting()
         return accepted && committed
     }
 
     fun acceptsPointerCapture(): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         check(stage(tag = MobileAbi.OP_CAPTURE, wide = 7))
         check(stage(tag = MobileAbi.OP_RELEASE_CAPTURE, wide = 7))
-        return view.commitFrameFromNative()
+        return view.commitFrameForTesting()
     }
 
     fun rejectOpacity(opacity: Float): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         check(stage(tag = 10, scalar = opacity))
-        return !view.commitFrameFromNative()
+        return !view.commitFrameForTesting()
     }
 
     fun rejectUnregisteredRasterResource(resourceId: Long): Boolean {
@@ -1017,25 +1017,25 @@ private class Driver(
 
     fun acceptRasterResource(resourceId: Long): Boolean {
         val bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
-        check(view.registerRasterResourceFromNative(resourceId, bitmap))
+        check(view.registerRasterResourceForTesting(resourceId, bitmap))
         return commitRasterResource(resourceId)
     }
 
     fun reportsRasterDecodeFailure(): Boolean {
         check(
-            view.loadRasterResourceBytesFromNative(
+            view.loadRasterResourceBytesForTesting(
                 7L,
                 1L,
                 "image/png",
                 byteArrayOf(0, 1, 2, 3),
             ),
         )
-        return view.awaitRasterResourceFromNative(7L, 1L, 5_000)?.state ==
+        return view.awaitRasterResourceForTesting(7L, 1L, 5_000)?.state ==
             HostResourceState.Failed
     }
 
     private fun commitRasterResource(resourceId: Long): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         val layer = backgroundGeometry(null).apply { appendResourceId(resourceId, this) }
         val packed = ArrayList<Float>().apply {
@@ -1053,7 +1053,7 @@ private class Driver(
                 names = emptyArray(),
             ),
         )
-        return view.commitFrameFromNative()
+        return view.commitFrameForTesting()
     }
 
     private fun registerRasterResource(command: JSONObject) {
@@ -1065,7 +1065,7 @@ private class Driver(
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
             setPixels(colors, 0, width, 0, 0, width, height)
         }
-        check(view.registerRasterResourceFromNative(command.getLong("id"), bitmap))
+        check(view.registerRasterResourceForTesting(command.getLong("id"), bitmap))
     }
 
     private fun loadRasterResource(command: JSONObject) {
@@ -1073,13 +1073,13 @@ private class Driver(
         val generation = command.getLong("generation")
         val source = command.getJSONObject("source")
         val accepted = when (source.getString("kind")) {
-            "bytes" -> view.loadRasterResourceBytesFromNative(
+            "bytes" -> view.loadRasterResourceBytesForTesting(
                 resourceId,
                 generation,
                 source.getString("media_type"),
                 Base64.decode(source.getString("base64"), Base64.DEFAULT),
             )
-            "url" -> view.loadRasterResourceUrlFromNative(
+            "url" -> view.loadRasterResourceUrlForTesting(
                 resourceId,
                 generation,
                 source.getString("value"),
@@ -1091,7 +1091,7 @@ private class Driver(
 
     private fun releaseRasterResource(command: JSONObject) {
         check(
-            view.releaseRasterResourceFromNative(
+            view.releaseRasterResourceForTesting(
                 command.getLong("id"),
                 command.getLong("generation"),
             ),
@@ -1100,7 +1100,7 @@ private class Driver(
 
     private fun checkpointRasterResource(command: JSONObject) {
         val snapshot = checkNotNull(
-            view.awaitRasterResourceFromNative(
+            view.awaitRasterResourceForTesting(
                 command.getLong("id"),
                 command.getLong("generation"),
                 5_000,
@@ -1121,19 +1121,19 @@ private class Driver(
 
     private fun present(command: JSONObject) {
         val revision = command.getLong("revision")
-        check(view.beginFrameFromNative(0, 1, 0, revision) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, revision) == 0)
         check(stage(tag = 1, member = 1))
         val rect = command.getJSONArray("rect").floats()
         check(stage(tag = 6, numbers = rect + floatArrayOf(0f, 0f, 0f, 0f)))
         val (numbers, names) = paint(command)
         check(stage(tag = 7, numbers = numbers, names = names))
-        check(view.commitFrameFromNative()) { "$id rejected present_box" }
+        check(view.commitFrameForTesting()) { "$id rejected present_box" }
     }
 
     private fun presentScene(command: JSONObject) {
         val revision = command.getLong("revision")
         val nodes = command.getJSONArray("nodes")
-        check(view.beginFrameFromNative(0, 1, 0, revision) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, revision) == 0)
         nodes.objects().forEach { node ->
             check(stage(tag = 1, node = node.getLong("id"), member = if (node.has("text")) 2 else 1))
         }
@@ -1494,7 +1494,7 @@ private class Driver(
                 ),
             )
         }
-        check(view.commitFrameFromNative()) { "$id: Host rejected the staged scene frame" }
+        check(view.commitFrameForTesting()) { "$id: Host rejected the staged scene frame" }
     }
 
     private fun stage(
@@ -1511,7 +1511,7 @@ private class Driver(
         numbers: FloatArray? = null,
         text: String? = null,
         names: Array<String>? = null,
-    ): Boolean = view.stageOperationFromNative(
+    ): Boolean = view.stageOperationForTesting(
         tag,
         flags,
         node,
