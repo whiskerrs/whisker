@@ -27,6 +27,63 @@ final class HostConformanceTests: XCTestCase {
         WhiskerModuleKernel.install(BuiltInElementModule())
     }
 
+    func testBootstrapRejectsUnknownEnumDiscriminants() {
+        func withStringRef<T>(_ value: String, _ body: (WhiskerStringRef) -> T) -> T {
+            let bytes = Array(value.utf8CString)
+            return bytes.withUnsafeBufferPointer { buffer in
+                body(WhiskerStringRef(
+                    ptr: UnsafePointer(buffer.baseAddress!),
+                    len: bytes.count - 1
+                ))
+            }
+        }
+
+        func bind(childPolicy: UInt8, measurement: UInt8) -> Bool {
+            withStringRef("test:View") { name in
+                var registration = WhiskerMobileElementRegistration()
+                registration.element_type = 1
+                registration.child_policy = childPolicy
+                registration.measurement = measurement
+                registration.name = name
+                return withUnsafePointer(to: &registration) { registrations in
+                    var bootstrap = WhiskerMobileBootstrap()
+                    bootstrap.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                    bootstrap.protocol_major = 1
+                    bootstrap.registrations = registrations
+                    bootstrap.registration_count = 1
+                    return HostElementBootstrap.bind(bootstrap)
+                }
+            }
+        }
+
+        XCTAssertFalse(bind(childPolicy: .max, measurement: 0))
+        XCTAssertFalse(bind(childPolicy: 0, measurement: .max))
+
+        withStringRef("test:View") { registrationName in
+            withStringRef("value") { memberName in
+                var member = WhiskerMobileMemberRegistration()
+                member.id = 1
+                member.value_kind = .max
+                member.name = memberName
+                withUnsafePointer(to: &member) { properties in
+                    var registration = WhiskerMobileElementRegistration()
+                    registration.element_type = 1
+                    registration.name = registrationName
+                    registration.properties = properties
+                    registration.property_count = 1
+                    withUnsafePointer(to: &registration) { registrations in
+                        var bootstrap = WhiskerMobileBootstrap()
+                        bootstrap.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                        bootstrap.protocol_major = 1
+                        bootstrap.registrations = registrations
+                        bootstrap.registration_count = 1
+                        XCTAssertFalse(HostElementBootstrap.bind(bootstrap))
+                    }
+                }
+            }
+        }
+    }
+
     func testPointerCaptureOperationsReachTheUIKitSurface() {
         let view = WhiskerView(frame: .zero)
         let registration = WhiskerElementRegistration(

@@ -13,48 +13,105 @@ enum HostElementBootstrap {
         guard raw.abi_major == UInt16(WHISKER_MOBILE_ABI_MAJOR),
               raw.protocol_major == 1,
               let base = raw.registrations else { return false }
-        let registrations = (0..<raw.registration_count).map { index -> WhiskerElementRegistration in
+        var registrations: [WhiskerElementRegistration] = []
+        registrations.reserveCapacity(raw.registration_count)
+        for index in 0..<raw.registration_count {
             let value = base.advanced(by: index).pointee
-            return WhiskerElementRegistration(
+            let name = hostString(value.name)
+            guard value.element_type > 0,
+                  !name.isEmpty,
+                  !name.contains("@"),
+                  let childPolicy = decodeChildPolicy(value.child_policy),
+                  let measurement = decodeMeasurement(value.measurement),
+                  let properties = decodeMembers(value.properties, value.property_count),
+                  let events = decodeMembers(value.events, value.event_count),
+                  let commands = decodeMembers(value.commands, value.command_count),
+                  membersAreUnique(properties),
+                  membersAreUnique(events),
+                  membersAreUnique(commands) else { return false }
+            registrations.append(WhiskerElementRegistration(
                 elementType: Int(value.element_type),
-                name: hostString(value.name),
-                childPolicy: [WhiskerChildPolicy.none, .elements, .plainText][Int(value.child_policy)],
-                measurement: [WhiskerMeasurement.none, .text, .replacedContent, .custom][Int(value.measurement)],
+                name: name,
+                childPolicy: childPolicy,
+                measurement: measurement,
                 textStyle: value.text_style != 0,
-                properties: decodeMembers(value.properties, value.property_count).map {
+                properties: properties.map {
                     WhiskerPropertyBinding(id: $0.id, name: $0.name, value: $0.kind)
                 },
-                events: decodeMembers(value.events, value.event_count).map {
+                events: events.map {
                     WhiskerEventBinding(
                         id: $0.id,
                         name: $0.name,
                         detail: $0.optional ? $0.kind : nil
                     )
                 },
-                commands: decodeMembers(value.commands, value.command_count).map {
+                commands: commands.map {
                     WhiskerCommandBinding(id: $0.id, name: $0.name, arguments: $0.kind)
                 }
-            )
+            ))
         }
         return WhiskerElementRegistry.bind(registrations)
     }
 }
 
+private func decodeChildPolicy(_ raw: UInt8) -> WhiskerChildPolicy? {
+    switch raw {
+    case 0: return WhiskerChildPolicy.none
+    case 1: return .elements
+    case 2: return .plainText
+    default: return nil
+    }
+}
+
+private func decodeMeasurement(_ raw: UInt8) -> WhiskerMeasurement? {
+    switch raw {
+    case 0: return WhiskerMeasurement.none
+    case 1: return .text
+    case 2: return .replacedContent
+    case 3: return .custom
+    default: return nil
+    }
+}
+
+private func decodeValueKind(_ raw: UInt8) -> WhiskerValueKind? {
+    switch raw {
+    case 0: return .null
+    case 1: return .bool
+    case 2: return .int
+    case 3: return .float
+    case 4: return .string
+    case 5: return .bytes
+    case 6: return .array
+    case 7: return .map
+    default: return nil
+    }
+}
+
+private func membersAreUnique(_ members: [DecodedMember]) -> Bool {
+    Set(members.map(\.id)).count == members.count
+        && Set(members.map(\.name)).count == members.count
+}
+
 private func decodeMembers(
     _ base: UnsafePointer<WhiskerMobileMemberRegistration>?,
     _ count: Int
-) -> [DecodedMember] {
-    guard let base else { return [] }
-    return (0..<count).map { index in
+) -> [DecodedMember]? {
+    if count == 0 { return [] }
+    guard let base else { return nil }
+    var members: [DecodedMember] = []
+    members.reserveCapacity(count)
+    for index in 0..<count {
         let raw = base.advanced(by: index).pointee
-        let kinds: [WhiskerValueKind] = [
-            .null, .bool, .int, .float, .string, .bytes, .array, .map,
-        ]
-        return DecodedMember(
+        let name = hostString(raw.name)
+        guard raw.id > 0, !name.isEmpty, let kind = decodeValueKind(raw.value_kind) else {
+            return nil
+        }
+        members.append(DecodedMember(
             id: Int(raw.id),
-            name: hostString(raw.name),
-            kind: kinds[Int(raw.value_kind)],
+            name: name,
+            kind: kind,
             optional: raw.optional_kind != 0
-        )
+        ))
     }
+    return members
 }
