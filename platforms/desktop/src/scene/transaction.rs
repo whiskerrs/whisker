@@ -931,6 +931,7 @@ impl DesktopScene {
             }
             self.pending_events.lock().unwrap().clear();
             self.pointer_captures.clear();
+            self.smooth_scrolls.clear();
         }
         for operation in &packet.operations {
             match operation {
