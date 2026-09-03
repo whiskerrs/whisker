@@ -42,6 +42,11 @@ import rs.whisker.runtime.scene.HostAccessibility
 import rs.whisker.runtime.scene.HostNode
 import rs.whisker.runtime.scene.HostScene
 import rs.whisker.runtime.scene.HostSceneOperation
+import rs.whisker.runtime.scene.OP_BACKGROUND_LAYERS
+import rs.whisker.runtime.scene.OP_CREATE
+import rs.whisker.runtime.scene.OP_DELETE
+import rs.whisker.runtime.scene.OP_INSERT
+import rs.whisker.runtime.scene.OP_LAYOUT
 
 private const val BACKGROUND_PACKED_LAYERS = 256
 
@@ -56,6 +61,19 @@ private data class CapturedPointerInput(
     val y: Float,
 )
 
+private class FailingElementView(context: android.content.Context) : View(context)
+
+private class FailingElementModule : Module() {
+    override fun definition(): ModuleDefinition = ModuleDefinition {
+        Name("FailingElement")
+        View("whisker.test/Failing", FailingElementView::class.java) {
+            Prop("checked") { _: FailingElementView, _: WhiskerValue ->
+                error("module property failure")
+            }
+        }
+    }
+}
+
 @RunWith(AndroidJUnit4::class)
 class HostConformanceTest {
     companion object {
@@ -64,6 +82,129 @@ class HostConformanceTest {
         fun registerBuiltIns() {
             WhiskerModuleKernel.install(BuiltInElementModule())
         }
+    }
+
+    @Test
+    fun pooledBuiltInVisibilityIsResetBeforeReuse() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val registration = WhiskerElementRegistration(
+                    elementType = 1,
+                    name = WhiskerBuiltInElements.TEXT,
+                    childPolicy = WhiskerChildPolicy.PlainText,
+                    measurement = WhiskerMeasurement.Text,
+                )
+                val elements = WhiskerElementRegistry.newBindings()
+                assertTrue(WhiskerElementRegistry.bind(elements, listOf(registration)))
+                val mounted = checkNotNull(
+                    elements.mount(1, context) { _, _ -> },
+                )
+                mounted.view.visibility = View.INVISIBLE
+
+                mounted.prepareForReuse { _, _ -> }
+
+                assertEquals(View.VISIBLE, mounted.view.visibility)
+            }
+    }
+
+    @Test
+    fun throwingModulePropertyDisablesOnlyTheMountedElement() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                WhiskerModuleKernel.install(FailingElementModule())
+                val registration = WhiskerElementRegistration(
+                    elementType = 20,
+                    name = "whisker.test/Failing",
+                    childPolicy = WhiskerChildPolicy.None,
+                    measurement = WhiskerMeasurement.None,
+                    properties = listOf(
+                        WhiskerPropertyBinding(1, "checked", WhiskerValueKind.Bool),
+                    ),
+                )
+                val elements = WhiskerElementRegistry.newBindings()
+                assertTrue(WhiskerElementRegistry.bind(elements, listOf(registration)))
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val mounted = checkNotNull(
+                    elements.mount(20, context) { _, _ -> },
+                )
+
+                mounted.setProperty(1, WhiskerValue.Bool(true))
+                mounted.setProperty(1, WhiskerValue.Bool(false))
+
+                assertEquals(View.VISIBLE, mounted.view.visibility)
+            }
+    }
+
+    @Test
+    fun invalidStructureAndLayoutAreRejectedBeforeViewMutation() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val root = WhiskerContainerView(context)
+                val elements = WhiskerElementRegistry.newBindings()
+                assertTrue(
+                    WhiskerElementRegistry.bind(
+                        elements,
+                        listOf(
+                            WhiskerElementRegistration(
+                                1,
+                                WhiskerBuiltInElements.VIEW,
+                                WhiskerChildPolicy.Elements,
+                                WhiskerMeasurement.None,
+                            ),
+                        ),
+                    ),
+                )
+                val scene = HostScene(
+                    root,
+                    context,
+                    { _, _, _ -> },
+                    { _, _, _ -> },
+                    { _ -> },
+                    HostRasterResourceStore(),
+                    elements,
+                )
+
+                assertEquals(0, scene.beginFrame(0, 1, 0, 1))
+                listOf(
+                    hostOperation(OP_CREATE, node = 1, member = 1),
+                    hostOperation(OP_CREATE, node = 2, member = 1),
+                    hostOperation(OP_CREATE, node = 3, member = 1),
+                    hostOperation(OP_INSERT, parent = 1, child = 2),
+                    hostOperation(OP_INSERT, parent = 2, child = 3),
+                ).forEach { assertTrue(scene.stage(it)) }
+                assertTrue(scene.commit())
+                val rootNode = root.getChildAt(0) as HostNode
+                val childNode = (0 until rootNode.childCount)
+                    .map(rootNode::getChildAt)
+                    .first { it is HostNode }
+                val childParent = childNode.parent
+
+                assertEquals(0, scene.beginFrame(1, 1, 1, 2))
+                scene.stage(hostOperation(OP_INSERT, parent = 3, child = 1))
+                assertTrue(!scene.commit())
+                assertTrue(childNode.parent === childParent)
+
+                assertEquals(0, scene.beginFrame(1, 1, 1, 2))
+                scene.stage(hostOperation(OP_DELETE, node = 2))
+                scene.stage(hostOperation(OP_BACKGROUND_LAYERS, node = 3))
+                assertTrue(!scene.commit())
+                assertTrue(childNode.parent === childParent)
+
+                assertEquals(0, scene.beginFrame(1, 1, 1, 2))
+                scene.stage(
+                    hostOperation(
+                        OP_LAYOUT,
+                        node = 1,
+                        numbers = floatArrayOf(0f, 0f, Float.NaN, 10f, 0f, 0f, 10f, 10f),
+                    ),
+                )
+                assertTrue(!scene.commit())
+            }
     }
 
     @Test
@@ -118,6 +259,12 @@ class HostConformanceTest {
                     (300 * density).roundToInt(),
                 )
                 var detail: WhiskerValue? = null
+                var presentedX = Float.NaN
+                var presentedY = Float.NaN
+                scrollView.installWhiskerPresentationSink { x, y ->
+                    presentedX = x
+                    presentedY = y
+                }
                 scrollView.installWhiskerEventSink { name, value ->
                     if (name == "scroll") detail = value
                 }
@@ -128,6 +275,8 @@ class HostConformanceTest {
                 assertEquals(120.0, (values.getValue("scrollTop") as WhiskerValue.Float).value, 0.001)
                 assertEquals(80.0, (values.getValue("viewportHeight") as WhiskerValue.Float).value, 0.001)
                 assertEquals(300.0, (values.getValue("scrollHeight") as WhiskerValue.Float).value, 0.001)
+                assertEquals(0f, presentedX, 0.001f)
+                assertEquals(120f, presentedY, 0.001f)
             }
     }
 
@@ -206,6 +355,8 @@ class HostConformanceTest {
                     root,
                     context,
                     { _, _, _ -> },
+                    { _, _, _ -> },
+                    { _ -> },
                     HostRasterResourceStore(),
                     elements,
                 )
@@ -1089,7 +1240,14 @@ private class Driver(
         val requestInts = IntArray(HostMeasureBatchAbi.REQUEST_INT_STRIDE).apply {
             this[HostMeasureBatchAbi.ELEMENT_TYPE] = 2
             this[HostMeasureBatchAbi.KIND] = 1
-            this[HostMeasureBatchAbi.AVAILABLE_WIDTH_KIND] = 0
+            this[HostMeasureBatchAbi.AVAILABLE_WIDTH_KIND] = when (
+                command.optString("available_width_kind", "definite")
+            ) {
+                "definite" -> 0
+                "min_content" -> 1
+                "max_content" -> 2
+                else -> error("unsupported available_width_kind: $command")
+            }
             this[HostMeasureBatchAbi.AVAILABLE_HEIGHT_KIND] = 2
             this[HostMeasureBatchAbi.FONT_WEIGHT] = command.optInt("font_weight", 400)
             this[HostMeasureBatchAbi.FONT_STYLE] = when (command.optString("font_style", "normal")) {
@@ -2136,3 +2294,27 @@ private fun assertPixelsClose(id: String, actual: Bitmap, expected: Bitmap) {
     }
     assertTrue("$id pixel difference $largestDifference", largestDifference <= 1)
 }
+
+private fun hostOperation(
+    tag: Int,
+    node: Long = 0,
+    parent: Long = 0,
+    child: Long = 0,
+    member: Int = 0,
+    numbers: FloatArray? = null,
+): HostSceneOperation = HostSceneOperation(
+    tag = tag,
+    flags = 0,
+    node = node,
+    parent = parent,
+    child = child,
+    index = 0,
+    member = member,
+    integer = 0,
+    scalar = 0f,
+    wide = 0,
+    numbers = numbers,
+    text = null,
+    names = null,
+    value = null,
+)

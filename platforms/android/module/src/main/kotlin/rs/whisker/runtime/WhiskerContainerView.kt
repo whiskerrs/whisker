@@ -117,6 +117,7 @@ public open class WhiskerContainerView(context: Context) : ViewGroup(context) {
 public class WhiskerScrollContainerView(context: Context) : FrameLayout(context), WhiskerEventSource {
     public val contentView: WhiskerContainerView = WhiskerContainerView(context)
     private var eventSink: ((String, WhiskerValue) -> Unit)? = null
+    private var presentationSink: ((Float, Float) -> Unit)? = null
     private var horizontal = false
     private var snapFactor: Double? = null
     private var snapOffset = 0.0
@@ -196,6 +197,11 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
 
     override fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?) {
         eventSink = sink
+    }
+
+    /** Installs the Host-internal scroll mirror, independent of app listeners. */
+    public fun installWhiskerPresentationSink(sink: ((Float, Float) -> Unit)?) {
+        presentationSink = sink
     }
 
     /** Switches the native scrolling axis without changing the Rust-owned child tree. */
@@ -282,6 +288,10 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
     private fun emitScroll() {
         val density = resources.displayMetrics.density.toDouble()
         val scroller = activeScroller()
+        presentationSink?.invoke(
+            (scroller.scrollX / density).toFloat(),
+            (scroller.scrollY / density).toFloat(),
+        )
         eventSink?.invoke(
             "scroll",
             WhiskerValue.Map(
