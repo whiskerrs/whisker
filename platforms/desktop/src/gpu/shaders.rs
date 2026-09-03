@@ -109,7 +109,7 @@ fn vs_main(input: VertexInput, @builtin(instance_index) draw_index: u32) -> Vert
     output.position = vec4<f32>(
         transformed.x / viewport.logical_size.x * 2.0 - transformed.w,
         transformed.w - transformed.y / viewport.logical_size.y * 2.0,
-        transformed.z,
+        0.0,
         transformed.w,
     );
     output.color = input.color;
