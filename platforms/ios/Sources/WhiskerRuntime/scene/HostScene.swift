@@ -19,7 +19,6 @@ final class HostScene {
     private let eventGate = HostEventGate { event in
         DispatchQueue.main.async(execute: event)
     }
-    private var pointerCaptures: [UInt64: UInt64] = [:]
 
     init(
         root: UIView,
@@ -70,14 +69,19 @@ final class HostScene {
         defer {
             eventGate.endFrame()
         }
-        if frame.mode == UInt8(WHISKER_FRAME_SNAPSHOT) { clear() }
-        for operation in values where !apply(operation) {
-            response.status = UInt8(WHISKER_APPLY_REJECTED)
-            response.revision = revision
-            return true
+        let snapshot = frame.mode == UInt8(WHISKER_FRAME_SNAPSHOT)
+        if snapshot { clear() }
+        var zOrderParents = Set<UInt64>()
+        for operation in values {
+            recordZOrderImpact(operation, into: &zOrderParents)
+            if !apply(operation) {
+                response.status = UInt8(WHISKER_APPLY_REJECTED)
+                response.revision = revision
+                return true
+            }
         }
         attachRoots()
-        refreshZOrderProjection()
+        refreshZOrderProjection(parentKeys: snapshot ? nil : zOrderParents)
         sceneEpoch = frame.scene_epoch
         revision = frame.target_revision
         response.status = UInt8(WHISKER_APPLY_ACCEPTED)
@@ -97,7 +101,6 @@ final class HostScene {
         nodeOrder.removeAll()
         parents.removeAll()
         zOrders.removeAll()
-        pointerCaptures.removeAll()
     }
 
     private func validate(_ operations: [WhiskerMobileOperation], snapshot: Bool) -> Bool {
@@ -491,14 +494,9 @@ final class HostScene {
             nodes[id]?.setHitTestBehavior(operation.integer)
         case UInt32(WHISKER_OP_CURSOR):
             nodes[id]?.setCursorKeyword(operation.integer)
-        case UInt32(WHISKER_OP_CAPTURE):
-            // UIKit keeps delivering a UITouch sequence to its recognizer
-            // after it begins; retaining ownership mirrors explicit capture.
-            pointerCaptures[operation.wide] = id
-        case UInt32(WHISKER_OP_RELEASE_CAPTURE):
-            if pointerCaptures[operation.wide] == id {
-                pointerCaptures.removeValue(forKey: operation.wide)
-            }
+        // Capture targeting is owned by SurfaceRuntime. UIKit already keeps a
+        // UITouch stream attached to its recognizer, so no Host mirror is needed.
+        case UInt32(WHISKER_OP_CAPTURE), UInt32(WHISKER_OP_RELEASE_CAPTURE): break
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):
@@ -587,7 +585,6 @@ final class HostScene {
             parents.removeValue(forKey: $0)
         }
         let removed = Set(descendants).union([id])
-        pointerCaptures = pointerCaptures.filter { !removed.contains($0.value) }
         nodeOrder.removeAll { removed.contains($0) }
         removed.forEach { zOrders.removeValue(forKey: $0) }
         parents.removeValue(forKey: id)
@@ -610,31 +607,55 @@ final class HostScene {
         }
     }
 
-    private func normalizeZOrder(parent parentID: UInt64?) {
-        let creationOrder = Dictionary(uniqueKeysWithValues: nodeOrder.enumerated().map { ($1, $0) })
+    private func recordZOrderImpact(
+        _ operation: WhiskerMobileOperation,
+        into parentKeys: inout Set<UInt64>
+    ) {
+        let rootKey: UInt64 = 0
+        switch operation.tag {
+        case UInt32(WHISKER_OP_CREATE):
+            parentKeys.insert(rootKey)
+        case UInt32(WHISKER_OP_DELETE), UInt32(WHISKER_OP_Z_ORDER):
+            parentKeys.insert(parents[operation.node] ?? rootKey)
+        case UInt32(WHISKER_OP_INSERT):
+            parentKeys.insert(rootKey)
+            parentKeys.insert(operation.parent)
+        case UInt32(WHISKER_OP_REMOVE):
+            parentKeys.insert(operation.parent)
+            parentKeys.insert(rootKey)
+        case UInt32(WHISKER_OP_MOVE):
+            parentKeys.insert(operation.parent)
+        default:
+            break
+        }
+    }
+
+    private func normalizeZOrder(
+        parent parentID: UInt64?,
+        siblings: [UInt64],
+        idsByView: [ObjectIdentifier: UInt64]
+    ) {
         let host: UIView?
         if let parentID, let parent = nodes[parentID] {
             host = parent.sceneChildrenHost()
         } else {
             host = root
         }
-        let idsByView = Dictionary(uniqueKeysWithValues: nodes.map { (ObjectIdentifier($1), $0) })
         let siblingPairs: [(UInt64, Int)] = (host?.subviews ?? []).enumerated()
             .compactMap { index, view in
                 guard let id = idsByView[ObjectIdentifier(view)] else { return nil }
                 return (id, index)
             }
         let siblingOrder = Dictionary(uniqueKeysWithValues: siblingPairs)
-        let siblings = nodeOrder.filter { id in
-            nodes[id] != nil && parents[id] == parentID
-        }.sorted { left, right in
+        let creationOrder = Dictionary(uniqueKeysWithValues: siblings.enumerated().map { ($1, $0) })
+        let ordered = siblings.sorted { left, right in
             let leftZ = zOrders[left] ?? 0
             let rightZ = zOrders[right] ?? 0
             if leftZ != rightZ { return leftZ < rightZ }
             return siblingOrder[left, default: creationOrder[left, default: 0]] <
                 siblingOrder[right, default: creationOrder[right, default: 0]]
         }
-        for id in siblings {
+        for id in ordered {
             guard let node = nodes[id] else { continue }
             // `CALayer.render(in:)`, used by deterministic Host capture as
             // well as some UIKit snapshot paths, preserves sublayer order but
@@ -645,10 +666,31 @@ final class HostScene {
         }
     }
 
-    private func refreshZOrderProjection() {
-        normalizeZOrder(parent: nil)
-        for parentID in Set(parents.values).sorted() where nodes[parentID] != nil {
-            normalizeZOrder(parent: parentID)
+    private func refreshZOrderProjection(parentKeys requested: Set<UInt64>?) {
+        let rootKey: UInt64 = 0
+        var parentKeys: Set<UInt64>
+        if let requested {
+            parentKeys = requested
+        } else {
+            parentKeys = Set(parents.values)
+            parentKeys.insert(rootKey)
+        }
+        guard !parentKeys.isEmpty else { return }
+
+        var siblingsByParent: [UInt64: [UInt64]] = [:]
+        var idsByView: [ObjectIdentifier: UInt64] = [:]
+        for id in nodeOrder where nodes[id] != nil {
+            let parentKey = parents[id] ?? rootKey
+            guard parentKeys.contains(parentKey), let node = nodes[id] else { continue }
+            siblingsByParent[parentKey, default: []].append(id)
+            idsByView[ObjectIdentifier(node)] = id
+        }
+        for parentKey in parentKeys.sorted() {
+            normalizeZOrder(
+                parent: parentKey == rootKey ? nil : parentKey,
+                siblings: siblingsByParent[parentKey] ?? [],
+                idsByView: idsByView
+            )
         }
     }
 

@@ -59,57 +59,38 @@ pub(crate) struct WebProviderEvent {
     pub(crate) detail: WhiskerValue,
 }
 
-const fn cursor_keyword_css(value: whisker_protocol::CursorKeyword) -> &'static str {
-    use whisker_protocol::CursorKeyword;
-    match value {
-        CursorKeyword::Auto => "auto",
-        CursorKeyword::Default => "default",
-        CursorKeyword::None => "none",
-        CursorKeyword::ContextMenu => "context-menu",
-        CursorKeyword::Help => "help",
-        CursorKeyword::Pointer => "pointer",
-        CursorKeyword::Progress => "progress",
-        CursorKeyword::Wait => "wait",
-        CursorKeyword::Cell => "cell",
-        CursorKeyword::Crosshair => "crosshair",
-        CursorKeyword::Text => "text",
-        CursorKeyword::VerticalText => "vertical-text",
-        CursorKeyword::Alias => "alias",
-        CursorKeyword::Copy => "copy",
-        CursorKeyword::Move => "move",
-        CursorKeyword::NoDrop => "no-drop",
-        CursorKeyword::NotAllowed => "not-allowed",
-        CursorKeyword::Grab => "grab",
-        CursorKeyword::Grabbing => "grabbing",
-        CursorKeyword::ColResize => "col-resize",
-        CursorKeyword::RowResize => "row-resize",
-        CursorKeyword::NResize => "n-resize",
-        CursorKeyword::EResize => "e-resize",
-        CursorKeyword::SResize => "s-resize",
-        CursorKeyword::WResize => "w-resize",
-        CursorKeyword::NeResize => "ne-resize",
-        CursorKeyword::NwResize => "nw-resize",
-        CursorKeyword::SeResize => "se-resize",
-        CursorKeyword::SwResize => "sw-resize",
-        CursorKeyword::EwResize => "ew-resize",
-        CursorKeyword::NsResize => "ns-resize",
-        CursorKeyword::NeswResize => "nesw-resize",
-        CursorKeyword::NwseResize => "nwse-resize",
-        CursorKeyword::ZoomIn => "zoom-in",
-        CursorKeyword::ZoomOut => "zoom-out",
-    }
-}
-
 impl DomFrameSink {
     pub(crate) fn new_with_resources(
         document: web_sys::Document,
-        root: web_sys::Element,
+        mount: web_sys::Element,
         surface: SurfaceId,
         registrations: &[ElementRegistration],
         factories: &[WebElementFactory],
         resources: WebResourceStore,
         capabilities: whisker_protocol::RenderCapabilities,
     ) -> Result<Self, WebError> {
+        let shadow = if let Some(shadow) = mount.shadow_root() {
+            shadow.set_inner_html("");
+            shadow
+        } else {
+            mount
+                .attach_shadow(&web_sys::ShadowRootInit::new(web_sys::ShadowRootMode::Open))
+                .map_err(|error| js_error("attach Whisker shadow root", error))?
+        };
+        let root = document
+            .create_element("div")
+            .map_err(|error| js_error("create Whisker Web surface root", error))?;
+        root.set_attribute("data-whisker-surface", "")
+            .map_err(|error| js_error("mark Whisker Web surface root", error))?;
+        set_style(&root, "all", "initial")?;
+        set_style(&root, "display", "block")?;
+        set_style(&root, "position", "relative")?;
+        set_style(&root, "width", "100%")?;
+        set_style(&root, "height", "100%")?;
+        set_style(&root, "overflow", "hidden")?;
+        shadow
+            .append_child(&root)
+            .map_err(|error| js_error("attach Whisker Web surface root", error))?;
         Ok(Self {
             capabilities,
             document,
@@ -160,7 +141,7 @@ impl DomFrameSink {
         self.resources.register_url(resource, url)
     }
 
-    fn apply(&mut self, packet: &FramePacket) -> Result<(), WebError> {
+    fn validate_frame(&self, packet: &FramePacket) -> Result<(), WebError> {
         if let Some(feature) = packet
             .operations
             .iter()
@@ -174,21 +155,6 @@ impl DomFrameSink {
                     if !paint::visual_effects::supports(effects) =>
                 {
                     Some("visual-effects payload")
-                }
-                Operation::SetCursor { cursor, .. } if !cursor.resources.is_empty() => {
-                    Some("resource-backed cursor")
-                }
-                Operation::SetText { content, .. }
-                    if content.paint.decoration.lines.overline
-                        || (content.paint.decoration.lines.underline
-                            && content.paint.decoration.lines.line_through)
-                        || !matches!(
-                            content.paint.decoration.thickness,
-                            whisker_protocol::TextDecorationThickness::Auto
-                        )
-                        || content.paint.shadows.len() > 1 =>
-                {
-                    Some("text-effects")
                 }
                 _ => None,
             })
@@ -215,26 +181,49 @@ impl DomFrameSink {
                 resource.get()
             )));
         }
+        if let Some(resource) = packet.operations.iter().find_map(|operation| {
+            let Operation::SetCursor { cursor, .. } = operation else {
+                return None;
+            };
+            cursor
+                .resources
+                .iter()
+                .find(|candidate| !self.resources.contains(candidate.resource))
+                .map(|candidate| candidate.resource)
+        }) {
+            return Err(WebError(format!(
+                "DOM Host cursor resource {} is not registered",
+                resource.get()
+            )));
+        }
+        Ok(())
+    }
+
+    fn apply(&mut self, packet: &FramePacket) -> Result<(), WebError> {
         if packet.header.mode == FrameMode::Snapshot {
-            self.release_all_pointer_captures();
-            self.root.set_inner_html("");
-            self.nodes.clear();
-            self.node_types.clear();
-            self.parents.clear();
-            self.layouts.clear();
-            self.box_paints.clear();
-            self.text_nodes.clear();
-            self.native_nodes.clear();
-            self.event_masks.clear();
-            self.scroll_listeners.clear();
-            self.pointer_captures.clear();
-            self.pending_events.borrow_mut().clear();
-            self.dirty_scroll_offsets.borrow_mut().clear();
+            self.reset_presentation();
         }
         for operation in &packet.operations {
             self.apply_operation(operation)?;
         }
         Ok(())
+    }
+
+    fn reset_presentation(&mut self) {
+        self.release_all_pointer_captures();
+        self.root.set_inner_html("");
+        self.nodes.clear();
+        self.node_types.clear();
+        self.parents.clear();
+        self.layouts.clear();
+        self.box_paints.clear();
+        self.text_nodes.clear();
+        self.native_nodes.clear();
+        self.event_masks.clear();
+        self.scroll_listeners.clear();
+        self.pointer_captures.clear();
+        self.pending_events.borrow_mut().clear();
+        self.dirty_scroll_offsets.borrow_mut().clear();
     }
 
     fn apply_operation(&mut self, operation: &Operation) -> Result<(), WebError> {
@@ -306,6 +295,12 @@ impl DomFrameSink {
                             match create(&self.document, emitter.clone()) {
                                 Ok(native) => (native.element(), Some(native)),
                                 Err(error) => {
+                                    if !binding.factory.isolates_failures() {
+                                        return Err(js_error(
+                                            "create built-in Whisker DOM element",
+                                            error,
+                                        ));
+                                    }
                                     Self::log_native_failure(
                                         &binding.registration.name,
                                         "create element",
@@ -416,14 +411,25 @@ impl DomFrameSink {
                 parent,
                 child,
                 index,
+            } => {
+                let parent_element = self.node(*parent)?;
+                let child_element = self.node(*child)?;
+                let reference = parent_element.children().item(*index);
+                parent_element
+                    .insert_before(&child_element, reference.as_ref().map(AsRef::as_ref))
+                    .map_err(|error| js_error("insert Whisker DOM child", error))?;
+                sync_scroll_snap_child(&parent_element, &child_element)?;
+                self.parents.insert(*child, *parent);
+                self.sync_layout(*child)?;
             }
-            | Operation::MoveChild {
+            Operation::MoveChild {
                 parent,
                 child,
                 index,
             } => {
                 let parent_element = self.node(*parent)?;
                 let child_element = self.node(*child)?;
+                child_element.remove();
                 let reference = parent_element.children().item(*index);
                 parent_element
                     .insert_before(&child_element, reference.as_ref().map(AsRef::as_ref))
@@ -440,6 +446,7 @@ impl DomFrameSink {
             }
             Operation::SetLayout { node, geometry } => {
                 self.layouts.insert(*node, *geometry);
+                self.sync_border_widths(*node)?;
                 self.sync_layout(*node)?;
                 self.sync_content_box(*node)?;
                 self.sync_child_layouts(*node)?;
@@ -447,7 +454,8 @@ impl DomFrameSink {
             }
             Operation::SetBoxPaint { node, paint } => {
                 let element = self.node(*node)?;
-                paint::box_paint::apply(&element, paint)?;
+                let border_widths = self.resolve_border_widths(*node, paint);
+                paint::box_paint::apply(&element, paint, border_widths)?;
                 self.box_paints.insert(*node, paint.clone());
                 self.sync_content_box(*node)?;
                 self.sync_child_layouts(*node)?;
@@ -530,7 +538,7 @@ impl DomFrameSink {
                     }
                 };
                 if let Err(error) = result {
-                    self.disable_native_node(*node, element_type, "set text style", error);
+                    self.handle_native_failure(*node, element_type, "set text style", error)?;
                 }
             }
             Operation::SetAccessibility {
@@ -550,11 +558,9 @@ impl DomFrameSink {
                 )?;
             }
             Operation::SetCursor { node, cursor } => {
-                set_style(
-                    &self.node(*node)?,
-                    "cursor",
-                    cursor_keyword_css(cursor.fallback),
-                )?;
+                paint::cursor::apply(&self.node(*node)?, cursor, |resource| {
+                    self.resources.url(resource)
+                })?;
             }
             Operation::SetProperty {
                 node,
@@ -586,7 +592,7 @@ impl DomFrameSink {
                     }
                 };
                 if let Err(error) = result {
-                    self.disable_native_node(*node, element_type, "set property", error);
+                    self.handle_native_failure(*node, element_type, "set property", error)?;
                 }
             }
             Operation::ClearProperty { node, property } => {
@@ -609,7 +615,7 @@ impl DomFrameSink {
                     }
                 };
                 if let Err(error) = result {
-                    self.disable_native_node(*node, element_type, "clear property", error);
+                    self.handle_native_failure(*node, element_type, "clear property", error)?;
                 }
             }
             Operation::SetEventMask { node, event_mask } => {
@@ -653,7 +659,7 @@ impl DomFrameSink {
                     }
                 };
                 if let Err(error) = result {
-                    self.disable_native_node(*node, element_type, "invoke command", error);
+                    self.handle_native_failure(*node, element_type, "invoke command", error)?;
                 }
             }
             Operation::SetPointerCapture { node, pointer } => {
@@ -686,19 +692,23 @@ impl DomFrameSink {
             .ok_or_else(|| WebError(format!("DOM projection is missing node {}", node.get())))
     }
 
-    fn disable_native_node(
+    fn handle_native_failure(
         &mut self,
         node: NodeId,
         element_type: ElementTypeId,
         action: &str,
         error: wasm_bindgen::JsValue,
-    ) {
-        let element_name = self
-            .elements
-            .binding(element_type)
-            .map_or("unknown", |binding| binding.registration.name.as_str());
+    ) -> Result<(), WebError> {
+        let binding = self.elements.binding(element_type)?;
+        let element_name = binding.registration.name.as_str();
+        if !binding.factory.isolates_failures() {
+            return Err(WebError(format!(
+                "built-in DOM element `{element_name}` failed to {action}: {error:?}"
+            )));
+        }
         Self::log_native_failure(element_name, action, &error);
         self.native_nodes.insert(node, WebNativeNode::Failed);
+        Ok(())
     }
 
     fn log_native_failure(element_name: &str, action: &str, error: &wasm_bindgen::JsValue) {
@@ -728,12 +738,16 @@ impl DomFrameSink {
     }
 
     fn sync_child_layouts(&self, parent: NodeId) -> Result<(), WebError> {
-        let children = self
-            .parents
-            .iter()
-            .filter_map(|(child, candidate)| (*candidate == parent).then_some(*child))
-            .collect::<Vec<_>>();
-        for child in children {
+        let children = self.node(parent)?.children();
+        for index in 0..children.length() {
+            let Some(child) = children
+                .item(index)
+                .and_then(|element| element.get_attribute("data-whisker-node"))
+                .and_then(|value| value.parse().ok())
+                .and_then(NodeId::new)
+            else {
+                continue;
+            };
             self.sync_layout(child)?;
         }
         Ok(())
@@ -743,6 +757,10 @@ impl DomFrameSink {
         let Some(paint) = self.box_paints.get(&node) else {
             return [0.0; 4];
         };
+        self.resolve_border_widths(node, paint)
+    }
+
+    fn resolve_border_widths(&self, node: NodeId, paint: &whisker_protocol::BoxPaint) -> [f32; 4] {
         let border_box = self
             .layouts
             .get(&node)
@@ -752,28 +770,44 @@ impl DomFrameSink {
         let resolve = |value: whisker_protocol::PaintLengthPercentage, axis: f32| {
             value.length + value.fraction * axis
         };
+        let uses_width = |style| {
+            !matches!(
+                style,
+                whisker_protocol::BorderLineStyle::None | whisker_protocol::BorderLineStyle::Hidden
+            )
+        };
         [
-            if paint.border_styles.top == whisker_protocol::BorderLineStyle::None {
-                0.0
-            } else {
+            if uses_width(paint.border_styles.top) {
                 resolve(paint.border_widths.top, border_box.height)
-            },
-            if paint.border_styles.right == whisker_protocol::BorderLineStyle::None {
-                0.0
             } else {
+                0.0
+            },
+            if uses_width(paint.border_styles.right) {
                 resolve(paint.border_widths.right, border_box.width)
-            },
-            if paint.border_styles.bottom == whisker_protocol::BorderLineStyle::None {
-                0.0
             } else {
+                0.0
+            },
+            if uses_width(paint.border_styles.bottom) {
                 resolve(paint.border_widths.bottom, border_box.height)
-            },
-            if paint.border_styles.left == whisker_protocol::BorderLineStyle::None {
-                0.0
             } else {
+                0.0
+            },
+            if uses_width(paint.border_styles.left) {
                 resolve(paint.border_widths.left, border_box.width)
+            } else {
+                0.0
             },
         ]
+    }
+
+    fn sync_border_widths(&self, node: NodeId) -> Result<(), WebError> {
+        let Some(paint) = self.box_paints.get(&node) else {
+            return Ok(());
+        };
+        paint::box_paint::apply_border_widths(
+            &self.node(node)?,
+            self.resolve_border_widths(node, paint),
+        )
     }
 
     fn sync_content_box(&self, node: NodeId) -> Result<(), WebError> {
@@ -939,12 +973,30 @@ impl FrameSink for DomFrameSink {
                 capability.as_str()
             )));
         }
+        self.validate_frame(packet)?;
         let mut next = self.projection.clone();
         let result = next
             .apply(packet)
             .map_err(|error| WebError(error.to_string()))?;
         if matches!(result, ApplyResult::Accepted { .. }) {
-            self.apply(packet)?;
+            if let Err(error) = self.apply(packet) {
+                // A DOM exception can happen after earlier operations in this
+                // transaction have already mutated the live tree. There is no
+                // portable rollback for DOM or custom-element callbacks, so
+                // drop the partial presentation and ask the sender for a full
+                // snapshot. This path is cold: successful frames pay only the
+                // existing result branch.
+                web_sys::console::error_1(
+                    &format!(
+                        "DOM Host discarded a partially applied frame and requested a snapshot: {error}"
+                    )
+                    .into(),
+                );
+                self.reset_presentation();
+                return Ok(ApplyResult::NeedSnapshot {
+                    receiver_revision: self.projection.revision(),
+                });
+            }
             self.projection = next;
         }
         Ok(result)
