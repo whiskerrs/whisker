@@ -133,6 +133,7 @@ internal class HostScene(
             if (stagedSnapshot) clear()
             stagedOperations.forEach(::applyOperation)
             attachRoots()
+            reapplyNativePointerInterception()
             if (zOrderParents == null) {
                 refreshAllZOrderProjections()
             } else if (zOrderParents.isNotEmpty()) {
@@ -631,8 +632,10 @@ internal class HostScene(
         }
         val parentNode = parents[id]?.let(nodes::get)
         val customHost = parentNode?.mountedElement?.childrenHost() != null
-        node.x = (node.geometry.x - if (customHost) parentNode!!.geometry.contentX else 0f) * density
-        node.y = (node.geometry.y - if (customHost) parentNode!!.geometry.contentY else 0f) * density
+        node.setLayoutPosition(
+            (node.geometry.x - if (customHost) parentNode!!.geometry.contentX else 0f) * density,
+            (node.geometry.y - if (customHost) parentNode!!.geometry.contentY else 0f) * density,
+        )
         node.layoutParams = (node.layoutParams ?: ViewGroup.LayoutParams(0, 0)).apply {
             width = (node.geometry.width * density).roundToInt().coerceAtLeast(0)
             height = (node.geometry.height * density).roundToInt().coerceAtLeast(0)

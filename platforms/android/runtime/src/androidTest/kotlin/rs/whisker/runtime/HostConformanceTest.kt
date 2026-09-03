@@ -51,6 +51,106 @@ import rs.whisker.runtime.scene.OP_MOVE
 
 private const val BACKGROUND_PACKED_LAYERS = 256
 
+private fun WhiskerView.beginFrameForTesting(
+    mode: Int,
+    epoch: Int,
+    baseRevision: Long,
+    targetRevision: Long,
+): Int = beginFrame(mode, epoch, baseRevision, targetRevision)
+
+private fun WhiskerView.registerRasterResourceForTesting(
+    resourceId: Long,
+    bitmap: Bitmap,
+): Boolean = registerRasterResource(resourceId, bitmap)
+
+private fun WhiskerView.loadRasterResourceBytesForTesting(
+    resourceId: Long,
+    generation: Long,
+    mediaType: String,
+    data: ByteArray,
+): Boolean = loadRasterResourceBytes(resourceId, generation, mediaType, data)
+
+private fun WhiskerView.loadRasterResourceUrlForTesting(
+    resourceId: Long,
+    generation: Long,
+    url: String,
+): Boolean = loadRasterResourceUrl(resourceId, generation, url)
+
+private fun WhiskerView.releaseRasterResourceForTesting(
+    resourceId: Long,
+    generation: Long,
+): Boolean = releaseRasterResource(resourceId, generation)
+
+private fun WhiskerView.awaitRasterResourceForTesting(
+    resourceId: Long,
+    generation: Long,
+    timeoutMillis: Long,
+): HostResourceSnapshot? = awaitRasterResource(resourceId, generation, timeoutMillis)
+
+private fun WhiskerView.observeRasterResourceEventsForTesting(
+    observer: ((HostResourceSnapshot) -> Unit)?,
+) = observeRasterResourceEvents(observer)
+
+@Suppress("LongParameterList")
+private fun WhiskerView.stageOperationForTesting(
+    tag: Int,
+    flags: Int,
+    node: Long,
+    parent: Long,
+    child: Long,
+    index: Int,
+    member: Int,
+    integer: Int,
+    scalar: Float,
+    wide: Long,
+    numbers: FloatArray?,
+    text: String?,
+    names: Array<String>?,
+    value: WhiskerValue?,
+): Boolean = stageOperation(
+    tag,
+    flags,
+    node,
+    parent,
+    child,
+    index,
+    member,
+    integer,
+    scalar,
+    wide,
+    numbers,
+    text,
+    names,
+    value,
+)
+
+private fun WhiskerView.commitFrameForTesting(): Boolean = commitFrame()
+
+private fun bootstrapBuiltIns(view: WhiskerView) {
+    view.beginBootstrapFromNative()
+    view.registerElementFromNative(
+        1,
+        WhiskerBuiltInElements.VIEW,
+        WhiskerChildPolicy.Elements.ordinal,
+        WhiskerMeasurement.None.ordinal,
+        0,
+        intArrayOf(), intArrayOf(), emptyArray(),
+        intArrayOf(), intArrayOf(), emptyArray(),
+        intArrayOf(), intArrayOf(), emptyArray(),
+    )
+    view.registerElementFromNative(
+        2,
+        WhiskerBuiltInElements.TEXT,
+        WhiskerChildPolicy.PlainText.ordinal,
+        WhiskerMeasurement.Text.ordinal,
+        0,
+        intArrayOf(), intArrayOf(), emptyArray(),
+        intArrayOf(), intArrayOf(), emptyArray(),
+        intArrayOf(), intArrayOf(), emptyArray(),
+    )
+    check(view.finishBootstrapFromNative())
+}
+
 private data class CapturedPointerInput(
     val event: Int,
     val pointerId: Long,
@@ -286,7 +386,11 @@ class HostConformanceTest {
                 val values = (detail as WhiskerValue.Map).value
                 assertEquals(120.0, (values.getValue("scrollTop") as WhiskerValue.Float).value, 0.001)
                 assertEquals(80.0, (values.getValue("viewportHeight") as WhiskerValue.Float).value, 0.001)
-                assertEquals(300.0, (values.getValue("scrollHeight") as WhiskerValue.Float).value, 0.001)
+                assertEquals(
+                    scrollView.contentView.height / density.toDouble(),
+                    (values.getValue("scrollHeight") as WhiskerValue.Float).value,
+                    0.001,
+                )
                 assertEquals(0f, presentedX, 0.001f)
                 assertEquals(120f, presentedY, 0.001f)
             }
@@ -635,6 +739,7 @@ class HostConformanceTest {
             .runOnMainSync {
                 val context = ApplicationProvider.getApplicationContext<android.content.Context>()
                 val view = WhiskerView(context)
+                bootstrapBuiltIns(view)
                 val metadata = longArrayOf(
                     // create node 1 as the built-in View element
                     1, 0, 1, 0, 0, 0, 1, 0, 0, 0,
@@ -839,34 +944,7 @@ private class Driver(
     private var pointerInput: CapturedPointerInput? = null
 
     init {
-        view.beginBootstrapFromNative()
-        view.registerElementFromNative(
-            1,
-            WhiskerBuiltInElements.VIEW,
-            WhiskerChildPolicy.Elements.ordinal,
-            WhiskerMeasurement.None.ordinal,
-            0,
-            intArrayOf(),
-            intArrayOf(),
-            emptyArray(),
-            intArrayOf(),
-            intArrayOf(),
-            emptyArray(),
-            intArrayOf(),
-            intArrayOf(),
-            emptyArray(),
-        )
-        view.registerElementFromNative(
-            2,
-            WhiskerBuiltInElements.TEXT,
-            WhiskerChildPolicy.PlainText.ordinal,
-            WhiskerMeasurement.Text.ordinal,
-            0,
-            intArrayOf(), intArrayOf(), emptyArray(),
-            intArrayOf(), intArrayOf(), emptyArray(),
-            intArrayOf(), intArrayOf(), emptyArray(),
-        )
-        check(view.finishBootstrapFromNative())
+        bootstrapBuiltIns(view)
     }
 
     fun execute(side: JSONObject): Bitmap {
@@ -965,9 +1043,12 @@ private class Driver(
                             check(text.typeface.isBold)
                         }
                         check(abs(text.letterSpacing - 0.075f) < 0.0001f)
-                        val actualLineHeight =
-                            text.paint.fontMetrics.run { descent - ascent } + text.lineSpacingExtra
-                        check(abs(actualLineHeight / density - 28f) < 0.01f)
+                        val lineHeightSpans = (text.text as Spanned).getSpans(
+                            0,
+                            text.text.length,
+                            rs.whisker.runtime.internal.CenteredLineHeightSpan::class.java,
+                        )
+                        check(lineHeightSpans.size == 1)
                         check(text.lineSpacingMultiplier == 1f)
                     }
                     check(

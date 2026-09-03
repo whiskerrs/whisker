@@ -417,7 +417,7 @@ class WhiskerView(context: Context) :
 
     fun finishBootstrapFromNative(): Boolean = bootstrap.finish()
 
-    internal fun beginFrameForTesting(
+    internal fun beginFrame(
         mode: Int,
         epoch: Int,
         baseRevision: Long,
@@ -496,10 +496,10 @@ class WhiskerView(context: Context) :
     }
 
     /** Registers an already decoded raster. Acquisition and eviction are separate Host concerns. */
-    internal fun registerRasterResourceForTesting(resourceId: Long, bitmap: Bitmap): Boolean =
+    internal fun registerRasterResource(resourceId: Long, bitmap: Bitmap): Boolean =
         rasterResources.register(resourceId, bitmap)
 
-    internal fun loadRasterResourceBytesForTesting(
+    internal fun loadRasterResourceBytes(
         resourceId: Long,
         generation: Long,
         mediaType: String,
@@ -510,13 +510,13 @@ class WhiskerView(context: Context) :
         HostRasterSource.Bytes(mediaType, data.copyOf()),
     )
 
-    internal fun loadRasterResourceUrlForTesting(
+    internal fun loadRasterResourceUrl(
         resourceId: Long,
         generation: Long,
         url: String,
     ): Boolean = resourceService.load(resourceId, generation, HostRasterSource.Url(url))
 
-    internal fun releaseRasterResourceForTesting(resourceId: Long, generation: Long): Boolean =
+    internal fun releaseRasterResource(resourceId: Long, generation: Long): Boolean =
         resourceService.release(resourceId, generation)
 
     /** Receives one typed command whose JNI-owned arguments outlive the C callback. */
@@ -539,7 +539,7 @@ class WhiskerView(context: Context) :
         data,
     )
 
-    internal fun awaitRasterResourceForTesting(
+    internal fun awaitRasterResource(
         resourceId: Long,
         generation: Long,
         timeoutMillis: Long,
@@ -547,12 +547,12 @@ class WhiskerView(context: Context) :
         resourceService.awaitTerminal(resourceId, generation, timeoutMillis)
 
     /** Observes owned Android lifecycle messages after asynchronous completion. */
-    internal fun observeRasterResourceEventsForTesting(observer: ((HostResourceSnapshot) -> Unit)?) {
+    internal fun observeRasterResourceEvents(observer: ((HostResourceSnapshot) -> Unit)?) {
         resourceEventObserver = observer
     }
 
     @Suppress("LongParameterList")
-    internal fun stageOperationForTesting(
+    internal fun stageOperation(
         tag: Int,
         flags: Int,
         node: Long,
@@ -586,7 +586,7 @@ class WhiskerView(context: Context) :
         ),
     )
 
-    internal fun commitFrameForTesting(): Boolean = scene.commit()
+    internal fun commitFrame(): Boolean = scene.commit()
 
     private fun handleResourceEvent(event: HostResourceSnapshot) {
         val abiEvent = HostResourceChannel.encodeEvent(event)

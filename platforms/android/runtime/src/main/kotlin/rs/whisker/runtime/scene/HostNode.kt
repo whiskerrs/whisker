@@ -81,7 +81,12 @@ internal class HostNode(
         private set
 
     private val localTransform = Matrix()
+    private var layoutTranslationX = 0f
+    private var layoutTranslationY = 0f
+    private var nativeTransformTranslationX = 0f
+    private var nativeTransformTranslationY = 0f
     private var needsCanvasTransformFallback = false
+    private var needsSoftwareCanvasTransform = false
     private var overflowClipRect = RectF()
     private var overflowClipPath: Path? = null
     private var paintClipPath: Path? = null
@@ -255,6 +260,13 @@ internal class HostNode(
 
     fun resolvedBorderWidths(): FloatArray = resolvedBoxGeometry?.borderWidths ?: FloatArray(4)
 
+    fun setLayoutPosition(x: Float, y: Float) {
+        layoutTranslationX = x
+        layoutTranslationY = y
+        translationX = x + nativeTransformTranslationX
+        translationY = y + nativeTransformTranslationY
+    }
+
     /** Applies a protocol transform around the local border-box origin. */
     @SuppressLint("NewApi")
     fun setLocalTransform(values: FloatArray, density: Float) {
@@ -268,7 +280,32 @@ internal class HostNode(
                 values[3] / density, values[7] / density, values[15],
             ),
         )
-        needsCanvasTransformFallback = !applyNativeTransform(localTransform)
+        val isAxisAligned = values[1] == 0f && values[4] == 0f && values[3] == 0f &&
+            values[7] == 0f && values[15] == 1f
+        if (isAxisAligned) {
+            clearNativeTransform()
+            pivotX = 0f
+            pivotY = 0f
+            scaleX = values[0]
+            scaleY = values[5]
+            nativeTransformTranslationX = values[12] * density
+            nativeTransformTranslationY = values[13] * density
+            translationX = layoutTranslationX + nativeTransformTranslationX
+            translationY = layoutTranslationY + nativeTransformTranslationY
+            needsCanvasTransformFallback = false
+            needsSoftwareCanvasTransform = false
+        } else {
+            pivotX = 0f
+            pivotY = 0f
+            scaleX = 1f
+            scaleY = 1f
+            nativeTransformTranslationX = 0f
+            nativeTransformTranslationY = 0f
+            translationX = layoutTranslationX
+            translationY = layoutTranslationY
+            needsCanvasTransformFallback = !applyNativeTransform(localTransform)
+            needsSoftwareCanvasTransform = !needsCanvasTransformFallback
+        }
         invalidate()
         (parent as? android.view.View)?.invalidate()
     }
@@ -289,9 +326,22 @@ internal class HostNode(
         }
     }
 
+    @SuppressLint("NewApi")
+    private fun clearNativeTransform() {
+        if (!animationMatrixAvailable) return
+        try {
+            setAnimationMatrix(null)
+        } catch (_: NoSuchMethodError) {
+            animationMatrixAvailable = false
+        }
+    }
+
     override fun draw(canvas: Canvas) {
         if (root?.shouldSkipBackdropCapture(this) == true) return
-        if (!needsCanvasTransformFallback) {
+        if (
+            !needsCanvasTransformFallback &&
+            (!needsSoftwareCanvasTransform || canvas.isHardwareAccelerated)
+        ) {
             drawClipped(canvas)
             return
         }
