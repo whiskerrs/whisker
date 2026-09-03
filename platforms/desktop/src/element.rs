@@ -1005,10 +1005,9 @@ impl DesktopElementRegistry {
     fn binding(
         &self,
         element_type: ElementTypeId,
-    ) -> Result<DesktopElementBinding, DesktopElementError> {
+    ) -> Result<&DesktopElementBinding, DesktopElementError> {
         self.bindings
             .get(&element_type)
-            .cloned()
             .ok_or(DesktopElementError::UnknownElementType { element_type })
     }
 }
