@@ -507,22 +507,23 @@ impl SurfaceRuntime {
                 if !update.is_valid() {
                     return Err(RuntimeInputError::InvalidPresentation);
                 }
-                match *update {
-                    HostPresentationUpdate::ScrollOffset { node, .. }
-                        if state.surface.node(node).is_none() =>
-                    {
-                        return Err(RuntimeInputError::UnknownTarget { node });
-                    }
-                    HostPresentationUpdate::ScrollOffset { .. } => {}
-                }
             }
             for update in presentation {
                 match *update {
-                    HostPresentationUpdate::ScrollOffset { node, offset } => state
-                        .surface
-                        .update_host_scroll_offset(node, [offset.x, offset.y])
-                        .map_err(RuntimeBindingError::from)
-                        .map_err(RuntimeInputError::Binding)?,
+                    HostPresentationUpdate::ScrollOffset { node, offset } => {
+                        // The Host can observe a scroll callback immediately
+                        // before a committed frame removes that native node.
+                        // Keep newer updates in the same coalesced batch and
+                        // route the input against the current retained scene.
+                        if state.surface.node(node).is_none() {
+                            continue;
+                        }
+                        state
+                            .surface
+                            .update_host_scroll_offset(node, [offset.x, offset.y])
+                            .map_err(RuntimeBindingError::from)
+                            .map_err(RuntimeInputError::Binding)?;
+                    }
                 }
             }
             let root = state.root.ok_or(RuntimeInputError::MissingRoot)?;
@@ -1834,6 +1835,63 @@ const EVENT_NAMED: u64 = 1 << 2;
 
 #[cfg(test)]
 mod motion_tests;
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use crate::element::ElementTag;
+    use crate::view::create_element;
+    use whisker_protocol::{InputEventKind, InputPoint, SurfaceId, WhiskerValue};
+
+    #[test]
+    fn stale_scroll_updates_do_not_discard_current_updates_or_input() {
+        crate::reactive::__reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(91).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        runtime.mount(|| create_element(ElementTag::View)).unwrap();
+        let root = surface.root().unwrap();
+        let stale = NodeId::new(u64::MAX).unwrap();
+
+        let dispatch = runtime
+            .dispatch_input_with_presentation(
+                &InputEvent {
+                    surface: surface.surface(),
+                    timestamp_ms: 1.0,
+                    kind: InputEventKind::Click,
+                    pointer: None,
+                    target: Some(root),
+                    detail: WhiskerValue::Null,
+                },
+                &[
+                    HostPresentationUpdate::ScrollOffset {
+                        node: stale,
+                        offset: InputPoint { x: 1.0, y: 2.0 },
+                    },
+                    HostPresentationUpdate::ScrollOffset {
+                        node: root,
+                        offset: InputPoint { x: 3.0, y: 4.0 },
+                    },
+                ],
+            )
+            .unwrap();
+
+        assert!(!dispatch.queued);
+        assert_eq!(
+            surface
+                .state
+                .borrow()
+                .surface
+                .node(root)
+                .unwrap()
+                .host_scroll_offset(),
+            [3.0, 4.0]
+        );
+    }
+}
 
 mod event;
 mod renderer;

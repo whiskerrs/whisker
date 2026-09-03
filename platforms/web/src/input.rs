@@ -34,7 +34,6 @@ pub(crate) fn dispatch_pointer(
     runtime: &RuntimeInstance,
     root_origin: InputPoint,
     input: WebPointerEvent,
-    presentation: &[whisker_protocol::HostPresentationUpdate],
 ) -> Result<InputEvent, WebError> {
     let pointer_id = PointerId::new(input.pointer_id)
         .ok_or_else(|| WebError("browser pointer id must be non-zero".into()))?;
@@ -61,7 +60,7 @@ pub(crate) fn dispatch_pointer(
         detail: WhiskerValue::Null,
     };
     runtime
-        .dispatch_input_with_presentation(&event, presentation)
+        .dispatch_input(&event)
         .map_err(|error| WebError(format!("dispatch Web pointer input: {error}")))?;
     Ok(event)
 }

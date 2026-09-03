@@ -6,7 +6,6 @@ public final class WhiskerView: UIView {
     private var displayLink: CADisplayLink?
     private var hostToken: UnsafeMutableRawPointer?
     private var runtimeHandle: UnsafeMutableRawPointer?
-    private var runtimePaused = false
     private var isApplicationActive = true
     private var moduleEventSinkEpoch: UInt64 = 0
     private let pendingModuleEvents = PendingModuleEvents()
@@ -18,7 +17,6 @@ public final class WhiskerView: UIView {
         return recognizer
     }()
     private var touchIdentities = HostTouchIdentityMap()
-    private var dirtyScrollOffsets: [UInt64: CGPoint] = [:]
     private let modules = HostModuleDispatcher()
     private let resources = HostResourceStore()
     private lazy var resourceService = HostResourceService(store: resources)
@@ -29,12 +27,6 @@ public final class WhiskerView: UIView {
         logicalBounds: { [unowned self] in self.logicalBounds },
         emitElementEvent: { [weak self] node, name, detail in
             self?.dispatchElementEvent(node: node, name: name, detail: detail)
-        },
-        updateScrollOffset: { [weak self] node, offset in
-            self?.dirtyScrollOffsets[node] = offset
-        },
-        removeScrollOffset: { [weak self] node in
-            self?.dirtyScrollOffsets.removeValue(forKey: node)
         }
     )
 
@@ -114,10 +106,8 @@ public final class WhiskerView: UIView {
         if window != nil {
             WhiskerInsetsDispatcher.attach(self)
             mountWhenSized()
-            resumeRuntime()
-            flushModuleEventsOnMain()
         } else {
-            pauseRuntime()
+            unmount()
             WhiskerInsetsDispatcher.detach(self)
         }
     }
@@ -164,7 +154,6 @@ public final class WhiskerView: UIView {
             whiskerIOSInvokeModule, whiskerIOSObserveModule, token
         )
         if runtimeHandle != nil {
-            runtimePaused = false
             driveRuntimeFrame(timestampMs: ProcessInfo.processInfo.systemUptime * 1_000)
             requestFrame()
         } else {
@@ -248,15 +237,8 @@ public final class WhiskerView: UIView {
               ) else { return }
         _ = dispatchWhiskerPointer(
             handle: handle,
-            input: input,
-            scrollOffsets: takeScrollOffsets()
+            input: input
         )
-    }
-
-    private func takeScrollOffsets() -> [UInt64: CGPoint] {
-        let result = dirtyScrollOffsets
-        dirtyScrollOffsets.removeAll(keepingCapacity: true)
-        return result
     }
 
     private func unmount() {
@@ -265,7 +247,6 @@ public final class WhiskerView: UIView {
         let handle = runtimeHandle
         let ownedRuntime = handle != nil || hostToken != nil
         runtimeHandle = nil
-        runtimePaused = false
         displayLink?.invalidate()
         displayLink = nil
         if let handle { whiskerViewDestroy(handle) }
@@ -275,7 +256,6 @@ public final class WhiskerView: UIView {
         if ownedRuntime { scene.clear() }
         pendingModuleEvents.clear()
         touchIdentities.clear()
-        dirtyScrollOffsets.removeAll(keepingCapacity: false)
         if let token = hostToken {
             Unmanaged<WhiskerView>.fromOpaque(token).release()
             hostToken = nil
@@ -283,7 +263,7 @@ public final class WhiskerView: UIView {
     }
 
     func requestFrame() {
-        guard runtimeHandle != nil, !runtimePaused, isApplicationActive, window != nil else { return }
+        guard runtimeHandle != nil, isApplicationActive, window != nil else { return }
         if displayLink == nil {
             displayLink = CADisplayLink(target: self, selector: #selector(driveFrame(_:)))
             displayLink?.add(to: .main, forMode: .common)
@@ -292,10 +272,7 @@ public final class WhiskerView: UIView {
     }
 
     @objc private func driveFrame(_ link: CADisplayLink) {
-        guard runtimeHandle != nil, !runtimePaused, isApplicationActive else {
-            link.isPaused = true
-            return
-        }
+        guard runtimeHandle != nil, isApplicationActive else { link.isPaused = true; return }
         let idle = driveRuntimeFrame(timestampMs: link.timestamp * 1_000)
         link.isPaused = idle
     }
@@ -313,26 +290,12 @@ public final class WhiskerView: UIView {
     @objc private func applicationDidBecomeActive() {
         isApplicationActive = true
         mountWhenSized()
-        resumeRuntime()
         requestFrame()
     }
 
     @objc private func applicationWillResignActive() {
         isApplicationActive = false
-        pauseRuntime()
-    }
-
-    private func pauseRuntime() {
-        displayLink?.invalidate()
-        displayLink = nil
-        guard let handle = runtimeHandle, !runtimePaused else { return }
-        if whiskerViewPause(handle) { runtimePaused = true }
-    }
-
-    private func resumeRuntime() {
-        guard isApplicationActive, window != nil,
-              let handle = runtimeHandle, runtimePaused else { return }
-        if whiskerViewResume(handle) { runtimePaused = false }
+        displayLink?.isPaused = true
     }
 
     func bootstrap(_ raw: WhiskerMobileBootstrap) -> Bool {

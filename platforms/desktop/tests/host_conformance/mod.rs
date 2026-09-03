@@ -1469,7 +1469,6 @@ impl Driver {
             alignment,
             indent,
             available_width,
-            available_width_kind,
         } = command
         else {
             unreachable!("measure_text is only called for MeasureText commands")
@@ -1483,17 +1482,7 @@ impl Driver {
             constraints: MeasureConstraints {
                 known_dimensions: [None, None],
                 available_space: [
-                    match available_width_kind {
-                        whisker_host_conformance::AvailableWidthFixture::Definite => {
-                            AvailableSpace::Definite(*available_width)
-                        }
-                        whisker_host_conformance::AvailableWidthFixture::MinContent => {
-                            AvailableSpace::MinContent
-                        }
-                        whisker_host_conformance::AvailableWidthFixture::MaxContent => {
-                            AvailableSpace::MaxContent
-                        }
-                    },
+                    AvailableSpace::Definite(*available_width),
                     AvailableSpace::MaxContent,
                 ],
             },

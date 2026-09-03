@@ -52,7 +52,6 @@ tasks.configureEach {
 dependencies {
     val moduleProject = if (rootProject.findProject(":module") != null) ":module" else ":whisker-module"
     api(project(moduleProject))
-    implementation("androidx.lifecycle:lifecycle-runtime:2.8.7")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:core-ktx:1.6.1")
     androidTestImplementation("androidx.test.ext:junit-ktx:1.2.1")

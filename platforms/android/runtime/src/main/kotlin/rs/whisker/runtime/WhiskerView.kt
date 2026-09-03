@@ -10,10 +10,6 @@ import android.util.Log
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.findViewTreeLifecycleOwner
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.bridge.AndroidFrameBatch
 import rs.whisker.runtime.bridge.AndroidHostCapabilities
@@ -39,8 +35,6 @@ import rs.whisker.runtime.scene.HostSceneOperation
 private const val HOST_APPLY_ACCEPTED = MobileAbi.APPLY_ACCEPTED
 private const val HOST_APPLY_REJECTED = MobileAbi.APPLY_REJECTED
 
-private class ScrollOffsetBatch(val nodes: LongArray, val offsets: FloatArray)
-
 /** The single Android View that owns a Whisker runtime and its native scene. */
 class WhiskerView(context: Context) :
     WhiskerContainerView(context),
@@ -51,31 +45,13 @@ class WhiskerView(context: Context) :
 
     private val choreographer = Choreographer.getInstance()
     private var nativeHandle = 0L
-    private var runtimePaused = false
-    private var permanentlyDestroyed = false
-    private var lifecycleOwner: LifecycleOwner? = null
-    private val lifecycleObserver = LifecycleEventObserver { owner, event ->
-        if (event == Lifecycle.Event.ON_DESTROY && owner === lifecycleOwner) {
-            destroyRuntime(permanent = true)
-        }
-    }
     private var frameScheduled = false
     private var windowVisible = true
     private val mainHandler = Handler(Looper.getMainLooper())
     private val measurements = HostMeasurementProvider(context)
     private val bootstrap = HostElementBootstrap()
     private val rasterResources = HostRasterResourceStore()
-    private val dirtyScrollOffsets = LinkedHashMap<Long, FloatArray>()
-    private val emptyScrollNodes = LongArray(0)
-    private val emptyScrollOffsets = FloatArray(0)
-    private val scene = HostScene(
-        this,
-        context,
-        ::dispatchElementEvent,
-        ::recordScrollOffset,
-        { node -> dirtyScrollOffsets.remove(node) },
-        rasterResources,
-    )
+    private val scene = HostScene(this, context, ::dispatchElementEvent, rasterResources)
     private val resourceService = HostResourceService(
         rasterResources,
         ::handleResourceEvent,
@@ -154,10 +130,8 @@ class WhiskerView(context: Context) :
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        bindLifecycleOwner()
         WhiskerAppContext.pushRuntimeOwner(this)
         mountWhenSized()
-        resumeRuntime()
     }
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
@@ -167,10 +141,7 @@ class WhiskerView(context: Context) :
     }
 
     private fun mountWhenSized() {
-        if (
-            !permanentlyDestroyed && nativeHandle == 0L &&
-            isAttachedToWindow && width > 0 && height > 0
-        ) {
+        if (nativeHandle == 0L && isAttachedToWindow && width > 0 && height > 0) {
             moduleEventSinkEpoch += 1
             val sinkEpoch = moduleEventSinkEpoch
             WhiskerModuleEventCenter.installEventSink(this) { module, event, payload ->
@@ -189,7 +160,6 @@ class WhiskerView(context: Context) :
                 AndroidHostCapabilities.current().wireValues(),
             )
             if (nativeHandle != 0L) {
-                runtimePaused = false
                 requestFrameFromNative()
             } else {
                 moduleEventSinkEpoch += 1
@@ -200,59 +170,10 @@ class WhiskerView(context: Context) :
     }
 
     override fun onDetachedFromWindow() {
-        pauseRuntime()
-        frameScheduled = false
-        continuousEventFlushPending = false
-        choreographer.removeFrameCallback(this)
-        mainHandler.removeCallbacks(continuousEventFlush)
-        mainHandler.removeCallbacks(moduleEventFlush)
-        pendingContinuousEvents.clear()
-        WhiskerAppContext.popRuntimeOwner(this)
-        if (lifecycleOwner == null) destroyRuntime()
-        super.onDetachedFromWindow()
-    }
-
-    /** Permanently releases this View's Rust runtime and retained Host scene. */
-    fun destroy() {
-        check(Looper.myLooper() == Looper.getMainLooper()) {
-            "WhiskerView.destroy() must run on the main thread"
-        }
-        destroyRuntime(permanent = true)
-    }
-
-    private fun bindLifecycleOwner() {
-        val next = findViewTreeLifecycleOwner()
-        if (next === lifecycleOwner) return
-        lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
-        lifecycleOwner = next
-        next?.lifecycle?.addObserver(lifecycleObserver)
-    }
-
-    private fun pauseRuntime() {
-        val handle = nativeHandle
-        if (handle != 0L && !runtimePaused && nativePause(handle)) {
-            runtimePaused = true
-        }
-    }
-
-    private fun resumeRuntime() {
-        val handle = nativeHandle
-        if (handle != 0L && runtimePaused && nativeResume(handle)) {
-            runtimePaused = false
-            requestFrameFromNative()
-        }
-    }
-
-    private fun destroyRuntime(permanent: Boolean = false) {
-        permanentlyDestroyed = permanentlyDestroyed || permanent
-        lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
-        lifecycleOwner = null
         moduleEventSinkEpoch += 1
         WhiskerModuleEventCenter.installEventSink(this, null)
-        val handle = nativeHandle
+        if (nativeHandle != 0L) nativeDestroy(nativeHandle)
         nativeHandle = 0L
-        runtimePaused = false
-        if (handle != 0L) nativeDestroy(handle)
         frameScheduled = false
         continuousEventFlushPending = false
         choreographer.removeFrameCallback(this)
@@ -262,6 +183,7 @@ class WhiskerView(context: Context) :
         pendingContinuousEvents.clear()
         pendingModuleEvents.clear()
         WhiskerAppContext.popRuntimeOwner(this)
+        super.onDetachedFromWindow()
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
@@ -297,7 +219,6 @@ class WhiskerView(context: Context) :
         pointers.forEach { pointer ->
             val handle = nativeHandle
             if (handle != 0L) {
-                val scrollBatch = takeScrollOffsets()
                 nativeDispatchPointer(
                     handle,
                     pointer.timestampMs,
@@ -308,8 +229,6 @@ class WhiskerView(context: Context) :
                     pointer.y,
                     pointer.buttons,
                     pointer.changedButton,
-                    scrollBatch?.nodes ?: emptyScrollNodes,
-                    scrollBatch?.offsets ?: emptyScrollOffsets,
                 )
             }
         }
@@ -318,28 +237,6 @@ class WhiskerView(context: Context) :
         // an Android ownership decision, so receiving a normalized sample is
         // enough to claim it while the runtime is mounted.
         return nativeHandle != 0L && pointers.isNotEmpty()
-    }
-
-    private fun recordScrollOffset(node: Long, x: Float, y: Float) {
-        val offset = dirtyScrollOffsets[node]
-        if (offset == null) dirtyScrollOffsets[node] = floatArrayOf(x, y)
-        else {
-            offset[0] = x
-            offset[1] = y
-        }
-    }
-
-    private fun takeScrollOffsets(): ScrollOffsetBatch? {
-        if (dirtyScrollOffsets.isEmpty()) return null
-        val nodes = LongArray(dirtyScrollOffsets.size)
-        val offsets = FloatArray(dirtyScrollOffsets.size * 2)
-        dirtyScrollOffsets.entries.forEachIndexed { index, entry ->
-            nodes[index] = entry.key
-            offsets[index * 2] = entry.value[0]
-            offsets[index * 2 + 1] = entry.value[1]
-        }
-        dirtyScrollOffsets.clear()
-        return ScrollOffsetBatch(nodes, offsets)
     }
 
     /** Called from Rust through JNI. Safe even when the wake originates off-main. */
@@ -693,8 +590,6 @@ class WhiskerView(context: Context) :
         height: Float,
         scale: Float,
     ): Boolean
-    private external fun nativePause(handle: Long): Boolean
-    private external fun nativeResume(handle: Long): Boolean
     private external fun nativeDestroy(handle: Long)
     private external fun nativeDispatchEvent(
         handle: Long,
@@ -713,8 +608,6 @@ class WhiskerView(context: Context) :
         y: Float,
         buttons: Int,
         changedButton: Int,
-        scrollNodes: LongArray,
-        scrollOffsets: FloatArray,
     ): Boolean
     private external fun nativeResolveModule(
         callbackPtr: Long,

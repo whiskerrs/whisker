@@ -143,11 +143,10 @@ internal class HostMeasurementProvider(private val context: Context) {
                 )
             }
         }
-        val maxWidthPx = when {
-            availableWidthKind == DEFINITE && wrap != 0 ->
-                ceil(availableWidth * density).toInt().coerceAtLeast(1)
-            availableWidthKind == MIN_CONTENT && wrap != 0 -> 1
-            else -> ceil(paint.measureText(text) + semantics.indentPixels).toInt().coerceAtLeast(1)
+        val maxWidthPx = if (availableWidthKind == DEFINITE && wrap != 0) {
+            ceil(availableWidth * density).toInt().coerceAtLeast(1)
+        } else {
+            ceil(paint.measureText(text) + semantics.indentPixels).toInt().coerceAtLeast(1)
         }
         val builder = StaticLayout.Builder.obtain(
             layoutText, 0, layoutText.length, paint, maxWidthPx,
@@ -283,7 +282,6 @@ private fun Char.isCjk(): Boolean = code in 0x2E80..0x9FFF || code in 0xF900..0x
     code in 0xAC00..0xD7AF
 
 private const val DEFINITE = 0
-private const val MIN_CONTENT = 1
 private const val WIDTH = 1
 private const val HEIGHT = 2
 private const val BOTH_DIMENSIONS = WIDTH or HEIGHT

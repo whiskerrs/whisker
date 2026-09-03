@@ -9,20 +9,6 @@ public enum class WhiskerChildPolicy { None, Elements, PlainText }
 /** Top-level shape of a value carried by [WhiskerValue]. */
 public enum class WhiskerValueKind { Null, Bool, Int, Float, String, Bytes, Array, Map }
 
-public fun WhiskerValueKind.accepts(value: WhiskerValue): Boolean {
-    if (!value.isData()) return false
-    return when (this) {
-        WhiskerValueKind.Null -> value is WhiskerValue.Null
-        WhiskerValueKind.Bool -> value is WhiskerValue.Bool
-        WhiskerValueKind.Int -> value is WhiskerValue.Int
-        WhiskerValueKind.Float -> value is WhiskerValue.Float
-        WhiskerValueKind.String -> value is WhiskerValue.Str
-        WhiskerValueKind.Bytes -> value is WhiskerValue.Bytes
-        WhiskerValueKind.Array -> value is WhiskerValue.Array
-        WhiskerValueKind.Map -> value is WhiskerValue.Map
-    }
-}
-
 /** Runtime-assigned property identity received during surface bootstrap. */
 public data class WhiskerPropertyBinding(
     public val id: Int,
@@ -102,13 +88,9 @@ public class WhiskerElementRegistration(
     public fun property(id: Int): WhiskerPropertyBinding =
         requireNotNull(propertiesById[id]) { "unknown property id $id on $name" }
 
-    public fun propertyOrNull(id: Int): WhiskerPropertyBinding? = propertiesById[id]
-
     public fun event(id: Int): WhiskerEventBinding =
         requireNotNull(eventsById[id]) { "unknown event id $id on $name" }
 
     public fun command(id: Int): WhiskerCommandBinding =
         requireNotNull(commandsById[id]) { "unknown command id $id on $name" }
-
-    public fun commandOrNull(id: Int): WhiskerCommandBinding? = commandsById[id]
 }
