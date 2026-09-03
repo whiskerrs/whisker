@@ -86,8 +86,16 @@ private func measureText(
         .kern: CGFloat(request.letter_spacing),
         .paragraphStyle: paragraph,
     ]
-    let width = request.available_width_kind == 0 && request.wrap != 0
-        ? CGFloat(request.available_width) : CGFloat.greatestFiniteMagnitude
+    let width: CGFloat
+    if request.wrap == 0 {
+        width = .greatestFiniteMagnitude
+    } else {
+        width = switch request.available_width_kind {
+        case 0: CGFloat(request.available_width)
+        case 1: 1
+        default: .greatestFiniteMagnitude
+        }
+    }
     let source = hostString(request.text)
     let measuredText = request.word_break == 2 ? protectCJKBreaks(source) : source
     var measured = (measuredText as NSString).boundingRect(

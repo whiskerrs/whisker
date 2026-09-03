@@ -52,6 +52,9 @@ bool whisker_view_tick(void *handle,
   return true;
 }
 
+bool whisker_view_pause(void *handle) { (void)handle; return true; }
+bool whisker_view_resume(void *handle) { (void)handle; return true; }
+
 void whisker_view_destroy(void *handle) { (void)handle; }
 
 bool whisker_view_dispatch_event(void *handle,
@@ -77,7 +80,10 @@ bool whisker_view_dispatch_pointer(void *handle,
                                    float x,
                                    float y,
                                    uint32_t buttons,
-                                   int16_t changed_button) {
+                                   int16_t changed_button,
+                                   const uint64_t *scroll_nodes,
+                                   const float *scroll_offsets,
+                                   size_t scroll_count) {
   (void)handle;
   (void)timestamp_ms;
   (void)event;
@@ -87,6 +93,9 @@ bool whisker_view_dispatch_pointer(void *handle,
   (void)y;
   (void)buttons;
   (void)changed_button;
+  (void)scroll_nodes;
+  (void)scroll_offsets;
+  (void)scroll_count;
   return false;
 }
 

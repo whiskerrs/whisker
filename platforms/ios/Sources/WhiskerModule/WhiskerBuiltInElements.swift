@@ -16,6 +16,7 @@ public class WhiskerContainerView: UIView {
 public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegate, WhiskerEventSource {
     public let contentView = WhiskerContainerView(frame: .zero)
     private var eventSink: ((String, WhiskerValue) -> Void)?
+    private var presentationSink: ((CGPoint) -> Void)?
     private var horizontal = false
     private var chromeVisible = true
     private var snapFactor: CGFloat?
@@ -40,6 +41,11 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
 
     public func installWhiskerEventSink(_ sink: ((String, WhiskerValue) -> Void)?) {
         eventSink = sink
+    }
+
+    /** Installs the Host-internal scroll mirror, independent of app listeners. */
+    public func installWhiskerPresentationSink(_ sink: ((CGPoint) -> Void)?) {
+        presentationSink = sink
     }
 
     public func setScrollOrientation(_ value: String) {
@@ -88,6 +94,7 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     }
 
     public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        presentationSink?(contentOffset)
         eventSink?("scroll", .map([
             "scrollLeft": .float(Double(contentOffset.x)),
             "scrollTop": .float(Double(contentOffset.y)),

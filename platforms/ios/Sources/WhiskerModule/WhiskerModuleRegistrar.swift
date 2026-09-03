@@ -234,25 +234,29 @@ public final class WhiskerMountedElement {
     public let registration: WhiskerElementRegistration
     public let view: UIView
     private let eventSource: WhiskerEventSource?
-    private let textUpdater: ((UIView, WhiskerTextContent) -> Void)?
-    private let textStyleUpdater: ((UIView, WhiskerTextStyle) -> Void)?
-    private let childrenHostProvider: ((UIView) -> UIView)?
+    private let textUpdater: ((UIView, WhiskerTextContent) throws -> Void)?
+    private let textStyleUpdater: ((UIView, WhiskerTextStyle) throws -> Void)?
+    private let childrenHostProvider: ((UIView) throws -> UIView)?
     private let properties: [Int: WhiskerPropComponent]
     private let commands: [Int: WhiskerCommandComponent]
     private let eventsByName: [String: WhiskerEventBinding]
     private var eventSink: WhiskerElementEventSink
     private var eventMask: UInt64 = 0
+    private let isolatesFailures: Bool
+    private var failed: Bool
 
     fileprivate init(
         registration: WhiskerElementRegistration,
         view: UIView,
-        textUpdater: ((UIView, WhiskerTextContent) -> Void)?,
-        textStyleUpdater: ((UIView, WhiskerTextStyle) -> Void)?,
-        childrenHost: ((UIView) -> UIView)?,
+        textUpdater: ((UIView, WhiskerTextContent) throws -> Void)?,
+        textStyleUpdater: ((UIView, WhiskerTextStyle) throws -> Void)?,
+        childrenHost: ((UIView) throws -> UIView)?,
         properties: [Int: WhiskerPropComponent],
         commands: [Int: WhiskerCommandComponent],
         eventsByName: [String: WhiskerEventBinding],
-        eventSink: @escaping WhiskerElementEventSink
+        eventSink: @escaping WhiskerElementEventSink,
+        isolatesFailures: Bool,
+        initiallyFailed: Bool = false
     ) {
         self.registration = registration
         self.view = view
@@ -264,6 +268,8 @@ public final class WhiskerMountedElement {
         self.commands = commands
         self.eventsByName = eventsByName
         self.eventSink = eventSink
+        self.isolatesFailures = isolatesFailures
+        self.failed = initiallyFailed
         installEventSink()
     }
 
@@ -275,13 +281,19 @@ public final class WhiskerMountedElement {
         }
     }
 
-    public func setProperty(_ id: Int, value: WhiskerValue) { properties[id]?.setter(view, value) }
+    public func setProperty(_ id: Int, value: WhiskerValue) {
+        runElementOperation("set property", member: id) { try properties[id]?.setter(view, value) }
+    }
 
     /// Clear is a distinct protocol operation; it is not converted to `.null`.
-    public func clearProperty(_ id: Int) { properties[id]?.clearer(view) }
+    public func clearProperty(_ id: Int) {
+        runElementOperation("clear property", member: id) { try properties[id]?.clearer(view) }
+    }
 
     public func invokeCommand(_ id: Int, parameters: WhiskerValue) {
-        commands[id]?.handler(view, parameters)
+        runElementOperation("invoke command", member: id) {
+            try commands[id]?.handler(view, parameters)
+        }
     }
 
     public func setEventMask(_ mask: UInt64) { eventMask = mask }
@@ -289,46 +301,91 @@ public final class WhiskerMountedElement {
     @discardableResult
     public func setText(_ content: WhiskerTextContent) -> Bool {
         guard let textUpdater else { return false }
-        textUpdater(view, content)
+        runElementOperation("set text") { try textUpdater(view, content) }
         return true
     }
 
     @discardableResult
     public func setTextStyle(_ style: WhiskerTextStyle) -> Bool {
         guard let textStyleUpdater else { return false }
-        textStyleUpdater(view, style)
+        runElementOperation("set text style") { try textStyleUpdater(view, style) }
         return true
     }
 
-    public func childrenHost() -> UIView? { childrenHostProvider?(view) }
+    public func childrenHost() -> UIView? {
+        guard !failed else { return nil }
+        if !isolatesFailures {
+            do { return try childrenHostProvider?(view) } catch {
+                preconditionFailure("Built-in element failed to resolve children host: \(error)")
+            }
+        }
+        do {
+            return try childrenHostProvider?(view)
+        } catch {
+            failed = true
+            NSLog(
+                "[Whisker] Disabled `%@` after it failed to resolve children host; common presentation remains active: %@",
+                registration.name,
+                String(describing: error)
+            )
+            return nil
+        }
+    }
 
     /** Resets protocol-owned state before a built-in presentation is reused. */
     public func prepareForReuse(eventSink: @escaping WhiskerElementEventSink) {
-        properties.values.forEach { $0.clearer(view) }
+        properties.values.forEach { try? $0.clearer(view) }
+        view.isHidden = false
         eventMask = 0
         self.eventSink = eventSink
         installEventSink()
     }
 
     public func dispose() { eventSource?.installWhiskerEventSink(nil) }
+
+    private func runElementOperation(
+        _ label: StaticString,
+        member: Int? = nil,
+        _ operation: () throws -> Void
+    ) {
+        guard !failed else { return }
+        if !isolatesFailures {
+            do { try operation() } catch {
+                preconditionFailure("Built-in element failed to \(label): \(error)")
+            }
+            return
+        }
+        do {
+            try operation()
+        } catch {
+            failed = true
+            let operationName = member.map { "\(label) \($0)" } ?? "\(label)"
+            NSLog(
+                "[Whisker] Disabled `%@` after it failed to %@; common presentation remains active: %@",
+                registration.name,
+                operationName,
+                String(describing: error)
+            )
+        }
+    }
 }
 
 /** Host-owned declaration. It contains names and behavior, never Rust IDs. */
 public struct WhiskerElementFactory {
     public let name: String
-    fileprivate let textUpdater: ((UIView, WhiskerTextContent) -> Void)?
-    fileprivate let textStyleUpdater: ((UIView, WhiskerTextStyle) -> Void)?
-    fileprivate let childrenHost: ((UIView) -> UIView)?
+    fileprivate let textUpdater: ((UIView, WhiskerTextContent) throws -> Void)?
+    fileprivate let textStyleUpdater: ((UIView, WhiskerTextStyle) throws -> Void)?
+    fileprivate let childrenHost: ((UIView) throws -> UIView)?
     fileprivate let measurer: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)?
-    fileprivate let makeView: () -> UIView
+    fileprivate let makeView: () throws -> UIView
 
     public init(
         name: String,
-        textUpdater: ((UIView, WhiskerTextContent) -> Void)? = nil,
-        textStyleUpdater: ((UIView, WhiskerTextStyle) -> Void)? = nil,
-        childrenHost: ((UIView) -> UIView)? = nil,
+        textUpdater: ((UIView, WhiskerTextContent) throws -> Void)? = nil,
+        textStyleUpdater: ((UIView, WhiskerTextStyle) throws -> Void)? = nil,
+        childrenHost: ((UIView) throws -> UIView)? = nil,
         measurer: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)? = nil,
-        makeView: @escaping () -> UIView
+        makeView: @escaping () throws -> UIView
     ) {
         precondition(!name.isEmpty && !name.contains("@"))
         self.name = name
@@ -340,7 +397,7 @@ public struct WhiskerElementFactory {
     }
 
     fileprivate func withTextStyleUpdater(
-        _ updater: ((UIView, WhiskerTextStyle) -> Void)?
+        _ updater: ((UIView, WhiskerTextStyle) throws -> Void)?
     ) -> WhiskerElementFactory {
         WhiskerElementFactory(
             name: name,
@@ -495,16 +552,44 @@ public enum WhiskerElementRegistry {
         eventSink: @escaping WhiskerElementEventSink
     ) -> WhiskerMountedElement? {
         guard let element = boundByType[elementType] else { return nil }
+        let isolatesFailures: Bool
+        switch element.registration.name {
+        case "whisker.ui/View", "whisker.ui/Text", "whisker.ui/ScrollView":
+            isolatesFailures = false
+        default:
+            isolatesFailures = true
+        }
+        let view: UIView
+        let factoryFailed: Bool
+        do {
+            view = try element.factory.makeView()
+            factoryFailed = false
+        } catch {
+            guard isolatesFailures else {
+                preconditionFailure(
+                    "Built-in element `\(element.registration.name)` factory failed: \(error)"
+                )
+            }
+            NSLog(
+                "[Whisker] Disabled `%@` after its View factory failed; common presentation remains active: %@",
+                element.registration.name,
+                String(describing: error)
+            )
+            view = UIView(frame: .zero)
+            factoryFailed = true
+        }
         return WhiskerMountedElement(
             registration: element.registration,
-            view: element.factory.makeView(),
+            view: view,
             textUpdater: element.factory.textUpdater,
             textStyleUpdater: element.factory.textStyleUpdater,
             childrenHost: element.factory.childrenHost,
             properties: element.properties,
             commands: element.commands,
             eventsByName: Dictionary(uniqueKeysWithValues: element.registration.events.map { ($0.name, $0) }),
-            eventSink: eventSink
+            eventSink: eventSink,
+            isolatesFailures: isolatesFailures,
+            initiallyFailed: factoryFailed
         )
     }
 
