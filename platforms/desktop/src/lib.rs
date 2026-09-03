@@ -238,7 +238,7 @@ impl DesktopRuntime {
     }
 
     /// Resolves the cursor for the target selected by Rust-authoritative hit testing.
-    pub fn cursor_for_target(
+    pub(crate) fn cursor_for_target(
         &self,
         target: Option<whisker_protocol::NodeId>,
     ) -> Option<whisker_protocol::CursorKeyword> {
@@ -255,7 +255,7 @@ impl DesktopRuntime {
     }
 
     /// Applies scrolling from a target selected by Rust-authoritative hit testing.
-    pub fn scroll_target(
+    pub(crate) fn scroll_target(
         &mut self,
         target: Option<whisker_protocol::NodeId>,
         delta: [f32; 2],
@@ -269,7 +269,10 @@ impl DesktopRuntime {
     }
 
     /// Settles scrolling from a target selected by Rust-authoritative hit testing.
-    pub fn settle_scroll_target(&mut self, target: Option<whisker_protocol::NodeId>) -> bool {
+    pub(crate) fn settle_scroll_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> bool {
         self.surface.settle_scroll_target(target)
     }
 
@@ -280,7 +283,10 @@ impl DesktopRuntime {
     }
 
     /// Focuses the nearest editor at a target selected by Rust hit testing.
-    pub fn focus_text_input_target(&mut self, target: Option<whisker_protocol::NodeId>) -> bool {
+    pub(crate) fn focus_text_input_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> bool {
         self.surface.focus_text_input_target(target)
     }
 
