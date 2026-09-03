@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(cng)* include Web and macOS Host templates in the published crate
 - *(router)* complete cross-platform navigation
 - *(router)* restore Android host navigation
 - *(ios)* keep Xcode builds on the active CLI
