@@ -25,6 +25,7 @@ pub(crate) struct NativeTextHost {
     pub(crate) font_system: FontSystem,
     pub(crate) swash_cache: SwashCache,
     pub(crate) prepared: HashMap<PreparedContentId, PreparedText>,
+    preparation_generation: u64,
 }
 
 fn cosmic_alignment(value: whisker_protocol::MeasureTextAlignment) -> Option<Align> {
@@ -59,7 +60,19 @@ impl NativeTextHost {
             font_system: FontSystem::new(),
             swash_cache: SwashCache::new(),
             prepared: HashMap::new(),
+            preparation_generation: 0,
         }
+    }
+
+    pub(crate) fn preparation_generation(&self) -> u64 {
+        self.preparation_generation
+    }
+
+    pub(crate) fn retain_prepared(
+        &mut self,
+        mut referenced: impl FnMut(PreparedContentId) -> bool,
+    ) {
+        self.prepared.retain(|id, _| referenced(*id));
     }
 
     fn shape_text(
@@ -306,6 +319,7 @@ impl MeasurementProvider for NativeTextHost {
                     let id = PreparedContentId::new(request.key.get())
                         .expect("measurement keys are always non-zero");
                     self.prepared.insert(id, prepared);
+                    self.preparation_generation = self.preparation_generation.wrapping_add(1);
                     metrics.prepared_content = Some(id);
                     MeasurementResponse::Ready {
                         key: request.key,
@@ -437,6 +451,40 @@ mod tests {
         assert!(metrics.last_baseline.is_some());
         let prepared = metrics.prepared_content.unwrap();
         assert!(host.prepared.contains_key(&prepared));
+    }
+
+    #[test]
+    fn prepared_text_cache_discards_content_not_referenced_by_the_scene() {
+        let payload = MeasurementPayload::Text(TextMeasurePayload {
+            text: "Whisker".into(),
+            style: whisker_protocol::TextMeasureStyle::default(),
+            locale: None,
+            direction: whisker_protocol::MeasureTextDirection::Auto,
+            alignment: whisker_protocol::MeasureTextAlignment::Start,
+            indent: Default::default(),
+            wrap: MeasureTextWrap::Wrap,
+            word_break: Default::default(),
+            max_lines: None,
+            overflow: whisker_protocol::MeasureTextOverflow::Clip,
+        });
+        let mut host = NativeTextHost::new(registry());
+        let mut responses = Vec::new();
+        host.measure_batch(
+            SurfaceId::new(1).unwrap(),
+            &[request(7, payload.clone()), request(8, payload)],
+            &mut responses,
+        )
+        .unwrap();
+        let generation = host.preparation_generation();
+
+        host.retain_prepared(|id| id == PreparedContentId::new(8).unwrap());
+
+        assert_eq!(host.prepared.len(), 1);
+        assert!(
+            host.prepared
+                .contains_key(&PreparedContentId::new(8).unwrap())
+        );
+        assert_eq!(host.preparation_generation(), generation);
     }
 
     #[test]
