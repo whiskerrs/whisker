@@ -1,5 +1,6 @@
 package rs.whisker.runtime.scene
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Matrix
@@ -80,7 +81,7 @@ internal class HostNode(
         private set
 
     private val localTransform = Matrix()
-    private var hasLocalTransform = false
+    private var needsCanvasTransformFallback = false
     private var overflowClipRect = RectF()
     private var overflowClipPath: Path? = null
     private var paintClipPath: Path? = null
@@ -255,6 +256,7 @@ internal class HostNode(
     fun resolvedBorderWidths(): FloatArray = resolvedBoxGeometry?.borderWidths ?: FloatArray(4)
 
     /** Applies a protocol transform around the local border-box origin. */
+    @SuppressLint("NewApi")
     fun setLocalTransform(values: FloatArray, density: Float) {
         require(isProjectableFlatPlaneTransform(values))
         require(density.isFinite() && density > 0f)
@@ -266,14 +268,30 @@ internal class HostNode(
                 values[3] / density, values[7] / density, values[15],
             ),
         )
-        hasLocalTransform = !localTransform.isIdentity
+        needsCanvasTransformFallback = !applyNativeTransform(localTransform)
         invalidate()
         (parent as? android.view.View)?.invalidate()
     }
 
+    @SuppressLint("NewApi")
+    private fun applyNativeTransform(matrix: Matrix): Boolean {
+        if (!animationMatrixAvailable) return false
+        return try {
+            // setAnimationMatrix existed on RenderNode from API 21 and became public in API 29.
+            // Unlike Canvas.concat, ViewGroup uses this matrix for native child hit testing too.
+            setAnimationMatrix(matrix.takeUnless(Matrix::isIdentity))
+            true
+        } catch (_: NoSuchMethodError) {
+            // An unusual OEM implementation may omit the formerly hidden method. Remember that
+            // once so animated frames do not repeatedly pay for a linkage exception.
+            animationMatrixAvailable = false
+            false
+        }
+    }
+
     override fun draw(canvas: Canvas) {
         if (root?.shouldSkipBackdropCapture(this) == true) return
-        if (!hasLocalTransform) {
+        if (!needsCanvasTransformFallback) {
             drawClipped(canvas)
             return
         }
@@ -346,6 +364,10 @@ internal class HostNode(
             if (horizontal) overflowClipRect.right else visible.right.toFloat(),
             if (vertical) overflowClipRect.bottom else visible.bottom.toFloat(),
         )
+    }
+
+    private companion object {
+        private var animationMatrixAvailable = true
     }
 }
 
