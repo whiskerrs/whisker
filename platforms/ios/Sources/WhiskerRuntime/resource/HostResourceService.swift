@@ -110,7 +110,7 @@ final class HostResourceService {
                 return true
             }
             if scheme == "data" {
-                guard let data = Self.pngData(from: value) else {
+                guard let data = Self.imageData(fromDataURL: value) else {
                     failIfCurrent(id: id, generation: generation, code: .decode)
                     return true
                 }
@@ -252,10 +252,20 @@ final class HostResourceService {
         ))
     }
 
-    private nonisolated static func pngData(from value: String) -> Data? {
-        let prefix = "data:image/png;base64,"
-        guard value.hasPrefix(prefix) else { return nil }
-        return Data(base64Encoded: String(value.dropFirst(prefix.count)), options: [])
+    private nonisolated static func imageData(fromDataURL value: String) -> Data? {
+        guard value.count > 5, value.prefix(5).lowercased() == "data:",
+              let comma = value.firstIndex(of: ",") else { return nil }
+        let metadata = value[value.index(value.startIndex, offsetBy: 5)..<comma]
+        let fields = metadata.split(separator: ";", omittingEmptySubsequences: false)
+        guard let mediaType = fields.first,
+              mediaType.lowercased().hasPrefix("image/"),
+              fields.dropFirst().contains(where: { $0.lowercased() == "base64" }) else {
+            return nil
+        }
+        let encoded = String(value[value.index(after: comma)...])
+        guard let data = Data(base64Encoded: encoded, options: [.ignoreUnknownCharacters]),
+              !data.isEmpty else { return nil }
+        return data
     }
 
     private nonisolated static func decodeImage(_ data: Data) -> CGImage? {

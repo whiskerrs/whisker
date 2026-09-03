@@ -683,6 +683,21 @@ final class HostConformanceTests: XCTestCase {
         )
     }
 
+    func testResourceServiceDecodesJPEGDataURLs() throws {
+        let png = try fixturePNGData()
+        let image = try XCTUnwrap(UIImage(data: png))
+        let jpeg = try XCTUnwrap(image.jpegData(compressionQuality: 0.8))
+        let url = "data:image/jpeg;charset=binary;BASE64,\(jpeg.base64EncodedString())"
+        let service = HostResourceService(store: HostResourceStore())
+
+        XCTAssertTrue(service.load(id: 9, generation: 1, source: .url(url)))
+
+        XCTAssertEqual(
+            try awaitResourceState(in: service, id: 9, generation: 1),
+            .ready(width: 2, height: 2)
+        )
+    }
+
     func testResourceChannelCopiesBorrowedBytesAndEncodesTypedEvents() throws {
         let view = WhiskerView(frame: .zero)
         var bytes = try fixturePNGData()
