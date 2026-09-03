@@ -28,6 +28,16 @@ thread_local! {
     static FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
     static RETRYING_FAILED_FRAME: Cell<bool> = const { Cell::new(false) };
     static URGENT_FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
+    static FRAME_CALLBACK: Closure<dyn FnMut(f64)> = Closure::new(|timestamp_ms| {
+        FRAME_SCHEDULED.with(|scheduled| scheduled.set(false));
+        let result = APPLICATION.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            slot.as_mut()
+                .ok_or_else(|| WebError("Web application is not mounted".into()))?
+                .drive_frame(timestamp_ms)
+        });
+        finish_frame(result);
+    });
     #[cfg(feature = "hot-reload")]
     static MOUNTED_APPLICATION_HASH: Cell<u64> = const { Cell::new(0) };
 }
@@ -455,23 +465,15 @@ pub(crate) fn request_frame() {
         if scheduled.replace(true) {
             return;
         }
-        let callback = Closure::once(move |timestamp_ms: f64| {
-            FRAME_SCHEDULED.with(|scheduled| scheduled.set(false));
-            let result = APPLICATION.with(|slot| {
-                let mut slot = slot.borrow_mut();
-                slot.as_mut()
-                    .ok_or_else(|| WebError("Web application is not mounted".into()))?
-                    .drive_frame(timestamp_ms)
-            });
-            finish_frame(result);
+        let requested = FRAME_CALLBACK.with(|callback| {
+            web_sys::window().and_then(|window| {
+                window
+                    .request_animation_frame(callback.as_ref().unchecked_ref())
+                    .ok()
+            })
         });
-        match web_sys::window().and_then(|window| {
-            window
-                .request_animation_frame(callback.as_ref().unchecked_ref())
-                .ok()
-        }) {
-            Some(_) => callback.forget(),
-            None => scheduled.set(false),
+        if requested.is_none() {
+            scheduled.set(false);
         }
     });
 }
