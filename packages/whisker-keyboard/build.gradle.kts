@@ -49,8 +49,8 @@ dependencies {
     // 0.1.6 is the first SDK release carrying `WhiskerInsetsDispatcher`
     // (the shared decor-view inset multiplexer this module subscribes
     // to). Requires cutting `sdk-v0.1.6`; see the module refactor commit.
-    implementation("rs.whisker:whisker-module-android:0.1.20")
-    ksp("rs.whisker:ksp:0.1.20")
+    implementation("rs.whisker:whisker-module-android:0.1.21")
+    ksp("rs.whisker:ksp:0.1.21")
 
     // `WindowInsetsCompat.Type.ime()` + `ViewCompat.setOnApplyWindowInsetsListener`
     // — the AndroidX wrappers that expose the IME inset uniformly across

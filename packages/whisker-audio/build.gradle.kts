@@ -43,8 +43,8 @@ ksp {
 }
 
 dependencies {
-    implementation("rs.whisker:whisker-module-android:0.1.20")
-    ksp("rs.whisker:ksp:0.1.20")
+    implementation("rs.whisker:whisker-module-android:0.1.21")
+    ksp("rs.whisker:ksp:0.1.21")
 
     // AndroidX Media3 — modern Player API. We use ExoPlayer (the
     // engine) directly without PlayerView (the visual chrome),

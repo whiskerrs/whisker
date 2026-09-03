@@ -42,8 +42,8 @@ ksp {
 }
 
 dependencies {
-    implementation("rs.whisker:whisker-module-android:0.1.20")
-    ksp("rs.whisker:ksp:0.1.20")
+    implementation("rs.whisker:whisker-module-android:0.1.21")
+    ksp("rs.whisker:ksp:0.1.21")
     // No extra native dep: `Vibrator`/`VibratorManager` are platform
     // APIs — see `src/lib.rs`'s doc comment.
 }
