@@ -143,7 +143,8 @@ static bool bootstrap_host(void* data, const WhiskerMobileBootstrap* bootstrap) 
     jobject view = env != NULL ? local_view(env, data) : NULL;
     if (view == NULL) return false;
     (*env)->CallVoidMethod(env, view, g_begin_bootstrap);
-    for (size_t i = 0; i < bootstrap->registration_count && !clear_exception(env); ++i) {
+    bool failed = clear_exception(env);
+    for (size_t i = 0; i < bootstrap->registration_count && !failed; ++i) {
         const WhiskerMobileElementRegistration* item = &bootstrap->registrations[i];
         jstring name = new_string(env, item->name.ptr, item->name.len);
         jintArray pi = member_ints(env, item->properties, item->property_count, false, false);
@@ -160,9 +161,15 @@ static bool bootstrap_host(void* data, const WhiskerMobileBootstrap* bootstrap) 
             pi, pk, pn, ei, ek, en, ci, ck, cn);
         jobject refs[] = {name, pi, pk, pn, ei, ek, en, ci, ck, cn};
         for (size_t j = 0; j < sizeof(refs) / sizeof(refs[0]); ++j) if (refs[j]) (*env)->DeleteLocalRef(env, refs[j]);
+        // JNI exceptions are cleared so native resources can be released, but remain a sticky
+        // transaction failure. Never finish and publish a partially registered element table.
+        failed = clear_exception(env);
     }
-    bool accepted = !clear_exception(env) && (*env)->CallBooleanMethod(env, view, g_finish_bootstrap) == JNI_TRUE;
-    if (clear_exception(env)) accepted = false;
+    bool accepted = false;
+    if (!failed) {
+        accepted = (*env)->CallBooleanMethod(env, view, g_finish_bootstrap) == JNI_TRUE;
+        if (clear_exception(env)) accepted = false;
+    }
     (*env)->DeleteLocalRef(env, view);
     if (attached) (*g_vm)->DetachCurrentThread(g_vm);
     return accepted;
