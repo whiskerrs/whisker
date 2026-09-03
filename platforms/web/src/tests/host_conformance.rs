@@ -188,6 +188,14 @@ async fn scroll_view_emits_geometry_and_honors_scroll_behavior() {
         .command_named("scrollTo")
         .unwrap()
         .command;
+    let scroll_orientation = scroll_registration
+        .property_named("scroll-orientation")
+        .unwrap()
+        .property;
+    let enable_scroll = scroll_registration
+        .property_named("enable-scroll")
+        .unwrap()
+        .property;
     let view_type = registry
         .registration_for_builtin(whisker::ElementTag::View)
         .unwrap()
@@ -330,6 +338,70 @@ async fn scroll_view_emits_geometry_and_honors_scroll_behavior() {
         wait_ms(50).await;
     }
     assert_eq!(element.scroll_top(), 200);
+
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 4,
+                base_revision: 3,
+                target_revision: 4,
+                viewport_epoch: 1,
+                mode: FrameMode::Delta,
+            },
+            operations: vec![
+                Operation::SetProperty {
+                    node: scroll,
+                    property: scroll_orientation,
+                    value: WhiskerValue::String("horizontal".into()),
+                },
+                Operation::SetClip {
+                    node: scroll,
+                    clip: BoxClip {
+                        horizontal: OverflowClip::Hidden,
+                        vertical: OverflowClip::Hidden,
+                    },
+                },
+            ],
+        })
+        .unwrap();
+    assert_style(&element.style(), "overflow-x", "auto");
+    assert_style(&element.style(), "overflow-y", "hidden");
+
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 5,
+                base_revision: 4,
+                target_revision: 5,
+                viewport_epoch: 1,
+                mode: FrameMode::Delta,
+            },
+            operations: vec![
+                Operation::SetProperty {
+                    node: scroll,
+                    property: enable_scroll,
+                    value: WhiskerValue::Bool(false),
+                },
+                Operation::SetClip {
+                    node: scroll,
+                    clip: BoxClip {
+                        horizontal: OverflowClip::Visible,
+                        vertical: OverflowClip::Visible,
+                    },
+                },
+            ],
+        })
+        .unwrap();
+    assert_style(&element.style(), "overflow-x", "hidden");
+    assert_style(&element.style(), "overflow-y", "hidden");
 }
 
 async fn wait_ms(milliseconds: i32) {
