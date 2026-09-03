@@ -165,6 +165,16 @@ class HostConformanceTest {
     }
 
     @Test
+    fun layoutSizesRoundToTheNearestPhysicalPixel() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertTrue(Driver(context, "layout-rounding").verifyLayoutRounding())
+            }
+    }
+
+    @Test
     fun pointerCaptureDisallowsInterceptionFromTheCapturedNodesParent() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
@@ -1203,6 +1213,32 @@ private class Driver(
             check(stage(tag = tag, member = member, value = value))
             !view.commitFrameFromNative()
         }
+    }
+
+    fun verifyLayoutRounding(): Boolean {
+        val density = context.resources.displayMetrics.density
+        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(stage(tag = MobileAbi.OP_CREATE, member = 1))
+        check(
+            stage(
+                tag = MobileAbi.OP_LAYOUT,
+                numbers = floatArrayOf(
+                    0f,
+                    0f,
+                    10.75f / density,
+                    12.75f / density,
+                    0f,
+                    0f,
+                    6.75f / density,
+                    8.75f / density,
+                ),
+            ),
+        )
+        check(view.commitFrameFromNative())
+        val node = view.getChildAt(0) as HostNode
+        val content = checkNotNull(node.mountedElement).view
+        return node.layoutParams.width == 11 && node.layoutParams.height == 13 &&
+            content.layoutParams.width == 7 && content.layoutParams.height == 9
     }
 
     fun rejectOpacity(opacity: Float): Boolean {
