@@ -19,8 +19,8 @@ use crate::{
 };
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
-    ApplyResult, InputEvent, InputEventKind, InputPoint, MeasurementReady, NodeId, PointerId,
-    PointerKind, ResourceEvent, WhiskerValue,
+    ApplyResult, HostPresentationUpdate, InputEvent, InputEventKind, InputPoint, MeasurementReady,
+    NodeId, PointerId, PointerKind, ResourceEvent, WhiskerValue,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{DeferredMeasurementApply, FrameSink, LayoutOptions, MeasurementProvider};
@@ -544,7 +544,10 @@ pub struct RuntimeInstance {
 }
 
 enum PendingHostEvent {
-    Input(InputEvent),
+    Input {
+        event: InputEvent,
+        presentation: Vec<HostPresentationUpdate>,
+    },
     Module {
         modules: Rc<ModuleHost>,
         module: String,
@@ -556,7 +559,6 @@ enum PendingHostEvent {
 }
 
 const HOST_EVENT_QUEUE_CAP: usize = 4096;
-
 #[derive(Clone, Copy, Debug)]
 struct ActivationCandidate {
     target: NodeId,
@@ -852,6 +854,19 @@ impl RuntimeInstance {
 
     /// Delivers one Host-normalized event and flushes its reactive transaction.
     pub fn dispatch_input(&self, event: &InputEvent) -> Result<InputDispatch, RuntimeEventError> {
+        self.dispatch_input_with_presentation(event, &[])
+    }
+
+    /// Delivers coalesced Host presentation changes immediately before one event.
+    ///
+    /// This is the input-side synchronization point for state such as native
+    /// scroll offsets. Hosts should overwrite repeated changes locally and call
+    /// this only when an input sample actually needs Rust hit testing.
+    pub fn dispatch_input_with_presentation(
+        &self,
+        event: &InputEvent,
+        presentation: &[HostPresentationUpdate],
+    ) -> Result<InputDispatch, RuntimeEventError> {
         self.require(RuntimeLifecycle::Running, "dispatch input")
             .map_err(RuntimeEventError::Lifecycle)?;
         if self.context.is_entered() {
@@ -867,7 +882,10 @@ impl RuntimeInstance {
                 .validate()
                 .map_err(RuntimeInputError::InvalidInput)
                 .map_err(RuntimeEventError::Input)?;
-            self.enqueue_host_event(PendingHostEvent::Input(event.clone()))?;
+            self.enqueue_host_event(PendingHostEvent::Input {
+                event: event.clone(),
+                presentation: presentation.to_vec(),
+            })?;
             return Ok(InputDispatch {
                 queued: true,
                 ..InputDispatch::default()
@@ -878,7 +896,7 @@ impl RuntimeInstance {
             view::with_installed_renderer(surface.renderer(), || {
                 crate::drain_runtime_dispatches();
                 let dispatch = self
-                    .dispatch_input_active(event)
+                    .dispatch_input_active(event, presentation)
                     .map_err(RuntimeEventError::Input)?;
                 self.drain_pending_host_events()?;
                 Ok(dispatch)
@@ -1084,6 +1102,7 @@ impl RuntimeInstance {
     fn dispatch_input_active(
         &self,
         event: &InputEvent,
+        presentation: &[HostPresentationUpdate],
     ) -> Result<InputDispatch, RuntimeInputError> {
         // Treat listener execution and the reactive cascade it schedules as
         // one retained-scene transaction. Renderer calls still update the
@@ -1091,7 +1110,9 @@ impl RuntimeInstance {
         // is committed once after the queue settles.
         self.surface.begin_mutation_batch();
         let dispatch = (|| {
-            let mut dispatch = self.surface.dispatch_input(event)?;
+            let mut dispatch = self
+                .surface
+                .dispatch_input_with_presentation(event, presentation)?;
             let activation = self
                 .activations
                 .borrow_mut()
@@ -1195,8 +1216,11 @@ impl RuntimeInstance {
                     return Ok(());
                 };
                 match event {
-                    PendingHostEvent::Input(event) => self
-                        .dispatch_input_active(&event)
+                    PendingHostEvent::Input {
+                        event,
+                        presentation,
+                    } => self
+                        .dispatch_input_active(&event, &presentation)
                         .map_err(RuntimeEventError::Input)
                         .map(|_| ())?,
                     PendingHostEvent::Module {

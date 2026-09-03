@@ -125,6 +125,8 @@ fn android(root: &Path, gen_dir: &Path) -> Result<()> {
             "Java_rs_whisker_runtime_WhiskerView_nativeCreate",
             "whisker_view_create",
             "whisker_view_tick",
+            "whisker_view_pause",
+            "whisker_view_resume",
             "whisker_view_destroy",
         ],
         &library_path,
@@ -177,6 +179,8 @@ fn ios(root: &Path, gen_dir: &Path) -> Result<()> {
         &[
             "_whisker_view_create",
             "_whisker_view_tick",
+            "_whisker_view_pause",
+            "_whisker_view_resume",
             "_whisker_view_destroy",
             "_whisker_aslr_anchor",
         ],

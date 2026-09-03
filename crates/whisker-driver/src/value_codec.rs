@@ -1,7 +1,6 @@
 //! Owned conversions for the borrowed [`whisker_driver_sys`] value ABI.
 
 use std::collections::BTreeMap;
-use std::ffi::CString;
 
 use whisker_driver_sys::{
     VALUE_ARRAY, VALUE_BOOL, VALUE_BYTES, VALUE_ERROR, VALUE_FLOAT, VALUE_INT, VALUE_MAP,
@@ -13,7 +12,7 @@ use whisker_runtime::value::WhiskerValue;
 /// Pinned allocations referenced by borrowed `WhiskerValueRaw` trees.
 #[derive(Default)]
 pub struct RawValueArena {
-    strings: Vec<CString>,
+    strings: Vec<Box<[u8]>>,
     bytes: Vec<Vec<u8>>,
     arrays: Vec<Vec<WhiskerValueRaw>>,
     maps: Vec<Vec<WhiskerKeyValueRaw>>,
@@ -21,10 +20,16 @@ pub struct RawValueArena {
 
 impl RawValueArena {
     fn string(&mut self, value: &str) -> WhiskerStringRef {
-        let string = CString::new(value).unwrap_or_default();
+        if value.is_empty() {
+            return WhiskerStringRef {
+                ptr: std::ptr::null(),
+                len: 0,
+            };
+        }
+        let string = value.as_bytes().to_vec().into_boxed_slice();
         let result = WhiskerStringRef {
-            ptr: string.as_ptr(),
-            len: string.as_bytes().len(),
+            ptr: string.as_ptr().cast(),
+            len: string.len(),
         };
         self.strings.push(string);
         result
@@ -166,6 +171,15 @@ mod tests {
         ]));
         let mut arena = RawValueArena::default();
         let raw = arena.encode(&value);
+        assert_eq!(unsafe { decode_value(&raw) }, value);
+    }
+
+    #[test]
+    fn value_abi_preserves_interior_nul_bytes() {
+        let value = WhiskerValue::String("left\0right".into());
+        let mut arena = RawValueArena::default();
+        let raw = arena.encode(&value);
+
         assert_eq!(unsafe { decode_value(&raw) }, value);
     }
 }

@@ -1067,6 +1067,15 @@ at runtime rejects the frame or emits a structured capability error according
 to whether the capability was declared optional. Silent no-op behavior is not
 allowed for required semantics.
 
+Frame protocol and common-presentation failures are frame failures. A failure
+inside a third-party element factory, property setter, text-style consumer, or
+command is instead isolated to that mounted element: the Host reports one
+diagnostic, disables later element-owned callbacks for the node, and continues
+to apply its common layout, paint, clipping, accessibility, and child-tree
+operations. Built-in elements remain core invariants and do not use this
+recovery path. This keeps one module defect from leaving a frame half-applied
+without adding exception handling to the common View/Text/paint hot path.
+
 ## Prior-art and failure-mode review
 
 This section is normative where it records a Whisker decision. It compares the

@@ -28,18 +28,18 @@ impl MeasurementProvider for MobileMeasurementHost {
         let mut batch = MobileMeasureBatch::new(requests);
         if !(self.callback)(
             self.data,
-            batch.requests.as_ptr(),
+            nonempty_ptr(&batch.requests),
             batch.requests.len(),
-            batch.responses.as_mut_ptr(),
+            nonempty_mut_ptr(&mut batch.responses),
         ) {
             return Err(MobileMeasureError("mobile Host rejected measurement batch"));
         }
-        for raw in &batch.responses {
-            let Some(request) = requests.iter().find(|item| item.key.get() == raw.key) else {
+        for (request, raw) in requests.iter().zip(&batch.responses) {
+            if raw.key != request.key.get() {
                 return Err(MobileMeasureError(
-                    "mobile Host returned an unknown measurement key",
+                    "mobile Host reordered measurement responses",
                 ));
-            };
+            }
             if raw.environment_epoch != request.environment_epoch {
                 return Err(MobileMeasureError(
                     "mobile Host returned a stale measurement epoch",
@@ -90,7 +90,7 @@ impl MeasurementProvider for MobileMeasurementHost {
 }
 
 pub(super) struct MobileMeasureBatch {
-    _strings: Vec<CString>,
+    _strings: Vec<Box<[u8]>>,
     _bytes: Vec<Vec<u8>>,
     _font_families: Vec<Box<[WhiskerStringRef]>>,
     _font_features: Vec<Box<[MobileFontFeature]>>,
@@ -317,6 +317,15 @@ pub(super) fn nonempty_ptr<T>(values: &[T]) -> *const T {
         values.as_ptr()
     }
 }
+
+fn nonempty_mut_ptr<T>(values: &mut [T]) -> *mut T {
+    if values.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        values.as_mut_ptr()
+    }
+}
+
 fn available_kind(value: AvailableSpace) -> u8 {
     match value {
         AvailableSpace::Definite(_) => 0,
@@ -324,9 +333,94 @@ fn available_kind(value: AvailableSpace) -> u8 {
         AvailableSpace::MaxContent => 2,
     }
 }
+
 fn available_value(value: AvailableSpace) -> f32 {
     match value {
         AvailableSpace::Definite(value) => value,
         _ => 0.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whisker_engine::whisker_protocol::{
+        ElementTypeId, MeasureConstraints, MeasurementKey, ReplacedContentMeasurePayload,
+    };
+
+    extern "C" fn reorder_responses(
+        _data: *mut c_void,
+        _requests: *const MobileMeasureRequest,
+        count: usize,
+        responses: *mut MobileMeasureResponse,
+    ) -> bool {
+        assert_eq!(count, 2);
+        // SAFETY: `measure_batch` provides exactly `count` writable response slots.
+        let responses = unsafe { std::slice::from_raw_parts_mut(responses, count) };
+        responses[0].key = 2;
+        responses[1].key = 1;
+        responses.iter_mut().for_each(|response| {
+            response.status = MEASURE_READY;
+            response.width = 10.0;
+            response.height = 10.0;
+        });
+        true
+    }
+
+    fn request(key: u64) -> MeasurementRequest {
+        MeasurementRequest {
+            key: MeasurementKey::new(key).unwrap(),
+            node: NodeId::new(key).unwrap(),
+            element_type: ElementTypeId::new(1).unwrap(),
+            environment_epoch: 1,
+            constraints: MeasureConstraints {
+                known_dimensions: [None, None],
+                available_space: [AvailableSpace::MaxContent, AvailableSpace::MaxContent],
+            },
+            payload: MeasurementPayload::ReplacedContent(ReplacedContentMeasurePayload::default()),
+        }
+    }
+
+    #[test]
+    fn host_responses_must_preserve_request_positions() {
+        let mut host = MobileMeasurementHost {
+            callback: reorder_responses,
+            data: std::ptr::null_mut(),
+        };
+        let requests = [request(1), request(2)];
+        let mut responses = Vec::new();
+
+        let error = host
+            .measure_batch(SurfaceId::new(1).unwrap(), &requests, &mut responses)
+            .unwrap_err();
+
+        assert_eq!(error.0, "mobile Host reordered measurement responses");
+    }
+
+    extern "C" fn observe_empty_batch(
+        data: *mut c_void,
+        requests: *const MobileMeasureRequest,
+        count: usize,
+        responses: *mut MobileMeasureResponse,
+    ) -> bool {
+        // SAFETY: the test passes a live `bool` as callback data.
+        unsafe { *data.cast::<bool>() = requests.is_null() && responses.is_null() && count == 0 };
+        true
+    }
+
+    #[test]
+    fn empty_measurement_batch_uses_null_pointers() {
+        let mut observed = false;
+        let mut host = MobileMeasurementHost {
+            callback: observe_empty_batch,
+            data: std::ptr::from_mut(&mut observed).cast(),
+        };
+        let mut responses = Vec::new();
+
+        host.measure_batch(SurfaceId::new(1).unwrap(), &[], &mut responses)
+            .unwrap();
+
+        assert!(observed);
+        assert!(responses.is_empty());
     }
 }

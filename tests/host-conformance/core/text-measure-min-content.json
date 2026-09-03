@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "host.measure.text.min-content",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 320.0, "height": 600.0, "scale": 1.0 },
+      {
+        "type": "measure_text",
+        "key": 30,
+        "text": "a a a a a a a a a a a a a a a a a a a a",
+        "font_size": 20.0,
+        "line_height": 28.0,
+        "available_width": 0.0,
+        "available_width_kind": "min_content"
+      },
+      {
+        "type": "checkpoint_measurement",
+        "key": 30,
+        "min_width": 0.1,
+        "max_width": 40.0,
+        "min_height": 28.0,
+        "max_height": 1200.0
+      }
+    ]
+  }
+}

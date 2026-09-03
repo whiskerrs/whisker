@@ -155,6 +155,13 @@ impl WebElementFactory {
             measurer: self.measurer.clone(),
         })
     }
+
+    pub(crate) fn isolates_failures(&self) -> bool {
+        !matches!(
+            self.name.as_str(),
+            "whisker.ui/View" | "whisker.ui/Text" | "whisker.ui/ScrollView"
+        )
+    }
 }
 
 pub(crate) fn isolates_element_failures(name: &str) -> bool {
