@@ -67,6 +67,55 @@ fn browser_pointer_metadata_maps_to_protocol_values() {
 }
 
 #[wasm_bindgen_test]
+fn text_measurement_batch_preserves_response_order_and_cleans_up_probes() {
+    let document = web_sys::window().unwrap().document().unwrap();
+    let body = document.body().unwrap();
+    let children_before = body.child_element_count();
+    let text_type = ElementRegistry::standard()
+        .registration_for_builtin(whisker::ElementTag::Text)
+        .unwrap()
+        .element_type;
+    let request = |key: u64, value: &str| MeasurementRequest {
+        key: MeasurementKey::new(key).unwrap(),
+        node: NodeId::new(key).unwrap(),
+        element_type: text_type,
+        environment_epoch: 1,
+        constraints: MeasureConstraints {
+            known_dimensions: [None, None],
+            available_space: [AvailableSpace::Definite(200.0), AvailableSpace::MaxContent],
+        },
+        payload: MeasurementPayload::Text(TextMeasurePayload {
+            text: value.into(),
+            style: TextMeasureStyle {
+                font_size: 16.0,
+                line_height: MeasureLineHeight::LogicalPixels(20.0),
+                ..TextMeasureStyle::default()
+            },
+            locale: None,
+            direction: MeasureTextDirection::Auto,
+            alignment: whisker_protocol::MeasureTextAlignment::Start,
+            indent: Default::default(),
+            wrap: MeasureTextWrap::Wrap,
+            word_break: MeasureTextWordBreak::Normal,
+            max_lines: None,
+            overflow: MeasureTextOverflow::Clip,
+        }),
+    };
+    let requests = [request(7, "short"), request(8, "a longer string")];
+    let mut provider = DomMeasurementProvider::new(document);
+    let mut responses = Vec::new();
+
+    provider
+        .measure_batch(SurfaceId::new(1).unwrap(), &requests, &mut responses)
+        .unwrap();
+
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0].key(), MeasurementKey::new(7).unwrap());
+    assert_eq!(responses[1].key(), MeasurementKey::new(8).unwrap());
+    assert_eq!(body.child_element_count(), children_before);
+}
+
+#[wasm_bindgen_test]
 fn accessibility_protocol_maps_to_dom_semantics() {
     let mut driver = Driver::new();
     let view_type = ElementRegistry::standard()
