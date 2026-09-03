@@ -11,6 +11,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use whisker::RuntimeInstance;
 use whisker::runtime::RuntimeWakeHandle;
@@ -66,6 +67,25 @@ use gpu::RasterResource;
 use resource::{DesktopResourceService, DesktopResourceUpdate};
 use surface::DesktopSurface;
 use text::NativeTextHost;
+
+fn asset_root_for_executable(executable: &Path) -> PathBuf {
+    let Some(directory) = executable.parent() else {
+        return PathBuf::new();
+    };
+    if directory.file_name().is_some_and(|name| name == "MacOS")
+        && let Some(contents) = directory.parent()
+        && contents.file_name().is_some_and(|name| name == "Contents")
+    {
+        return contents.join("Resources");
+    }
+    directory.to_owned()
+}
+
+fn bundled_asset_root() -> PathBuf {
+    std::env::current_exe()
+        .map(|executable| asset_root_for_executable(&executable))
+        .unwrap_or_default()
+}
 
 /// Logical and physical metrics sampled by an OS adapter for one frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -186,7 +206,7 @@ impl DesktopRuntime {
         Ok(Self {
             measurements: NativeTextHost::new(elements),
             surface,
-            resources: DesktopResourceService::new(std::path::PathBuf::new(), move || {
+            resources: DesktopResourceService::new(bundled_asset_root(), move || {
                 resource_wake.wake();
             }),
             resource_events: Vec::new(),
@@ -493,6 +513,24 @@ mod tests {
                 ..valid
             })
             .is_err()
+        );
+    }
+
+    #[test]
+    fn bundled_assets_resolve_beside_plain_desktop_executables() {
+        assert_eq!(
+            asset_root_for_executable(Path::new("/opt/example/bin/whisker-app")),
+            PathBuf::from("/opt/example/bin")
+        );
+    }
+
+    #[test]
+    fn bundled_assets_resolve_from_the_macos_bundle_resources_directory() {
+        assert_eq!(
+            asset_root_for_executable(Path::new(
+                "/Applications/Example.app/Contents/MacOS/example"
+            )),
+            PathBuf::from("/Applications/Example.app/Contents/Resources")
         );
     }
 
