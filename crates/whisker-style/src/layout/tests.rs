@@ -68,6 +68,70 @@ fn empty_style_uses_the_documented_layout_initials() {
 }
 
 #[test]
+fn optional_auto_preserves_the_supplied_initial_when_unspecified() {
+    let initial = ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(3.0, 0.25));
+    assert_eq!(
+        resolve_optional_auto(
+            None,
+            initial,
+            20.0,
+            StyleEnvironment::default(),
+            StyleProperty::MarginTop,
+        )
+        .unwrap(),
+        initial
+    );
+}
+
+#[test]
+fn border_width_accepts_length_values_and_classifies_calc_expression_shapes() {
+    let style = resolve(&declaration(
+        StyleProperty::BorderTopWidth,
+        StyleValue::Length(length(2.0, LengthUnit::Em)),
+    ))
+    .unwrap();
+    assert_eq!(style.border.top.length(), 40.0);
+    assert_eq!(
+        resolve(&declaration(
+            StyleProperty::BorderTopWidth,
+            StyleValue::Length(length(f32::INFINITY, LengthUnit::Em)),
+        ))
+        .unwrap_err(),
+        StyleResolutionError::InvalidPropertyValue(StyleProperty::BorderTopWidth)
+    );
+    assert_eq!(
+        resolve(&declaration(
+            StyleProperty::BorderTopWidth,
+            StyleValue::LengthPercentage(LengthPercentageValue::Calc(Box::new(
+                CalcExpression::Value(Box::new(LengthPercentageValue::Length(length(
+                    f32::INFINITY,
+                    LengthUnit::Em,
+                )))),
+            ))),
+        ))
+        .unwrap_err(),
+        StyleResolutionError::InvalidPropertyValue(StyleProperty::BorderTopWidth)
+    );
+
+    let scalar = || CalcExpression::Number(number(2.0));
+    let variable = || {
+        CalcExpression::Variable(crate::CustomPropertyReference::new(
+            crate::CustomPropertyName::new("--border-width").unwrap(),
+        ))
+    };
+    assert!(calc_is_length_only(&scalar()));
+    assert!(calc_is_length_only(&variable()));
+    for expression in [
+        CalcExpression::Add(Box::new(scalar()), Box::new(variable())),
+        CalcExpression::Sub(Box::new(scalar()), Box::new(variable())),
+        CalcExpression::Mul(Box::new(scalar()), Box::new(variable())),
+        CalcExpression::Div(Box::new(scalar()), Box::new(variable())),
+    ] {
+        assert!(calc_is_length_only(&expression));
+    }
+}
+
+#[test]
 fn grid_declarations_resolve_to_backend_independent_values() {
     let fixed = |value: LengthPercentageValue| GridTrackSizingValue {
         min: GridMinTrackSizingValue::Fixed(value.clone()),

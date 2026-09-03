@@ -643,6 +643,33 @@ fn text_indent_resolves_length_percentage_and_calc_without_inheriting() {
             percentage: number(10.0),
         }
     );
+
+    for (value, expected) in [
+        (
+            LengthPercentageValue::Calc(Box::new(CalcExpression::Value(Box::new(
+                LengthPercentageValue::Length(px(6.0)),
+            )))),
+            ComputedTextIndent::LogicalPixels(number(6.0)),
+        ),
+        (
+            LengthPercentageValue::Calc(Box::new(CalcExpression::Value(Box::new(
+                LengthPercentageValue::Percentage(number(12.0)),
+            )))),
+            ComputedTextIndent::Percentage(number(12.0)),
+        ),
+    ] {
+        let resolved = resolve_text_style(
+            &declaration(
+                StyleProperty::TextIndent,
+                StyleValue::LengthPercentage(value),
+            ),
+            None,
+            environment,
+        )
+        .unwrap();
+        assert_eq!(resolved.computed().text_indent(), expected);
+    }
+
     let child = resolve_text_style(
         &SpecifiedStyle::new(),
         Some(length.inherited_for_children()),

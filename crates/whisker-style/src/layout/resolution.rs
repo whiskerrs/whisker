@@ -427,7 +427,7 @@ fn is_length_only(value: &LengthPercentageValue) -> bool {
     }
 }
 
-fn calc_is_length_only(expression: &CalcExpression) -> bool {
+pub(super) fn calc_is_length_only(expression: &CalcExpression) -> bool {
     match expression {
         CalcExpression::Value(value) => is_length_only(value),
         CalcExpression::Number(_) | CalcExpression::Variable(_) => true,
