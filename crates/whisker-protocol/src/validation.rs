@@ -308,7 +308,7 @@ impl SceneProjection {
                     },
                 );
             }
-            Operation::DeleteNode { node } => self.delete_subtree(*node)?,
+            Operation::DeleteNode { node } => self.delete_subtree(*node),
             Operation::InsertChild {
                 parent,
                 child,
@@ -512,8 +512,16 @@ impl SceneProjection {
         false
     }
 
-    fn delete_subtree(&mut self, node: NodeId) -> Result<(), ValidationError> {
-        let state = self.require_node(node)?.clone();
+    fn delete_subtree(&mut self, node: NodeId) {
+        let state = self
+            .nodes
+            .get(&node)
+            .expect("frame validation guarantees the deleted node exists")
+            .clone();
+        self.delete_known_subtree(node, state);
+    }
+
+    fn delete_known_subtree(&mut self, node: NodeId, state: NodeProjection) {
         if let Some(parent) = state.parent {
             let siblings = &mut self
                 .nodes
@@ -530,7 +538,6 @@ impl SceneProjection {
                 .expect("subtree children exist while parent exists");
             pending.extend(state.children);
         }
-        Ok(())
     }
 }
 
@@ -552,16 +559,19 @@ impl<'a> ProjectionTransaction<'a> {
     fn apply_operation(&mut self, operation: &Operation) -> Result<(), ValidationError> {
         match operation {
             Operation::CreateNode { node, .. } => {
-                if self.projection.allocated_nodes.contains(node) {
-                    return Err(ValidationError::DuplicateNode { node: *node });
-                }
                 self.remember(*node);
                 self.projection.apply_operation(operation)?;
                 self.newly_allocated.push(*node);
             }
             Operation::DeleteNode { node } => {
                 self.remember_subtree(*node)?;
-                self.projection.apply_operation(operation)?;
+                let state = self
+                    .projection
+                    .nodes
+                    .get(node)
+                    .expect("remembered subtree root remains present")
+                    .clone();
+                self.projection.delete_known_subtree(*node, state);
             }
             Operation::InsertChild { parent, child, .. }
             | Operation::RemoveChild { parent, child } => {
@@ -592,7 +602,13 @@ impl<'a> ProjectionTransaction<'a> {
             self.remember(parent);
         }
         while let Some(current) = pending.pop() {
-            let children = self.projection.require_node(current)?.children.clone();
+            let children = self
+                .projection
+                .nodes
+                .get(&current)
+                .expect("retained child exists while its parent exists")
+                .children
+                .clone();
             self.remember(current);
             pending.extend(children);
         }
@@ -884,13 +900,7 @@ mod tests {
     fn property_and_command_payloads_reject_error_values_recursively() {
         let property = PropertyId::new(1).expect("test property");
         let command = CommandId::new(1).expect("test command");
-        let invalid_values = [
-            WhiskerValue::Error("top-level failure".to_owned()),
-            WhiskerValue::Array(vec![WhiskerValue::Error("nested failure".to_owned())]),
-            WhiskerValue::map([("nested", WhiskerValue::Error("nested failure".to_owned()))]),
-        ];
-
-        for value in invalid_values {
+        fn check_invalid(property: PropertyId, command: CommandId, value: WhiskerValue) {
             let (mut scene, root, _) = initial_tree();
             let property_error = apply_next(
                 &mut scene,
@@ -920,6 +930,22 @@ mod tests {
             );
             assert_eq!(scene.revision(), 1);
         }
+
+        check_invalid(
+            property,
+            command,
+            WhiskerValue::Error("top-level failure".to_owned()),
+        );
+        check_invalid(
+            property,
+            command,
+            WhiskerValue::Array(vec![WhiskerValue::Error("nested failure".to_owned())]),
+        );
+        check_invalid(
+            property,
+            command,
+            WhiskerValue::map([("nested", WhiskerValue::Error("nested failure".to_owned()))]),
+        );
     }
 
     #[test]
@@ -980,6 +1006,54 @@ mod tests {
         assert_eq!(error, ValidationError::DuplicateNode { node: child });
         assert_eq!(scene.revision(), 2);
         assert!(scene.node(child).is_none());
+    }
+
+    #[test]
+    fn replacement_snapshot_rejects_duplicate_node_creation_without_mutating_the_scene() {
+        let (mut scene, _, _) = initial_tree();
+        let duplicate = node(3);
+        let error = scene.apply(&packet(
+            FrameMode::Snapshot,
+            2,
+            0,
+            2,
+            vec![
+                Operation::CreateNode {
+                    node: duplicate,
+                    element_type: element_type(),
+                },
+                Operation::CreateNode {
+                    node: duplicate,
+                    element_type: element_type(),
+                },
+            ],
+        ));
+
+        assert_eq!(
+            error,
+            Err(ValidationError::DuplicateNode { node: duplicate })
+        );
+    }
+
+    #[test]
+    fn replacement_snapshot_can_create_and_delete_an_unattached_node() {
+        let (mut scene, _, _) = initial_tree();
+        let temporary = node(99);
+        let result = scene.apply(&packet(
+            FrameMode::Snapshot,
+            2,
+            0,
+            2,
+            vec![
+                Operation::CreateNode {
+                    node: temporary,
+                    element_type: element_type(),
+                },
+                Operation::DeleteNode { node: temporary },
+            ],
+        ));
+
+        assert_eq!(result, Ok(ApplyResult::Accepted { revision: 2 }));
     }
 
     #[test]
