@@ -27,7 +27,7 @@ final class HostConformanceTests: XCTestCase {
         WhiskerModuleKernel.install(BuiltInElementModule())
     }
 
-    func testPointerCaptureOperationsReachTheUIKitSurface() {
+    func testRuntimeOwnedPointerCaptureOperationsAreAcceptedByUIKit() {
         let view = WhiskerView(frame: .zero)
         let registration = WhiskerElementRegistration(
             elementType: 1,
