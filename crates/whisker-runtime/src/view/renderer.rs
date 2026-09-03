@@ -380,10 +380,10 @@ pub fn create_element_by_name(tag_name: &str) -> Element {
     let handle = with_renderer(|r| r.create_element_by_name(tag_name), Element(u32::MAX));
     if handle.id() != u32::MAX {
         crate::reactive::with_runtime(|rt| {
-            if let Some(owner_id) = rt.current_owner() {
-                if let Some(owner) = rt.owners.get_mut(owner_id) {
-                    owner.elements.push(handle);
-                }
+            if let Some(owner_id) = rt.current_owner()
+                && let Some(owner) = rt.owners.get_mut(owner_id)
+            {
+                owner.elements.push(handle);
             }
         });
     }
@@ -417,10 +417,10 @@ pub fn create_element(tag: ElementTag) -> Element {
     // `<For>` removal, and component remount.
     if handle.id() != u32::MAX {
         crate::reactive::with_runtime(|rt| {
-            if let Some(owner_id) = rt.current_owner() {
-                if let Some(owner) = rt.owners.get_mut(owner_id) {
-                    owner.elements.push(handle);
-                }
+            if let Some(owner_id) = rt.current_owner()
+                && let Some(owner) = rt.owners.get_mut(owner_id)
+            {
+                owner.elements.push(handle);
             }
         });
     }
@@ -497,10 +497,10 @@ pub fn create_phantom_element() -> Element {
         s.insert(handle);
     });
     crate::reactive::with_runtime(|rt| {
-        if let Some(owner_id) = rt.current_owner() {
-            if let Some(owner) = rt.owners.get_mut(owner_id) {
-                owner.elements.push(handle);
-            }
+        if let Some(owner_id) = rt.current_owner()
+            && let Some(owner) = rt.owners.get_mut(owner_id)
+        {
+            owner.elements.push(handle);
         }
     });
     handle
