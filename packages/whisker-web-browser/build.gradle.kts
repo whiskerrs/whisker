@@ -36,7 +36,7 @@ dependencies {
     // `0.1.7` — needs `WhiskerAppContext.DeepLinkListener`/
     // `addDeepLinkListener`/`removeDeepLinkListener`, added in this
     // same change and published by the `sdk-v0.1.7` release.
-    implementation("rs.whisker:whisker-module-android:0.1.20")
-    ksp("rs.whisker:ksp:0.1.20")
+    implementation("rs.whisker:whisker-module-android:0.1.21")
+    ksp("rs.whisker:ksp:0.1.21")
     implementation("androidx.browser:browser:1.8.0")
 }

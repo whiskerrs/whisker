@@ -38,7 +38,11 @@ android {
     publishing {
         singleVariant("release") {
             withSourcesJar()
-            withJavadocJar()
+            // AGP 8.6's bundled Dokka cannot read the Java 17
+            // PermittedSubclasses attribute emitted for WhiskerValue in the
+            // module API. Documentation is published from the source jar;
+            // do not make the runtime AAR release depend on that obsolete
+            // Javadoc pipeline.
         }
     }
 }

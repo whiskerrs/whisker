@@ -64,16 +64,18 @@ pub struct PlatformSync {
 /// Not every `sdk-v*` tag needs a bump here — read the SDK diff and
 /// move this only when apps must pick the release up, such as a Host
 /// runtime ABI change or a Kotlin API consumed by applications/modules.
-// 0.1.20 is the first Android SDK release that ships WhiskerView in the
-// standalone whisker-runtime-android AAR.
-const WHISKER_SDK_VERSION: &str = "0.1.20";
+// 0.1.21 is the first published Android SDK release that ships WhiskerView in
+// the standalone whisker-runtime-android AAR. 0.1.20 failed before publishing.
+const WHISKER_SDK_VERSION: &str = "0.1.21";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
 /// `gradle-plugin-v*` release tag. The Settings plugin and the
 /// Project plugin ship as separate Maven artifacts but share this
 /// version.
-const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.4.1";
+// 0.5.0 ships the package-scoped module-report contract and the build-process
+// fixes required by the standalone new-architecture Android Host.
+const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.5.0";
 const WHISKER_MAVEN_URL: &str = "https://whiskerrs.github.io/whisker/maven";
 
 fn sync_android(

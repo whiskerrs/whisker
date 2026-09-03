@@ -38,12 +38,12 @@ ksp {
 }
 
 dependencies {
-    // Phase J — single Whisker runtime dep. `ksp("rs.whisker:ksp:0.1.20")`
+    // Phase J — single Whisker runtime dep. `ksp("rs.whisker:ksp:0.1.21")`
     // stays separate (it is a build-time processor, not on the
     // runtime classpath). The KSP processor discovers explicit
     // `@WhiskerModule` declarations from the runtime artifact.
-    implementation("rs.whisker:whisker-module-android:0.1.20")
-    ksp("rs.whisker:ksp:0.1.20")
+    implementation("rs.whisker:whisker-module-android:0.1.21")
+    ksp("rs.whisker:ksp:0.1.21")
 
     // AndroidX Media3 — modern replacement for the deprecated
     // android.widget.VideoView / MediaPlayer pair. ExoPlayer is
