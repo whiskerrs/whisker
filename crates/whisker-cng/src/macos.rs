@@ -12,7 +12,7 @@ use whisker_config::Config;
 use crate::fingerprint;
 use crate::render::render;
 
-const CARGO_TOML: &str = include_str!("templates/macos/Cargo.toml");
+const CARGO_TOML: &str = include_str!("templates/macos/Cargo.toml.template");
 const MAIN_RS: &str = include_str!("templates/macos/src/main.rs");
 const INFO_PLIST: &str = include_str!("templates/macos/Info.plist");
 const ENTITLEMENTS: &str = include_str!("templates/macos/Entitlements.plist");

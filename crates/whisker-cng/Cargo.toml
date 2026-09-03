@@ -20,6 +20,15 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Whisker Continuous Native Generation — declarative platform project generation from whisker.rs."
+# Cargo treats a nested file named exactly `Cargo.toml` as a package boundary
+# and omits that tree from the published archive. The Web and macOS source
+# manifests therefore use a `.template` suffix and are renamed when rendered.
+include = [
+    "src/**",
+    "tests/**",
+    "Cargo.toml",
+    "CHANGELOG.md",
+]
 
 [dependencies]
 anyhow = { workspace = true }

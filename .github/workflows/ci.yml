@@ -30,6 +30,11 @@ jobs:
           RUST_TEST_THREADS: 1
           WGPU_BACKEND: vulkan
       - run: cargo test --workspace --doc
+      - name: Verify CNG Host templates are publishable
+        run: |
+          package_files="$(cargo package -p whisker-cng --allow-dirty --list)"
+          grep -Fxq 'src/templates/macos/Cargo.toml.template' <<<"$package_files"
+          grep -Fxq 'src/templates/web/Cargo.toml.template' <<<"$package_files"
 
   fmt:
     name: cargo fmt
