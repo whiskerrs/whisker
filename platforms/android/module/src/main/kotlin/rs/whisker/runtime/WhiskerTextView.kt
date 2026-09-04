@@ -17,6 +17,12 @@ import rs.whisker.runtime.internal.CenteredLineHeightSpan
 
 /** Native text element implementing Whisker's single-line decorations. */
 public class WhiskerTextView(context: Context) : TextView(context) {
+    init {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            setFallbackLineSpacing(true)
+        }
+    }
+
     private var whiskerTextValue: String = ""
     private var whiskerTextIndent: WhiskerTextIndent = WhiskerTextIndent()
     private var whiskerWordBreak: WhiskerTextWordBreak = WhiskerTextWordBreak.NORMAL

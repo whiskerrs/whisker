@@ -178,7 +178,10 @@ impl Css {
     /// Sets the `animation` shorthand for multiple comma-separated
     /// animations.
     pub fn animations(self, anims: impl IntoIterator<Item = Animation>) -> Self {
-        let anims = anims.into_iter().collect::<Vec<_>>();
+        let mut anims = anims.into_iter().collect::<Vec<_>>();
+        if anims.is_empty() {
+            anims.push(Animation::new("none"));
+        }
         let mut s = String::new();
         for (i, a) in anims.iter().enumerate() {
             if i > 0 {
@@ -250,6 +253,20 @@ mod tests {
             resolved.computed().motion().animations[1].delay.get(),
             100.0
         );
+    }
+
+    #[test]
+    fn empty_animations_disable_animations() {
+        let style = Css::new().animations([]);
+        let resolved = whisker_style::resolve_style(
+            &style.to_specified_style(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .expect("an empty animation collection means animation: none");
+
+        assert_eq!(style.to_string(), "animation: none;");
+        assert!(resolved.computed().motion().animations.is_empty());
     }
 
     #[test]

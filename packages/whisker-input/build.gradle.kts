@@ -37,6 +37,9 @@ android {
         getByName("main") {
             kotlin.srcDirs("android/src/main/kotlin")
         }
+        getByName("test") {
+            kotlin.srcDirs("android/src/test/kotlin")
+        }
     }
 }
 
@@ -48,4 +51,5 @@ ksp {
 dependencies {
     implementation("rs.whisker:whisker-module-android:0.1.21")
     ksp("rs.whisker:ksp:0.1.21")
+    testImplementation("junit:junit:4.13.2")
 }

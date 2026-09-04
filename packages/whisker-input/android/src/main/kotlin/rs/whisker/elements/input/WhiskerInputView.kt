@@ -489,7 +489,10 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     fun applyTextStyle(style: WhiskerTextStyle) {
         val et = view()
         et.setTextColor(style.color)
-        et.setTextSize(TypedValue.COMPLEX_UNIT_PX, style.fontSize)
+        et.setTextSize(
+            TypedValue.COMPLEX_UNIT_PX,
+            inputTextSizePixels(style.fontSize, et.resources.displayMetrics.density),
+        )
         val family = style.fontFamilies.firstOrNull()?.takeUnless { it == "system" }
         val base = Typeface.create(family, Typeface.NORMAL)
         et.typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -566,3 +569,6 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         }
     }
 }
+
+internal fun inputTextSizePixels(logicalPixels: Float, density: Float): Float =
+    logicalPixels * density
