@@ -121,7 +121,13 @@ struct LayoutIndex<T, K> {
     /// entry is the complete estimated extent.
     offsets: Vec<f32>,
     sizes: Vec<f32>,
+    /// Measured main-axis content size keyed by the first item in a virtual
+    /// track. Grid gaps are added separately from the measured content.
     measured_sizes: HashMap<K, f32>,
+    /// Automatically learned fallback for tracks that have not been mounted
+    /// yet. A developer-provided estimate is deliberately not part of the
+    /// public List API.
+    estimated_track_size: f32,
     header_extent: f32,
     footer_extent: f32,
     empty_extent: f32,
@@ -143,6 +149,7 @@ where
             offsets: vec![0.0],
             sizes: Vec::new(),
             measured_sizes: HashMap::new(),
+            estimated_track_size: DEFAULT_ITEM_SIZE,
             header_extent: 0.0,
             footer_extent: 0.0,
             empty_extent: 0.0,
@@ -159,11 +166,6 @@ where
         self.keys.reserve(items.len());
         self.key_to_index.clear();
         self.key_to_index.reserve(items.len());
-        self.offsets.clear();
-        self.offsets.reserve(items.len() + 1);
-        self.offsets.push(self.header_extent);
-        self.sizes.clear();
-        self.sizes.reserve(items.len());
         for (index, item) in items.iter().enumerate() {
             let key = key(item);
             assert!(
@@ -171,29 +173,19 @@ where
                 "virtualized List keys must be unique"
             );
             self.key_to_index.insert(key.clone(), index);
-            let size = if index % self.items_per_track == 0 {
-                let has_successor = index + self.items_per_track < items.len();
-                self.measured_sizes
-                    .get(&key)
-                    .copied()
-                    .unwrap_or(DEFAULT_ITEM_SIZE + if has_successor { self.main_gap } else { 0.0 })
-            } else {
-                0.0
-            };
             self.keys.push(key);
-            self.sizes.push(size);
-            self.offsets
-                .push(self.offsets.last().copied().unwrap_or(self.header_extent) + size);
         }
         self.measured_sizes
             .retain(|key, _| unique_keys.contains(key));
+        self.refresh_estimated_track_size();
+        self.rebuild_sizes_and_offsets();
         self.items = items;
         self.generation = self.generation.wrapping_add(1);
         self.source_generation = self.source_generation.wrapping_add(1);
     }
 
     fn update_measurements(&mut self, measurements: impl IntoIterator<Item = (K, f32)>) -> bool {
-        let mut first_changed = None::<usize>;
+        let mut cache_changed = false;
         for (key, size) in measurements {
             if !size.is_finite() || size < 0.0 {
                 continue;
@@ -202,10 +194,28 @@ where
                 continue;
             };
             let index = self.track_start_item(self.track_for_item(item_index));
+            let track_key = self.keys[index].clone();
+            if self
+                .measured_sizes
+                .get(&track_key)
+                .is_some_and(|measured| (*measured - size).abs() < 0.5)
+            {
+                continue;
+            }
+            self.measured_sizes.insert(track_key, size);
+            cache_changed = true;
+        }
+        if !cache_changed {
+            return false;
+        }
+
+        self.refresh_estimated_track_size();
+        let mut first_changed = None::<usize>;
+        for index in (0..self.keys.len()).step_by(self.items_per_track) {
+            let size = self.track_extent(index);
             if (self.sizes[index] - size).abs() < 0.5 {
                 continue;
             }
-            self.measured_sizes.insert(key, size);
             self.sizes[index] = size;
             first_changed = Some(first_changed.map_or(index, |first| first.min(index)));
         }
@@ -218,6 +228,52 @@ where
         }
         self.generation = self.generation.wrapping_add(1);
         true
+    }
+
+    fn refresh_estimated_track_size(&mut self) {
+        let mut total = 0.0_f64;
+        let mut samples = 0_usize;
+        for (key, size) in &self.measured_sizes {
+            let Some(index) = self.key_to_index.get(key).copied() else {
+                continue;
+            };
+            if index % self.items_per_track != 0 || *size <= 0.0 {
+                continue;
+            }
+            total += f64::from(*size);
+            samples += 1;
+        }
+        if samples > 0 {
+            self.estimated_track_size = (total / samples as f64) as f32;
+        }
+    }
+
+    fn rebuild_sizes_and_offsets(&mut self) {
+        self.offsets.clear();
+        self.offsets.reserve(self.keys.len() + 1);
+        self.offsets.push(self.header_extent);
+        self.sizes.clear();
+        self.sizes.reserve(self.keys.len());
+        for index in 0..self.keys.len() {
+            let size = if index % self.items_per_track == 0 {
+                self.track_extent(index)
+            } else {
+                0.0
+            };
+            self.sizes.push(size);
+            self.offsets
+                .push(self.offsets.last().copied().unwrap_or(self.header_extent) + size);
+        }
+    }
+
+    fn track_extent(&self, index: usize) -> f32 {
+        let content_size = self
+            .measured_sizes
+            .get(&self.keys[index])
+            .copied()
+            .unwrap_or(self.estimated_track_size);
+        let has_successor = index + self.items_per_track < self.keys.len();
+        content_size + if has_successor { self.main_gap } else { 0.0 }
     }
 
     fn update_aux_measurement(&mut self, content: AuxContent, size: f32) -> bool {
@@ -913,17 +969,11 @@ pub fn virtualize<T, K>(
                             layout.update_aux_measurement(pending.content, pending.size.max(0.0));
                     }
                     let mut measurements = entry_measurements;
-                    measurements.extend(track_measurements.into_iter().map(
-                        |(track, key, size)| {
-                            let extent = size
-                                + if track + 1 < layout.track_count() {
-                                    main_gap
-                                } else {
-                                    0.0
-                                };
-                            (key, extent)
-                        },
-                    ));
+                    measurements.extend(
+                        track_measurements
+                            .into_iter()
+                            .map(|(_track, key, size)| (key, size)),
+                    );
                     changed |= layout.update_measurements(measurements);
 
                     let initial_offset = resolve_pending_initial_target(
@@ -1691,8 +1741,38 @@ mod tests {
         assert!(index.update_measurements([(1, 20.0), (3, 80.0)]));
 
         assert_eq!(index.generation, generation + 1);
-        assert_eq!(index.offsets, vec![0.0, 44.0, 64.0, 108.0, 188.0, 232.0]);
+        assert_eq!(index.estimated_track_size, 50.0);
+        assert_eq!(index.offsets, vec![0.0, 50.0, 70.0, 120.0, 200.0, 250.0]);
         assert_eq!(index.measured_sizes.get(&1), Some(&20.0));
         assert_eq!(index.measured_sizes.get(&3), Some(&80.0));
+    }
+
+    #[test]
+    fn zero_sized_tracks_do_not_collapse_the_unmeasured_estimate() {
+        let mut index = LayoutIndex::new(1, 0.0);
+        index.replace((0_u32..3).collect(), |item| *item);
+
+        assert!(index.update_measurements([(0, 0.0)]));
+        assert_eq!(index.estimated_track_size, DEFAULT_ITEM_SIZE);
+        assert_eq!(index.sizes, vec![0.0, 44.0, 44.0]);
+
+        assert!(index.update_measurements([(1, 100.0)]));
+        assert_eq!(index.estimated_track_size, 100.0);
+        assert_eq!(index.sizes, vec![0.0, 100.0, 100.0]);
+    }
+
+    #[test]
+    fn grid_estimates_track_content_and_applies_gap_separately() {
+        let mut index = LayoutIndex::new(2, 8.0);
+        index.replace((0_u32..6).collect(), |item| *item);
+        assert_eq!(index.sizes, vec![52.0, 0.0, 52.0, 0.0, 44.0, 0.0]);
+
+        assert!(index.update_measurements([(0, 100.0), (2, 60.0)]));
+
+        assert_eq!(index.estimated_track_size, 80.0);
+        assert_eq!(index.measured_sizes.get(&0), Some(&100.0));
+        assert_eq!(index.measured_sizes.get(&2), Some(&60.0));
+        assert_eq!(index.sizes, vec![108.0, 0.0, 68.0, 0.0, 80.0, 0.0]);
+        assert_eq!(index.total_extent(), 256.0);
     }
 }
