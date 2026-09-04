@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::rc::Rc;
 
@@ -313,6 +314,195 @@ fn list_virtualizes_through_scroll_view_and_reacts_to_host_scroll_geometry() {
                 .and_then(|index| index.parse::<u32>().ok())
                 .is_some_and(|index| index >= 20))
             )
+    );
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn horizontal_list_mounted_by_show_lays_out_initial_items() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(57).unwrap(),
+        StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+    );
+    let visible = owner.with(|| signal(false));
+    let observed = owner.with(|| signal(None::<(f32, f32)>));
+    let list_handle = owner.with(ListHandle::<u32>::new);
+    let list_ref = list_handle.r();
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                View(style: css!(width: px(320), height: px(100))) {
+                    Show(when: move || visible.get()) {
+                        List(
+                            axis: ScrollAxis::Horizontal,
+                            style: css!(width: percent(100), height: percent(100)),
+                            content_style: css!(height: percent(100)),
+                            list_ref: list_ref.clone(),
+                            initial_scroll: ListScrollTarget::index(17, ScrollAlignment::Start),
+                            each: || (0_u32..18).collect::<Vec<_>>(),
+                            key: |row: &u32| *row,
+                            children: move |_row: ReadSignal<u32>| {
+                                let page = render! {
+                                    View(style: css!(
+                                        width: px(320),
+                                        height: percent(100),
+                                        flex_shrink: 0.0,
+                                    ))
+                                };
+                                whisker::runtime::view::observe_layout(
+                                    page,
+                                    Box::new(move |geometry| {
+                                        observed.set(Some((
+                                            geometry.border_box.width,
+                                            geometry.border_box.height,
+                                        )))
+                                    }),
+                                );
+                                page
+                            },
+                        )
+                    }
+                    Show(when: move || !visible.get()) {
+                        View(style: css!(
+                            width: px(1),
+                            height: px(1),
+                        ))
+                    }
+                }
+            }
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(observed.get(), None);
+
+    with_installed_renderer(surface.renderer(), || {
+        visible.set(true);
+        whisker::flush();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            2,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            3,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let observed_geometry = observed.get();
+    assert!(
+        observed_geometry.is_some_and(|(width, height)| width > 0.0 && height > 0.0),
+        "items mounted in a dynamic horizontal List must join layout with non-zero geometry, got {observed_geometry:?}"
+    );
+    let snapshot = list_handle.snapshot().expect("dynamic List is bound");
+    assert!(
+        (snapshot.offset - 5_440.0).abs() < 0.01,
+        "initial end item must be aligned after the real viewport and row sizes are known, got {snapshot:?}"
+    );
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn horizontal_list_exposes_its_complete_extent_to_the_host_scroll_view() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(58).unwrap(),
+        StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+    );
+    let list_handle = owner.with(ListHandle::<u32>::new);
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                List(
+                    axis: ScrollAxis::Horizontal,
+                    style: css!(width: px(320), height: px(100)),
+                    content_style: css!(height: percent(100)),
+                    list_ref: list_handle.r(),
+                    initial_scroll: ListScrollTarget::index(17, ScrollAlignment::Start),
+                    each: || (0_u32..18).collect::<Vec<_>>(),
+                    key: |row: &u32| *row,
+                    children: |_row: ReadSignal<u32>| render! {
+                        View(style: css!(
+                            width: px(320),
+                            height: percent(100),
+                            flex_shrink: 0.0,
+                        ))
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    for frame in 1..=2 {
+        surface
+            .render_frame(
+                LayoutSize::new(320.0, 100.0),
+                1,
+                frame,
+                &mut host,
+                &mut renderer,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+    }
+
+    let mut layouts = HashMap::new();
+    for frame in renderer.frames() {
+        for operation in &frame.packet.operations {
+            if let Operation::SetLayout { node, geometry } = operation {
+                layouts.insert(*node, geometry.border_box);
+            }
+        }
+    }
+    let root = surface.root().expect("List ScrollView root");
+    let root = renderer
+        .projection()
+        .node(root)
+        .expect("projected List root");
+    let content_extent = list_handle.snapshot().unwrap().content_extent as f32;
+    assert!(
+        root.children().iter().any(|child| {
+            layouts
+                .get(child)
+                .is_some_and(|layout| layout.width >= content_extent)
+        }),
+        "the Host ScrollView needs a direct child spanning the full {content_extent}px extent; direct child layouts were {:?}",
+        root.children()
+            .iter()
+            .filter_map(|child| layouts.get(child))
+            .collect::<Vec<_>>()
     );
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
@@ -806,7 +996,10 @@ fn list_applies_axis_scroll_control_and_initial_key_target() {
                     each: || (0_u32..20).collect::<Vec<_>>(),
                     key: |row: &u32| *row,
                     children: |row: ReadSignal<u32>| render! {
-                        Text(value: computed(move || row.get().to_string()), style: css!(width: px(44), font_size: px(20)))
+                        Text(
+                            value: computed(move || row.get().to_string()),
+                            style: css!(width: px(44), flex_shrink: 0.0, font_size: px(20)),
+                        )
                     },
                 )
             }
@@ -841,7 +1034,25 @@ fn list_applies_axis_scroll_control_and_initial_key_target() {
         )
         .unwrap();
 
-    let operations = &renderer.frames()[0].packet.operations;
+    // Initial scrolling waits for the first resolved viewport, measured target,
+    // and Host-facing scroll extent. Their layout observers queue the command
+    // for the following frame instead of acting on the pre-layout estimate.
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            2,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let operations = renderer
+        .frames()
+        .iter()
+        .flat_map(|frame| frame.packet.operations.iter())
+        .collect::<Vec<_>>();
     assert!(operations.iter().any(|operation| matches!(
         operation,
         Operation::SetProperty {

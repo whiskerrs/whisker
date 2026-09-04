@@ -255,13 +255,22 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
 
     public fun scrollToLogicalOffset(offset: Double, smooth: Boolean) {
         val pixels = (offset * resources.displayMetrics.density).roundToInt()
-        if (horizontal) {
-            if (smooth) horizontalScroller.smoothScrollTo(pixels, 0)
-            else horizontalScroller.scrollTo(pixels, 0)
-        } else {
-            if (smooth) verticalScroller.smoothScrollTo(0, pixels)
-            else verticalScroller.scrollTo(0, pixels)
+        val isHorizontal = horizontal
+        val apply = {
+            if (isHorizontal) {
+                if (smooth) horizontalScroller.smoothScrollTo(pixels, 0)
+                else horizontalScroller.scrollTo(pixels, 0)
+            } else {
+                if (smooth) verticalScroller.smoothScrollTo(0, pixels)
+                else verticalScroller.scrollTo(0, pixels)
+            }
         }
+        // A FramePacket can resize the scroll content and issue scrollTo in
+        // the same Host turn. Applying synchronously lets the following
+        // Android layout pass clamp the offset against the previous extent
+        // and reset it to zero. Defer every command until all operations in
+        // the packet have been staged and the pending layout has completed.
+        post { apply() }
     }
 
     public fun scrollByLogicalOffset(offset: Double, smooth: Boolean) {
