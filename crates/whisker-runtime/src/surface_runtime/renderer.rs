@@ -272,7 +272,7 @@ impl DynRenderer for SurfaceRuntime {
         state.record(result);
     }
 
-    fn observe_layout(&self, handle: Element, callback: Box<dyn Fn(LayoutGeometry) + 'static>) {
+    fn observe_layout(&self, handle: Element, callback: Box<dyn Fn(LayoutObservation) + 'static>) {
         let mut state = self.state.borrow_mut();
         let result = state.element_mut(handle).map(|entry| {
             let observers = entry

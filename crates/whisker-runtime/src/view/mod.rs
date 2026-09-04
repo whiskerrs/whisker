@@ -62,6 +62,7 @@ pub use renderer::{
 // module-author API, hence `#[doc(hidden)]`.
 #[doc(hidden)]
 pub use renderer::{
-    DynRenderer, EventDispatchPlan, PHANTOM_BASE, current_renderer_id, install_renderer,
-    specified_style, try_invoke_element_command, uninstall_renderer, with_installed_renderer,
+    DynRenderer, EventDispatchPlan, LayoutObservation, PHANTOM_BASE, current_renderer_id,
+    install_renderer, specified_style, try_invoke_element_command, uninstall_renderer,
+    with_installed_renderer,
 };

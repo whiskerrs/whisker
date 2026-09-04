@@ -26,8 +26,23 @@ use super::handle::Element;
 use crate::element::ElementTag;
 use crate::event::Dataset;
 use crate::value::WhiskerValue;
+use whisker_engine::whisker_layout::LayoutParticipation;
 use whisker_protocol::{Accessibility, ElementSchema, LayoutGeometry};
 use whisker_style::SpecifiedStyle;
+
+/// One internal resolved-layout notification.
+///
+/// Participation is kept outside [`LayoutGeometry`] because geometry is part
+/// of the Host protocol while this state is consumed only by Rust control
+/// primitives.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LayoutObservation {
+    /// Resolved box geometry for the retained node.
+    pub geometry: LayoutGeometry,
+    /// Whether the node belongs to the active layout tree.
+    pub participation: LayoutParticipation,
+}
 
 /// Event-handler propagation type for the four supported handler kinds
 /// (`bind` / `catch` / `capture-bind` /
@@ -184,7 +199,12 @@ pub trait DynRenderer {
     /// Observes resolved Rust layout for framework control primitives.
     /// Ordinary renderers may ignore this; SurfaceRuntime reports after each
     /// successful Taffy pass without involving a Host event.
-    fn observe_layout(&self, _handle: Element, _callback: Box<dyn Fn(LayoutGeometry) + 'static>) {}
+    fn observe_layout(
+        &self,
+        _handle: Element,
+        _callback: Box<dyn Fn(LayoutObservation) + 'static>,
+    ) {
+    }
 
     /// Registers a callback that runs once after all per-element layout
     /// notifications for a completed layout pass. Renderers without retained
@@ -894,7 +914,7 @@ pub fn set_event_listener(
 }
 
 /// Registers an internal resolved-layout observer on one real element.
-pub fn observe_layout(handle: Element, callback: Box<dyn Fn(LayoutGeometry) + 'static>) {
+pub fn observe_layout(handle: Element, callback: Box<dyn Fn(LayoutObservation) + 'static>) {
     if is_phantom(handle) {
         drop(callback);
         return;

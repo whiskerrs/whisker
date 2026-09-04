@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::rc::Rc;
 
+use whisker_engine::whisker_layout::LayoutParticipation;
 use whisker_style::{
     GridPlacementValue, LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue,
     PositionValue, SizeValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue,
@@ -486,7 +487,7 @@ pub fn virtualize<T, K>(
     let rendered_window = Rc::new(Cell::new(None::<LayoutWindow>));
     let pending_initial_scroll = Rc::new(RefCell::new(initial_scroll));
     let viewport_ready = Rc::new(Cell::new(false));
-    let layout_participating = Rc::new(Cell::new(false));
+    let layout_participation = Rc::new(Cell::new(LayoutParticipation::Participating));
     let presented_scroll_extent = Rc::new(Cell::new(0.0));
     let configured_scroll_extent = Rc::new(Cell::new(f32::NAN));
     let inside_start_threshold = Rc::new(Cell::new(false));
@@ -512,7 +513,8 @@ pub fn virtualize<T, K>(
             let pending_layout_notification = Rc::clone(&pending_layout_notification);
             observe_layout(
                 handle,
-                Box::new(move |layout_geometry| {
+                Box::new(move |observation| {
+                    let layout_geometry = observation.geometry;
                     let size = match axis {
                         ScrollAxis::Vertical => layout_geometry.border_box.height,
                         ScrollAxis::Horizontal => layout_geometry.border_box.width,
@@ -537,7 +539,8 @@ pub fn virtualize<T, K>(
             let pending_layout_notification = Rc::clone(&pending_layout_notification);
             observe_layout(
                 handle,
-                Box::new(move |layout_geometry| {
+                Box::new(move |observation| {
+                    let layout_geometry = observation.geometry;
                     let size = match axis {
                         ScrollAxis::Vertical => layout_geometry.border_box.height,
                         ScrollAxis::Horizontal => layout_geometry.border_box.width,
@@ -563,7 +566,8 @@ pub fn virtualize<T, K>(
             let pending_layout_notification = Rc::clone(&pending_layout_notification);
             observe_layout(
                 handle,
-                Box::new(move |layout_geometry| {
+                Box::new(move |observation| {
+                    let layout_geometry = observation.geometry;
                     let size = match axis {
                         ScrollAxis::Vertical => layout_geometry.border_box.height,
                         ScrollAxis::Horizontal => layout_geometry.border_box.width,
@@ -769,7 +773,8 @@ pub fn virtualize<T, K>(
         let pending_layout_notification = Rc::clone(&pending_layout_notification);
         observe_layout(
             scroll_extent,
-            Box::new(move |layout_geometry| {
+            Box::new(move |observation| {
+                let layout_geometry = observation.geometry;
                 let extent = match axis {
                     ScrollAxis::Vertical => layout_geometry.border_box.height,
                     ScrollAxis::Horizontal => layout_geometry.border_box.width,
@@ -777,7 +782,9 @@ pub fn virtualize<T, K>(
                 if !extent.is_finite() || extent < 0.0 {
                     return;
                 }
-                presented_scroll_extent.set(extent);
+                if observation.participation == LayoutParticipation::Participating {
+                    presented_scroll_extent.set(extent);
+                }
                 pending_layout_notification.set(true);
             }),
         );
@@ -787,11 +794,12 @@ pub fn virtualize<T, K>(
         let geometry = Rc::clone(&geometry);
         let list_ref = list_ref.clone();
         let viewport_ready = Rc::clone(&viewport_ready);
-        let layout_participating = Rc::clone(&layout_participating);
+        let layout_participation = Rc::clone(&layout_participation);
         let pending_layout_notification = Rc::clone(&pending_layout_notification);
         observe_layout(
             scroll_view,
-            Box::new(move |layout_geometry| {
+            Box::new(move |observation| {
+                let layout_geometry = observation.geometry;
                 let viewport = match axis {
                     ScrollAxis::Vertical => layout_geometry.border_box.height,
                     ScrollAxis::Horizontal => layout_geometry.border_box.width,
@@ -799,9 +807,9 @@ pub fn virtualize<T, K>(
                 if !viewport.is_finite() || viewport < 0.0 {
                     return;
                 }
-                layout_participating.set(viewport > 0.0);
+                layout_participation.set(observation.participation);
                 pending_layout_notification.set(true);
-                if viewport <= 0.0 {
+                if observation.participation == LayoutParticipation::SuppressedByDisplayNone {
                     return;
                 }
                 viewport_ready.set(true);
@@ -832,7 +840,7 @@ pub fn virtualize<T, K>(
         let pending_layout_notification = Rc::clone(&pending_layout_notification);
         let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
         let viewport_ready = Rc::clone(&viewport_ready);
-        let layout_participating = Rc::clone(&layout_participating);
+        let layout_participation = Rc::clone(&layout_participation);
         let presented_scroll_extent = Rc::clone(&presented_scroll_extent);
         let alive = Rc::clone(&alive);
         let reconcile = Rc::clone(&reconcile);
@@ -847,11 +855,12 @@ pub fn virtualize<T, K>(
                     return;
                 }
 
-                // `display:none` legitimately collapses the List subtree to
-                // zero. Those geometries describe an absent ancestor, not
-                // new row measurements; retain the last active index and
-                // scroll anchor until the List participates in layout again.
-                if !layout_participating.get() {
+                // An explicit `display:none` on the List or an ancestor makes
+                // descendant geometries inapplicable. Retain the last active
+                // index and scroll anchor until the List participates again.
+                // A participating zero-sized viewport is intentionally not
+                // treated as hidden.
+                if layout_participation.get() == LayoutParticipation::SuppressedByDisplayNone {
                     pending_entry_measurements.borrow_mut().clear();
                     pending_track_measurements.borrow_mut().clear();
                     pending_aux_measurements.borrow_mut().clear();

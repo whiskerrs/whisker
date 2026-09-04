@@ -17,12 +17,12 @@ use crate::transform_interpolation::interpolate_transform_style;
 #[cfg(test)]
 use crate::transform_interpolation::{identity_transform_function, interpolate_transform_function};
 use crate::value::WhiskerValue;
-use crate::view::{BindType, DynRenderer, Element, with_installed_renderer};
+use crate::view::{BindType, DynRenderer, Element, LayoutObservation, with_installed_renderer};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     Accessibility, BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior,
-    HostPresentationUpdate, InputEvent, InputEventError, LayoutGeometry, MeasurementReady, NodeId,
-    PaintColor, ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
+    HostPresentationUpdate, InputEvent, InputEventError, MeasurementReady, NodeId, PaintColor,
+    ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
 };
 #[cfg(test)]
 use whisker_engine::whisker_style::ComputedTransformFunction;
@@ -701,24 +701,30 @@ impl SurfaceRuntime {
                 } = &mut *state;
                 if let Some(last_layout) = surface.last_layout() {
                     for entry in elements.values_mut() {
-                        let Some(geometry) =
-                            entry.node.and_then(|node| last_layout.get(node)).copied()
-                        else {
+                        let Some((geometry, participation)) = entry.node.and_then(|node| {
+                            last_layout
+                                .get_with_participation(node)
+                                .map(|(geometry, participation)| (*geometry, participation))
+                        }) else {
                             continue;
+                        };
+                        let observation = LayoutObservation {
+                            geometry,
+                            participation,
                         };
                         let Some(observers) = entry.layout_observers.as_mut() else {
                             continue;
                         };
-                        if observers.last_notified == Some(geometry) {
+                        if observers.last_notified == Some(observation) {
                             continue;
                         }
-                        observers.last_notified = Some(geometry);
+                        observers.last_notified = Some(observation);
                         notifications.extend(
                             observers
                                 .callbacks
                                 .iter()
                                 .cloned()
-                                .map(|callback| (callback, geometry)),
+                                .map(|callback| (callback, observation)),
                         );
                     }
                 }
@@ -739,8 +745,8 @@ impl SurfaceRuntime {
         };
         if !notifications.is_empty() || !batch_end_notifications.is_empty() {
             with_installed_renderer(self.renderer(), || {
-                for (callback, geometry) in notifications {
-                    callback(geometry);
+                for (callback, observation) in notifications {
+                    callback(observation);
                 }
                 for callback in batch_end_notifications {
                     callback();
@@ -835,8 +841,8 @@ struct BoundElement {
 
 #[derive(Clone, Default)]
 struct LayoutObservers {
-    callbacks: Vec<Rc<dyn Fn(LayoutGeometry) + 'static>>,
-    last_notified: Option<LayoutGeometry>,
+    callbacks: Vec<Rc<dyn Fn(LayoutObservation) + 'static>>,
+    last_notified: Option<LayoutObservation>,
 }
 
 #[derive(Clone)]
@@ -1928,7 +1934,7 @@ mod input_tests {
 
 #[cfg(test)]
 mod layout_observer_tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::convert::Infallible;
     use std::rc::Rc;
 
@@ -1938,10 +1944,11 @@ mod layout_observer_tests {
         append_child, create_element, observe_layout, observe_layout_batch_end,
         set_specified_style, with_installed_renderer,
     };
+    use whisker_engine::whisker_layout::LayoutParticipation;
     use whisker_engine::whisker_protocol::{MeasurementRequest, MeasurementResponse};
     use whisker_engine::whisker_style::{
-        LengthPercentageValue, LengthUnit, LengthValue, PositionValue, SizeValue, StyleNumber,
-        StyleProperty, StyleValue,
+        DisplayValue, LengthPercentageValue, LengthUnit, LengthValue, PositionValue, SizeValue,
+        StyleNumber, StyleProperty, StyleValue,
     };
 
     struct NoMeasurements;
@@ -2048,6 +2055,94 @@ mod layout_observer_tests {
             completed_batches.get(),
             2,
             "batch-end observers run once after each completed layout notification batch"
+        );
+    }
+
+    #[test]
+    fn layout_observers_report_display_none_separately_from_zero_geometry() {
+        crate::reactive::__reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(93).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        let root_handle = Rc::new(Cell::new(None));
+
+        runtime
+            .mount({
+                let observations = Rc::clone(&observations);
+                let root_handle = Rc::clone(&root_handle);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    let child = create_element(ElementTag::View);
+                    set_specified_style(root, &absolute_box(100.0, 100.0));
+                    set_specified_style(child, &absolute_box(0.0, 0.0));
+                    append_child(root, child);
+                    observe_layout(
+                        child,
+                        Box::new(move |observation| observations.borrow_mut().push(observation)),
+                    );
+                    root_handle.set(Some(root));
+                    root
+                }
+            })
+            .unwrap();
+
+        let mut provider = NoMeasurements;
+        surface
+            .drive_layout(
+                LayoutSize::new(320.0, 480.0),
+                1,
+                &mut provider,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+        assert_eq!(observations.borrow().len(), 1);
+        assert_eq!(
+            observations.borrow()[0].participation,
+            LayoutParticipation::Participating
+        );
+        assert_eq!(observations.borrow()[0].geometry.border_box.width, 0.0);
+        assert_eq!(observations.borrow()[0].geometry.border_box.height, 0.0);
+
+        with_installed_renderer(surface.renderer(), || {
+            let hidden = absolute_box(100.0, 100.0).push(
+                StyleProperty::Display,
+                StyleValue::Display(DisplayValue::None),
+            );
+            set_specified_style(root_handle.get().unwrap(), &hidden);
+        });
+        surface
+            .drive_layout(
+                LayoutSize::new(320.0, 480.0),
+                1,
+                &mut provider,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+        assert_eq!(observations.borrow().len(), 2);
+        assert_eq!(
+            observations.borrow()[1].participation,
+            LayoutParticipation::SuppressedByDisplayNone
+        );
+
+        with_installed_renderer(surface.renderer(), || {
+            set_specified_style(root_handle.get().unwrap(), &absolute_box(100.0, 100.0));
+        });
+        surface
+            .drive_layout(
+                LayoutSize::new(320.0, 480.0),
+                1,
+                &mut provider,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+        assert_eq!(observations.borrow().len(), 3);
+        assert_eq!(
+            observations.borrow()[2].participation,
+            LayoutParticipation::Participating
         );
     }
 }

@@ -354,7 +354,8 @@ fn horizontal_list_mounted_by_show_lays_out_initial_items() {
                                 };
                                 whisker::runtime::view::observe_layout(
                                     page,
-                                    Box::new(move |geometry| {
+                                    Box::new(move |observation| {
+                                        let geometry = observation.geometry;
                                         observed.set(Some((
                                             geometry.border_box.width,
                                             geometry.border_box.height,
