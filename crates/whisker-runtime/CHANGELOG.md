@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.3](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.13.2...whisker-runtime-v0.13.3) - 2026-09-04
+
+### Fixed
+
+- preserve initial position for virtualized lists ([#669](https://github.com/whiskerrs/whisker/pull/669))
+
+### Other
+
+- *(list)* optimize retained virtual layout ([#671](https://github.com/whiskerrs/whisker/pull/671))
+
 ## [0.13.2](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.13.1...whisker-runtime-v0.13.2) - 2026-09-04
 
 ### Fixed

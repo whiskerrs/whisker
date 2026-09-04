@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.3](https://github.com/whiskerrs/whisker/compare/whisker-layout-v0.13.2...whisker-layout-v0.13.3) - 2026-09-04
+
+### Other
+
+- *(list)* optimize retained virtual layout ([#671](https://github.com/whiskerrs/whisker/pull/671))
+
 ## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-layout-v0.12.0...whisker-layout-v0.13.0) - 2026-09-03
 
 ### Added
