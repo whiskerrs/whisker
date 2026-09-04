@@ -677,7 +677,7 @@ impl SurfaceRuntime {
         provider: &mut Provider,
         options: LayoutOptions,
     ) -> Result<LayoutProgress, RuntimeLayoutError<Provider::Error>> {
-        let (layout, notifications) = {
+        let (layout, notifications, batch_end_notifications) = {
             let mut state = self.state.borrow_mut();
             state
                 .take_binding_error()
@@ -695,30 +695,55 @@ impl SurfaceRuntime {
             BindingState::apply_transform_updates(transform_updates, &mut state.surface)
                 .map_err(RuntimeLayoutError::Binding)?;
             let notifications = if layout.has_layout() {
+                let mut notifications = Vec::new();
+                let BindingState {
+                    surface, elements, ..
+                } = &mut *state;
+                if let Some(last_layout) = surface.last_layout() {
+                    for entry in elements.values_mut() {
+                        let Some(geometry) =
+                            entry.node.and_then(|node| last_layout.get(node)).copied()
+                        else {
+                            continue;
+                        };
+                        let Some(observers) = entry.layout_observers.as_mut() else {
+                            continue;
+                        };
+                        if observers.last_notified == Some(geometry) {
+                            continue;
+                        }
+                        observers.last_notified = Some(geometry);
+                        notifications.extend(
+                            observers
+                                .callbacks
+                                .iter()
+                                .cloned()
+                                .map(|callback| (callback, geometry)),
+                        );
+                    }
+                }
+                notifications
+            } else {
+                Vec::new()
+            };
+            let batch_end_notifications = if layout.has_layout() {
                 state
                     .elements
                     .values()
-                    .filter_map(|entry| {
-                        let geometry = state.surface.last_layout()?.get(entry.node?).copied()?;
-                        Some(
-                            entry
-                                .layout_observers
-                                .iter()
-                                .cloned()
-                                .map(move |callback| (callback, geometry)),
-                        )
-                    })
-                    .flatten()
+                    .flat_map(|entry| entry.layout_batch_end_observers.iter().cloned())
                     .collect::<Vec<_>>()
             } else {
                 Vec::new()
             };
-            (layout, notifications)
+            (layout, notifications, batch_end_notifications)
         };
-        if !notifications.is_empty() {
+        if !notifications.is_empty() || !batch_end_notifications.is_empty() {
             with_installed_renderer(self.renderer(), || {
                 for (callback, geometry) in notifications {
                     callback(geometry);
+                }
+                for callback in batch_end_notifications {
+                    callback();
                 }
             });
         }
@@ -796,7 +821,8 @@ struct BoundElement {
     dataset: BTreeMap<String, WhiskerValue>,
     accessibility: Accessibility,
     listeners: HashMap<String, Vec<RuntimeListener>>,
-    layout_observers: Vec<Rc<dyn Fn(LayoutGeometry) + 'static>>,
+    layout_observers: Option<Box<LayoutObservers>>,
+    layout_batch_end_observers: Vec<Rc<dyn Fn() + 'static>>,
     style_initialized: bool,
     opacity_transition: Option<Box<ActiveTransition<f32>>>,
     color_transitions: Option<Box<ActiveColorTransitions>>,
@@ -805,6 +831,12 @@ struct BoundElement {
     layout_transitions: Option<Box<ActivePropertyTransitions>>,
     animations: Vec<ActiveKeyframeAnimation>,
     pending_motion_events: VecDeque<PendingMotionEvent>,
+}
+
+#[derive(Clone, Default)]
+struct LayoutObservers {
+    callbacks: Vec<Rc<dyn Fn(LayoutGeometry) + 'static>>,
+    last_notified: Option<LayoutGeometry>,
 }
 
 #[derive(Clone)]
@@ -1309,7 +1341,8 @@ impl BindingState {
                 dataset: BTreeMap::new(),
                 accessibility: Accessibility::default(),
                 listeners: HashMap::new(),
-                layout_observers: Vec::new(),
+                layout_observers: None,
+                layout_batch_end_observers: Vec::new(),
                 style_initialized: false,
                 opacity_transition: None,
                 color_transitions: None,
@@ -1889,6 +1922,132 @@ mod input_tests {
                 .unwrap()
                 .host_scroll_offset(),
             [3.0, 4.0]
+        );
+    }
+}
+
+#[cfg(test)]
+mod layout_observer_tests {
+    use std::cell::Cell;
+    use std::convert::Infallible;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::element::ElementTag;
+    use crate::view::{
+        append_child, create_element, observe_layout, observe_layout_batch_end,
+        set_specified_style, with_installed_renderer,
+    };
+    use whisker_engine::whisker_protocol::{MeasurementRequest, MeasurementResponse};
+    use whisker_engine::whisker_style::{
+        LengthPercentageValue, LengthUnit, LengthValue, PositionValue, SizeValue, StyleNumber,
+        StyleProperty, StyleValue,
+    };
+
+    struct NoMeasurements;
+
+    impl MeasurementProvider for NoMeasurements {
+        type Error = Infallible;
+
+        fn measure_batch(
+            &mut self,
+            _surface: SurfaceId,
+            requests: &[MeasurementRequest],
+            _responses: &mut Vec<MeasurementResponse>,
+        ) -> Result<(), Self::Error> {
+            assert!(requests.is_empty());
+            Ok(())
+        }
+    }
+
+    fn absolute_box(width: f32, height: f32) -> SpecifiedStyle {
+        let px = |value| {
+            StyleValue::Size(SizeValue::LengthPercentage(LengthPercentageValue::Length(
+                LengthValue::Dimension {
+                    value: StyleNumber::new(value),
+                    unit: LengthUnit::Px,
+                },
+            )))
+        };
+        SpecifiedStyle::new()
+            .push(
+                StyleProperty::Position,
+                StyleValue::Position(PositionValue::Absolute),
+            )
+            .push(StyleProperty::Width, px(width))
+            .push(StyleProperty::Height, px(height))
+    }
+
+    #[test]
+    fn layout_observers_skip_unchanged_geometry_after_another_node_relayouts() {
+        crate::reactive::__reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(92).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        let observed = Rc::new(Cell::new(0));
+        let completed_batches = Rc::new(Cell::new(0));
+        let sibling = Rc::new(Cell::new(None));
+
+        runtime
+            .mount({
+                let observed = Rc::clone(&observed);
+                let completed_batches = Rc::clone(&completed_batches);
+                let sibling = Rc::clone(&sibling);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    let child = create_element(ElementTag::View);
+                    let other = create_element(ElementTag::View);
+                    set_specified_style(child, &absolute_box(20.0, 20.0));
+                    set_specified_style(other, &absolute_box(10.0, 10.0));
+                    append_child(root, child);
+                    append_child(root, other);
+                    observe_layout(child, Box::new(move |_| observed.set(observed.get() + 1)));
+                    observe_layout_batch_end(
+                        root,
+                        Box::new(move || completed_batches.set(completed_batches.get() + 1)),
+                    );
+                    sibling.set(Some(other));
+                    root
+                }
+            })
+            .unwrap();
+
+        let mut provider = NoMeasurements;
+        surface
+            .drive_layout(
+                LayoutSize::new(320.0, 480.0),
+                1,
+                &mut provider,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+        assert_eq!(observed.get(), 1);
+        assert_eq!(completed_batches.get(), 1);
+
+        with_installed_renderer(surface.renderer(), || {
+            set_specified_style(sibling.get().unwrap(), &absolute_box(30.0, 10.0));
+        });
+        surface
+            .drive_layout(
+                LayoutSize::new(320.0, 480.0),
+                1,
+                &mut provider,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            observed.get(),
+            1,
+            "an unrelated layout pass must not re-notify unchanged geometry"
+        );
+        assert_eq!(
+            completed_batches.get(),
+            2,
+            "batch-end observers run once after each completed layout notification batch"
         );
     }
 }

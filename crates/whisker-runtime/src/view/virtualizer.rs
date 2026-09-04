@@ -25,8 +25,8 @@ use super::handle::Element;
 use super::list::{ListRef, ListScrollTarget, ScrollAlignment, ScrollAxis};
 use super::renderer::{
     BindType, append_child, children_of, create_element, insert_child_at, observe_layout,
-    remove_child, set_event_listener, set_specified_style, specified_style,
-    try_invoke_element_command,
+    observe_layout_batch_end, remove_child, set_event_listener, set_specified_style,
+    specified_style, try_invoke_element_command,
 };
 
 const DEFAULT_ITEM_SIZE: f32 = 44.0;
@@ -78,6 +78,25 @@ pub struct VirtualListOptions<K: 'static> {
 type ReconcileCallback = Rc<dyn Fn()>;
 type EntryLayoutObserver<K> = Rc<dyn Fn(&K, Element)>;
 
+struct PendingEntryMeasurement<K> {
+    key: K,
+    handle: Element,
+    size: f32,
+}
+
+#[derive(Clone, Copy)]
+struct PendingTrackMeasurement {
+    track: usize,
+    handle: Element,
+    size: f32,
+}
+
+#[derive(Clone, Copy)]
+struct PendingAuxMeasurement {
+    content: AuxContent,
+    size: f32,
+}
+
 struct MountedEntry<T: 'static> {
     owner: Owner,
     handle: Element,
@@ -94,6 +113,9 @@ struct MountedTrack<K> {
 struct LayoutIndex<T, K> {
     items: Vec<T>,
     keys: Vec<K>,
+    /// Stable-key lookup kept in sync with `keys`. Hot measurement, anchor,
+    /// and imperative-scroll paths must not linearly scan large data sets.
+    key_to_index: HashMap<K, usize>,
     /// Prefix offsets. `offsets[i]` is the start of item `i` and the final
     /// entry is the complete estimated extent.
     offsets: Vec<f32>,
@@ -116,6 +138,7 @@ where
         Self {
             items: Vec::new(),
             keys: Vec::new(),
+            key_to_index: HashMap::new(),
             offsets: vec![0.0],
             sizes: Vec::new(),
             measured_sizes: HashMap::new(),
@@ -133,6 +156,8 @@ where
         let mut unique_keys = HashSet::with_capacity(items.len());
         self.keys.clear();
         self.keys.reserve(items.len());
+        self.key_to_index.clear();
+        self.key_to_index.reserve(items.len());
         self.offsets.clear();
         self.offsets.reserve(items.len() + 1);
         self.offsets.push(self.header_extent);
@@ -144,6 +169,7 @@ where
                 unique_keys.insert(key.clone()),
                 "virtualized List keys must be unique"
             );
+            self.key_to_index.insert(key.clone(), index);
             let size = if index % self.items_per_track == 0 {
                 let has_successor = index + self.items_per_track < items.len();
                 self.measured_sizes
@@ -165,20 +191,27 @@ where
         self.source_generation = self.source_generation.wrapping_add(1);
     }
 
-    fn update_measurement(&mut self, key: &K, size: f32) -> bool {
-        if !size.is_finite() || size < 0.0 {
-            return false;
+    fn update_measurements(&mut self, measurements: impl IntoIterator<Item = (K, f32)>) -> bool {
+        let mut first_changed = None::<usize>;
+        for (key, size) in measurements {
+            if !size.is_finite() || size < 0.0 {
+                continue;
+            }
+            let Some(&item_index) = self.key_to_index.get(&key) else {
+                continue;
+            };
+            let index = self.track_start_item(self.track_for_item(item_index));
+            if (self.sizes[index] - size).abs() < 0.5 {
+                continue;
+            }
+            self.measured_sizes.insert(key, size);
+            self.sizes[index] = size;
+            first_changed = Some(first_changed.map_or(index, |first| first.min(index)));
         }
-        let Some(item_index) = self.keys.iter().position(|candidate| candidate == key) else {
+        let Some(first_changed) = first_changed else {
             return false;
         };
-        let index = self.track_start_item(self.track_for_item(item_index));
-        if (self.sizes[index] - size).abs() < 0.5 {
-            return false;
-        }
-        self.measured_sizes.insert(key.clone(), size);
-        self.sizes[index] = size;
-        for offset_index in index + 1..self.offsets.len() {
+        for offset_index in first_changed + 1..self.offsets.len() {
             self.offsets[offset_index] =
                 self.offsets[offset_index - 1] + self.sizes[offset_index - 1];
         }
@@ -301,7 +334,7 @@ where
     }
 
     fn anchored_offset(&self, key: &K, within_item: f32) -> Option<f32> {
-        let index = self.keys.iter().position(|candidate| candidate == key)?;
+        let index = *self.key_to_index.get(key)?;
         Some(self.item_start(index)? + within_item)
     }
 
@@ -453,268 +486,92 @@ pub fn virtualize<T, K>(
     let rendered_window = Rc::new(Cell::new(None::<LayoutWindow>));
     let pending_initial_scroll = Rc::new(RefCell::new(initial_scroll));
     let viewport_ready = Rc::new(Cell::new(false));
+    let layout_participating = Rc::new(Cell::new(false));
     let presented_scroll_extent = Rc::new(Cell::new(0.0));
     let configured_scroll_extent = Rc::new(Cell::new(f32::NAN));
     let inside_start_threshold = Rc::new(Cell::new(false));
     let inside_end_threshold = Rc::new(Cell::new(false));
+    let alive = Rc::new(Cell::new(true));
+    let pending_entry_measurements: Rc<RefCell<Vec<PendingEntryMeasurement<K>>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let pending_track_measurements: Rc<RefCell<Vec<PendingTrackMeasurement>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let pending_aux_measurements: Rc<RefCell<Vec<PendingAuxMeasurement>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let pending_layout_notification = Rc::new(Cell::new(false));
     if let Some(list_ref) = &list_ref {
         list_ref.bind(scroll_view);
         list_ref.update_geometry(0.0, DEFAULT_VIEWPORT_SIZE);
     }
-    let reconcile_slot: Rc<RefCell<Option<ReconcileCallback>>> = Rc::new(RefCell::new(None));
     let observe_entry: EntryLayoutObserver<K> = {
-        let layout = Rc::clone(&layout);
-        let geometry = Rc::clone(&geometry);
-        let reconcile_slot = Rc::clone(&reconcile_slot);
-        let list_ref = list_ref.clone();
-        let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
-        let viewport_ready = Rc::clone(&viewport_ready);
-        let presented_scroll_extent = Rc::clone(&presented_scroll_extent);
+        let pending_entry_measurements = Rc::clone(&pending_entry_measurements);
+        let pending_layout_notification = Rc::clone(&pending_layout_notification);
         Rc::new(move |key, handle| {
             let key = key.clone();
-            let layout = Rc::clone(&layout);
-            let geometry = Rc::clone(&geometry);
-            let reconcile_slot = Rc::clone(&reconcile_slot);
-            let list_ref = list_ref.clone();
-            let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
-            let viewport_ready = Rc::clone(&viewport_ready);
-            let presented_scroll_extent = Rc::clone(&presented_scroll_extent);
+            let pending_entry_measurements = Rc::clone(&pending_entry_measurements);
+            let pending_layout_notification = Rc::clone(&pending_layout_notification);
             observe_layout(
                 handle,
                 Box::new(move |layout_geometry| {
-                    let current_geometry = *geometry.borrow();
-                    let (changed, corrected_offset) = {
-                        let mut layout = layout.borrow_mut();
-                        let anchor = layout.anchor(current_geometry.offset);
-                        let measured_size = match axis {
-                            ScrollAxis::Vertical => layout_geometry.border_box.height,
-                            ScrollAxis::Horizontal => layout_geometry.border_box.width,
-                        };
-                        let changed = layout.update_measurement(&key, measured_size.max(0.0));
-                        let initial_offset = resolve_pending_initial_target(
-                            &mut pending_initial_scroll.borrow_mut(),
-                            &layout,
-                            current_geometry,
-                            initial_geometry_ready(
-                                viewport_ready.get(),
-                                presented_scroll_extent.get(),
-                                layout.total_extent(),
-                            ),
-                        );
-                        let corrected_offset = initial_offset.or_else(|| {
-                            anchor.and_then(|(key, within_item)| {
-                                layout.anchored_offset(&key, within_item)
-                            })
-                        });
-                        if changed && let Some(list_ref) = &list_ref {
-                            let (starts, ends) = layout.item_offsets();
-                            list_ref.update_layout(
-                                &layout.keys,
-                                &starts,
-                                &ends,
-                                layout.total_extent(),
-                            );
-                        }
-                        (changed, corrected_offset)
+                    let size = match axis {
+                        ScrollAxis::Vertical => layout_geometry.border_box.height,
+                        ScrollAxis::Horizontal => layout_geometry.border_box.width,
                     };
-                    if changed
-                        && let Some(offset) = corrected_offset
-                        && (offset - current_geometry.offset).abs() >= 0.5
-                    {
-                        geometry.borrow_mut().offset = offset;
-                        if let Some(list_ref) = &list_ref {
-                            list_ref.update_geometry(offset, current_geometry.viewport);
-                        }
-                        let _ = try_invoke_element_command(
-                            scroll_view,
-                            "scrollTo",
-                            WhiskerValue::map([
-                                ("offset", WhiskerValue::Float(f64::from(offset))),
-                                ("smooth", WhiskerValue::Bool(false)),
-                            ]),
-                        );
-                    }
-                    if changed && let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
-                        reconcile();
-                    }
+                    pending_entry_measurements
+                        .borrow_mut()
+                        .push(PendingEntryMeasurement {
+                            key: key.clone(),
+                            handle,
+                            size,
+                        });
+                    pending_layout_notification.set(true);
                 }),
             );
         })
     };
-    let observe_track: Rc<dyn Fn(Vec<K>, Element)> = {
-        let layout = Rc::clone(&layout);
-        let geometry = Rc::clone(&geometry);
-        let reconcile_slot = Rc::clone(&reconcile_slot);
-        let list_ref = list_ref.clone();
-        let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
-        let viewport_ready = Rc::clone(&viewport_ready);
-        let presented_scroll_extent = Rc::clone(&presented_scroll_extent);
-        let main_gap = match &virtual_layout {
-            VirtualListLayout::Linear => 0.0,
-            VirtualListLayout::Grid(grid) => grid.main_gap,
-        };
-        Rc::new(move |keys, handle| {
-            let layout = Rc::clone(&layout);
-            let geometry = Rc::clone(&geometry);
-            let reconcile_slot = Rc::clone(&reconcile_slot);
-            let list_ref = list_ref.clone();
-            let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
-            let viewport_ready = Rc::clone(&viewport_ready);
-            let presented_scroll_extent = Rc::clone(&presented_scroll_extent);
+    let observe_track: Rc<dyn Fn(usize, Element)> = {
+        let pending_track_measurements = Rc::clone(&pending_track_measurements);
+        let pending_layout_notification = Rc::clone(&pending_layout_notification);
+        Rc::new(move |track, handle| {
+            let pending_track_measurements = Rc::clone(&pending_track_measurements);
+            let pending_layout_notification = Rc::clone(&pending_layout_notification);
             observe_layout(
                 handle,
                 Box::new(move |layout_geometry| {
-                    let Some(first_key) = keys.first() else {
-                        return;
+                    let size = match axis {
+                        ScrollAxis::Vertical => layout_geometry.border_box.height,
+                        ScrollAxis::Horizontal => layout_geometry.border_box.width,
                     };
-                    let current_geometry = *geometry.borrow();
-                    let (changed, corrected_offset) = {
-                        let mut layout = layout.borrow_mut();
-                        let anchor = layout.anchor(current_geometry.offset);
-                        let measured_size = match axis {
-                            ScrollAxis::Vertical => layout_geometry.border_box.height,
-                            ScrollAxis::Horizontal => layout_geometry.border_box.width,
-                        };
-                        let track_has_successor = layout
-                            .keys
-                            .iter()
-                            .position(|candidate| candidate == first_key)
-                            .is_some_and(|item| {
-                                layout.track_for_item(item) + 1 < layout.track_count()
-                            });
-                        let extent = measured_size.max(0.0)
-                            + if track_has_successor { main_gap } else { 0.0 };
-                        let changed = layout.update_measurement(first_key, extent);
-                        let initial_offset = resolve_pending_initial_target(
-                            &mut pending_initial_scroll.borrow_mut(),
-                            &layout,
-                            current_geometry,
-                            initial_geometry_ready(
-                                viewport_ready.get(),
-                                presented_scroll_extent.get(),
-                                layout.total_extent(),
-                            ),
-                        );
-                        let corrected_offset = initial_offset.or_else(|| {
-                            anchor.and_then(|(key, within_item)| {
-                                layout.anchored_offset(&key, within_item)
-                            })
+                    pending_track_measurements
+                        .borrow_mut()
+                        .push(PendingTrackMeasurement {
+                            track,
+                            handle,
+                            size,
                         });
-                        if changed && let Some(list_ref) = &list_ref {
-                            let (starts, ends) = layout.item_offsets();
-                            list_ref.update_layout(
-                                &layout.keys,
-                                &starts,
-                                &ends,
-                                layout.total_extent(),
-                            );
-                        }
-                        (changed, corrected_offset)
-                    };
-                    if changed
-                        && let Some(offset) = corrected_offset
-                        && (offset - current_geometry.offset).abs() >= 0.5
-                    {
-                        geometry.borrow_mut().offset = offset;
-                        if let Some(list_ref) = &list_ref {
-                            list_ref.update_geometry(offset, current_geometry.viewport);
-                        }
-                        let _ = try_invoke_element_command(
-                            scroll_view,
-                            "scrollTo",
-                            WhiskerValue::map([
-                                ("offset", WhiskerValue::Float(f64::from(offset))),
-                                ("smooth", WhiskerValue::Bool(false)),
-                            ]),
-                        );
-                    }
-                    if changed && let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
-                        reconcile();
-                    }
+                    pending_layout_notification.set(true);
                 }),
             );
         })
     };
 
     let observe_aux: Rc<dyn Fn(AuxContent, Element)> = {
-        let layout = Rc::clone(&layout);
-        let geometry = Rc::clone(&geometry);
-        let reconcile_slot = Rc::clone(&reconcile_slot);
-        let list_ref = list_ref.clone();
-        let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
-        let viewport_ready = Rc::clone(&viewport_ready);
-        let presented_scroll_extent = Rc::clone(&presented_scroll_extent);
+        let pending_aux_measurements = Rc::clone(&pending_aux_measurements);
+        let pending_layout_notification = Rc::clone(&pending_layout_notification);
         Rc::new(move |content, handle| {
-            let layout = Rc::clone(&layout);
-            let geometry = Rc::clone(&geometry);
-            let reconcile_slot = Rc::clone(&reconcile_slot);
-            let list_ref = list_ref.clone();
-            let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
-            let viewport_ready = Rc::clone(&viewport_ready);
-            let presented_scroll_extent = Rc::clone(&presented_scroll_extent);
+            let pending_aux_measurements = Rc::clone(&pending_aux_measurements);
+            let pending_layout_notification = Rc::clone(&pending_layout_notification);
             observe_layout(
                 handle,
                 Box::new(move |layout_geometry| {
-                    let current_geometry = *geometry.borrow();
-                    let measured_size = match axis {
+                    let size = match axis {
                         ScrollAxis::Vertical => layout_geometry.border_box.height,
                         ScrollAxis::Horizontal => layout_geometry.border_box.width,
                     };
-                    let (changed, corrected_offset) = {
-                        let mut layout = layout.borrow_mut();
-                        let preserve_item_anchor = !matches!(content, AuxContent::Header)
-                            || current_geometry.offset >= layout.header_extent;
-                        let anchor = preserve_item_anchor
-                            .then(|| layout.anchor(current_geometry.offset))
-                            .flatten();
-                        let changed =
-                            layout.update_aux_measurement(content, measured_size.max(0.0));
-                        let initial_offset = resolve_pending_initial_target(
-                            &mut pending_initial_scroll.borrow_mut(),
-                            &layout,
-                            current_geometry,
-                            initial_geometry_ready(
-                                viewport_ready.get(),
-                                presented_scroll_extent.get(),
-                                layout.total_extent(),
-                            ),
-                        );
-                        let corrected_offset = initial_offset.or_else(|| {
-                            anchor.and_then(|(key, within_item)| {
-                                layout.anchored_offset(&key, within_item)
-                            })
-                        });
-                        if changed && let Some(list_ref) = &list_ref {
-                            let (starts, ends) = layout.item_offsets();
-                            list_ref.update_layout(
-                                &layout.keys,
-                                &starts,
-                                &ends,
-                                layout.total_extent(),
-                            );
-                        }
-                        (changed, corrected_offset)
-                    };
-                    if changed
-                        && let Some(offset) = corrected_offset
-                        && (offset - current_geometry.offset).abs() >= 0.5
-                    {
-                        geometry.borrow_mut().offset = offset;
-                        if let Some(list_ref) = &list_ref {
-                            list_ref.update_geometry(offset, current_geometry.viewport);
-                        }
-                        let _ = try_invoke_element_command(
-                            scroll_view,
-                            "scrollTo",
-                            WhiskerValue::map([
-                                ("offset", WhiskerValue::Float(f64::from(offset))),
-                                ("smooth", WhiskerValue::Bool(false)),
-                            ]),
-                        );
-                    }
-                    if changed && let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
-                        reconcile();
-                    }
+                    pending_aux_measurements
+                        .borrow_mut()
+                        .push(PendingAuxMeasurement { content, size });
+                    pending_layout_notification.set(true);
                 }),
             );
         })
@@ -907,16 +764,9 @@ pub fn virtualize<T, K>(
             rendered_window.set(Some(window));
         })
     };
-    *reconcile_slot.borrow_mut() = Some(Rc::clone(&reconcile));
-
     {
-        let geometry = Rc::clone(&geometry);
-        let layout = Rc::clone(&layout);
-        let reconcile = Rc::clone(&reconcile);
-        let list_ref = list_ref.clone();
-        let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
-        let viewport_ready = Rc::clone(&viewport_ready);
         let presented_scroll_extent = Rc::clone(&presented_scroll_extent);
+        let pending_layout_notification = Rc::clone(&pending_layout_notification);
         observe_layout(
             scroll_extent,
             Box::new(move |layout_geometry| {
@@ -928,17 +778,172 @@ pub fn virtualize<T, K>(
                     return;
                 }
                 presented_scroll_extent.set(extent);
+                pending_layout_notification.set(true);
+            }),
+        );
+    }
+
+    {
+        let geometry = Rc::clone(&geometry);
+        let list_ref = list_ref.clone();
+        let viewport_ready = Rc::clone(&viewport_ready);
+        let layout_participating = Rc::clone(&layout_participating);
+        let pending_layout_notification = Rc::clone(&pending_layout_notification);
+        observe_layout(
+            scroll_view,
+            Box::new(move |layout_geometry| {
+                let viewport = match axis {
+                    ScrollAxis::Vertical => layout_geometry.border_box.height,
+                    ScrollAxis::Horizontal => layout_geometry.border_box.width,
+                };
+                if !viewport.is_finite() || viewport < 0.0 {
+                    return;
+                }
+                layout_participating.set(viewport > 0.0);
+                pending_layout_notification.set(true);
+                if viewport <= 0.0 {
+                    return;
+                }
+                viewport_ready.set(true);
                 let current_geometry = *geometry.borrow();
-                let initial_offset = {
-                    let layout = layout.borrow();
-                    resolve_pending_initial_target(
+                *geometry.borrow_mut() = ScrollGeometry {
+                    offset: current_geometry.offset,
+                    viewport,
+                };
+                if let Some(list_ref) = &list_ref {
+                    list_ref.update_geometry(current_geometry.offset, viewport);
+                }
+            }),
+        );
+    }
+
+    // A layout pass may resize dozens of mounted rows. Collect their
+    // callbacks first, then update the index, anchor, ListRef snapshot, and
+    // mounted window once. This mirrors FlashList's commit-level layout
+    // collection and avoids N suffix rebuilds plus N reconciliations.
+    {
+        let geometry = Rc::clone(&geometry);
+        let layout = Rc::clone(&layout);
+        let mounted = Rc::clone(&mounted);
+        let mounted_tracks = Rc::clone(&mounted_tracks);
+        let pending_entry_measurements = Rc::clone(&pending_entry_measurements);
+        let pending_track_measurements = Rc::clone(&pending_track_measurements);
+        let pending_aux_measurements = Rc::clone(&pending_aux_measurements);
+        let pending_layout_notification = Rc::clone(&pending_layout_notification);
+        let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
+        let viewport_ready = Rc::clone(&viewport_ready);
+        let layout_participating = Rc::clone(&layout_participating);
+        let presented_scroll_extent = Rc::clone(&presented_scroll_extent);
+        let alive = Rc::clone(&alive);
+        let reconcile = Rc::clone(&reconcile);
+        let list_ref = list_ref.clone();
+        observe_layout_batch_end(
+            scroll_view,
+            Box::new(move || {
+                if !alive.get() {
+                    return;
+                }
+                if !pending_layout_notification.replace(false) {
+                    return;
+                }
+
+                // `display:none` legitimately collapses the List subtree to
+                // zero. Those geometries describe an absent ancestor, not
+                // new row measurements; retain the last active index and
+                // scroll anchor until the List participates in layout again.
+                if !layout_participating.get() {
+                    pending_entry_measurements.borrow_mut().clear();
+                    pending_track_measurements.borrow_mut().clear();
+                    pending_aux_measurements.borrow_mut().clear();
+                    return;
+                }
+
+                let current_geometry = *geometry.borrow();
+                let entry_measurements = pending_entry_measurements
+                    .borrow_mut()
+                    .drain(..)
+                    .filter_map(|pending| {
+                        mounted
+                            .borrow()
+                            .get(&pending.key)
+                            .is_some_and(|entry| entry.handle == pending.handle)
+                            .then_some((pending.key, pending.size.max(0.0)))
+                    })
+                    .collect::<Vec<_>>();
+
+                let track_measurements = pending_track_measurements
+                    .borrow_mut()
+                    .drain(..)
+                    .filter_map(|pending| {
+                        let tracks = mounted_tracks.borrow();
+                        let track = tracks.get(&pending.track)?;
+                        (track.handle == pending.handle)
+                            .then(|| track.keys.first().cloned())
+                            .flatten()
+                            .map(|key| (pending.track, key, pending.size.max(0.0)))
+                    })
+                    .collect::<Vec<_>>();
+                let aux_measurements = pending_aux_measurements
+                    .borrow_mut()
+                    .drain(..)
+                    .collect::<Vec<_>>();
+
+                let (changed, corrected_offset) = {
+                    let mut layout = layout.borrow_mut();
+                    let preserve_item_anchor = !aux_measurements
+                        .iter()
+                        .any(|pending| matches!(pending.content, AuxContent::Header))
+                        || current_geometry.offset >= layout.header_extent;
+                    let anchor = preserve_item_anchor
+                        .then(|| layout.anchor(current_geometry.offset))
+                        .flatten();
+
+                    let mut changed = false;
+                    for pending in aux_measurements {
+                        changed |=
+                            layout.update_aux_measurement(pending.content, pending.size.max(0.0));
+                    }
+                    let mut measurements = entry_measurements;
+                    measurements.extend(track_measurements.into_iter().map(
+                        |(track, key, size)| {
+                            let extent = size
+                                + if track + 1 < layout.track_count() {
+                                    main_gap
+                                } else {
+                                    0.0
+                                };
+                            (key, extent)
+                        },
+                    ));
+                    changed |= layout.update_measurements(measurements);
+
+                    let initial_offset = resolve_pending_initial_target(
                         &mut pending_initial_scroll.borrow_mut(),
                         &layout,
                         current_geometry,
-                        initial_geometry_ready(viewport_ready.get(), extent, layout.total_extent()),
-                    )
+                        initial_geometry_ready(
+                            viewport_ready.get(),
+                            presented_scroll_extent.get(),
+                            layout.total_extent(),
+                        ),
+                    );
+                    let corrected_offset = initial_offset.or_else(|| {
+                        if changed {
+                            anchor.and_then(|(key, within_item)| {
+                                layout.anchored_offset(&key, within_item)
+                            })
+                        } else {
+                            None
+                        }
+                    });
+                    if changed && let Some(list_ref) = &list_ref {
+                        let (starts, ends) = layout.item_offsets();
+                        list_ref.update_layout(&layout.keys, &starts, &ends, layout.total_extent());
+                    }
+                    (changed, corrected_offset)
                 };
-                if let Some(offset) = initial_offset
+
+                if let Some(offset) = corrected_offset
                     && (offset - current_geometry.offset).abs() >= 0.5
                 {
                     geometry.borrow_mut().offset = offset;
@@ -954,67 +959,9 @@ pub fn virtualize<T, K>(
                         ]),
                     );
                 }
-                reconcile();
-            }),
-        );
-    }
-
-    {
-        let geometry = Rc::clone(&geometry);
-        let layout = Rc::clone(&layout);
-        let reconcile = Rc::clone(&reconcile);
-        let list_ref = list_ref.clone();
-        let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
-        let viewport_ready = Rc::clone(&viewport_ready);
-        let presented_scroll_extent = Rc::clone(&presented_scroll_extent);
-        observe_layout(
-            scroll_view,
-            Box::new(move |layout_geometry| {
-                let viewport = match axis {
-                    ScrollAxis::Vertical => layout_geometry.border_box.height,
-                    ScrollAxis::Horizontal => layout_geometry.border_box.width,
-                };
-                if !viewport.is_finite() || viewport <= 0.0 {
-                    return;
+                if changed || viewport_ready.get() {
+                    reconcile();
                 }
-                viewport_ready.set(true);
-                let current_geometry = *geometry.borrow();
-                let next_geometry = ScrollGeometry {
-                    offset: current_geometry.offset,
-                    viewport,
-                };
-                let initial_offset = {
-                    let layout = layout.borrow();
-                    resolve_pending_initial_target(
-                        &mut pending_initial_scroll.borrow_mut(),
-                        &layout,
-                        next_geometry,
-                        initial_geometry_ready(
-                            true,
-                            presented_scroll_extent.get(),
-                            layout.total_extent(),
-                        ),
-                    )
-                };
-                let next_offset = initial_offset.unwrap_or(current_geometry.offset);
-                *geometry.borrow_mut() = ScrollGeometry {
-                    offset: next_offset,
-                    viewport,
-                };
-                if let Some(list_ref) = &list_ref {
-                    list_ref.update_geometry(next_offset, viewport);
-                }
-                if (next_offset - current_geometry.offset).abs() >= 0.5 {
-                    let _ = try_invoke_element_command(
-                        scroll_view,
-                        "scrollTo",
-                        WhiskerValue::map([
-                            ("offset", WhiskerValue::Float(f64::from(next_offset))),
-                            ("smooth", WhiskerValue::Bool(false)),
-                        ]),
-                    );
-                }
-                reconcile();
             }),
         );
     }
@@ -1118,7 +1065,7 @@ pub fn virtualize<T, K>(
     }
 
     on_cleanup(move || {
-        reconcile_slot.borrow_mut().take();
+        alive.set(false);
         for (_, track) in mounted_tracks.borrow_mut().drain() {
             for key in &track.keys {
                 if let Some(entry) = mounted.borrow().get(key)
@@ -1203,9 +1150,7 @@ fn initial_target_is_measured<T, K: Eq + Hash + Clone>(
         ListScrollTarget::Start | ListScrollTarget::Offset(_) => return true,
         ListScrollTarget::End => layout.items.len().checked_sub(1),
         ListScrollTarget::Index { index, .. } => Some(*index),
-        ListScrollTarget::Key { key, .. } => {
-            layout.keys.iter().position(|candidate| candidate == key)
-        }
+        ListScrollTarget::Key { key, .. } => layout.key_to_index.get(key).copied(),
     };
     let Some(target_index) = target_index.filter(|index| *index < layout.items.len()) else {
         return false;
@@ -1245,7 +1190,7 @@ fn resolve_layout_target<T, K: Eq + Hash + Clone>(
         ListScrollTarget::Offset(offset) => *offset as f32,
         ListScrollTarget::Index { index, alignment } => item_offset(*index, *alignment)?,
         ListScrollTarget::Key { key, alignment } => {
-            let index = layout.keys.iter().position(|candidate| candidate == key)?;
+            let index = *layout.key_to_index.get(key)?;
             item_offset(index, *alignment)?
         }
     };
@@ -1321,7 +1266,7 @@ fn reconcile_grid_window<T, K>(
     mounted: &mut HashMap<K, MountedEntry<T>>,
     mounted_tracks: &mut HashMap<usize, MountedTrack<K>>,
     children: &dyn Fn(ReadSignal<T>) -> Element,
-    observe_track: &dyn Fn(Vec<K>, Element),
+    observe_track: &dyn Fn(usize, Element),
     grid: &VirtualGridLayout,
     axis: ScrollAxis,
     list_owner: Owner,
@@ -1428,7 +1373,7 @@ fn reconcile_grid_window<T, K>(
                     keys: keys.clone(),
                 },
             );
-            observe_track(keys.clone(), handle);
+            observe_track(track_index, handle);
             handle
         };
         set_specified_style(
@@ -1711,5 +1656,34 @@ mod tests {
             "bottom overscan {bottom_buffer}px must cover one {viewport}px viewport",
             viewport = geometry.viewport,
         );
+    }
+
+    #[test]
+    fn key_index_is_rebuilt_after_source_reordering() {
+        let mut index = LayoutIndex::new(1, 0.0);
+        index.replace(vec!["alpha", "beta", "gamma"], |item| *item);
+
+        assert_eq!(index.key_to_index.get("alpha"), Some(&0));
+        assert_eq!(index.key_to_index.get("gamma"), Some(&2));
+
+        index.replace(vec!["gamma", "alpha"], |item| *item);
+
+        assert_eq!(index.key_to_index.get("gamma"), Some(&0));
+        assert_eq!(index.key_to_index.get("alpha"), Some(&1));
+        assert!(!index.key_to_index.contains_key("beta"));
+    }
+
+    #[test]
+    fn measurement_batch_rebuilds_the_suffix_and_generation_once() {
+        let mut index = LayoutIndex::new(1, 0.0);
+        index.replace((0_u32..5).collect(), |item| *item);
+        let generation = index.generation;
+
+        assert!(index.update_measurements([(1, 20.0), (3, 80.0)]));
+
+        assert_eq!(index.generation, generation + 1);
+        assert_eq!(index.offsets, vec![0.0, 44.0, 64.0, 108.0, 188.0, 232.0]);
+        assert_eq!(index.measured_sizes.get(&1), Some(&20.0));
+        assert_eq!(index.measured_sizes.get(&3), Some(&80.0));
     }
 }

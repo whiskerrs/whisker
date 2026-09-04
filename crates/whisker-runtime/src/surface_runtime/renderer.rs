@@ -274,9 +274,24 @@ impl DynRenderer for SurfaceRuntime {
 
     fn observe_layout(&self, handle: Element, callback: Box<dyn Fn(LayoutGeometry) + 'static>) {
         let mut state = self.state.borrow_mut();
+        let result = state.element_mut(handle).map(|entry| {
+            let observers = entry
+                .layout_observers
+                .get_or_insert_with(|| Box::new(super::LayoutObservers::default()));
+            observers.callbacks.push(Rc::from(callback));
+            // A newly registered observer must receive the current geometry
+            // on the next completed layout even when it equals the geometry
+            // seen by older observers.
+            observers.last_notified = None;
+        });
+        state.record(result);
+    }
+
+    fn observe_layout_batch_end(&self, handle: Element, callback: Box<dyn Fn() + 'static>) {
+        let mut state = self.state.borrow_mut();
         let result = state
             .element_mut(handle)
-            .map(|entry| entry.layout_observers.push(Rc::from(callback)));
+            .map(|entry| entry.layout_batch_end_observers.push(Rc::from(callback)));
         state.record(result);
     }
 

@@ -50,10 +50,10 @@ pub use virtualizer::{VirtualGridLayout, VirtualListLayout, VirtualListOptions, 
 pub use renderer::{
     BindType, append_child, child_index, children_of, create_element, create_element_by_name,
     create_element_by_schema, create_phantom_element, dispatch_event, flush, insert_child_at,
-    is_phantom, observe_layout, previous_sibling, release_element, remove_child, set_accessibility,
-    set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int,
-    set_attribute_object, set_dataset, set_element_id, set_event_listener, set_root,
-    set_specified_style, set_text_max_lines,
+    is_phantom, observe_layout, observe_layout_batch_end, previous_sibling, release_element,
+    remove_child, set_accessibility, set_attribute, set_attribute_bool, set_attribute_double,
+    set_attribute_int, set_attribute_object, set_dataset, set_element_id, set_event_listener,
+    set_root, set_specified_style, set_text_max_lines,
 };
 
 // Renderer-wiring internals. Public because Hosts and test renderers link

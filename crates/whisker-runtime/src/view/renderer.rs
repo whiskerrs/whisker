@@ -186,6 +186,11 @@ pub trait DynRenderer {
     /// successful Taffy pass without involving a Host event.
     fn observe_layout(&self, _handle: Element, _callback: Box<dyn Fn(LayoutGeometry) + 'static>) {}
 
+    /// Registers a callback that runs once after all per-element layout
+    /// notifications for a completed layout pass. Renderers without retained
+    /// layout notification batches may ignore it.
+    fn observe_layout_batch_end(&self, _handle: Element, _callback: Box<dyn Fn() + 'static>) {}
+
     /// Plan how a reported event (`event_name` at `target_sign`,
     /// carrying `body`) propagates through Whisker's reconstructed
     /// chain — capture phase (root → target) then bubble phase
@@ -895,6 +900,20 @@ pub fn observe_layout(handle: Element, callback: Box<dyn Fn(LayoutGeometry) + 's
         return;
     }
     with_renderer(|renderer| renderer.observe_layout(handle, callback), ())
+}
+
+/// Registers an internal callback at the end of each completed resolved-layout
+/// notification batch. The callback is owned by `handle`, so removing that
+/// element also removes the registration.
+pub fn observe_layout_batch_end(handle: Element, callback: Box<dyn Fn() + 'static>) {
+    if is_phantom(handle) {
+        drop(callback);
+        return;
+    }
+    with_renderer(
+        |renderer| renderer.observe_layout_batch_end(handle, callback),
+        (),
+    )
 }
 
 /// Gives the installed renderer the first opportunity to handle an element
