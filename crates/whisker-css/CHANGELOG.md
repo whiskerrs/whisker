@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/whiskerrs/whisker/compare/whisker-css-v0.13.0...whisker-css-v0.13.1) - 2026-09-04
+
+### Fixed
+
+- *(android)* preserve text and disabled-motion rendering ([#664](https://github.com/whiskerrs/whisker/pull/664))
+
 ## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-css-v0.12.0...whisker-css-v0.13.0) - 2026-09-03
 
 ### Added

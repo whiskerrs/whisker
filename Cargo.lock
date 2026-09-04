@@ -1055,9 +1055,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.4.4"
+version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ad534f4357a5264cce5019c989cf66a4f0dc4e0d1b1d15f8aacec0ff7360273"
+checksum = "005ec2760ca554fae18df7a11195552ec576cd665632a881bc011d5bb2fd4d80"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1900,9 +1900,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.11"
+version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
+checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
 name = "fixedbitset"
@@ -5790,9 +5790,9 @@ dependencies = [
 
 [[package]]
 name = "tinyvec"
-version = "1.12.0"
+version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb4ebadaa0af04fab11ae01eb5f9fdb5f9c5b875506e210e71c07873528baa7f"
+checksum = "4cf0ded5c4e56918d8f8a339e1bb67d038d3bc6d144ac407904015ba2e4cde9b"
 dependencies = [
  "tinyvec_macros",
 ]
@@ -5832,9 +5832,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
-version = "0.26.4"
+version = "0.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
+checksum = "b0c85f2c3ef0b1cd58b36682f4b17aaa995f0e5db534d85692b4903abce21f67"
 dependencies = [
  "rustls",
  "tokio",
@@ -6965,7 +6965,7 @@ dependencies = [
 
 [[package]]
 name = "whisker"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -6984,7 +6984,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-animation"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker-css",
  "whisker-runtime",
@@ -6992,7 +6992,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-asset"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -7004,7 +7004,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-asset-macros"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7013,7 +7013,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-audio"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -7032,7 +7032,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-audio-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
@@ -7042,7 +7042,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-build"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "indicatif",
@@ -7053,7 +7053,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-cli"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -7081,7 +7081,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-cng"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -7096,7 +7096,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-config"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -7106,7 +7106,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-credentials"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "age",
  "anyhow",
@@ -7117,7 +7117,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-css"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker-macros",
  "whisker-style",
@@ -7125,7 +7125,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-desktop"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -7151,7 +7151,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-dev-runtime"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "futures-util",
  "libc",
@@ -7166,7 +7166,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-dev-server"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "ar",
@@ -7194,7 +7194,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-driver"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker-dev-runtime",
  "whisker-driver-sys",
@@ -7204,14 +7204,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-driver-sys"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "whisker-engine"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker-layout",
  "whisker-protocol",
@@ -7220,7 +7220,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-fmt"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "proc-macro2",
@@ -7233,7 +7233,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-haptics"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -7243,7 +7243,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-haptics-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "js-sys",
  "web-sys",
@@ -7260,7 +7260,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-icons"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker",
  "whisker-svg",
@@ -7277,7 +7277,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-image"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
  "whisker",
@@ -7285,7 +7285,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-image-desktop"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -7305,7 +7305,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-image-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "web-sys",
  "whisker-web",
@@ -7313,7 +7313,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-input"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
  "whisker",
@@ -7321,7 +7321,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-input-desktop"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "csscolorparser",
  "glyphon",
@@ -7340,7 +7340,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-input-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "web-sys",
  "whisker-protocol",
@@ -7349,14 +7349,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-keyboard"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-keyboard-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "web-sys",
  "whisker-web",
@@ -7364,7 +7364,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-layout"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "taffy",
  "whisker-protocol",
@@ -7373,21 +7373,21 @@ dependencies = [
 
 [[package]]
 name = "whisker-linux"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker-desktop",
 ]
 
 [[package]]
 name = "whisker-local-store"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-local-store-desktop"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde_json",
  "whisker-desktop",
@@ -7395,7 +7395,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-local-store-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "web-sys",
  "whisker-web",
@@ -7403,14 +7403,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-macos"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker-desktop",
 ]
 
 [[package]]
 name = "whisker-macro-syntax"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "proc-macro2",
  "syn 2.0.119",
@@ -7418,7 +7418,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-macros"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7430,7 +7430,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-paths"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker",
 ]
@@ -7445,7 +7445,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-plugin"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -7454,14 +7454,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-protocol"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker-value",
 ]
 
 [[package]]
 name = "whisker-router"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -7485,7 +7485,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-router-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "wasm-bindgen",
  "web-sys",
@@ -7495,7 +7495,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-runtime"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "futures-channel",
  "futures-executor",
@@ -7511,14 +7511,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-safe-area"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-secure-store"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker",
 ]
@@ -7533,7 +7533,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-splash-screen"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -7542,7 +7542,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-status-bar"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -7552,7 +7552,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-style"
-version = "0.13.0"
+version = "0.13.1"
 
 [[package]]
 name = "whisker-subsecond"
@@ -7573,7 +7573,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-svg"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "roxmltree",
@@ -7582,7 +7582,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-svg-desktop"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "csscolorparser",
@@ -7601,7 +7601,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-svg-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "whisker-svg",
@@ -7610,7 +7610,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-value"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -7618,14 +7618,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-video"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-video-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
@@ -7634,7 +7634,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "js-sys",
@@ -7656,7 +7656,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-web-browser"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "futures-channel",
  "whisker",
@@ -7664,7 +7664,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-web-browser-desktop"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "open",
  "whisker-desktop",
@@ -7672,7 +7672,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-web-browser-web"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "web-sys",
  "whisker",
@@ -7681,7 +7681,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-webview"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
  "whisker",
@@ -7697,7 +7697,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-windows"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "whisker-desktop",
 ]
