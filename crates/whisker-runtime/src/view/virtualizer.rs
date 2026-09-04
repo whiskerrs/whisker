@@ -399,6 +399,11 @@ pub fn virtualize<T, K>(
     T: Clone + 'static,
     K: Eq + Hash + Clone + 'static,
 {
+    // Reconciliation can be entered from Host layout/scroll callbacks, where
+    // there is deliberately no current reactive owner. Keep every row and
+    // Grid track under the List's authoring scope so components mounted later
+    // still inherit contexts (RouterHandle, themes, providers, etc.).
+    let list_owner = Owner::current().expect("List must be mounted inside a reactive owner");
     let VirtualListOptions {
         axis,
         layout: virtual_layout,
@@ -709,6 +714,7 @@ pub fn virtualize<T, K>(
                     observe_track.as_ref(),
                     grid,
                     axis,
+                    list_owner,
                 );
                 rendered_window.set(Some(window));
                 return;
@@ -744,8 +750,12 @@ pub fn virtualize<T, K>(
                     previous.end,
                     |index| {
                         let key = layout.keys[index].clone();
-                        let entry =
-                            new_mounted_entry(layout.items[index].clone(), children.as_ref(), None);
+                        let entry = new_mounted_entry(
+                            layout.items[index].clone(),
+                            children.as_ref(),
+                            None,
+                            list_owner,
+                        );
                         let handle = entry.handle;
                         observe_entry(&key, handle);
                         let replaced = mounted.insert(key, entry);
@@ -804,8 +814,12 @@ pub fn virtualize<T, K>(
                     if let Some(entry) = mounted.get_mut(key) {
                         entry.item.set(layout.items[index].clone());
                     } else {
-                        let entry =
-                            new_mounted_entry(layout.items[index].clone(), children.as_ref(), None);
+                        let entry = new_mounted_entry(
+                            layout.items[index].clone(),
+                            children.as_ref(),
+                            None,
+                            list_owner,
+                        );
                         observe_entry(key, entry.handle);
                         mounted.insert(key.clone(), entry);
                     }
@@ -1010,8 +1024,9 @@ fn new_mounted_entry<T: Clone + 'static>(
     item: T,
     children: &dyn Fn(ReadSignal<T>) -> Element,
     cell_style: Option<&SpecifiedStyle>,
+    parent: Owner,
 ) -> MountedEntry<T> {
-    let owner = Owner::new(None);
+    let owner = Owner::new(Some(parent));
     let (item, handle, mount_handle) = owner.with(|| {
         let item = RwSignal::new(item);
         let handle = children(item.read_only());
@@ -1077,6 +1092,7 @@ fn reconcile_grid_window<T, K>(
     observe_track: &dyn Fn(Vec<K>, Element),
     grid: &VirtualGridLayout,
     axis: ScrollAxis,
+    list_owner: Owner,
 ) where
     T: Clone + 'static,
     K: Eq + Hash + Clone + 'static,
@@ -1170,7 +1186,7 @@ fn reconcile_grid_window<T, K>(
         let track_handle = if let Some(track) = mounted_tracks.get(&track_index) {
             track.handle
         } else {
-            let owner = Owner::new(None);
+            let owner = Owner::new(Some(list_owner));
             let handle = owner.with(|| create_element(ElementTag::View));
             mounted_tracks.insert(
                 track_index,
@@ -1199,6 +1215,7 @@ fn reconcile_grid_window<T, K>(
                         layout.items[item_index].clone(),
                         children,
                         Some(&grid.cell_style),
+                        list_owner,
                     ),
                 );
             }
@@ -1339,6 +1356,32 @@ fn scroll_geometry(event: &WhiskerValue, axis: ScrollAxis) -> Option<ScrollGeome
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_mounted_from_host_callbacks_inherit_the_list_context() {
+        crate::reactive::__reset_for_tests();
+        let list_owner = Owner::new(None);
+        list_owner.with(|| crate::reactive::provide_context(String::from("router")));
+
+        // Host callbacks enter with no current owner. The explicit List owner
+        // must still be the parent of the newly materialized row.
+        assert!(Owner::current().is_none());
+        let entry = new_mounted_entry(
+            1_u32,
+            &|_| {
+                assert_eq!(
+                    crate::reactive::use_context::<String>().as_deref(),
+                    Some("router")
+                );
+                create_element(ElementTag::View)
+            },
+            None,
+            list_owner,
+        );
+
+        entry.owner.dispose();
+        list_owner.dispose();
+    }
 
     #[test]
     fn visits_only_indices_outside_the_other_range() {
