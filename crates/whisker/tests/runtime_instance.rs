@@ -1678,6 +1678,104 @@ fn raw_touch_stream_synthesizes_tap_but_drag_does_not() {
 }
 
 #[test]
+fn touch_stream_stays_routed_to_its_pointer_down_target() {
+    let surface = surface(38);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let first_start = Rc::clone(&log);
+    let first_move = Rc::clone(&log);
+    let first_end = Rc::clone(&log);
+    let first_cancel = Rc::clone(&log);
+    let second_move = Rc::clone(&log);
+    let second_end = Rc::clone(&log);
+    let second_cancel = Rc::clone(&log);
+
+    runtime
+        .mount(move || {
+            render! {
+                View(
+                    style: css!(
+                        width: px(100),
+                        height: px(50),
+                        flex_direction: FlexDirection::Row,
+                    ),
+                ) {
+                    View(
+                        style: css!(width: px(50), height: px(50)),
+                        on_touchstart: move |_| first_start.borrow_mut().push("first-start"),
+                        on_touchmove: move |_| first_move.borrow_mut().push("first-move"),
+                        on_touchend: move |_| first_end.borrow_mut().push("first-end"),
+                        on_touchcancel: move |_| first_cancel.borrow_mut().push("first-cancel"),
+                    )
+                    View(
+                        style: css!(width: px(50), height: px(50)),
+                        on_touchmove: move |_| second_move.borrow_mut().push("second-move"),
+                        on_touchend: move |_| second_end.borrow_mut().push("second-end"),
+                        on_touchcancel: move |_| second_cancel.borrow_mut().push("second-cancel"),
+                    )
+                }
+            }
+        })
+        .unwrap();
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(100.0, 50.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let pointer = |timestamp_ms, kind, x, buttons| InputEvent {
+        surface: surface.surface(),
+        timestamp_ms,
+        kind,
+        pointer: Some(PointerInput {
+            id: PointerId::new(1).unwrap(),
+            kind: PointerKind::Touch,
+            position: InputPoint { x, y: 25.0 },
+            buttons,
+            changed_button: -1,
+        }),
+        target: None,
+        detail: WhiskerValue::Null,
+    };
+
+    runtime
+        .dispatch_input(&pointer(2.0, InputEventKind::PointerDown, 25.0, 1))
+        .unwrap();
+    runtime
+        .dispatch_input(&pointer(3.0, InputEventKind::PointerMove, 75.0, 1))
+        .unwrap();
+    runtime
+        .dispatch_input(&pointer(4.0, InputEventKind::PointerUp, 75.0, 0))
+        .unwrap();
+    runtime
+        .dispatch_input(&pointer(5.0, InputEventKind::PointerDown, 25.0, 1))
+        .unwrap();
+    runtime
+        .dispatch_input(&pointer(6.0, InputEventKind::PointerCancel, 75.0, 0))
+        .unwrap();
+
+    assert_eq!(
+        log.borrow().as_slice(),
+        [
+            "first-start",
+            "first-move",
+            "first-end",
+            "first-start",
+            "first-cancel",
+        ]
+    );
+}
+
+#[test]
 fn raw_mouse_stream_synthesizes_cross_host_tap_and_mouse_click() {
     let surface = surface(37);
     let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
