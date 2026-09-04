@@ -354,7 +354,8 @@ fn horizontal_list_mounted_by_show_lays_out_initial_items() {
                                 };
                                 whisker::runtime::view::observe_layout(
                                     page,
-                                    Box::new(move |geometry| {
+                                    Box::new(move |observation| {
+                                        let geometry = observation.geometry;
                                         observed.set(Some((
                                             geometry.border_box.width,
                                             geometry.border_box.height,
@@ -934,9 +935,9 @@ fn typed_list_handle_resolves_keys_from_the_rust_snapshot() {
             LayoutOptions::default(),
         )
         .unwrap();
-    // Key lookup is resolved entirely from the Rust-side layout index. Rows
-    // outside the mounted window retain the private initial extent until they
-    // have been observed, so key 10 starts at 10 × 44px.
+    // Key lookup is resolved entirely from the Rust-side layout index. The
+    // mounted rows teach the index a 44px estimate for rows outside the
+    // window, so key 10 starts at 10 × 44px.
     let expected_key_offset = 440.0;
 
     with_installed_renderer(surface.renderer(), || {
@@ -1289,6 +1290,62 @@ fn list_learns_variable_item_sizes_from_rust_layout() {
         )
         .unwrap();
     assert_eq!(list_handle.snapshot().unwrap().content_extent, 300.0);
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn list_applies_visible_measurements_to_unmounted_item_estimates() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(59).unwrap(),
+        StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+    );
+    let list_handle = owner.with(ListHandle::<u32>::new);
+    let render_list_handle = list_handle.clone();
+    let item_builds = Rc::new(Cell::new(0_u32));
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with({
+            let item_builds = Rc::clone(&item_builds);
+            move || {
+                render! {
+                    List(
+                        list_ref: render_list_handle.r(),
+                        style: css!(width: percent(100), height: px(100)),
+                        each: || (0_u32..100).collect::<Vec<_>>(),
+                        key: |row: &u32| *row,
+                        children: move |_row: ReadSignal<u32>| {
+                            item_builds.set(item_builds.get() + 1);
+                            render! { View(style: css!(height: px(100), flex_shrink: 0.0)) }
+                        },
+                    )
+                }
+            }
+        });
+        set_root(root);
+    });
+
+    assert_eq!(list_handle.snapshot().unwrap().content_extent, 4_400.0);
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(list_handle.snapshot().unwrap().content_extent, 10_000.0);
+    assert!(
+        item_builds.get() < 100,
+        "the learned full extent must come from the mounted sample, not from mounting every row"
+    );
 
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }

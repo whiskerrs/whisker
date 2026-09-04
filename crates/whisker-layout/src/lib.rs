@@ -74,6 +74,21 @@ where
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LayoutSnapshot {
     boxes: BTreeMap<NodeId, LayoutGeometry>,
+    suppressed_by_display_none: BTreeSet<NodeId>,
+}
+
+/// Whether a node has a meaningful result in the current layout tree.
+///
+/// This is intentionally narrower than paint visibility. Properties such as
+/// `visibility:hidden` and `opacity:0` still participate in layout; only an
+/// explicit `display:none` on the node or one of its ancestors suppresses it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LayoutParticipation {
+    /// The node participates in layout, including when its resolved size is zero.
+    #[default]
+    Participating,
+    /// The node or one of its ancestors has `display:none`.
+    SuppressedByDisplayNone,
 }
 
 impl LayoutSnapshot {
@@ -85,6 +100,27 @@ impl LayoutSnapshot {
     /// Iterates in stable node-ID order.
     pub fn iter(&self) -> impl Iterator<Item = (NodeId, &LayoutGeometry)> {
         self.boxes.iter().map(|(node, rect)| (*node, rect))
+    }
+
+    /// Returns why a retained node does or does not participate in layout.
+    pub fn participation(&self, node: NodeId) -> Option<LayoutParticipation> {
+        self.get_with_participation(node)
+            .map(|(_, participation)| participation)
+    }
+
+    /// Returns geometry and layout participation with one node lookup.
+    pub fn get_with_participation(
+        &self,
+        node: NodeId,
+    ) -> Option<(&LayoutGeometry, LayoutParticipation)> {
+        self.boxes.get(&node).map(|geometry| {
+            let participation = if self.suppressed_by_display_none.contains(&node) {
+                LayoutParticipation::SuppressedByDisplayNone
+            } else {
+                LayoutParticipation::Participating
+            };
+            (geometry, participation)
+        })
     }
 
     /// Returns the number of laid-out nodes.
@@ -563,7 +599,7 @@ impl LayoutTree {
             return Err(LayoutError::InvalidMeasurement(node));
         }
         let mut snapshot = LayoutSnapshot::default();
-        self.collect_snapshot(root, &mut snapshot);
+        self.collect_snapshot(root, false, &mut snapshot);
         Ok(snapshot)
     }
 
@@ -610,8 +646,14 @@ impl LayoutTree {
         output.push(node);
     }
 
-    fn collect_snapshot(&self, node: NodeId, snapshot: &mut LayoutSnapshot) {
+    fn collect_snapshot(
+        &self,
+        node: NodeId,
+        ancestor_suppressed: bool,
+        snapshot: &mut LayoutSnapshot,
+    ) {
         let retained = self.nodes.get(&node).expect("retained snapshot node");
+        let suppressed = ancestor_suppressed || retained.style.display == DisplayValue::None;
         let layout = self
             .backend
             .layout(retained.backend)
@@ -633,8 +675,11 @@ impl LayoutTree {
                 },
             },
         );
+        if suppressed {
+            snapshot.suppressed_by_display_none.insert(node);
+        }
         for child in &retained.children {
-            self.collect_snapshot(*child, snapshot);
+            self.collect_snapshot(*child, suppressed, snapshot);
         }
     }
 }
@@ -1127,6 +1172,61 @@ mod tests {
             })
             .unwrap();
         assert_eq!(snapshot.get(leaf).unwrap().border_box.width, 50.0);
+    }
+
+    #[test]
+    fn participation_distinguishes_display_none_from_zero_size() {
+        let root = id(1);
+        let hidden = id(2);
+        let hidden_child = id(3);
+        let zero_sized = id(4);
+        let mut tree = LayoutTree::new();
+        tree.create_node(root, sized(100.0, 100.0)).unwrap();
+        tree.create_node(
+            hidden,
+            ComputedLayoutStyle {
+                display: DisplayValue::None,
+                ..sized(50.0, 50.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(hidden_child, sized(20.0, 20.0)).unwrap();
+        tree.create_node(zero_sized, sized(0.0, 0.0)).unwrap();
+        tree.set_children(root, &[hidden, zero_sized]).unwrap();
+        tree.set_children(hidden, &[hidden_child]).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(100.0, 100.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(
+            snapshot.participation(root),
+            Some(LayoutParticipation::Participating)
+        );
+        assert_eq!(
+            snapshot.participation(hidden),
+            Some(LayoutParticipation::SuppressedByDisplayNone)
+        );
+        assert_eq!(
+            snapshot.participation(hidden_child),
+            Some(LayoutParticipation::SuppressedByDisplayNone)
+        );
+        assert_eq!(
+            snapshot.participation(zero_sized),
+            Some(LayoutParticipation::Participating)
+        );
+        assert_eq!(
+            snapshot.get(zero_sized).unwrap().border_box,
+            LayoutRect::default()
+        );
+
+        tree.update_style(hidden, sized(50.0, 50.0)).unwrap();
+        let snapshot = tree
+            .compute(root, LayoutSize::new(100.0, 100.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(
+            snapshot.participation(hidden_child),
+            Some(LayoutParticipation::Participating)
+        );
     }
 
     #[test]
