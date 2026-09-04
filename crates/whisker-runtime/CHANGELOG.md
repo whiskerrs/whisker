@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.13.0...whisker-runtime-v0.13.1) - 2026-09-04
+
+### Fixed
+
+- *(runtime)* retain touch sequence targets ([#665](https://github.com/whiskerrs/whisker/pull/665))
+- *(runtime)* allow tasks to spawn while polling ([#663](https://github.com/whiskerrs/whisker/pull/663))
+
 ## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.12.0...whisker-runtime-v0.13.0) - 2026-09-03
 
 ### Added
