@@ -586,6 +586,26 @@ struct ActivationRecognizer {
 }
 
 impl ActivationRecognizer {
+    // Touch and pen contacts keep the node selected by pointer-down for their
+    // whole active sequence. This gives raw touch listeners the same stable
+    // target as implicit pointer capture without changing mouse hover routing.
+    fn implicit_capture_target(&self, event: &InputEvent) -> Option<NodeId> {
+        let pointer = event.pointer?;
+        if !matches!(pointer.kind, PointerKind::Touch | PointerKind::Pen)
+            || !matches!(
+                event.kind,
+                InputEventKind::PointerMove
+                    | InputEventKind::PointerUp
+                    | InputEventKind::PointerCancel
+            )
+        {
+            return None;
+        }
+        self.pointers
+            .get(&pointer.id)
+            .map(|candidate| candidate.target)
+    }
+
     fn observe(
         &mut self,
         event: &InputEvent,
@@ -624,7 +644,10 @@ impl ActivationRecognizer {
             InputEventKind::PointerUp => {
                 let candidate = self.pointers.remove(&pointer.id)?;
                 let elapsed = event.timestamp_ms - candidate.started_at_ms;
+                let dx = pointer.position.x - candidate.origin.x;
+                let dy = pointer.position.y - candidate.origin.y;
                 if candidate.cancelled
+                    || dx * dx + dy * dy > TAP_SLOP * TAP_SLOP
                     || !(0.0..=TAP_TIMEOUT_MS).contains(&elapsed)
                     || hit_target != Some(candidate.target)
                 {
@@ -1110,9 +1133,21 @@ impl RuntimeInstance {
         // is committed once after the queue settles.
         self.surface.begin_mutation_batch();
         let dispatch = (|| {
+            let routed_event = if event.target.is_none() {
+                self.activations
+                    .borrow()
+                    .implicit_capture_target(event)
+                    .map(|target| InputEvent {
+                        target: Some(target),
+                        ..event.clone()
+                    })
+            } else {
+                None
+            };
+            let routed_event = routed_event.as_ref().unwrap_or(event);
             let mut dispatch = self
                 .surface
-                .dispatch_input_with_presentation(event, presentation)?;
+                .dispatch_input_with_presentation(routed_event, presentation)?;
             let activation = self
                 .activations
                 .borrow_mut()
