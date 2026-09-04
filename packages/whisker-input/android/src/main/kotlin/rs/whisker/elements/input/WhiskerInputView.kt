@@ -103,6 +103,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     /// shown.
     private var autoCorrectFlag: Int = InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
     private var noSuggestionsFlag: Int = 0
+    private var multilineEnabled: Boolean = false
 
     // -------------------------------------------------------------------------
     // View creation
@@ -300,6 +301,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
 
     fun setMultiline(multiline: Boolean) {
         val et = view()
+        multilineEnabled = multiline
         if (multiline) {
             et.isSingleLine = false
             et.inputType = et.inputType or InputType.TYPE_TEXT_FLAG_MULTI_LINE
@@ -421,12 +423,11 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     }
 
     /**
-     * Reapply the cached text-behaviour flag bits ([capFlag],
-     * [autoCorrectFlag], [noSuggestionsFlag]) onto the EditText's current
-     * `inputType`, clearing the managed bits first. Every setter that
-     * rebuilds `inputType` ([setKeyboardType], [setSecure],
-     * [setMultiline]) must call this, since all three settings share that
-     * one Int (unlike iOS's orthogonal traits).
+     * Reapply the cached multiline and text-behaviour flag bits onto the
+     * EditText's current `inputType`, clearing the managed bits first. Every
+     * setter that rebuilds `inputType` ([setKeyboardType], [setSecure],
+     * [setMultiline]) must call this, since all three settings share that one
+     * Int (unlike iOS's orthogonal traits).
      *
      * The flags only have an effect under `TYPE_CLASS_TEXT`; Android
      * ignores them for number / phone classes, so ORing unconditionally is
@@ -434,13 +435,13 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
      */
     private fun applyTextFlags() {
         val et = view()
-        val managed = InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
-            InputType.TYPE_TEXT_FLAG_CAP_WORDS or
-            InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
-            InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
-            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        et.inputType = (et.inputType and managed.inv()) or
-            capFlag or autoCorrectFlag or noSuggestionsFlag
+        et.inputType = inputTypeWithManagedFlags(
+            inputType = et.inputType,
+            multiline = multilineEnabled,
+            capFlag = capFlag,
+            autoCorrectFlag = autoCorrectFlag,
+            noSuggestionsFlag = noSuggestionsFlag,
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -572,3 +573,21 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
 
 internal fun inputTextSizePixels(logicalPixels: Float, density: Float): Float =
     logicalPixels * density
+
+internal fun inputTypeWithManagedFlags(
+    inputType: Int,
+    multiline: Boolean,
+    capFlag: Int,
+    autoCorrectFlag: Int,
+    noSuggestionsFlag: Int,
+): Int {
+    val managed = InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+        InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+        InputType.TYPE_TEXT_FLAG_CAP_WORDS or
+        InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
+        InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
+        InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+    val multilineFlag = if (multiline) InputType.TYPE_TEXT_FLAG_MULTI_LINE else 0
+    return (inputType and managed.inv()) or multilineFlag or capFlag or
+        autoCorrectFlag or noSuggestionsFlag
+}
