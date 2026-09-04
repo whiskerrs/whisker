@@ -996,7 +996,10 @@ fn list_applies_axis_scroll_control_and_initial_key_target() {
                     each: || (0_u32..20).collect::<Vec<_>>(),
                     key: |row: &u32| *row,
                     children: |row: ReadSignal<u32>| render! {
-                        Text(value: computed(move || row.get().to_string()), style: css!(width: px(44), font_size: px(20)))
+                        Text(
+                            value: computed(move || row.get().to_string()),
+                            style: css!(width: px(44), flex_shrink: 0.0, font_size: px(20)),
+                        )
                     },
                 )
             }
@@ -1031,7 +1034,25 @@ fn list_applies_axis_scroll_control_and_initial_key_target() {
         )
         .unwrap();
 
-    let operations = &renderer.frames()[0].packet.operations;
+    // Initial scrolling waits for the first resolved viewport, measured target,
+    // and Host-facing scroll extent. Their layout observers queue the command
+    // for the following frame instead of acting on the pre-layout estimate.
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            2,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let operations = renderer
+        .frames()
+        .iter()
+        .flat_map(|frame| frame.packet.operations.iter())
+        .collect::<Vec<_>>();
     assert!(operations.iter().any(|operation| matches!(
         operation,
         Operation::SetProperty {
