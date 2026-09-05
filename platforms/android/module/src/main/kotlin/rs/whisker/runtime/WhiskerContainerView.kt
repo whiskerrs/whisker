@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Rect
 import android.view.MotionEvent
 import android.view.View
+import android.view.VelocityTracker
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -161,10 +163,34 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
     private var userScrollEnabled = true
     private var scrollSequenceStart: Int? = null
     private var settleGeneration = 0
+    private var dragging = false
+    private var lastScrollX = 0.0
+    private var lastScrollY = 0.0
+    private var velocityTracker: VelocityTracker? = null
+    private var activePointerId = MotionEvent.INVALID_POINTER_ID
+    private var touchAction = -1
 
     private val verticalScroller = object : ScrollView(context) {
-        override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
-            userScrollEnabled && super.onInterceptTouchEvent(event)
+        fun scrollInstantlyTo(x: Int, y: Int) {
+            super.scrollTo(x, y)
+            // scrollTo clamps the position but leaves the framework scroller running.
+            // A clamped overscroll finishes its springBack immediately when already
+            // in bounds, cancelling both flings and smooth scrolls at this position.
+            super.onOverScrolled(scrollX, scrollY, false, true)
+        }
+
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+            val intercepted = userScrollEnabled && super.onInterceptTouchEvent(event)
+            if (intercepted) beginDrag()
+            return intercepted
+        }
+
+        override fun onOverScrolled(x: Int, y: Int, clampedX: Boolean, clampedY: Boolean) {
+            // The native scroller calls this only after its own touch slop and
+            // nested-scroll arbitration have accepted movement, including edges.
+            if (touchAction == MotionEvent.ACTION_MOVE) beginDrag()
+            super.onOverScrolled(x, y, clampedX, clampedY)
+        }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
             if (!userScrollEnabled) return false
@@ -189,8 +215,26 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
     }
 
     private val horizontalScroller = object : HorizontalScrollView(context) {
-        override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
-            userScrollEnabled && super.onInterceptTouchEvent(event)
+        fun scrollInstantlyTo(x: Int, y: Int) {
+            super.scrollTo(x, y)
+            // Finish the framework scroller even when scrollTo did not change the
+            // offset. Using the clamped position prevents a later spring-back frame
+            // from overwriting the requested position.
+            super.onOverScrolled(scrollX, scrollY, true, false)
+        }
+
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+            val intercepted = userScrollEnabled && super.onInterceptTouchEvent(event)
+            if (intercepted) beginDrag()
+            return intercepted
+        }
+
+        override fun onOverScrolled(x: Int, y: Int, clampedX: Boolean, clampedY: Boolean) {
+            // The native scroller calls this only after its own touch slop and
+            // nested-scroll arbitration have accepted movement, including edges.
+            if (touchAction == MotionEvent.ACTION_MOVE) beginDrag()
+            super.onOverScrolled(x, y, clampedX, clampedY)
+        }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
             if (!userScrollEnabled) return false
@@ -284,6 +328,7 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
     public fun setUserScrollEnabled(value: Boolean) {
         userScrollEnabled = value
         if (!value) {
+            finishDrag(cancelled = true)
             verticalScroller.stopNestedScroll()
             horizontalScroller.stopNestedScroll()
         }
@@ -293,12 +338,18 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
         val pixels = (offset * resources.displayMetrics.density).roundToInt()
         val isHorizontal = horizontal
         val apply = {
+            if (!smooth) {
+                // A settle check from the interrupted gesture must not start
+                // another animation after the explicit position has been applied.
+                settleGeneration += 1
+                scrollSequenceStart = null
+            }
             if (isHorizontal) {
                 if (smooth) horizontalScroller.smoothScrollTo(pixels, 0)
-                else horizontalScroller.scrollTo(pixels, 0)
+                else horizontalScroller.scrollInstantlyTo(pixels, 0)
             } else {
                 if (smooth) verticalScroller.smoothScrollTo(0, pixels)
-                else verticalScroller.scrollTo(0, pixels)
+                else verticalScroller.scrollInstantlyTo(0, pixels)
             }
         }
         // A FramePacket can resize the scroll content and issue scrollTo in
@@ -328,11 +379,76 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
         }
     }
 
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            finishDrag(cancelled = true)
+            velocityTracker = VelocityTracker.obtain()
+            activePointerId = event.getPointerId(0)
+        }
+        velocityTracker?.addMovement(event)
+        if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+            activePointerId = event.getPointerId(event.actionIndex)
+        } else if (event.actionMasked == MotionEvent.ACTION_POINTER_UP &&
+            event.getPointerId(event.actionIndex) == activePointerId
+        ) {
+            activePointerId = event.getPointerId(if (event.actionIndex == 0) 1 else 0)
+            velocityTracker?.clear()
+        }
+        touchAction = event.actionMasked
+        val handled = try {
+            super.dispatchTouchEvent(event)
+        } finally {
+            touchAction = -1
+        }
+        // Emit after native UP processing, so an app's Instant command cancels
+        // the fling that native handling just started, rather than preceding it.
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            finishDrag(cancelled = event.actionMasked == MotionEvent.ACTION_CANCEL)
+        }
+        return handled
+    }
+
+    private fun beginDrag() {
+        if (dragging || !userScrollEnabled || velocityTracker == null) return
+        dragging = true
+        scrollSequenceStart = if (horizontal) horizontalScroller.scrollX else verticalScroller.scrollY
+        emitScroll()
+    }
+
+    private fun finishDrag(cancelled: Boolean) {
+        var velocity = 0.0
+        if (dragging && !cancelled) {
+            velocityTracker?.let { tracker ->
+                tracker.computeCurrentVelocity(1000, ViewConfiguration.get(context).scaledMaximumFlingVelocity.toFloat())
+                // Pointer motion and content offset have opposite signs.
+                velocity = -(if (horizontal) tracker.getXVelocity(activePointerId)
+                    else tracker.getYVelocity(activePointerId)) / resources.displayMetrics.density.toDouble()
+            }
+        }
+        velocityTracker?.recycle()
+        velocityTracker = null
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+        if (!dragging) return
+        dragging = false
+        emitScroll(velocity, cancelled)
+    }
+
+    override fun onDetachedFromWindow() {
+        finishDrag(cancelled = true)
+        super.onDetachedFromWindow()
+    }
+
     private fun activeScroller(): View = if (horizontal) horizontalScroller else verticalScroller
 
-    private fun emitScroll() {
+    private fun emitScroll(releaseVelocity: Double = 0.0, cancelled: Boolean = false) {
         val density = resources.displayMetrics.density.toDouble()
         val scroller = activeScroller()
+        val x = scroller.scrollX / density
+        val y = scroller.scrollY / density
+        val dx = x - lastScrollX
+        val dy = y - lastScrollY
+        lastScrollX = x
+        lastScrollY = y
         presentationSink?.invoke(
             (scroller.scrollX / density).toFloat(),
             (scroller.scrollY / density).toFloat(),
@@ -341,6 +457,12 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
             "scroll",
             WhiskerValue.Map(
                 mapOf(
+                    "deltaX" to WhiskerValue.Float(dx),
+                    "deltaY" to WhiskerValue.Float(dy),
+                    "isDragging" to WhiskerValue.Bool(dragging),
+                    "velocityX" to WhiskerValue.Float(if (horizontal) releaseVelocity else 0.0),
+                    "velocityY" to WhiskerValue.Float(if (horizontal) 0.0 else releaseVelocity),
+                    "isDragCancelled" to WhiskerValue.Bool(cancelled),
                     "scrollLeft" to WhiskerValue.Float(scroller.scrollX / density),
                     "scrollTop" to WhiskerValue.Float(scroller.scrollY / density),
                     "scrollWidth" to WhiskerValue.Float(contentView.width / density),
