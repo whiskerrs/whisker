@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.5](https://github.com/whiskerrs/whisker/compare/whisker-layout-v0.13.3...whisker-layout-v0.13.5) - 2026-09-05
+
+### Fixed
+
+- *(runtime)* recognize long presses and preserve List margins ([#674](https://github.com/whiskerrs/whisker/pull/674))
+
+### Other
+
+- release v0.13.4 ([#672](https://github.com/whiskerrs/whisker/pull/672))
+
 ## [0.13.4](https://github.com/whiskerrs/whisker/compare/whisker-layout-v0.13.3...whisker-layout-v0.13.4) - 2026-09-05
 
 ### Fixed

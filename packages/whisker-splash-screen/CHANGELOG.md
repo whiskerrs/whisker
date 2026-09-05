@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.5](https://github.com/whiskerrs/whisker/compare/whisker-splash-screen-v0.13.4...whisker-splash-screen-v0.13.5) - 2026-09-05
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.13.4](https://github.com/whiskerrs/whisker/compare/whisker-splash-screen-v0.13.3...whisker-splash-screen-v0.13.4) - 2026-09-05
 
 ### Other
