@@ -37,7 +37,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check every SwiftPM pin and immutable tag
         id: check
+        if: inputs.publish
         run: cargo xtask release native-check ios "$VERSION"
+      - name: Check smoke-build pins
+        if: '!inputs.publish'
+        run: cargo xtask release native-pins ios "$VERSION"
       - name: Build the public Swift package
         if: steps.check.outputs.published != 'true'
         run: xcodebuild -scheme WhiskerRuntime -destination 'generic/platform=iOS Simulator' -skipPackagePluginValidation build

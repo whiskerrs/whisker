@@ -126,6 +126,7 @@ pub fn run(root: &Path, mode: &str, args: Vec<String>) -> Result<()> {
         ("plan", []) => plan(root),
         ("publish", []) => publish::run(root),
         ("native-check", [stream, value]) => native::check(root, stream, value),
+        ("native-pins", [stream, value]) => native::check_pins(root, stream, value),
         ("native-stamp", [stream, value]) => native::stamp(root, stream, value),
         ("native-tag", [stream, value]) => native::tag(root, stream, value),
         ("native-verify", [stream, value]) => native::verify(stream, value),

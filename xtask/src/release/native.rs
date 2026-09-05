@@ -119,7 +119,7 @@ pub(super) fn check_selection(root: &Path, stream: &str, selected: Option<&str>)
     Ok(())
 }
 
-pub(super) fn check(root: &Path, stream: &str, value: &str) -> Result<()> {
+pub(super) fn check_pins(root: &Path, stream: &str, value: &str) -> Result<()> {
     version(value)?;
     ensure!(
         pin(root, stream)? == value,
@@ -128,6 +128,11 @@ pub(super) fn check(root: &Path, stream: &str, value: &str) -> Result<()> {
     if stream == "ios" {
         check_swift_pins(root, value)?;
     }
+    Ok(())
+}
+
+pub(super) fn check(root: &Path, stream: &str, value: &str) -> Result<()> {
+    check_pins(root, stream, value)?;
     let (_, _, prefix) = definition(stream)?;
     let tag = format!("{prefix}{value}");
     ensure_tag(root, &tag, false)?;
