@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.widget.HorizontalScrollView
 import android.widget.ScrollView
 import androidx.test.core.app.ActivityScenario
@@ -64,6 +65,7 @@ class ScrollCancellationTest {
         smooth: Boolean = false,
         requestedOffset: Int? = null,
         nativeSnap: Boolean = false,
+        delayFirstDraw: Boolean = false,
     ) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val intent = Intent(instrumentation.context, ScrollCancellationActivity::class.java)
@@ -77,8 +79,17 @@ class ScrollCancellationTest {
             var target = 0
             scenario.onActivity { activity ->
                 if (nativeSnap) activity.scroll.setItemSnap(0.0, 0.0)
-                activity.startMotion(smooth)
-                activity.scroll.postDelayed({
+                if (delayFirstDraw) {
+                    // Model a busy CI renderer: timers run before the first
+                    // frame that advances the native scroller.
+                    val gate = ViewTreeObserver.OnPreDrawListener { false }
+                    activity.scroll.viewTreeObserver.addOnPreDrawListener(gate)
+                    activity.scroll.postDelayed({
+                        activity.scroll.viewTreeObserver.removeOnPreDrawListener(gate)
+                        activity.scroll.invalidate()
+                    }, 160)
+                }
+                val interrupt = Runnable {
                     before = activity.offset
                     val requested = requestedOffset ?: if (sameOffset) before else 500
                     val maximum = if (horizontal) {
@@ -103,7 +114,17 @@ class ScrollCancellationTest {
                         }
                         activity.scroll.postOnAnimation(sample)
                     }
-                }, 80)
+                }
+                // A timer can run before any draw on a busy emulator. Wait for
+                // actual native movement, then interrupt outside its callback
+                // so the framework has finished updating its current frame.
+                activity.scroll.installWhiskerPresentationSink { _, _ ->
+                    if (activity.offset > 1_000) {
+                        activity.scroll.installWhiskerPresentationSink(null)
+                        activity.scroll.post(interrupt)
+                    }
+                }
+                activity.startMotion(smooth)
             }
             assertTrue("native frames must complete", completed.await(10, TimeUnit.SECONDS))
             assertTrue("fixture must interrupt moving content: before=$before", before > 1_000)
@@ -130,6 +151,8 @@ class ScrollCancellationTest {
         }
     }
 
+    @Test fun horizontalFlingWaitsForDelayedFirstDraw() = verify(true, true, delayFirstDraw = true)
+    @Test fun verticalFlingWaitsForDelayedFirstDraw() = verify(false, true, delayFirstDraw = true)
     @Test fun horizontalFlingStopsAtDifferentOffset() = verify(true, false)
     @Test fun horizontalFlingStopsAtSameOffset() = verify(true, true)
     @Test fun verticalFlingStopsAtDifferentOffset() = verify(false, false)
