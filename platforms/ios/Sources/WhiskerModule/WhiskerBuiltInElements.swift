@@ -23,6 +23,15 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     private var snapOffset: CGFloat = 0
     private var snapStopAlways = false
     private var scrollSequenceStart: CGPoint?
+    private var reportingDrag = false
+    private var lastScrollOffset = CGPoint.zero
+    private var releaseVelocity = CGPoint.zero
+
+    public override var isScrollEnabled: Bool {
+        didSet {
+            if !isScrollEnabled { finishDrag(cancelled: true) }
+        }
+    }
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
@@ -35,6 +44,7 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
         automaticallyAdjustsScrollIndicatorInsets = false
         addSubview(contentView)
         delegate = self
+        panGestureRecognizer.addTarget(self, action: #selector(panStateChanged))
     }
 
     public required init?(coder: NSCoder) { nil }
@@ -91,11 +101,44 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
 
     public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         scrollSequenceStart = contentOffset
+        releaseVelocity = .zero
+        reportingDrag = true
+        emitScroll()
+    }
+
+    @objc private func panStateChanged() {
+        if panGestureRecognizer.state == .cancelled || panGestureRecognizer.state == .failed {
+            finishDrag(cancelled: true)
+        }
+    }
+
+    public func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        finishDrag(cancelled: panGestureRecognizer.state == .cancelled || !isScrollEnabled)
+    }
+
+    private func finishDrag(cancelled: Bool) {
+        guard reportingDrag else { return }
+        reportingDrag = false
+        let velocity = cancelled ? CGPoint.zero : releaseVelocity
+        releaseVelocity = .zero
+        emitScroll(velocity: velocity, cancelled: cancelled)
     }
 
     public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        emitScroll()
+    }
+
+    private func emitScroll(velocity: CGPoint = .zero, cancelled: Bool = false) {
+        let delta = CGPoint(x: contentOffset.x - lastScrollOffset.x, y: contentOffset.y - lastScrollOffset.y)
+        lastScrollOffset = contentOffset
         presentationSink?(contentOffset)
         eventSink?("scroll", .map([
+            "deltaX": .float(Double(delta.x)),
+            "deltaY": .float(Double(delta.y)),
+            "isDragging": .bool(reportingDrag),
+            "velocityX": .float(Double(velocity.x)),
+            "velocityY": .float(Double(velocity.y)),
+            "isDragCancelled": .bool(cancelled),
             "scrollLeft": .float(Double(contentOffset.x)),
             "scrollTop": .float(Double(contentOffset.y)),
             "scrollWidth": .float(Double(contentSize.width)),
@@ -110,6 +153,9 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
         withVelocity velocity: CGPoint,
         targetContentOffset: UnsafeMutablePointer<CGPoint>
     ) {
+        // UIKit supplies content velocity in points/ms; Whisker uses logical px/s.
+        releaseVelocity = CGPoint(x: horizontal ? velocity.x * 1000 : 0,
+                                  y: horizontal ? 0 : velocity.y * 1000)
         guard let factor = snapFactor, !contentView.subviews.isEmpty else { return }
         let viewport = horizontal ? bounds.width : bounds.height
         let contentExtent = horizontal ? contentSize.width : contentSize.height

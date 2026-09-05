@@ -183,7 +183,8 @@ impl<EachF, KeyF, ChildF, RefF, InitialF> List<EachF, KeyF, ChildF, RefF, Initia
     }
 
     /// Fired continuously while scrolling. Geometry is normalized by the
-    /// standard ScrollView event contract on every Host.
+    /// standard ScrollView event contract on every Host. Android/iOS also report
+    /// drag transitions and release velocity; see [`crate::event::ScrollDetail`].
     pub fn on_scroll<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
         bind_typed(self.handle, "scroll", BindType::Bind, f);
         self
