@@ -590,10 +590,10 @@ pub fn virtualize<T, K>(
             observe_layout(
                 handle,
                 Box::new(move |observation| {
-                    let layout_geometry = observation.geometry;
+                    let occupied_size = observation.margin_box_size;
                     let size = match axis {
-                        ScrollAxis::Vertical => layout_geometry.border_box.height,
-                        ScrollAxis::Horizontal => layout_geometry.border_box.width,
+                        ScrollAxis::Vertical => occupied_size.height,
+                        ScrollAxis::Horizontal => occupied_size.width,
                     };
                     pending_entry_measurements
                         .borrow_mut()
@@ -616,10 +616,12 @@ pub fn virtualize<T, K>(
             observe_layout(
                 handle,
                 Box::new(move |observation| {
-                    let layout_geometry = observation.geometry;
+                    // Synthetic grid tracks use an outer margin for the gap;
+                    // ListLayoutIndex already adds that gap separately.
+                    let track_box = observation.geometry.border_box;
                     let size = match axis {
-                        ScrollAxis::Vertical => layout_geometry.border_box.height,
-                        ScrollAxis::Horizontal => layout_geometry.border_box.width,
+                        ScrollAxis::Vertical => track_box.height,
+                        ScrollAxis::Horizontal => track_box.width,
                     };
                     pending_track_measurements
                         .borrow_mut()
@@ -643,10 +645,10 @@ pub fn virtualize<T, K>(
             observe_layout(
                 handle,
                 Box::new(move |observation| {
-                    let layout_geometry = observation.geometry;
+                    let occupied_size = observation.margin_box_size;
                     let size = match axis {
-                        ScrollAxis::Vertical => layout_geometry.border_box.height,
-                        ScrollAxis::Horizontal => layout_geometry.border_box.width,
+                        ScrollAxis::Vertical => occupied_size.height,
+                        ScrollAxis::Horizontal => occupied_size.width,
                     };
                     pending_aux_measurements
                         .borrow_mut()

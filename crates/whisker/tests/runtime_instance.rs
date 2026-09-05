@@ -2054,3 +2054,219 @@ fn deferred_measurement_event_wakes_and_completes_the_next_frame() {
     assert!(complete.frame.layout.has_layout());
     assert!(complete.frame.presentation.is_some());
 }
+
+mod longpress {
+    use super::*;
+
+    struct Reader {
+        runtime: RuntimeInstance,
+        surface: SurfaceRuntime,
+        sink: RecordingRenderer,
+        holds: Rc<RefCell<Vec<f64>>>,
+        taps: Rc<Cell<usize>>,
+        wakes: Arc<AtomicUsize>,
+    }
+
+    impl Reader {
+        fn new(listen: bool) -> Self {
+            let surface = surface(90);
+            let holds = Rc::new(RefCell::new(Vec::new()));
+            let held = holds.clone();
+            let taps = Rc::new(Cell::new(0));
+            let tapped = taps.clone();
+            let wakes = Arc::new(AtomicUsize::new(0));
+            let wake_count = wakes.clone();
+            let mut runtime = RuntimeInstance::new(
+                surface.clone(),
+                RuntimeWakeHandle::new(move || {
+                    wake_count.fetch_add(1, Ordering::Relaxed);
+                }),
+            );
+            runtime
+                .mount(move || {
+                    let view = render! {
+                        View(style: css!(width: px(100), height: px(100)),
+                            on_tap: move |_| tapped.set(tapped.get() + 1)) {
+                            View(style: css!(width: px(100), height: px(100)))
+                        }
+                    };
+                    if listen {
+                        whisker::runtime::event::bind_typed(
+                            view,
+                            "longpress",
+                            whisker::event::BindType::Bind,
+                            move |event: whisker::event::TouchEvent| {
+                                held.borrow_mut().push(event.detail.x)
+                            },
+                        );
+                    }
+                    view
+                })
+                .unwrap();
+            let sink = RecordingRenderer::new(surface.surface());
+            let mut reader = Self {
+                runtime,
+                surface,
+                sink,
+                holds,
+                taps,
+                wakes,
+            };
+            reader.frame(1.0);
+            reader.wakes.store(0, Ordering::Relaxed);
+            reader
+        }
+
+        fn frame(&mut self, time: f64) -> bool {
+            self.runtime
+                .drive_frame(
+                    time,
+                    StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+                    1,
+                    1,
+                    &mut NoMeasurement,
+                    &mut self.sink,
+                    LayoutOptions::default(),
+                )
+                .unwrap()
+                .needs_frame
+        }
+
+        fn pointer(
+            &self,
+            time: f64,
+            kind: InputEventKind,
+            id: u64,
+            x: f32,
+            pointer_kind: PointerKind,
+        ) {
+            self.runtime
+                .dispatch_input(&InputEvent {
+                    surface: self.surface.surface(),
+                    timestamp_ms: time,
+                    pointer: Some(PointerInput {
+                        id: PointerId::new(id).unwrap(),
+                        kind: pointer_kind,
+                        position: InputPoint { x, y: 10.0 },
+                        buttons: if kind == InputEventKind::PointerUp {
+                            0
+                        } else {
+                            1
+                        },
+                        changed_button: -1,
+                    }),
+                    kind,
+                    target: None,
+                    detail: WhiskerValue::Null,
+                })
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn stationary_contact_wakes_fires_once_bubbles_and_does_not_tap_on_release() {
+        for pointer_kind in [PointerKind::Touch, PointerKind::Pen] {
+            let mut reader = Reader::new(true);
+            reader.pointer(10.0, InputEventKind::PointerDown, 1, 10.0, pointer_kind);
+            assert!(reader.wakes.load(Ordering::Relaxed) > 0);
+            assert!(
+                reader.frame(509.0),
+                "hold deadline must keep the host scheduled"
+            );
+            assert!(reader.holds.borrow().is_empty());
+            assert!(
+                !reader.frame(510.0),
+                "recognition must stop requesting frames"
+            );
+            assert_eq!(&*reader.holds.borrow(), &[10.0]);
+            reader.frame(900.0);
+            reader.pointer(1000.0, InputEventKind::PointerUp, 1, 10.0, pointer_kind);
+            assert_eq!(reader.holds.borrow().len(), 1);
+            assert_eq!(reader.taps.get(), 0);
+            reader.pointer(1100.0, InputEventKind::PointerDown, 1, 10.0, pointer_kind);
+            reader.pointer(1110.0, InputEventKind::PointerUp, 1, 10.0, pointer_kind);
+            assert_eq!(reader.taps.get(), 1, "the next independent tap must work");
+        }
+    }
+
+    #[test]
+    fn movement_cancel_second_contact_and_pause_cancel_a_hold() {
+        for scenario in ["move", "cancel", "second contact", "pause", "remount"] {
+            let mut reader = Reader::new(true);
+            reader.pointer(
+                10.0,
+                InputEventKind::PointerDown,
+                1,
+                10.0,
+                PointerKind::Touch,
+            );
+            match scenario {
+                "move" => reader.pointer(
+                    20.0,
+                    InputEventKind::PointerMove,
+                    1,
+                    30.0,
+                    PointerKind::Touch,
+                ),
+                "cancel" => reader.pointer(
+                    20.0,
+                    InputEventKind::PointerCancel,
+                    1,
+                    10.0,
+                    PointerKind::Touch,
+                ),
+                "second contact" => reader.pointer(
+                    20.0,
+                    InputEventKind::PointerDown,
+                    2,
+                    20.0,
+                    PointerKind::Touch,
+                ),
+                "pause" => {
+                    reader.runtime.pause().unwrap();
+                    reader.runtime.resume().unwrap();
+                }
+                "remount" => {
+                    reader.runtime.remount_root(|| render! { View() }).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            reader.frame(1000.0);
+            assert!(reader.holds.borrow().is_empty(), "{scenario}");
+            reader.pointer(
+                1010.0,
+                InputEventKind::PointerUp,
+                1,
+                10.0,
+                PointerKind::Touch,
+            );
+            assert_eq!(reader.taps.get(), 0, "{scenario}");
+        }
+    }
+
+    #[test]
+    fn ordinary_taps_and_mouse_contacts_do_not_keep_frames_running() {
+        let mut reader = Reader::new(false);
+        reader.pointer(
+            10.0,
+            InputEventKind::PointerDown,
+            1,
+            10.0,
+            PointerKind::Touch,
+        );
+        assert!(!reader.frame(20.0));
+        reader.pointer(30.0, InputEventKind::PointerUp, 1, 10.0, PointerKind::Touch);
+        assert_eq!(reader.taps.get(), 1);
+        let mut reader = Reader::new(true);
+        reader.pointer(
+            10.0,
+            InputEventKind::PointerDown,
+            1,
+            10.0,
+            PointerKind::Mouse,
+        );
+        assert!(!reader.frame(20.0));
+        reader.frame(1000.0);
+        assert!(reader.holds.borrow().is_empty());
+    }
+}

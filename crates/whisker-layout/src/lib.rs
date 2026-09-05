@@ -73,7 +73,7 @@ where
 /// A deterministic immutable result of one layout pass.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LayoutSnapshot {
-    boxes: BTreeMap<NodeId, LayoutGeometry>,
+    boxes: BTreeMap<NodeId, (LayoutGeometry, LayoutSize)>,
     suppressed_by_display_none: BTreeSet<NodeId>,
 }
 
@@ -94,12 +94,14 @@ pub enum LayoutParticipation {
 impl LayoutSnapshot {
     /// Returns the border box for a node relative to its parent content origin.
     pub fn get(&self, node: NodeId) -> Option<&LayoutGeometry> {
-        self.boxes.get(&node)
+        self.boxes.get(&node).map(|(geometry, _)| geometry)
     }
 
     /// Iterates in stable node-ID order.
     pub fn iter(&self) -> impl Iterator<Item = (NodeId, &LayoutGeometry)> {
-        self.boxes.iter().map(|(node, rect)| (*node, rect))
+        self.boxes
+            .iter()
+            .map(|(node, (geometry, _))| (*node, geometry))
     }
 
     /// Returns why a retained node does or does not participate in layout.
@@ -113,7 +115,7 @@ impl LayoutSnapshot {
         &self,
         node: NodeId,
     ) -> Option<(&LayoutGeometry, LayoutParticipation)> {
-        self.boxes.get(&node).map(|geometry| {
+        self.boxes.get(&node).map(|(geometry, _)| {
             let participation = if self.suppressed_by_display_none.contains(&node) {
                 LayoutParticipation::SuppressedByDisplayNone
             } else {
@@ -121,6 +123,12 @@ impl LayoutSnapshot {
             };
             (geometry, participation)
         })
+    }
+
+    /// Returns the occupied size, including resolved margins. Kept separate
+    /// from Host paint geometry for consumers such as virtualized lists.
+    pub fn margin_box_size(&self, node: NodeId) -> Option<LayoutSize> {
+        self.boxes.get(&node).map(|(_, size)| *size)
     }
 
     /// Returns the number of laid-out nodes.
@@ -660,20 +668,26 @@ impl LayoutTree {
             .expect("retained backend node");
         snapshot.boxes.insert(
             node,
-            LayoutGeometry {
-                border_box: LayoutRect {
-                    x: layout.location.x,
-                    y: layout.location.y,
-                    width: layout.size.width,
-                    height: layout.size.height,
+            (
+                LayoutGeometry {
+                    border_box: LayoutRect {
+                        x: layout.location.x,
+                        y: layout.location.y,
+                        width: layout.size.width,
+                        height: layout.size.height,
+                    },
+                    content_box: LayoutRect {
+                        x: layout.border.left + layout.padding.left,
+                        y: layout.border.top + layout.padding.top,
+                        width: layout.content_box_width().max(0.0),
+                        height: layout.content_box_height().max(0.0),
+                    },
                 },
-                content_box: LayoutRect {
-                    x: layout.border.left + layout.padding.left,
-                    y: layout.border.top + layout.padding.top,
-                    width: layout.content_box_width().max(0.0),
-                    height: layout.content_box_height().max(0.0),
-                },
-            },
+                LayoutSize::new(
+                    (layout.size.width + layout.margin.left + layout.margin.right).max(0.0),
+                    (layout.size.height + layout.margin.top + layout.margin.bottom).max(0.0),
+                ),
+            ),
         );
         if suppressed {
             snapshot.suppressed_by_display_none.insert(node);
@@ -1647,6 +1661,49 @@ mod tests {
             convert_style(&style),
             Err(LayoutError::UnsupportedStyle(feature))
         );
+    }
+
+    #[test]
+    fn margin_box_size_tracks_resolved_margins_without_changing_paint_geometry() {
+        let root = id(1);
+        let child = id(2);
+        let mut tree = LayoutTree::new();
+        tree.create_node(root, sized(200.0, 200.0)).unwrap();
+        let mut child_style = sized(40.0, 30.0);
+        child_style.margin = Edges {
+            top: ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(3.0, 0.0)),
+            right: ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(7.0, 0.0)),
+            bottom: ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(0.0, 0.2)),
+            left: ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(0.0, 0.1)),
+        };
+        tree.create_node(child, child_style).unwrap();
+        tree.set_children(root, &[child]).unwrap();
+
+        for (width, left, occupied) in [
+            (200.0, 20.0, LayoutSize::new(67.0, 73.0)),
+            (300.0, 30.0, LayoutSize::new(77.0, 93.0)),
+        ] {
+            tree.update_style(root, sized(width, 200.0)).unwrap();
+            let snapshot = tree
+                .compute(root, LayoutSize::new(width, 200.0), &mut zero_measure)
+                .unwrap();
+
+            assert_eq!(snapshot.margin_box_size(child), Some(occupied));
+            assert_eq!(
+                snapshot.margin_box_size(root),
+                Some(LayoutSize::new(width, 200.0))
+            );
+            assert_eq!(snapshot.margin_box_size(id(99)), None);
+            assert_eq!(
+                snapshot.get(child).unwrap().border_box,
+                LayoutRect {
+                    x: left,
+                    y: 3.0,
+                    width: 40.0,
+                    height: 30.0
+                },
+            );
+        }
     }
 
     #[test]

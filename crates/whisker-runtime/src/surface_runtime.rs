@@ -480,6 +480,15 @@ impl SurfaceRuntime {
         state.update_environment(environment)
     }
 
+    pub(crate) fn has_input_listener(&self, target: NodeId, event: &str) -> bool {
+        let state = self.state.borrow();
+        state.root.is_some_and(|root| {
+            state
+                .plan_event(root, target, event)
+                .is_ok_and(|firings| !firings.is_empty())
+        })
+    }
+
     /// Hit-tests and routes one Host-normalized event through Rust listeners.
     pub fn dispatch_input(&self, event: &InputEvent) -> Result<InputDispatch, RuntimeInputError> {
         self.dispatch_input_with_presentation(event, &[])
@@ -701,6 +710,9 @@ impl SurfaceRuntime {
                 } = &mut *state;
                 if let Some(last_layout) = surface.last_layout() {
                     for entry in elements.values_mut() {
+                        let Some(observers) = entry.layout_observers.as_mut() else {
+                            continue;
+                        };
                         let Some((geometry, participation)) = entry.node.and_then(|node| {
                             last_layout
                                 .get_with_participation(node)
@@ -710,10 +722,11 @@ impl SurfaceRuntime {
                         };
                         let observation = LayoutObservation {
                             geometry,
+                            margin_box_size: entry
+                                .node
+                                .and_then(|node| last_layout.margin_box_size(node))
+                                .expect("observed layout node"),
                             participation,
-                        };
-                        let Some(observers) = entry.layout_observers.as_mut() else {
-                            continue;
                         };
                         if observers.last_notified == Some(observation) {
                             continue;
