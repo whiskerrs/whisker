@@ -52,6 +52,7 @@ jobs:
     # commit that triggered this run isn't a release PR merge.
     name: release-plz / release (publish + tag)
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     # Skip on forks — only the canonical repo can publish.
     if: github.repository_owner == 'whiskerrs'
     steps:
@@ -62,10 +63,16 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Run release-plz release
-        uses: release-plz/action@v0.5
+      - name: Install release-plz
+        uses: taiki-e/install-action@v2
         with:
-          command: release
+          tool: release-plz@0.3.161
+      - name: Configure release tag author
+        uses: release-plz/git-config@59144859caf016f8b817a2ac9b051578729173c4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run release-plz with crates.io rate-limit recovery
+        run: python3 .github/scripts/release_with_retry.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

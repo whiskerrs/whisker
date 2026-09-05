@@ -37,13 +37,18 @@ happens on the merge commit of a release PR**.
    Confirm its changelog mentions your change.
 3. Merge that PR. The push to `main` publishes and tags.
 
-Expect **HTTP 429** partway through: crates.io limits how many existing
-crates you may update in a burst, and the workspace is large. It is not
-a failure of the release — re-run the failed job and it resumes from the
-first unpublished crate.
+The publish job automatically recovers from **crates.io HTTP 429** using
+`.github/scripts/release_with_retry.py`. It waits until the reset time
+in cargo's diagnostic (with a small margin), then runs release-plz again
+on the same checkout. Published crates are skipped. Missing or stale
+reset times use a fallback delay; attempts and job duration are bounded.
+Other errors fail immediately.
+
+If retries are exhausted, inspect the final error before re-running.
+A manual re-run resumes the same release without bumping versions:
 
 ```sh
-gh run rerun <run-id> --failed   # wait ~2-3 min between attempts
+gh run rerun <run-id> --failed
 ```
 
 Watch a specific crate rather than the run alone, since the run can be

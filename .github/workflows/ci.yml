@@ -16,6 +16,13 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  release-retry-tests:
+    name: Release retry tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+
   test:
     name: cargo test
     runs-on: ubuntu-latest
