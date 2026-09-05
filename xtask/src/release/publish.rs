@@ -144,14 +144,47 @@ pub(super) fn index_path(name: &str) -> Result<String> {
 
 fn is_published(agent: &ureq::Agent, name: &str, value: &str) -> Result<bool> {
     let url = format!("https://index.crates.io/{}", index_path(name)?);
-    match agent.get(&url).call() {
-        Ok(response) => index_contains(&response.into_string()?, value),
-        Err(ureq::Error::Status(404, _)) => Ok(false),
-        Err(error) => Err(error).with_context(|| {
-            format!(
-                "check published version of {name}; registry failure is not an unpublished crate"
-            )
-        }),
+    index_is_published(agent, &url, value, std::thread::sleep).with_context(|| {
+        format!("check published version of {name}; registry failure is not an unpublished crate")
+    })
+}
+
+pub(super) fn index_is_published(
+    agent: &ureq::Agent,
+    url: &str,
+    value: &str,
+    mut wait: impl FnMut(Duration),
+) -> Result<bool> {
+    let mut failures = 0;
+    loop {
+        // A pooled connection can expire while cargo publishes or waits for a
+        // rate limit. Retry reads too, including an interrupted response body.
+        let result = agent
+            .get(url)
+            .call()
+            .and_then(|response| response.into_string().map_err(ureq::Error::from));
+        let error = match result {
+            Ok(index) => return index_contains(&index, value),
+            Err(ureq::Error::Status(404, _)) => return Ok(false),
+            Err(error) => error,
+        };
+        failures += 1;
+        let transient = match &error {
+            ureq::Error::Status(status, _) => matches!(status, 408 | 429 | 500..=599),
+            ureq::Error::Transport(error) => matches!(
+                error.kind(),
+                ureq::ErrorKind::Dns | ureq::ErrorKind::ConnectionFailed | ureq::ErrorKind::Io
+            ),
+        };
+        if !transient || failures == 5 {
+            return Err(error.into());
+        }
+        let delay = Duration::from_secs(1 << failures);
+        eprintln!(
+            "Registry read failed (attempt {failures}/5): {error}; retrying in {}s",
+            delay.as_secs()
+        );
+        wait(delay);
     }
 }
 
