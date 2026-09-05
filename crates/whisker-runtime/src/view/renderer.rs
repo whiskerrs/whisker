@@ -40,6 +40,8 @@ use whisker_style::SpecifiedStyle;
 pub struct LayoutObservation {
     /// Resolved box geometry for the retained node.
     pub geometry: LayoutGeometry,
+    /// Occupied size including resolved margins, for virtual layout accounting.
+    pub margin_box_size: whisker_engine::whisker_layout::LayoutSize,
     /// Whether the node belongs to the active layout tree.
     pub participation: LayoutParticipation,
 }

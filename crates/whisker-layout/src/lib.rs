@@ -73,7 +73,7 @@ where
 /// A deterministic immutable result of one layout pass.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LayoutSnapshot {
-    boxes: BTreeMap<NodeId, LayoutGeometry>,
+    boxes: BTreeMap<NodeId, (LayoutGeometry, LayoutSize)>,
     suppressed_by_display_none: BTreeSet<NodeId>,
 }
 
@@ -94,12 +94,14 @@ pub enum LayoutParticipation {
 impl LayoutSnapshot {
     /// Returns the border box for a node relative to its parent content origin.
     pub fn get(&self, node: NodeId) -> Option<&LayoutGeometry> {
-        self.boxes.get(&node)
+        self.boxes.get(&node).map(|(geometry, _)| geometry)
     }
 
     /// Iterates in stable node-ID order.
     pub fn iter(&self) -> impl Iterator<Item = (NodeId, &LayoutGeometry)> {
-        self.boxes.iter().map(|(node, rect)| (*node, rect))
+        self.boxes
+            .iter()
+            .map(|(node, (geometry, _))| (*node, geometry))
     }
 
     /// Returns why a retained node does or does not participate in layout.
@@ -113,7 +115,7 @@ impl LayoutSnapshot {
         &self,
         node: NodeId,
     ) -> Option<(&LayoutGeometry, LayoutParticipation)> {
-        self.boxes.get(&node).map(|geometry| {
+        self.boxes.get(&node).map(|(geometry, _)| {
             let participation = if self.suppressed_by_display_none.contains(&node) {
                 LayoutParticipation::SuppressedByDisplayNone
             } else {
@@ -121,6 +123,12 @@ impl LayoutSnapshot {
             };
             (geometry, participation)
         })
+    }
+
+    /// Returns the occupied size, including resolved margins. Kept separate
+    /// from Host paint geometry for consumers such as virtualized lists.
+    pub fn margin_box_size(&self, node: NodeId) -> Option<LayoutSize> {
+        self.boxes.get(&node).map(|(_, size)| *size)
     }
 
     /// Returns the number of laid-out nodes.
@@ -660,20 +668,26 @@ impl LayoutTree {
             .expect("retained backend node");
         snapshot.boxes.insert(
             node,
-            LayoutGeometry {
-                border_box: LayoutRect {
-                    x: layout.location.x,
-                    y: layout.location.y,
-                    width: layout.size.width,
-                    height: layout.size.height,
+            (
+                LayoutGeometry {
+                    border_box: LayoutRect {
+                        x: layout.location.x,
+                        y: layout.location.y,
+                        width: layout.size.width,
+                        height: layout.size.height,
+                    },
+                    content_box: LayoutRect {
+                        x: layout.border.left + layout.padding.left,
+                        y: layout.border.top + layout.padding.top,
+                        width: layout.content_box_width().max(0.0),
+                        height: layout.content_box_height().max(0.0),
+                    },
                 },
-                content_box: LayoutRect {
-                    x: layout.border.left + layout.padding.left,
-                    y: layout.border.top + layout.padding.top,
-                    width: layout.content_box_width().max(0.0),
-                    height: layout.content_box_height().max(0.0),
-                },
-            },
+                LayoutSize::new(
+                    (layout.size.width + layout.margin.left + layout.margin.right).max(0.0),
+                    (layout.size.height + layout.margin.top + layout.margin.bottom).max(0.0),
+                ),
+            ),
         );
         if suppressed {
             snapshot.suppressed_by_display_none.insert(node);

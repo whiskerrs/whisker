@@ -20,7 +20,7 @@ use crate::{
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     ApplyResult, HostPresentationUpdate, InputEvent, InputEventKind, InputPoint, MeasurementReady,
-    NodeId, PointerId, PointerKind, ResourceEvent, WhiskerValue,
+    NodeId, PointerId, PointerInput, PointerKind, ResourceEvent, WhiskerValue,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{DeferredMeasurementApply, FrameSink, LayoutOptions, MeasurementProvider};
@@ -565,6 +565,9 @@ struct ActivationCandidate {
     origin: InputPoint,
     started_at_ms: f64,
     pointer_kind: PointerKind,
+    pointer: PointerInput,
+    longpress_pending: bool,
+    longpress_fired: bool,
     cancelled: bool,
 }
 
@@ -610,10 +613,17 @@ impl ActivationRecognizer {
         &mut self,
         event: &InputEvent,
         hit_target: Option<NodeId>,
+        accepts_longpress: bool,
     ) -> Option<RecognizedActivation> {
         let pointer = event.pointer?;
         match event.kind {
             InputEventKind::PointerDown => {
+                let multiple_contacts = !self.pointers.is_empty();
+                if multiple_contacts {
+                    for candidate in self.pointers.values_mut() {
+                        candidate.cancelled = true;
+                    }
+                }
                 if let Some(target) = hit_target {
                     self.pointers.insert(
                         pointer.id,
@@ -622,7 +632,11 @@ impl ActivationRecognizer {
                             origin: pointer.position,
                             started_at_ms: event.timestamp_ms,
                             pointer_kind: pointer.kind,
-                            cancelled: false,
+                            pointer,
+                            longpress_pending: accepts_longpress
+                                && matches!(pointer.kind, PointerKind::Touch | PointerKind::Pen),
+                            longpress_fired: false,
+                            cancelled: multiple_contacts,
                         },
                     );
                 }
@@ -630,6 +644,7 @@ impl ActivationRecognizer {
             }
             InputEventKind::PointerMove => {
                 let candidate = self.pointers.get_mut(&pointer.id)?;
+                candidate.pointer = pointer;
                 let dx = pointer.position.x - candidate.origin.x;
                 let dy = pointer.position.y - candidate.origin.y;
                 if dx * dx + dy * dy > TAP_SLOP * TAP_SLOP {
@@ -647,6 +662,7 @@ impl ActivationRecognizer {
                 let dx = pointer.position.x - candidate.origin.x;
                 let dy = pointer.position.y - candidate.origin.y;
                 if candidate.cancelled
+                    || candidate.longpress_fired
                     || dx * dx + dy * dy > TAP_SLOP * TAP_SLOP
                     || !(0.0..=TAP_TIMEOUT_MS).contains(&elapsed)
                     || hit_target != Some(candidate.target)
@@ -669,6 +685,40 @@ impl ActivationRecognizer {
         }
     }
 
+    fn has_pending_longpress(&self) -> bool {
+        self.pointers.values().any(|candidate| {
+            candidate.longpress_pending && !candidate.cancelled && !candidate.longpress_fired
+        })
+    }
+
+    fn take_longpresses(
+        &mut self,
+        timestamp_ms: f64,
+        surface: whisker_engine::whisker_protocol::SurfaceId,
+    ) -> Vec<InputEvent> {
+        self.pointers
+            .values_mut()
+            .filter_map(|candidate| {
+                if !candidate.longpress_pending
+                    || candidate.cancelled
+                    || candidate.longpress_fired
+                    || timestamp_ms - candidate.started_at_ms < LONGPRESS_TIMEOUT_MS
+                {
+                    return None;
+                }
+                candidate.longpress_fired = true;
+                Some(InputEvent {
+                    surface,
+                    timestamp_ms,
+                    kind: InputEventKind::Named("longpress".into()),
+                    pointer: Some(candidate.pointer),
+                    target: Some(candidate.target),
+                    detail: WhiskerValue::Null,
+                })
+            })
+            .collect()
+    }
+
     fn clear(&mut self) {
         self.pointers.clear();
     }
@@ -676,6 +726,7 @@ impl ActivationRecognizer {
 
 const TAP_SLOP: f32 = 10.0;
 const TAP_TIMEOUT_MS: f64 = 500.0;
+const LONGPRESS_TIMEOUT_MS: f64 = 500.0;
 
 impl RuntimeInstance {
     /// Creates an unmounted runtime connected to one Host wake-up endpoint.
@@ -808,6 +859,7 @@ impl RuntimeInstance {
     ) -> Result<Element, RuntimeEventError> {
         self.require(RuntimeLifecycle::Running, "remount the application root")
             .map_err(RuntimeEventError::Lifecycle)?;
+        self.activations.borrow_mut().clear();
         let previous = self
             .owner
             .take()
@@ -1080,6 +1132,17 @@ impl RuntimeInstance {
                 crate::drain_runtime_dispatches();
                 self.drain_pending_host_events()
                     .map_err(RuntimeDriveError::HostEvent)?;
+                // Use the Host frame clock so idle, stationary pointers also
+                // reach the threshold without platform-specific recognizers.
+                let longpresses = self
+                    .activations
+                    .borrow_mut()
+                    .take_longpresses(timestamp_ms, surface.surface());
+                for event in longpresses {
+                    self.dispatch_input_active(&event, &[]).map_err(|error| {
+                        RuntimeDriveError::HostEvent(RuntimeEventError::Input(error))
+                    })?;
+                }
                 surface.begin_mutation_batch();
                 crate::anim_hook::step(timestamp_ms);
                 reactive::flush();
@@ -1113,6 +1176,7 @@ impl RuntimeInstance {
                 Ok(RuntimeDrive {
                     frame,
                     needs_frame: recovery
+                        || self.activations.borrow().has_pending_longpress()
                         || drained_events > 0
                         || reactive::has_pending_work()
                         || surface.has_active_motion()
@@ -1148,10 +1212,17 @@ impl RuntimeInstance {
             let mut dispatch = self
                 .surface
                 .dispatch_input_with_presentation(routed_event, presentation)?;
-            let activation = self
-                .activations
-                .borrow_mut()
-                .observe(event, dispatch.target);
+            let accepts_longpress = matches!(event.kind, InputEventKind::PointerDown)
+                && dispatch
+                    .target
+                    .is_some_and(|target| self.surface.has_input_listener(target, "longpress"));
+            let activation =
+                self.activations
+                    .borrow_mut()
+                    .observe(event, dispatch.target, accepts_longpress);
+            if self.activations.borrow().has_pending_longpress() {
+                self.wake.wake();
+            }
             if let Some(activation) = activation {
                 let synthesized = self.surface.dispatch_input(&activation.tap)?;
                 merge_input_dispatch(&mut dispatch, synthesized);
