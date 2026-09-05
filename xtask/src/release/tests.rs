@@ -85,6 +85,128 @@ fn registry_check_uses_exact_versions_and_rejects_yanked_or_invalid_data() {
     assert!(publish::index_path("../private").is_err());
 }
 
+// A local sparse index exercises ureq's connection and body-read failures, with
+// an injected clock so retries don't slow the tests or depend on crates.io.
+const PUBLISHED_INDEX: &str =
+    "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{\"vers\":\"0.13.5\",\"yanked\":false}\n";
+
+fn registry_responses(responses: &[Option<&str>]) -> (Result<bool>, Vec<Duration>, usize) {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/wh/is/whisker", listener.local_addr().unwrap());
+    let (stop, stopped) = mpsc::channel();
+    std::thread::scope(|scope| {
+        let server = scope.spawn(move || {
+            let mut requests = 0;
+            while let Err(mpsc::TryRecvError::Empty) = stopped.try_recv() {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                    Err(error) => panic!("{error}"),
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut reader = BufReader::new(&stream);
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                        break;
+                    }
+                }
+                let response = responses.get(requests).copied().flatten();
+                requests += 1;
+                if let Some(response) = response {
+                    stream.write_all(response.as_bytes()).unwrap();
+                }
+            }
+            requests
+        });
+        let mut waits = Vec::new();
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(2))
+            .build();
+        let result = publish::index_is_published(&agent, &url, "0.13.5", |delay| waits.push(delay));
+        stop.send(()).unwrap();
+        (result, waits, server.join().unwrap())
+    })
+}
+
+#[test]
+fn registry_read_recovers_after_a_dropped_connection() {
+    let (result, waits, requests) = registry_responses(&[None, Some(PUBLISHED_INDEX)]);
+    assert!(result.unwrap());
+    assert_eq!(requests, 2);
+    assert_eq!(waits, [Duration::from_secs(2)]);
+}
+
+#[test]
+fn registry_read_retries_transient_statuses_and_incomplete_bodies() {
+    for response in [
+        "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 200\r\nConnection: close\r\n\r\n{\"vers\":",
+    ] {
+        let (result, waits, requests) =
+            registry_responses(&[Some(response), Some(PUBLISHED_INDEX)]);
+        assert!(result.unwrap(), "{response}");
+        assert_eq!(requests, 2);
+        assert_eq!(waits, [Duration::from_secs(2)]);
+    }
+}
+
+#[test]
+fn registry_read_exhaustion_is_an_error_not_an_unpublished_crate() {
+    let unavailable = Some("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+    for responses in [[None; 5], [unavailable; 5]] {
+        let (result, waits, requests) = registry_responses(&responses);
+        assert!(result.is_err());
+        assert_eq!(requests, 5);
+        assert_eq!(waits, [2, 4, 8, 16].map(Duration::from_secs));
+    }
+}
+
+#[test]
+fn registry_read_does_not_retry_permanent_errors_or_unpublished_versions() {
+    for (response, expected) in [
+        (
+            "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n",
+            Some(false),
+        ),
+        (
+            "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n",
+            None,
+        ),
+        ("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n", None),
+        (
+            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\ninvalid json",
+            None,
+        ),
+        (
+            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{\"vers\":\"0.13.5\",\"yanked\":true}",
+            None,
+        ),
+        (
+            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{\"vers\":\"0.13.4\",\"yanked\":false}",
+            Some(false),
+        ),
+    ] {
+        let (result, waits, requests) = registry_responses(&[Some(response)]);
+        assert_eq!(result.ok(), expected, "{response}");
+        assert_eq!(requests, 1);
+        assert!(waits.is_empty());
+    }
+}
+
 #[test]
 fn versions_cannot_inject_paths_shell_or_workflow_outputs() {
     for invalid in [
