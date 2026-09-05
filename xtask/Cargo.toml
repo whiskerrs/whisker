@@ -9,8 +9,16 @@ publish = false
 [dependencies]
 anyhow = { workspace = true }
 cbindgen = "0.29.4"
+httpdate = "1"
+semver = "1"
+serde = { workspace = true }
 serde_json = { workspace = true }
+toml_edit = "0.22"
+ureq = { version = "2", features = ["json"] }
 whisker-build = { workspace = true }
 whisker-cli = { workspace = true }
 whisker-dev-server = { workspace = true }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"

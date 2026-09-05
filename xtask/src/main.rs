@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 
 mod mobile_abi;
 mod mobile_link_test;
+mod release;
 mod rust_host_link_test;
 
 #[cfg(test)]
@@ -18,6 +19,9 @@ mod module_contract;
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
     match (arguments.next().as_deref(), arguments.next().as_deref()) {
+        (Some("release"), Some(mode)) => {
+            release::run(&workspace_root()?, mode, arguments.collect())
+        }
         (Some("host-conformance"), Some(host)) if arguments.next().is_none() => {
             host_conformance(host)
         }
@@ -31,7 +35,7 @@ fn main() -> Result<()> {
             rust_host_link_test::run(&workspace_root()?, host)
         }
         _ => bail!(
-            "usage: cargo xtask host-conformance <desktop|web|android|ios>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>"
+            "usage: cargo xtask host-conformance <desktop|web|android|ios>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
         ),
     }
 }

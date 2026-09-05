@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Release preparation explicitly dispatches CI for its bot-created PR.
+  workflow_dispatch:
 
 # Cancel in-flight runs for the same ref so a rapid `git push` series
 # doesn't pile up jobs.
