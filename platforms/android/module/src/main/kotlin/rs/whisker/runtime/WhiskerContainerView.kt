@@ -24,6 +24,7 @@ import kotlin.math.roundToInt
 public open class WhiskerContainerView(context: Context) : ViewGroup(context) {
     private var clipDescendantsHorizontally: Boolean = false
     private var clipDescendantsVertically: Boolean = false
+    internal var measuresDescendantOverflow: Boolean = false
 
     init {
         clipChildren = false
@@ -94,13 +95,43 @@ public open class WhiskerContainerView(context: Context) : ViewGroup(context) {
                 MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(childHeight, MeasureSpec.EXACTLY),
             )
-            contentWidth = max(contentWidth, ceil(child.x + child.measuredWidth).toInt())
-            contentHeight = max(contentHeight, ceil(child.y + child.measuredHeight).toInt())
+            if (measuresDescendantOverflow) {
+                val extent = descendantOverflowExtent(child)
+                contentWidth = max(contentWidth, ceil(child.x + extent.right).toInt())
+                contentHeight = max(contentHeight, ceil(child.y + extent.bottom).toInt())
+            } else {
+                contentWidth = max(contentWidth, ceil(child.x + child.measuredWidth).toInt())
+                contentHeight = max(contentHeight, ceil(child.y + child.measuredHeight).toInt())
+            }
         }
         setMeasuredDimension(
             resolveSize(contentWidth, widthMeasureSpec),
             resolveSize(contentHeight, heightMeasureSpec),
         )
+    }
+
+    /**
+     * Returns the positive-axis visual extent of [view] in its own coordinate
+     * space. A scroll container establishes a new overflow viewport, while an
+     * ordinary Whisker View contributes descendants that visibly overflow it.
+     */
+    private fun descendantOverflowExtent(view: View): OverflowExtent {
+        var right = view.measuredWidth.toFloat()
+        var bottom = view.measuredHeight.toFloat()
+        if (view !is ViewGroup || view is WhiskerScrollContainerView) {
+            return OverflowExtent(right, bottom)
+        }
+
+        val clipsHorizontal = view is WhiskerContainerView && view.clipDescendantsHorizontally
+        val clipsVertical = view is WhiskerContainerView && view.clipDescendantsVertically
+        for (index in 0 until view.childCount) {
+            val child = view.getChildAt(index)
+            if (child.visibility == View.GONE) continue
+            val childExtent = descendantOverflowExtent(child)
+            if (!clipsHorizontal) right = max(right, child.x + childExtent.right)
+            if (!clipsVertical) bottom = max(bottom, child.y + childExtent.bottom)
+        }
+        return OverflowExtent(right, bottom)
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
@@ -115,7 +146,12 @@ public open class WhiskerContainerView(context: Context) : ViewGroup(context) {
 
 /** Native two-axis scroll container with a dedicated multi-child content host. */
 public class WhiskerScrollContainerView(context: Context) : FrameLayout(context), WhiskerEventSource {
-    public val contentView: WhiskerContainerView = WhiskerContainerView(context)
+    public val contentView: WhiskerContainerView = WhiskerContainerView(context).apply {
+        // Taffy may keep an auto-sized row at the viewport width while its
+        // children visibly overflow it. Native ScrollView content size must
+        // include that descendant overflow, matching CSS scrollable overflow.
+        measuresDescendantOverflow = true
+    }
     private var eventSink: ((String, WhiskerValue) -> Unit)? = null
     private var presentationSink: ((Float, Float) -> Unit)? = null
     private var horizontal = false
@@ -389,3 +425,5 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
             .sorted()
     }
 }
+
+private data class OverflowExtent(val right: Float, val bottom: Float)

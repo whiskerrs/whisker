@@ -1501,9 +1501,13 @@ mod replace_repro {
         next_id: u32,
         children: HashMap<Element, Vec<Element>>,
         attrs: HashMap<Element, BTreeMap<String, String>>,
-        /// Last `display` value set on each element (for #306 — asserting
-        /// which Switch branch wrappers are hidden and when).
+        /// Last layout/presentation values set on each element. Switch keeps
+        /// every branch in layout while suppressing paint and input for
+        /// inactive branches.
         display: HashMap<Element, String>,
+        visibility: HashMap<Element, String>,
+        opacity: HashMap<Element, f32>,
+        pointer_events: HashMap<Element, String>,
         ops: Vec<String>,
         /// A positioned insert whose reference wasn't a live child — the
         /// on-device silent drop. Non-empty = the bug is reproduced.
@@ -1567,10 +1571,7 @@ mod replace_repro {
                 .copied()
                 .find(|child| contains(&inner, *child, target))
         }
-        /// The `display` values recorded along the path `root..=el`, or
-        /// `None` if `el` isn't reachable from `root`. Used to assert
-        /// whether a leaf mounted under a `display:none` ancestor (#306).
-        fn path_displays(&self, root: Element, el: Element) -> Option<Vec<Option<String>>> {
+        fn path_elements(&self, root: Element, el: Element) -> Option<Vec<Element>> {
             let inner = self.0.borrow();
             fn dfs(inner: &Inner, node: Element, target: Element, acc: &mut Vec<Element>) -> bool {
                 acc.push(node);
@@ -1591,7 +1592,39 @@ mod replace_repro {
             if !dfs(&inner, root, el, &mut path) {
                 return None;
             }
+            Some(path)
+        }
+
+        fn path_displays(&self, root: Element, el: Element) -> Option<Vec<Option<String>>> {
+            let path = self.path_elements(root, el)?;
+            let inner = self.0.borrow();
             Some(path.iter().map(|e| inner.display.get(e).cloned()).collect())
+        }
+
+        fn path_visibilities(&self, root: Element, el: Element) -> Option<Vec<Option<String>>> {
+            let path = self.path_elements(root, el)?;
+            let inner = self.0.borrow();
+            Some(
+                path.iter()
+                    .map(|e| inner.visibility.get(e).cloned())
+                    .collect(),
+            )
+        }
+
+        fn path_pointer_events(&self, root: Element, el: Element) -> Option<Vec<Option<String>>> {
+            let path = self.path_elements(root, el)?;
+            let inner = self.0.borrow();
+            Some(
+                path.iter()
+                    .map(|e| inner.pointer_events.get(e).cloned())
+                    .collect(),
+            )
+        }
+
+        fn path_opacities(&self, root: Element, el: Element) -> Option<Vec<Option<f32>>> {
+            let path = self.path_elements(root, el)?;
+            let inner = self.0.borrow();
+            Some(path.iter().map(|e| inner.opacity.get(e).copied()).collect())
         }
     }
 
@@ -1626,7 +1659,9 @@ mod replace_repro {
             handle: Element,
             style: &whisker_style::SpecifiedStyle,
         ) -> bool {
-            use whisker_style::{DisplayValue, StyleProperty, StyleValue};
+            use whisker_style::{
+                DisplayValue, PointerEventsValue, StyleProperty, StyleValue, VisibilityValue,
+            };
 
             let display = style.resolved().iter().find_map(|declaration| {
                 if declaration.property() != StyleProperty::Display {
@@ -1644,6 +1679,59 @@ mod replace_repro {
                     .ops
                     .push(format!("style {} display={}", handle.id(), d));
                 inner.display.insert(handle, d);
+            }
+
+            let visibility = style.resolved().iter().find_map(|declaration| {
+                if declaration.property() != StyleProperty::Visibility {
+                    return None;
+                }
+                match declaration.value() {
+                    StyleValue::Visibility(VisibilityValue::Visible) => Some("visible".to_string()),
+                    StyleValue::Visibility(VisibilityValue::Hidden) => Some("hidden".to_string()),
+                    _ => None,
+                }
+            });
+            if let Some(value) = visibility {
+                let mut inner = self.0.borrow_mut();
+                inner
+                    .ops
+                    .push(format!("style {} visibility={}", handle.id(), value));
+                inner.visibility.insert(handle, value);
+            }
+
+            let opacity = style.resolved().iter().find_map(|declaration| {
+                if declaration.property() != StyleProperty::Opacity {
+                    return None;
+                }
+                match declaration.value() {
+                    StyleValue::Number(value) => Some(value.get()),
+                    _ => None,
+                }
+            });
+            if let Some(value) = opacity {
+                let mut inner = self.0.borrow_mut();
+                inner
+                    .ops
+                    .push(format!("style {} opacity={}", handle.id(), value));
+                inner.opacity.insert(handle, value);
+            }
+
+            let pointer_events = style.resolved().iter().find_map(|declaration| {
+                if declaration.property() != StyleProperty::PointerEvents {
+                    return None;
+                }
+                match declaration.value() {
+                    StyleValue::PointerEvents(PointerEventsValue::Auto) => Some("auto".to_string()),
+                    StyleValue::PointerEvents(PointerEventsValue::None) => Some("none".to_string()),
+                    _ => None,
+                }
+            });
+            if let Some(value) = pointer_events {
+                let mut inner = self.0.borrow_mut();
+                inner
+                    .ops
+                    .push(format!("style {} pointer-events={}", handle.id(), value));
+                inner.pointer_events.insert(handle, value);
             }
             true
         }
@@ -1987,21 +2075,11 @@ mod replace_repro {
         RouterHandle::new((tree, registry))
     }
 
-    /// #306: a `module_element` (native) leaf in a Switch branch OTHER
-    /// than the first-declared one is eager-mounted — and has its props
-    /// dispatched — while its branch wrapper is `display: none`, because
-    /// `mount_switch` sets the wrapper hidden BEFORE mounting descendants
-    /// and only the default-selected (first) branch is flipped visible.
-    ///
-    /// This locks in the two facts that place the historical blank-icon
-    /// bug in the NATIVE layer, not here: (1) the Rust side DOES create the
-    /// element and dispatch its props at mount (so the element exists and
-    /// is attributed), and (2) it does so under a `display:none` ancestor
-    /// (so a native view that only paints once, at its first — zero-size —
-    /// layout, renders blank until it repaints on the later resize; fixed
-    /// in `whisker-svg` via `contentMode = .redraw` / `onSizeChanged`).
+    /// A native leaf in an inactive Switch branch is eager-mounted with its
+    /// props and retains its layout, but neither paints nor accepts pointer
+    /// input until its branch becomes active.
     #[test]
-    fn nonfirst_switch_branch_native_leaf_mounts_hidden_with_props() {
+    fn inactive_switch_branch_keeps_layout_without_paint_or_pointer_input() {
         with_runtime(|| {
             let rec = Rec::default();
             with_installed_renderer(Box::new(rec.clone()), || {
@@ -2028,21 +2106,46 @@ mod replace_repro {
                     "native leaf must be attached to the real tree"
                 );
 
-                // (2) …but it mounted under a `display: none` ancestor (its
-                // branch wrapper), i.e. at zero size.
+                // (2) The inactive branch remains in layout. Its wrapper must
+                // never collapse the native subtree with `display:none`.
                 let displays = rec
                     .path_displays(root, native_b)
                     .expect("native leaf reachable from root");
                 assert!(
-                    displays.iter().any(|d| d.as_deref() == Some("none")),
-                    "non-first branch's leaf must mount under a display:none wrapper\nops:\n{}",
+                    displays.iter().all(|d| d.as_deref() != Some("none")),
+                    "inactive branch must remain in layout\nops:\n{}",
                     rec.0.borrow().ops.join("\n")
                 );
 
-                // After navigating to the branch, its wrapper flips visible —
-                // nothing on the path to the leaf stays hidden. (A native
-                // view must repaint on this 0→real resize; that's the
-                // whisker-svg fix, not observable through this renderer.)
+                let visibilities = rec
+                    .path_visibilities(root, native_b)
+                    .expect("native leaf reachable from root");
+                assert!(
+                    visibilities.iter().any(|v| v.as_deref() == Some("hidden")),
+                    "inactive branch must be hidden from paint\nops:\n{}",
+                    rec.0.borrow().ops.join("\n")
+                );
+
+                let opacities = rec
+                    .path_opacities(root, native_b)
+                    .expect("native leaf reachable from root");
+                assert!(
+                    opacities.contains(&Some(0.0)),
+                    "inactive branch must suppress descendant paint\nops:\n{}",
+                    rec.0.borrow().ops.join("\n")
+                );
+
+                let pointer_events = rec
+                    .path_pointer_events(root, native_b)
+                    .expect("native leaf reachable from root");
+                assert!(
+                    pointer_events.iter().any(|v| v.as_deref() == Some("none")),
+                    "inactive branch must reject pointer input\nops:\n{}",
+                    rec.0.borrow().ops.join("\n")
+                );
+
+                // Selecting the branch restores paint and input without any
+                // 0→real layout transition.
                 h.navigate("/b").unwrap();
                 flush();
                 let displays = rec
@@ -2051,6 +2154,30 @@ mod replace_repro {
                 assert!(
                     displays.iter().all(|d| d.as_deref() != Some("none")),
                     "after navigating to branch b, no ancestor of its leaf stays display:none\nops:\n{}",
+                    rec.0.borrow().ops.join("\n")
+                );
+                let visibilities = rec
+                    .path_visibilities(root, native_b)
+                    .expect("native leaf still reachable after group navigation");
+                assert!(
+                    visibilities.iter().all(|v| v.as_deref() != Some("hidden")),
+                    "selected branch must be paint-visible\nops:\n{}",
+                    rec.0.borrow().ops.join("\n")
+                );
+                let opacities = rec
+                    .path_opacities(root, native_b)
+                    .expect("native leaf still reachable after group navigation");
+                assert!(
+                    opacities.iter().all(|value| *value != Some(0.0)),
+                    "selected branch must restore descendant paint\nops:\n{}",
+                    rec.0.borrow().ops.join("\n")
+                );
+                let pointer_events = rec
+                    .path_pointer_events(root, native_b)
+                    .expect("native leaf still reachable after group navigation");
+                assert!(
+                    pointer_events.iter().all(|v| v.as_deref() != Some("none")),
+                    "selected branch must accept pointer input\nops:\n{}",
                     rec.0.borrow().ops.join("\n")
                 );
             });

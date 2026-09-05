@@ -7,10 +7,10 @@
 //!
 //! - **`Route`** → looks the leaf up in the registry and mounts it,
 //!   re-mounting only when its params change.
-//! - **`Switch`** → mounts **every** branch once (keep-alive) and
-//!   toggles `display` on `selected`; backgrounded branches stay mounted
-//!   so their state persists, matching the design's parallel-container
-//!   rule.
+//! - **`Switch`** → mounts **every** branch once (keep-alive) and suppresses
+//!   paint + pointer input for inactive branches without removing them from
+//!   layout; backgrounded branches keep both state and native presentation
+//!   geometry, matching the design's parallel-container rule.
 //! - **`Stack`** → keeps every history entry mounted (lower entries
 //!   frozen via [`Owner::pause`]) and runs a float-`Tween` transition on
 //!   push / pop; the popped entry is unmounted when its reverse run
@@ -26,7 +26,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use whisker::css::ext::{percent, px};
-use whisker::css::{Color, Css, FlexDirection, Overflow, PointerEvents, Position, PositionKind};
+use whisker::css::{
+    Color, Css, FlexDirection, Overflow, PointerEvents, Position, PositionKind, Visibility,
+};
 use whisker::runtime::reactive::{Owner, effect};
 use whisker::runtime::view::{
     Element, append_child, create_element, create_phantom_element, remove_child,
@@ -182,7 +184,7 @@ fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
 
     // Mount every branch once into its own wrapper; keep them all alive.
     // The wrapper MUST be a real `view` (not a phantom): it carries
-    // `display` / `position: absolute` styles, and a phantom is a
+    // visibility / hit-test / `position: absolute` styles, and a phantom is a
     // style-less transparent bundler whose layout never reaches the retained
     // surface (so non-selected branches would not hide).
     let mut wrappers: Vec<Element> = Vec::with_capacity(branch_count);
@@ -218,8 +220,10 @@ fn switch_container_style() -> Css {
         .flex_direction(FlexDirection::Column)
 }
 
-/// A switch branch wrapper fills the container; only the selected one is
-/// displayed.
+/// A switch branch wrapper fills the container. Every branch remains in
+/// layout so retained native state (notably a List's measured rows and scroll
+/// position) cannot collapse to zero while its tab is inactive. Paint and
+/// pointer input are independently suppressed for inactive branches.
 fn branch_base_style(visible: bool) -> Css {
     let style = Css::new()
         .flex_direction(FlexDirection::Column)
@@ -227,11 +231,22 @@ fn branch_base_style(visible: bool) -> Css {
         .left(px(0))
         .top(px(0))
         .right(px(0))
-        .bottom(px(0));
+        .bottom(px(0))
+        .display_flex();
     if visible {
-        style.display_flex()
+        style
+            .visibility(Visibility::Visible)
+            .opacity(1.0)
+            .pointer_events(PointerEvents::Auto)
     } else {
-        style.display_none()
+        style
+            .visibility(Visibility::Hidden)
+            // Unlike `visibility`, group opacity cannot be overridden by a
+            // descendant. Keep this hard subtree-paint barrier because route
+            // contents are user-controlled and may explicitly set
+            // `visibility: visible`.
+            .opacity(0.0)
+            .pointer_events(PointerEvents::None)
     }
 }
 

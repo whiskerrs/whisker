@@ -98,6 +98,18 @@ struct PendingAuxMeasurement {
     size: f32,
 }
 
+fn should_preserve_item_anchor(
+    measurements: &[PendingAuxMeasurement],
+    geometry: ScrollGeometry,
+    measured_header_extent: f32,
+) -> bool {
+    let header_is_being_measured = measurements
+        .iter()
+        .any(|pending| matches!(pending.content, AuxContent::Header));
+    !header_is_being_measured
+        || (measured_header_extent > 0.0 && geometry.offset >= measured_header_extent)
+}
+
 struct MountedEntry<T: 'static> {
     owner: Owner,
     handle: Element,
@@ -243,9 +255,17 @@ where
             total += f64::from(*size);
             samples += 1;
         }
-        if samples > 0 {
-            self.estimated_track_size = (total / samples as f64) as f32;
-        }
+        self.estimated_track_size = if samples > 0 {
+            (total / samples as f64) as f32
+        } else {
+            // Measurements only describe the source generation whose keys
+            // produced them. When a placeholder/loading row is replaced by a
+            // disjoint data set, carrying its often much larger size forward
+            // makes the next window start artificially tiny and expand over
+            // several layout passes. Fall back immediately until the new
+            // generation supplies representative measurements.
+            DEFAULT_ITEM_SIZE
+        };
     }
 
     fn rebuild_sizes_and_offsets(&mut self) {
@@ -955,10 +975,11 @@ pub fn virtualize<T, K>(
 
                 let (changed, corrected_offset) = {
                     let mut layout = layout.borrow_mut();
-                    let preserve_item_anchor = !aux_measurements
-                        .iter()
-                        .any(|pending| matches!(pending.content, AuxContent::Header))
-                        || current_geometry.offset >= layout.header_extent;
+                    let preserve_item_anchor = should_preserve_item_anchor(
+                        &aux_measurements,
+                        current_geometry,
+                        layout.header_extent,
+                    );
                     let anchor = preserve_item_anchor
                         .then(|| layout.anchor(current_geometry.offset))
                         .flatten();
@@ -1759,6 +1780,62 @@ mod tests {
         assert!(index.update_measurements([(1, 100.0)]));
         assert_eq!(index.estimated_track_size, 100.0);
         assert_eq!(index.sizes, vec![0.0, 100.0, 100.0]);
+    }
+
+    #[test]
+    fn source_replacement_drops_an_estimate_learned_from_removed_placeholders() {
+        let mut index = LayoutIndex::new(1, 0.0);
+        index.replace(vec!["loading".to_string()], String::clone);
+        assert!(index.update_measurements([("loading".to_string(), 640.0)]));
+        assert_eq!(index.estimated_track_size, 640.0);
+
+        let rows = (0..800).map(|index| format!("row-{index}")).collect();
+        index.replace(rows, String::clone);
+
+        assert_eq!(index.estimated_track_size, DEFAULT_ITEM_SIZE);
+        assert_eq!(index.total_extent(), 800.0 * DEFAULT_ITEM_SIZE);
+        let window = index.window(ScrollGeometry {
+            offset: 0.0,
+            viewport: 768.0,
+        });
+        assert!(
+            window.end >= 30,
+            "the first replacement frame should fill viewport and overscan; got {} rows",
+            window.end,
+        );
+    }
+
+    #[test]
+    fn first_header_measurement_keeps_the_list_at_its_visual_start() {
+        let header = [PendingAuxMeasurement {
+            content: AuxContent::Header,
+            size: 360.0,
+        }];
+
+        assert!(!should_preserve_item_anchor(
+            &header,
+            ScrollGeometry {
+                offset: 0.0,
+                viewport: 768.0,
+            },
+            0.0,
+        ));
+        assert!(should_preserve_item_anchor(
+            &header,
+            ScrollGeometry {
+                offset: 360.0,
+                viewport: 768.0,
+            },
+            360.0,
+        ));
+        assert!(!should_preserve_item_anchor(
+            &header,
+            ScrollGeometry {
+                offset: 120.0,
+                viewport: 768.0,
+            },
+            360.0,
+        ));
     }
 
     #[test]

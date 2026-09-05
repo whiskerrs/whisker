@@ -7,7 +7,6 @@ use whisker::SurfaceRuntime;
 use whisker::prelude::*;
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::runtime::reactive::__reset_for_tests;
-use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     InputEvent, InputEventKind, MeasurementRequest, MeasurementResponse, Operation, SurfaceId,
     WhiskerValue,
@@ -73,9 +72,11 @@ fn scrolls_a_hundred_thousand_row_list() {
         .element_type;
     let mut host = NoMeasurement;
     let mut renderer = RecordingRenderer::new(surface.surface());
-    surface
-        .render_frame(
-            LayoutSize::new(390.0, 844.0),
+    let environment = StyleEnvironment::new(390.0, 844.0, 1.0, 14.0);
+    runtime
+        .drive_frame(
+            0.0,
+            environment,
             1,
             1,
             &mut host,
@@ -97,7 +98,7 @@ fn scrolls_a_hundred_thousand_row_list() {
 
     let started = Instant::now();
     let mut runtime_elapsed = Duration::ZERO;
-    let mut presentation_elapsed = Duration::ZERO;
+    let mut frame_elapsed = Duration::ZERO;
     let mut operation_count = 0_usize;
     for update in 0..UPDATE_COUNT {
         let row = (update * 7) % (ITEM_COUNT - 20);
@@ -124,13 +125,21 @@ fn scrolls_a_hundred_thousand_row_list() {
         );
         runtime_elapsed += runtime_started.elapsed();
 
-        let presentation_started = Instant::now();
+        let frame_started = Instant::now();
         black_box(
-            surface
-                .present(update + 2, &mut renderer)
-                .expect("benchmark FramePacket must remain valid"),
+            runtime
+                .drive_frame(
+                    f64::from(update + 1) * 16.0,
+                    environment,
+                    1,
+                    update + 2,
+                    &mut host,
+                    &mut renderer,
+                    LayoutOptions::default(),
+                )
+                .expect("benchmark frame must remain valid"),
         );
-        presentation_elapsed += presentation_started.elapsed();
+        frame_elapsed += frame_started.elapsed();
         operation_count += renderer
             .frames()
             .last()
@@ -145,9 +154,9 @@ fn scrolls_a_hundred_thousand_row_list() {
         elapsed.as_nanos() as f64 / f64::from(UPDATE_COUNT)
     );
     eprintln!(
-        "runtime: {:.1} ns/update; presentation: {:.1} ns/update; {:.1} operations/update",
+        "input: {:.1} ns/update; frame: {:.1} ns/update; {:.1} operations/update",
         runtime_elapsed.as_nanos() as f64 / f64::from(UPDATE_COUNT),
-        presentation_elapsed.as_nanos() as f64 / f64::from(UPDATE_COUNT),
+        frame_elapsed.as_nanos() as f64 / f64::from(UPDATE_COUNT),
         operation_count as f64 / f64::from(UPDATE_COUNT),
     );
     runtime.unmount().unwrap();
