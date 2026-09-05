@@ -161,7 +161,7 @@ whisker = "{whisker_version}"
 }
 
 /// The `whisker` version a freshly-scaffolded app should depend on: the
-/// CLI's own `major.minor`. release-plz bumps every workspace crate in
+/// CLI's own `major.minor`. release preparation bumps every workspace crate in
 /// lockstep, so the CLI version always matches the published `whisker`
 /// crate — this keeps `whisker new` from pinning a stale version (e.g. a
 /// `0.1` scaffold while crates.io is already on `0.2`).
@@ -583,7 +583,7 @@ mod tests {
         let cargo = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
         assert!(cargo.contains("name = \"demo-app\""));
         assert!(cargo.contains("[workspace]"));
-        // Tracks the CLI's own major.minor (release-plz bumps in lockstep),
+        // Tracks the CLI's own major.minor (workspace versions advance in lockstep),
         // so this stays correct across version bumps.
         assert!(cargo.contains(&format!("whisker = \"{}\"", super::whisker_dep_version())));
 

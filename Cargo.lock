@@ -8252,7 +8252,13 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "cbindgen",
+ "httpdate",
+ "semver",
+ "serde",
  "serde_json",
+ "tempfile",
+ "toml_edit 0.22.27",
+ "ureq",
  "whisker-build",
  "whisker-cli",
  "whisker-dev-server",

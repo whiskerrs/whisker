@@ -1,134 +1,84 @@
 name: publish-sdk
 
-# Publishes the Whisker Android SDK artifacts to the same
-# `gh-pages` Maven repository the Gradle plugin ships from
-# (https://whiskerrs.github.io/whisker/maven/):
-#
-#   * `rs.whisker:whisker-module-android:<ver>`  (AAR)
-#   * `rs.whisker:whisker-runtime-android:<ver>` (AAR)
-#   * `rs.whisker:ksp:<ver>`                     (jar)
-#
-# Triggers:
-#   * `workflow_dispatch` — manual smoke. Inputs: `version`
-#     (default `0.0.0-dev`). Uploads the staged Maven layout as an
-#     artifact; does NOT touch gh-pages.
-#   * push of a tag matching `sdk-v*` — real release. Same pipeline,
-#     plus `peaceiris/actions-gh-pages@v3` pushes `maven-out/` to
-#     `gh-pages` under `maven/`.
-#
-# The `sdk-v*` tag stream is independent from Whisker's own crate
-# `v*` tags and from the gradle plugin's `gradle-plugin-v*` tags.
-# Bumps are decoupled — a Rust-only change doesn't require an SDK
-# republish.
-
+# Standalone dispatch builds a smoke artifact. Real publishing is called by release.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'SDK version to publish (omit for 0.0.0-dev)'
-        required: false
-        default: ''
-  push:
-    tags:
-      - 'sdk-v*'
+        description: SDK smoke-build version
+        default: '0.0.0-dev'
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      publish:
+        type: boolean
+        default: false
 
 permissions:
-  # peaceiris/actions-gh-pages needs write access to push to
-  # gh-pages on tag pushes.
   contents: write
+  pages: write
 
+# SDK and plugin writes share the same gh-pages branch.
 concurrency:
-  group: publish-sdk
+  group: publish-maven
   cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Resolve release version
-        id: ver
-        env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            # `refs/tags/sdk-v0.1.0` → `0.1.0`.
-            VER="${GITHUB_REF_NAME#sdk-v}"
-          else
-            VER="$INPUT_VERSION"
-            if [ -z "$VER" ]; then VER="0.0.0-dev"; fi
-          fi
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "Resolved SDK version: $VER"
-
-      - name: Stamp version into the SDK build.gradle.kts files
-        # Same `sed` pattern as `publish-gradle-plugin.yml`: anchor on
-        # the start-of-line `version = "..."` assignment so unrelated
-        # `version = ...` strings inside dependency coords are left
-        # alone. `0.0.0-dev` is the literal currently in the file as
-        # the workflow_dispatch default; the regex is broader to also
-        # match whatever the previous release stamped.
-        run: |
-          set -e
-          VER="${{ steps.ver.outputs.version }}"
-          for FILE in \
-            platforms/android/module/build.gradle.kts \
-            platforms/android/runtime/build.gradle.kts \
-            platforms/android/ksp/ksp/build.gradle.kts; do
-            sed -i -E "s/^version = \"[^\"]*\"$/version = \"${VER}\"/" "$FILE"
-            echo "After sed in $FILE:"
-            grep -n '^version = ' "$FILE"
-          done
-
-      - name: Publish module API to staging Maven repo
-        # `publishUrl` is the module API's
-        # `publishing.repositories.maven.url` override — redirects
-        # the publish target from `build/repo` to our workspace
-        # `maven-out` dir.
+      - name: Check release version and immutable tag
+        id: check
+        if: inputs.publish
+        run: cargo xtask release native-check sdk "$VERSION"
+      - name: Stamp SDK version
+        if: steps.check.outputs.published != 'true'
+        run: cargo xtask release native-stamp sdk "$VERSION"
+      - name: Stage module API and runtime
+        if: steps.check.outputs.published != 'true'
         working-directory: platforms/android
-        run: |
-          ./gradle-plugin/gradlew --no-daemon \
-            publishAllPublicationsToGhPagesRepository \
-            -PpublishUrl=file://${{ github.workspace }}/maven-out
-
-      - name: Publish ksp to staging Maven repo
-        # ksp is its own composite-build (platforms/android/ksp/),
-        # so we run gradle separately for it.
+        run: ./gradle-plugin/gradlew --no-daemon publishAllPublicationsToGhPagesRepository -PpublishUrl="file://${{ github.workspace }}/maven-out"
+      - name: Stage KSP
+        if: steps.check.outputs.published != 'true'
         working-directory: platforms/android/ksp
-        run: |
-          ../gradle-plugin/gradlew --no-daemon \
-            publishAllPublicationsToGhPagesRepository \
-            -PpublishUrl=file://${{ github.workspace }}/maven-out
-
-      - name: List staged Maven contents
-        run: find maven-out -type f | sort
-
-      - name: Upload Maven layout (workflow_dispatch)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: actions/upload-artifact@v4
+        run: ../gradle-plugin/gradlew --no-daemon publishAllPublicationsToGhPagesRepository -PpublishUrl="file://${{ github.workspace }}/maven-out"
+      - uses: actions/upload-artifact@v4
+        if: '!inputs.publish'
         with:
           name: sdk-maven
           path: maven-out/**
-
-      - name: Publish to gh-pages (tag push)
-        # Lands the staged Maven layout at
-        # https://whiskerrs.github.io/whisker/maven/ alongside the
-        # gradle plugin's existing coordinates. `keep_files: true`
-        # so prior versions of either accumulate rather than getting
-        # clobbered.
-        if: ${{ startsWith(github.ref, 'refs/tags/sdk-v') }}
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Tag built SDK
+        if: inputs.publish && steps.check.outputs.published != 'true'
+        run: cargo xtask release native-tag sdk "$VERSION"
+      - name: Publish Maven artifacts
+        if: inputs.publish && steps.check.outputs.published != 'true'
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: maven-out
           destination_dir: maven
           keep_files: true
-          commit_message: "publish SDK ${{ steps.ver.outputs.version }}"
+          commit_message: publish SDK ${{ inputs.version }}
+      - name: Request Pages deployment
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds"
+      - name: Verify public Maven artifacts
+        if: inputs.publish
+        run: cargo xtask release native-verify sdk "$VERSION"
