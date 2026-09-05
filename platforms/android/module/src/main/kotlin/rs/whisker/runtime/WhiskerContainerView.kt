@@ -163,6 +163,14 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
     private var settleGeneration = 0
 
     private val verticalScroller = object : ScrollView(context) {
+        fun scrollInstantlyTo(x: Int, y: Int) {
+            super.scrollTo(x, y)
+            // scrollTo clamps the position but leaves the framework scroller running.
+            // A clamped overscroll finishes its springBack immediately when already
+            // in bounds, cancelling both flings and smooth scrolls at this position.
+            super.onOverScrolled(scrollX, scrollY, false, true)
+        }
+
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
             userScrollEnabled && super.onInterceptTouchEvent(event)
 
@@ -189,6 +197,14 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
     }
 
     private val horizontalScroller = object : HorizontalScrollView(context) {
+        fun scrollInstantlyTo(x: Int, y: Int) {
+            super.scrollTo(x, y)
+            // Finish the framework scroller even when scrollTo did not change the
+            // offset. Using the clamped position prevents a later spring-back frame
+            // from overwriting the requested position.
+            super.onOverScrolled(scrollX, scrollY, true, false)
+        }
+
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
             userScrollEnabled && super.onInterceptTouchEvent(event)
 
@@ -293,12 +309,18 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
         val pixels = (offset * resources.displayMetrics.density).roundToInt()
         val isHorizontal = horizontal
         val apply = {
+            if (!smooth) {
+                // A settle check from the interrupted gesture must not start
+                // another animation after the explicit position has been applied.
+                settleGeneration += 1
+                scrollSequenceStart = null
+            }
             if (isHorizontal) {
                 if (smooth) horizontalScroller.smoothScrollTo(pixels, 0)
-                else horizontalScroller.scrollTo(pixels, 0)
+                else horizontalScroller.scrollInstantlyTo(pixels, 0)
             } else {
                 if (smooth) verticalScroller.smoothScrollTo(0, pixels)
-                else verticalScroller.scrollTo(0, pixels)
+                else verticalScroller.scrollInstantlyTo(0, pixels)
             }
         }
         // A FramePacket can resize the scroll content and issue scrollTo in
