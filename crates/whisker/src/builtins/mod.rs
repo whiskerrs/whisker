@@ -120,6 +120,34 @@ pub trait ElementBuilder: Sized {
         self
     }
 
+    /// `longpress` — fires while the pointer remains held past the hold
+    /// threshold without moving far. Receives the touch coordinates and
+    /// target metadata. Bubble phase, lets the event continue up the chain.
+    ///
+    /// ```ignore
+    /// View(on_longpress: move |e| println!("held at {:?}", e.detail))
+    /// ```
+    fn on_longpress<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+        bind_typed(self.__element(), "longpress", BindType::Bind, f);
+        self
+    }
+    /// `longpress`, bubble phase — **stops** propagation at this element.
+    fn on_longpress_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+        bind_typed(self.__element(), "longpress", BindType::Catch, f);
+        self
+    }
+    /// `longpress`, capture phase — doesn't stop propagation.
+    fn on_capture_longpress<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+        bind_typed(self.__element(), "longpress", BindType::CaptureBind, f);
+        self
+    }
+    /// `longpress`, capture phase — **stops** propagation before it reaches
+    /// the target.
+    fn on_capture_longpress_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+        bind_typed(self.__element(), "longpress", BindType::CaptureCatch, f);
+        self
+    }
+
     /// `click` — mouse-compatible activation on the nearest listening node.
     /// A mouse activation emits `tap` first and then `click`; touch and pen
     /// activation emit only `tap`.
