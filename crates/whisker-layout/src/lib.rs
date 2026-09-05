@@ -1664,6 +1664,49 @@ mod tests {
     }
 
     #[test]
+    fn margin_box_size_tracks_resolved_margins_without_changing_paint_geometry() {
+        let root = id(1);
+        let child = id(2);
+        let mut tree = LayoutTree::new();
+        tree.create_node(root, sized(200.0, 200.0)).unwrap();
+        let mut child_style = sized(40.0, 30.0);
+        child_style.margin = Edges {
+            top: ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(3.0, 0.0)),
+            right: ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(7.0, 0.0)),
+            bottom: ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(0.0, 0.2)),
+            left: ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(0.0, 0.1)),
+        };
+        tree.create_node(child, child_style).unwrap();
+        tree.set_children(root, &[child]).unwrap();
+
+        for (width, left, occupied) in [
+            (200.0, 20.0, LayoutSize::new(67.0, 73.0)),
+            (300.0, 30.0, LayoutSize::new(77.0, 93.0)),
+        ] {
+            tree.update_style(root, sized(width, 200.0)).unwrap();
+            let snapshot = tree
+                .compute(root, LayoutSize::new(width, 200.0), &mut zero_measure)
+                .unwrap();
+
+            assert_eq!(snapshot.margin_box_size(child), Some(occupied));
+            assert_eq!(
+                snapshot.margin_box_size(root),
+                Some(LayoutSize::new(width, 200.0))
+            );
+            assert_eq!(snapshot.margin_box_size(id(99)), None);
+            assert_eq!(
+                snapshot.get(child).unwrap().border_box,
+                LayoutRect {
+                    x: left,
+                    y: 3.0,
+                    width: 40.0,
+                    height: 30.0
+                },
+            );
+        }
+    }
+
+    #[test]
     fn retained_tree_measures_orders_and_snapshots_fractional_layout() {
         let root = id(1);
         let first = id(2);
