@@ -1,0 +1,130 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "rs.whisker",
+    "module": "whisker-module-android",
+    "version": "0.1.22",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.10.2"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.core",
+          "module": "core-ktx",
+          "version": {
+            "requires": "1.13.1"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "whisker-module-android-0.1.22.aar",
+          "url": "whisker-module-android-0.1.22.aar",
+          "size": 203388,
+          "sha512": "17764d01d9b6bc6c7d68648a429dc80594db726b663c86c1a51ccaa1c34ce43e58be7e521e37421e66fa484d0f402957e48cc617c42ef486b74f65915af9e9fc",
+          "sha256": "cdea09c6c43986aaf0789a28625c5d1dc2597ec8eafb014881787522642f73a5",
+          "sha1": "77cbf85107d5eb779ca28a7a020c60211ef3defa",
+          "md5": "ae3396d4b1c51edd962a0bf23a95ca85"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.core",
+          "module": "core-ktx",
+          "version": {
+            "requires": "1.13.1"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "whisker-module-android-0.1.22.aar",
+          "url": "whisker-module-android-0.1.22.aar",
+          "size": 203388,
+          "sha512": "17764d01d9b6bc6c7d68648a429dc80594db726b663c86c1a51ccaa1c34ce43e58be7e521e37421e66fa484d0f402957e48cc617c42ef486b74f65915af9e9fc",
+          "sha256": "cdea09c6c43986aaf0789a28625c5d1dc2597ec8eafb014881787522642f73a5",
+          "sha1": "77cbf85107d5eb779ca28a7a020c60211ef3defa",
+          "md5": "ae3396d4b1c51edd962a0bf23a95ca85"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "whisker-module-android-0.1.22-sources.jar",
+          "url": "whisker-module-android-0.1.22-sources.jar",
+          "size": 38506,
+          "sha512": "8102ca9fdd7698c7242d8378cccc8558a3ec687e98566d571da98b8f1b3b290c3925e30ad55e851cef7ab1c0c7aa3e406eb98e63531b2c6e7ec15a69571b3978",
+          "sha256": "49fd63223c6a316c6afbda66005bb8212d3d6ae5827c03f8c979c96f69f3300a",
+          "sha1": "f8db69fd48eb5e655e1151b750f6babc6ace10c6",
+          "md5": "1c6d8523917a17414bdb00bbc44ae017"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseJavaDocPublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "javadoc",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "whisker-module-android-0.1.22-javadoc.jar",
+          "url": "whisker-module-android-0.1.22-javadoc.jar",
+          "size": 665988,
+          "sha512": "565071b710a0b59b31da46317729a021db161112e80c4d79a1ec84be2d71d2eaa4ece90b2b8e18a44e00ca1c67f22c2e84c1652bf31561097e51c9323fa536e7",
+          "sha256": "9a2825e36a8a927c2ba4dac926d100500da71c2f70c10fd49f13eb8b15b59c55",
+          "sha1": "dc47b87eacaa0aa20be21b8fc01a42c4da08306b",
+          "md5": "b70e6e48c8c8229f9d9b17151c0cf810"
+        }
+      ]
+    }
+  ]
+}
