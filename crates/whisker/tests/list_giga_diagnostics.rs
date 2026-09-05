@@ -324,8 +324,9 @@ fn giga_reader_hold_emits_longpress() {
             .each(|| vec![0_u32])
             .key(|row: &u32| *row)
             .children(|_: ReadSignal<u32>| render! { View(style: css!(width: px(390), height: px(600))) });
-        whisker::runtime::event::bind_typed(builder.__element(), "longpress", whisker::event::BindType::Bind, move |_: whisker::event::TouchEvent| held.set(held.get() + 1));
-        builder.build()
+        builder
+            .on_longpress(move |_| held.set(held.get() + 1))
+            .build()
     }).unwrap();
     let mut renderer = RecordingRenderer::new(surface.surface());
     for epoch in 1..=3 {

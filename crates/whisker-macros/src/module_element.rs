@@ -983,6 +983,10 @@ const COMMON_ELEMENT_PROP_NAMES: &[&str] = &[
     "on_tap_catch",
     "on_capture_tap",
     "on_capture_tap_catch",
+    "on_longpress",
+    "on_longpress_catch",
+    "on_capture_longpress",
+    "on_capture_longpress_catch",
     "on_click",
     "on_click_catch",
     "on_capture_click",
@@ -1368,6 +1372,10 @@ mod tests {
             "dataset",
             "accessibility",
             "on_tap",
+            "on_longpress",
+            "on_longpress_catch",
+            "on_capture_longpress",
+            "on_capture_longpress_catch",
             "on_animationend",
         ] {
             let ident: Ident = syn::parse_str(name).unwrap();

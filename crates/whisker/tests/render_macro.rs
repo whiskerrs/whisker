@@ -466,6 +466,39 @@ fn tap_propagation_variants_route_to_bind_types() {
 }
 
 #[test]
+fn longpress_propagation_variants_route_to_bind_types() {
+    with_recorder(|log| {
+        let _ = render! {
+            View {
+                View(on_longpress: |_| {})
+                View(on_longpress_catch: |_| {})
+                View(on_capture_longpress: |_| {})
+                View(on_capture_longpress_catch: |_| {})
+            }
+        };
+        let kinds: Vec<BindType> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::Event {
+                    name, bind_type, ..
+                } if name == "longpress" => Some(*bind_type),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                BindType::Bind,
+                BindType::Catch,
+                BindType::CaptureBind,
+                BindType::CaptureCatch,
+            ]
+        );
+    });
+}
+
+#[test]
 fn component_specific_events_route_bind_only() {
     // Tag-specific events use the binding declared by their public builder.
     with_recorder(|log| {

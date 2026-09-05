@@ -2084,23 +2084,18 @@ mod longpress {
             );
             runtime
                 .mount(move || {
-                    let view = render! {
-                        View(style: css!(width: px(100), height: px(100)),
-                            on_tap: move |_| tapped.set(tapped.get() + 1)) {
+                    let builder = View::builder()
+                        .style(css!(width: px(100), height: px(100)))
+                        .on_tap(move |_| tapped.set(tapped.get() + 1))
+                        .child(render! {
                             View(style: css!(width: px(100), height: px(100)))
-                        }
+                        });
+                    let builder = if listen {
+                        builder.on_longpress(move |event| held.borrow_mut().push(event.detail.x))
+                    } else {
+                        builder
                     };
-                    if listen {
-                        whisker::runtime::event::bind_typed(
-                            view,
-                            "longpress",
-                            whisker::event::BindType::Bind,
-                            move |event: whisker::event::TouchEvent| {
-                                held.borrow_mut().push(event.detail.x)
-                            },
-                        );
-                    }
-                    view
+                    builder.build()
                 })
                 .unwrap();
             let sink = RecordingRenderer::new(surface.surface());
