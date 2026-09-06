@@ -17,6 +17,10 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     public let contentView = WhiskerContainerView(frame: .zero)
     private var eventSink: ((String, WhiskerValue) -> Void)?
     private var presentationSink: ((CGPoint) -> Void)?
+    private var contentExtentSource: (() -> CGSize)?
+    private var cachedContentExtent = CGSize.zero
+    private var contentExtentNeedsUpdate = true
+    private var previousChildExtent = CGRect.null
     private var horizontal = false
     private var chromeVisible = true
     private var snapFactor: CGFloat?
@@ -56,6 +60,17 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     /** Installs the Host-internal scroll mirror, independent of app listeners. */
     public func installWhiskerPresentationSink(_ sink: ((CGPoint) -> Void)?) {
         presentationSink = sink
+    }
+
+    /// Installs the Host's overflow measurement without exposing its scene wrappers to native modules.
+    public func installWhiskerContentExtentSource(_ source: (() -> CGSize)?) {
+        contentExtentSource = source
+        invalidateWhiskerContentExtent()
+    }
+
+    public func invalidateWhiskerContentExtent() {
+        contentExtentNeedsUpdate = true
+        setNeedsLayout()
     }
 
     public func setScrollOrientation(_ value: String) {
@@ -187,12 +202,26 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
 
     public override func layoutSubviews() {
         super.layoutSubviews()
-        let extent = contentView.subviews.reduce(CGRect.zero) { result, child in
+        let directExtent = contentView.subviews.reduce(CGRect.zero) { result, child in
             result.union(child.frame)
         }
+        if directExtent != previousChildExtent {
+            previousChildExtent = directExtent
+            contentExtentNeedsUpdate = true
+        }
+        let extent: CGSize
+        if let contentExtentSource {
+            if contentExtentNeedsUpdate {
+                contentExtentNeedsUpdate = false
+                cachedContentExtent = contentExtentSource()
+            }
+            extent = cachedContentExtent
+        } else {
+            extent = CGSize(width: directExtent.maxX, height: directExtent.maxY)
+        }
         let size = CGSize(
-            width: max(bounds.width, extent.maxX),
-            height: max(bounds.height, extent.maxY)
+            width: max(bounds.width, extent.width),
+            height: max(bounds.height, extent.height)
         )
         contentSize = size
         contentView.frame = CGRect(origin: .zero, size: size)
