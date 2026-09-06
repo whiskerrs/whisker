@@ -18,7 +18,7 @@ let package = Package(
         .library(name: "WhiskerAudio", targets: ["WhiskerAudio"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.13"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.14"),
     ],
     targets: [
         .target(
