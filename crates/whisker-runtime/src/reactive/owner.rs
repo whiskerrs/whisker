@@ -64,7 +64,7 @@ impl Owner {
     ///
     /// Unlike [`Owner::new(None)`](Owner::new) — which adopts the
     /// current top-of-stack owner as parent — this always produces a
-    /// detached root. Use it for **process-global singletons** whose
+    /// detached root. Use it for **runtime-local singletons** whose
     /// lifetime must not be tied to the (possibly short-lived) owner
     /// that happens to be active when the singleton is first touched.
     ///
@@ -74,12 +74,12 @@ impl Owner {
     /// per-route / per-component owner, minting under `new(None)` would
     /// free the handle when that scope disposes, and a later read would
     /// hit a disposed node. Minting under a `detached_root()` (then
-    /// never disposing it) keeps the handle alive for the whole
-    /// process — the intended semantics for a singleton.
+    /// never disposing it) keeps the handle alive until the runtime ends.
+    /// It does not make an arena handle portable between runtime instances.
     ///
     /// The returned owner is never auto-disposed; the caller is
-    /// expected to leak it (i.e. drop the handle without calling
-    /// [`dispose`](Owner::dispose)) for genuine process-lifetime data.
+    /// expected to retain it until explicit disposal or let the runtime release
+    /// its arena on shutdown. Dropping the handle alone does not dispose it.
     pub fn detached_root() -> Owner {
         with_runtime(|rt| rt.owners.insert(Scope::new(None)))
     }
