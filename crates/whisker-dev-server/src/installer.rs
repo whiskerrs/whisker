@@ -548,11 +548,9 @@ async fn ios_install_and_launch(
         .args(["-destination", "generic/platform=iOS Simulator"])
         .arg("-derivedDataPath")
         .arg(&derived)
-        // The WhiskerModuleCodegenPlugin is a SwiftPM build-tool plugin;
-        // Xcode gates plugins behind an interactive trust prompt a
-        // headless build can't answer, so skip validation (it ships from
-        // Whisker's own `whisker` SPM package).
+        // Whisker's codegen plugin and compiler macros have separate trust prompts that headless builds cannot answer.
         .arg("-skipPackagePluginValidation")
+        .arg("-skipMacroValidation")
         .args(["-quiet", "build"]);
     // No `WHISKER_IOS_RUNTIME` / `WHISKER_IOS_MACROS` injection:
     // WhiskerRuntime and the codegen plugin resolve from the remote
