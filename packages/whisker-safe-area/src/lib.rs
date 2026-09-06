@@ -4,7 +4,7 @@
 //! **API shape — 4 (Free fn → signal).** See
 //! [`docs/module-api-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/module-api-design.md)
 //! §"Shape 4". A singleton observable: [`safe_area_insets`] returns
-//! a process-global `ReadSignal<SafeAreaInsets>`, lazily wired to
+//! a runtime-local `ReadSignal<SafeAreaInsets>`, lazily wired to
 //! the native event on first call.
 //!
 //! ## Usage
@@ -60,11 +60,10 @@
 //!
 //! ## Single source of truth
 //!
-//! Every `safe_area_insets()` call hands back a `ReadSignal` cloned
-//! from one global `RwSignal<SafeAreaInsets>`. The first call kicks
-//! off the native-event subscription; subsequent calls are free.
-//! Values stay live for the entire process — the module never
-//! unsubscribes.
+//! Calls within one runtime share a signal and a native-event subscription.
+//! They survive individual component and route owners, but are released when
+//! the runtime ends. A new runtime (for example after an Android Activity is
+//! recreated) initializes its own signal and subscription.
 //!
 //! ## Native source
 //!
@@ -73,13 +72,12 @@
 //! - iOS: `packages/whisker-safe-area/ios/Sources/WhiskerSafeArea/SafeAreaModule.swift`
 //! - Android: `packages/whisker-safe-area/android/src/main/kotlin/rs/whisker/modules/safe_area/SafeAreaModule.kt`
 
-use std::sync::OnceLock;
-
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 use whisker::WhiskerValue;
-#[cfg(any(target_os = "android", target_os = "ios"))]
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 use whisker::module;
-use whisker::{ArcRwSignal, ArcWriteSignal, Owner, ReadSignal};
+use whisker::runtime::{module::ModuleSubscription, runtime_local};
+use whisker::{Owner, ReadSignal, RwSignal};
 
 /// Safe-area inset amounts in **points (iOS) / dp (Android)** — the
 /// same density-independent units that the rest of Whisker's CSS
@@ -98,89 +96,68 @@ pub struct SafeAreaInsets {
     pub bottom: f64,
 }
 
-/// Reactive accessor for the current safe-area insets.
+/// Reactive accessor for the current host view's safe-area insets.
 ///
-/// All calls share one underlying signal: the value lives in a
-/// process-global [`ArcRwSignal`] stashed in an internal slot, so reading
-/// from many components or effects is cheap (no extra subscription,
-/// no extra cross-platform round-trip). The signal starts at
-/// `SafeAreaInsets::default()` and updates as soon as the native side
-/// can push the host view's current values.
+/// Calls within the currently entered runtime share one signal and native
+/// subscription. The initial value is [`SafeAreaInsets::default()`]; mobile
+/// Hosts push the current insets when observation starts and whenever they
+/// change. Web and desktop always expose the all-zero value.
 ///
-/// The returned handle is a `Copy` [`ReadSignal`], minted **once**
-/// under a process-lifetime [`Owner::detached_root`] and cached in
-/// that slot, so every call hands back the *same* arena entry. That
-/// pinning is what keeps a short-lived owner (a per-route scope, say)
-/// from freeing the entry out from under a surviving reader.
+/// The `Copy` handle lives under a detached owner in this runtime, so disposing
+/// a component or route does not invalidate other readers. It must not be
+/// retained across runtime shutdown or used in a different runtime.
 ///
-/// **Must be called from the main thread.** The underlying reactive
-/// runtime is thread-local.
+/// **Must be called on the runtime's UI thread with that runtime entered.**
 pub fn safe_area_insets() -> ReadSignal<SafeAreaInsets> {
-    install();
-    SLOT.get().expect("install() ran above").read.inner
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        insets_with_subscription(subscribe_to_native)
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        insets_with_subscription(|_| None)
+    }
 }
 
 struct Slot {
-    read: MainThreadOnly<ReadSignal<SafeAreaInsets>>,
-    // Kept reachable from the on-event closure; never read here.
-    #[allow(dead_code)]
-    write: MainThreadOnly<ArcWriteSignal<SafeAreaInsets>>,
+    read: ReadSignal<SafeAreaInsets>,
+    // Dropping runtime-local state unsubscribes from this slot's original Host.
+    _subscription: Option<ModuleSubscription>,
 }
 
-/// One-shot install of the global signal + the native subscription.
-/// Idempotent — re-entry is a single `OnceLock::get()` check.
-///
-/// The signal is an [`ArcRwSignal`] so its lifetime follows [`SLOT`]'s
-/// Arc strong count, not the owner that happened to trigger the first
-/// call. The `Copy` handle callers receive is minted here under a
-/// deliberately-leaked [`Owner::detached_root`] for the same reason.
-fn install() {
-    SLOT.get_or_init(|| {
-        let (read, write) = ArcRwSignal::new(SafeAreaInsets::default()).split();
-        // `ArcWriteSignal` is `!Send`; both platforms post their events from
-        // the UI thread, so `MainThreadOnly` asserts that contract. A host
-        // that breaks it must post through the active runtime dispatcher first.
-        subscribe_to_native(MainThreadOnly {
-            inner: write.clone(),
-        });
-        // Never-disposed root, so the handle outlives every per-route owner.
-        let root = Owner::detached_root();
-        let read_handle: ReadSignal<SafeAreaInsets> = root.with(|| read.into());
-        Slot {
-            read: MainThreadOnly { inner: read_handle },
-            write: MainThreadOnly { inner: write },
+// Keep platform selection separate so host tests exercise the same native
+// subscription and runtime lifecycle without needing an Android or iOS device.
+fn insets_with_subscription(
+    subscribe: impl FnOnce(RwSignal<SafeAreaInsets>) -> Option<ModuleSubscription>,
+) -> ReadSignal<SafeAreaInsets> {
+    let state = runtime_local::state::<Option<Slot>>();
+    let mut state = state.borrow_mut();
+    state
+        .get_or_insert_with(|| {
+            // This owner outlives individual routes, but belongs to the current
+            // runtime's arena. A process-global handle would point into the old
+            // arena after Activity recreation.
+            let root = Owner::detached_root();
+            let signal = root.with(|| RwSignal::new(SafeAreaInsets::default()));
+            Slot {
+                read: signal.read_only(),
+                _subscription: subscribe(signal),
+            }
+        })
+        .read
+}
+
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+fn subscribe_to_native(signal: RwSignal<SafeAreaInsets>) -> Option<ModuleSubscription> {
+    let sub = module!("SafeArea").on_event("insetsChanged", move |payload| {
+        if let Some(insets) = decode_payload(payload) {
+            signal.set(insets);
         }
     });
-}
-
-/// Wire the global signal to the native module's `insetsChanged`
-/// event. The returned `ModuleSubscription` is intentionally leaked
-/// — the signal lives for the process lifetime; dropping the
-/// subscription would also drop the closure the bridge holds.
-fn subscribe_to_native(writer: MainThreadOnly<ArcWriteSignal<SafeAreaInsets>>) {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        // The writer remains in `SLOT`, keeping the process-global signal
-        // alive. Web and desktop deliberately expose the all-zero value.
-        let _ = writer;
+    if let Some(err) = sub.error() {
+        eprintln!("[whisker-safe-area] failed to subscribe: {err}");
     }
-
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let module = module!("SafeArea");
-        let sub = module.on_event("insetsChanged", move |payload| {
-            if let Some(insets) = decode_payload(payload) {
-                // Bind the wrapper (not `.inner`) so Rust 2021 disjoint
-                // captures move the `Send + Sync` impl as a whole.
-                let w = &writer;
-                w.inner.set(insets);
-            }
-        });
-        if let Some(err) = sub.error() {
-            eprintln!("[whisker-safe-area] failed to subscribe: {err}");
-        }
-        std::mem::forget(sub);
-    }
+    Some(sub)
 }
 
 // Missing or non-numeric keys default to `0.0` — a malformed message
@@ -205,31 +182,186 @@ fn decode_payload(value: WhiskerValue) -> Option<SafeAreaInsets> {
     })
 }
 
-// `OnceLock<T>` requires `T: Sync`, which the `Rc`-backed signal halves are
-// not; `MainThreadOnly` asserts the contract rather than enforcing it.
-static SLOT: OnceLock<Slot> = OnceLock::new();
-
-/// Locally-scoped wrapper asserting main-thread-only access to
-/// `inner`. Used twice: once for the static slot
-/// (`OnceLock<…>: Sync`), once for the `on_event` closure capture
-/// (bridge callback's `Send + Sync`). Lives here rather than in
-/// `whisker-runtime` until the bridge gains a proper main-thread-only
-/// listener API.
-#[derive(Copy, Clone)]
-struct MainThreadOnly<T> {
-    inner: T,
-}
-// SAFETY: every access path — the signal read in `safe_area_insets`, the
-// write in the `on_event` callback — runs on the runtime thread by
-// contract. Misuse would corrupt the reactive arena.
-unsafe impl<T> Send for MainThreadOnly<T> {}
-unsafe impl<T> Sync for MainThreadOnly<T> {}
-
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
+    use std::rc::Rc;
+    use whisker::runtime::module::{ModuleHost, with_module_host};
+    use whisker::runtime::{RuntimeContext, RuntimeWakeHandle};
 
     use super::*;
+
+    #[test]
+    fn insets_survive_runtime_recreation() {
+        for _ in 0..3 {
+            let runtime = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+            runtime.enter(|| {
+                assert_eq!(safe_area_insets().get(), SafeAreaInsets::default());
+            });
+            runtime.shutdown();
+        }
+    }
+
+    fn runtime() -> RuntimeContext {
+        RuntimeContext::new(RuntimeWakeHandle::new(|| {}))
+    }
+
+    fn payload(top: f64) -> WhiskerValue {
+        WhiskerValue::Map(BTreeMap::from([("top".into(), WhiskerValue::Float(top))]))
+    }
+
+    fn host() -> (Rc<ModuleHost>, Rc<RefCell<Vec<bool>>>) {
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        let events = observations.clone();
+        let host = ModuleHost::new(
+            |_, _, _, _, _| false,
+            move |module, event, observing| {
+                assert_eq!(
+                    (module, event),
+                    ("whisker-safe-area:SafeArea", "insetsChanged")
+                );
+                events.borrow_mut().push(observing);
+            },
+        );
+        (host, observations)
+    }
+
+    fn native_insets() -> ReadSignal<SafeAreaInsets> {
+        insets_with_subscription(subscribe_to_native)
+    }
+
+    #[test]
+    fn readers_share_updates_after_the_first_component_is_disposed() {
+        let runtime = runtime();
+        let (host, observations) = host();
+        runtime.enter(|| {
+            with_module_host(&host, || {
+                let component = Owner::new(None);
+                let first = component.with(native_insets);
+                component.dispose();
+                let second = native_insets();
+                let padding =
+                    Owner::new(None).with(|| whisker::computed(move || first.get().top + 16.0));
+                assert_eq!(padding.get(), 16.0);
+                assert_eq!(*observations.borrow(), [true]);
+                assert!(host.dispatch_event(
+                    "whisker-safe-area:SafeArea",
+                    "insetsChanged",
+                    payload(24.0)
+                ));
+                assert_eq!(first.get().top, 24.0);
+                assert_eq!(second.get().top, 24.0);
+                whisker::runtime::reactive::flush();
+                assert_eq!(padding.get(), 40.0);
+                // Malformed events must not replace the last valid value.
+                host.dispatch_event(
+                    "whisker-safe-area:SafeArea",
+                    "insetsChanged",
+                    WhiskerValue::Null,
+                );
+                assert_eq!(first.get().top, 24.0);
+            })
+        });
+        runtime.shutdown();
+        assert_eq!(*observations.borrow(), [true, false]);
+    }
+
+    #[test]
+    fn recreated_runtime_resubscribes_and_releases_the_old_listener() {
+        let (host, observations) = host();
+        for generation in 1..=3 {
+            let runtime = runtime();
+            runtime.enter(|| {
+                with_module_host(&host, || {
+                    let insets = native_insets();
+                    assert_eq!(insets.get(), SafeAreaInsets::default());
+                    assert!(host.dispatch_event(
+                        "whisker-safe-area:SafeArea",
+                        "insetsChanged",
+                        payload(10.0 * generation as f64)
+                    ));
+                    assert_eq!(insets.get().top, 10.0 * generation as f64);
+                })
+            });
+            runtime.shutdown();
+            assert!(!host.dispatch_event(
+                "whisker-safe-area:SafeArea",
+                "insetsChanged",
+                payload(99.0)
+            ));
+            assert_eq!(observations.borrow().len(), generation * 2);
+        }
+        assert_eq!(
+            *observations.borrow(),
+            [true, false, true, false, true, false]
+        );
+    }
+
+    #[test]
+    fn simultaneous_runtimes_keep_their_insets_and_hosts_separate() {
+        let first_runtime = runtime();
+        let second_runtime = runtime();
+        let (first_host, first_observations) = host();
+        let (second_host, second_observations) = host();
+        let first = first_runtime.enter(|| with_module_host(&first_host, native_insets));
+        let second = second_runtime.enter(|| with_module_host(&second_host, native_insets));
+        first_runtime.enter(|| {
+            first_host.dispatch_event("whisker-safe-area:SafeArea", "insetsChanged", payload(12.0));
+            assert_eq!(first.get().top, 12.0);
+        });
+        second_runtime.enter(|| {
+            assert_eq!(second.get().top, 0.0);
+            second_host.dispatch_event(
+                "whisker-safe-area:SafeArea",
+                "insetsChanged",
+                payload(40.0),
+            );
+            assert_eq!(second.get().top, 40.0);
+        });
+        first_runtime.enter(|| assert_eq!(first.get().top, 12.0));
+        // Subscription teardown must use its original Host, even while a
+        // different runtime and Host are active on this thread.
+        second_runtime.enter(|| with_module_host(&second_host, || first_runtime.shutdown()));
+        assert_eq!(*first_observations.borrow(), [true, false]);
+        assert_eq!(*second_observations.borrow(), [true]);
+        second_runtime.enter(|| {
+            second_host.dispatch_event(
+                "whisker-safe-area:SafeArea",
+                "insetsChanged",
+                payload(44.0),
+            );
+            assert_eq!(second.get().top, 44.0);
+        });
+        drop(second_runtime);
+        assert_eq!(*second_observations.borrow(), [true, false]);
+    }
+
+    #[test]
+    fn synchronous_initial_insets_are_visible_on_first_read() {
+        let runtime = runtime();
+        let slot = Rc::new(RefCell::new(std::rc::Weak::<ModuleHost>::new()));
+        let callback_host = slot.clone();
+        let host = ModuleHost::new(
+            |_, _, _, _, _| false,
+            move |_, _, observing| {
+                if observing {
+                    callback_host.borrow().upgrade().unwrap().dispatch_event(
+                        "whisker-safe-area:SafeArea",
+                        "insetsChanged",
+                        payload(18.0),
+                    );
+                }
+            },
+        );
+        *slot.borrow_mut() = Rc::downgrade(&host);
+        runtime.enter(|| {
+            with_module_host(&host, || {
+                assert_eq!(native_insets().get().top, 18.0);
+            })
+        });
+        runtime.shutdown();
+    }
 
     #[test]
     fn decodes_native_payload_and_defaults_missing_edges() {
