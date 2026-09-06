@@ -86,7 +86,7 @@ internal class HostScene(
     private val elements: WhiskerElementBindings,
 ) {
     private val nodes = LinkedHashMap<Long, HostNode>()
-    private val parents = HashMap<Long, Long>()
+    private val topology = SceneTopology()
     private val presentationPool = HashMap<Int, ArrayDeque<rs.whisker.runtime.WhiskerMountedElement>>()
     private var sceneEpoch = 0
     private var revision = 0L
@@ -161,20 +161,20 @@ internal class HostScene(
         }
         nodes.values.toList().forEach(::releasePresentation)
         nodes.clear()
-        parents.clear()
+        topology.clear()
         pointerCaptures.clear()
         root.parent?.requestDisallowInterceptTouchEvent(false)
         root.removeAllViews()
     }
 
     private fun validateStagedFrame(): Boolean {
-        val existing = if (stagedSnapshot) mutableSetOf() else nodes.keys.toMutableSet()
-        val stagedParents = if (stagedSnapshot) HashMap() else HashMap(parents)
-        val stagedChildCounts = HashMap<Long, Int>()
-        if (!stagedSnapshot) {
-            stagedParents.values.forEach { parent ->
-                stagedChildCounts[parent] = stagedChildCounts.getOrDefault(parent, 0) + 1
-            }
+        val changesTopology = stagedOperations.any {
+            it.tag == OP_CREATE || it.tag == OP_DELETE || it.tag == OP_INSERT || it.tag == OP_REMOVE
+        }
+        val stagedTopology = when {
+            stagedSnapshot -> SceneTopology()
+            changesTopology -> topology.copy()
+            else -> topology
         }
         val elementTypes = if (stagedSnapshot) {
             HashMap()
@@ -184,99 +184,85 @@ internal class HostScene(
         for (operation in stagedOperations) when (operation.tag) {
             OP_CREATE -> {
                 if (
-                    operation.node == 0L || !existing.add(operation.node) ||
+                    operation.node == 0L || !stagedTopology.add(operation.node) ||
                     elements.registration(operation.member) == null
                 ) return false
                 elementTypes[operation.node] = operation.member
             }
             OP_DELETE -> {
-                if (operation.node !in existing) return false
-                val removed = existing.filterTo(mutableSetOf()) {
-                    it == operation.node || isStagedDescendant(it, operation.node, stagedParents)
-                }
-                existing.removeAll(removed)
-                elementTypes.keys.removeAll(removed)
-                stagedParents[operation.node]?.let { parent ->
-                    stagedChildCounts[parent] = stagedChildCounts.getOrDefault(parent, 1) - 1
-                }
-                removed.forEach(stagedChildCounts::remove)
-                stagedParents.entries.removeAll {
-                    it.key in removed || it.value in removed
-                }
+                if (operation.node !in stagedTopology) return false
+                val removed = stagedTopology.removeSubtree(operation.node)
+                removed.forEach(elementTypes::remove)
             }
             OP_INSERT -> {
-                val childCount = stagedChildCounts.getOrDefault(operation.parent, 0)
+                val childCount = stagedTopology.childCount(operation.parent)
                 val policy = elementTypes[operation.parent]
                     ?.let(elements::registration)?.childPolicy
                 if (
-                    operation.parent !in existing || operation.child !in existing ||
-                    stagedParents.containsKey(operation.child) ||
+                    operation.parent !in stagedTopology || operation.child !in stagedTopology ||
+                    stagedTopology.parentOf(operation.child) != null ||
                     operation.index !in 0..childCount ||
-                    isStagedDescendant(operation.parent, operation.child, stagedParents) ||
+                    stagedTopology.isDescendantOrSelf(operation.parent, operation.child) ||
                     policy != WhiskerChildPolicy.Elements
                 ) return false
-                stagedParents[operation.child] = operation.parent
-                stagedChildCounts[operation.parent] = childCount + 1
+                stagedTopology.attach(operation.parent, operation.child)
             }
             OP_REMOVE -> {
-                if (stagedParents.remove(operation.child) != operation.parent) return false
-                val childCount = stagedChildCounts.getOrDefault(operation.parent, 0)
-                if (childCount == 0) return false
-                stagedChildCounts[operation.parent] = childCount - 1
+                if (stagedTopology.detach(operation.child) != operation.parent) return false
             }
             OP_MOVE -> {
-                val childCount = stagedChildCounts.getOrDefault(operation.parent, 0)
+                val childCount = stagedTopology.childCount(operation.parent)
                 if (
-                    stagedParents[operation.child] != operation.parent ||
+                    stagedTopology.parentOf(operation.child) != operation.parent ||
                     operation.index !in 0 until childCount
                 ) return false
             }
             OP_LAYOUT -> {
                 val values = operation.numbers
                 if (
-                    operation.node !in existing || values == null || values.size < 8 ||
+                    operation.node !in stagedTopology || values == null || values.size < 8 ||
                     !validLayoutValues(values) ||
                     values[2] < 0f || values[3] < 0f || values[6] < 0f || values[7] < 0f
                 ) return false
             }
             OP_PAINT -> if (
-                operation.node !in existing || operation.numbers?.size ?: 0 < 53 ||
+                operation.node !in stagedTopology || operation.numbers?.size ?: 0 < 53 ||
                 operation.names?.size ?: 0 < 5
             ) return false
             OP_CLIP, OP_Z_ORDER, OP_EVENT_MASK ->
-                if (operation.node !in existing) return false
+                if (operation.node !in stagedTopology) return false
             OP_CLEAR_PROPERTY -> {
                 val elementType = elementTypes[operation.node] ?: return false
                 if (!elements.hasProperty(elementType, operation.member)) return false
             }
-            OP_HIT_TEST -> if (operation.node !in existing || operation.integer !in 0..3) return false
-            OP_CURSOR -> if (operation.node !in existing || operation.integer !in 0..34) return false
+            OP_HIT_TEST -> if (operation.node !in stagedTopology || operation.integer !in 0..3) return false
+            OP_CURSOR -> if (operation.node !in stagedTopology || operation.integer !in 0..34) return false
             OP_CAPTURE, OP_RELEASE_CAPTURE -> if (
-                operation.node !in existing || operation.wide == 0L
+                operation.node !in stagedTopology || operation.wide == 0L
             ) return false
-            OP_BOX_SHADOWS -> if (!validBoxShadows(operation, existing)) return false
-            OP_CLIP_PATH -> if (!validClipPath(operation, existing)) return false
+            OP_BOX_SHADOWS -> if (!validBoxShadows(operation, elementTypes.keys)) return false
+            OP_CLIP_PATH -> if (!validClipPath(operation, elementTypes.keys)) return false
             OP_BACKDROP_BLUR -> if (
-                operation.node !in existing || !operation.scalar.isFinite() ||
+                operation.node !in stagedTopology || !operation.scalar.isFinite() ||
                 operation.scalar < 0f || (operation.scalar > 0f && Build.VERSION.SDK_INT < 31)
             ) return false
-            OP_IMAGE_RENDERING -> if (operation.node !in existing || operation.integer !in 0..2) return false
+            OP_IMAGE_RENDERING -> if (operation.node !in stagedTopology || operation.integer !in 0..2) return false
             OP_TRANSFORM -> if (
-                operation.node !in existing ||
+                operation.node !in stagedTopology ||
                 !isProjectableFlatPlaneTransform(operation.numbers ?: return false)
             ) return false
             OP_OPACITY -> if (
-                operation.node !in existing || !operation.scalar.isFinite() ||
+                operation.node !in stagedTopology || !operation.scalar.isFinite() ||
                 operation.scalar !in 0f..1f
             ) return false
-            OP_VISIBILITY -> if (operation.node !in existing || operation.integer !in 0..1) return false
+            OP_VISIBILITY -> if (operation.node !in stagedTopology || operation.integer !in 0..1) return false
             OP_TEXT, OP_TEXT_STYLE -> {
                 val values = operation.numbers ?: return false
                 val names = operation.names ?: return false
                 val registration = elementTypes[operation.node]
                     ?.let(elements::registration) ?: return false
                 if (
-                    operation.node !in existing || operation.text == null ||
+                    operation.node !in stagedTopology || operation.text == null ||
                     !validTextPayload(values, names)
                 ) return false
                 if (operation.tag == OP_TEXT && registration.childPolicy != WhiskerChildPolicy.PlainText) return false
@@ -297,9 +283,9 @@ internal class HostScene(
                 if (!command.arguments.accepts(value)) return false
             }
             OP_ACCESSIBILITY -> if (
-                operation.node !in existing || operation.value !is rs.whisker.runtime.WhiskerValue.Map
+                operation.node !in stagedTopology || operation.value !is rs.whisker.runtime.WhiskerValue.Map
             ) return false
-            OP_BACKGROUND_LAYERS -> if (!validBackgroundLayers(operation, existing, rasterResources)) return false
+            OP_BACKGROUND_LAYERS -> if (!validBackgroundLayers(operation, elementTypes.keys, rasterResources)) return false
             else -> return false
         }
         return true
@@ -342,19 +328,6 @@ internal class HostScene(
         return true
     }
 
-    private fun isStagedDescendant(
-        candidate: Long,
-        ancestor: Long,
-        stagedParents: Map<Long, Long>,
-    ): Boolean {
-        var current: Long? = candidate
-        while (current != null) {
-            if (current == ancestor) return true
-            current = stagedParents[current]
-        }
-        return false
-    }
-
     private fun applyOperation(operation: HostSceneOperation) {
         val id = operation.node
         when (operation.tag) {
@@ -382,9 +355,14 @@ internal class HostScene(
                     ),
                 )
                 nodes[id] = node
+                check(topology.add(id))
             }
             OP_DELETE -> deleteNode(id)
-            OP_INSERT, OP_MOVE -> insertChild(operation.parent, operation.child, operation.index)
+            OP_INSERT -> {
+                topology.attach(operation.parent, operation.child)
+                placeChild(operation.parent, operation.child, operation.index)
+            }
+            OP_MOVE -> placeChild(operation.parent, operation.child, operation.index)
             OP_REMOVE -> detachChild(operation.parent, operation.child)
             OP_LAYOUT -> applyLayout(id, nodes[id] ?: return, requireNotNull(operation.numbers))
             OP_PAINT -> applyPaint(
@@ -471,7 +449,7 @@ internal class HostScene(
 
     private fun attachRoots() {
         nodes.forEach { (id, node) ->
-            if (!parents.containsKey(id) && node.parent !== root) {
+            if (topology.parentOf(id) == null && node.parent !== root) {
                 (node.parent as? ViewGroup)?.removeView(node)
                 root.addView(node)
             }
@@ -483,7 +461,7 @@ internal class HostScene(
         stagedOperations.forEach { operation ->
             when (operation.tag) {
                 OP_CREATE -> affected += null
-                OP_DELETE -> affected += parents[operation.node]
+                OP_DELETE -> affected += topology.parentOf(operation.node)
                 OP_INSERT -> {
                     affected += null
                     affected += operation.parent
@@ -493,7 +471,7 @@ internal class HostScene(
                     affected += null
                 }
                 OP_MOVE -> affected += operation.parent
-                OP_Z_ORDER -> affected += parents[operation.node]
+                OP_Z_ORDER -> affected += topology.parentOf(operation.node)
             }
         }
         return affected
@@ -502,7 +480,7 @@ internal class HostScene(
     private fun refreshAllZOrderProjections() {
         val parentIds = HashSet<Long?>()
         parentIds += null
-        parents.values.forEach(parentIds::add)
+        parentIds.addAll(topology.parentIds())
         parentIds.forEach(::refreshZOrderProjection)
     }
 
@@ -537,7 +515,7 @@ internal class HostScene(
         host.invalidate()
     }
 
-    private fun insertChild(parentId: Long, childId: Long, requestedIndex: Int) {
+    private fun placeChild(parentId: Long, childId: Long, requestedIndex: Int) {
         val parent = nodes[parentId] ?: return
         val child = nodes[childId] ?: return
         val mounted = requireNotNull(parent.mountedElement)
@@ -545,7 +523,6 @@ internal class HostScene(
             "${mounted.registration.name} does not accept element children"
         }
         (child.parent as? ViewGroup)?.removeView(child)
-        parents[childId] = parentId
         val childHost = mounted.childrenHost()
         if (childHost != null) {
             childHost.addView(child, requestedIndex)
@@ -557,30 +534,24 @@ internal class HostScene(
     private fun detachChild(parentId: Long, childId: Long) {
         val child = nodes[childId] ?: return
         (child.parent as? ViewGroup)?.removeView(child)
-        parents.remove(childId)
+        topology.detach(childId)
         check(nodes.containsKey(parentId))
     }
 
     private fun deleteNode(id: Long) {
-        val node = nodes[id] ?: return
-        val descendants = nodes.keys.filter { candidate -> isDescendant(candidate, id) }
-        val removedNodes = descendants.toSet() + id
+        if (id !in nodes) return
+        val removedNodes = topology.removeSubtree(id)
+        val removedIds = removedNodes.toSet()
         pointerCaptures.entries.removeAll { (_, capturedNode) ->
-            if (capturedNode !in removedNodes) return@removeAll false
+            if (capturedNode !in removedIds) return@removeAll false
             nodes[capturedNode]?.parent?.requestDisallowInterceptTouchEvent(false)
             true
         }
         reapplyNativePointerInterception()
-        nodes.remove(id)
-        descendants.forEach { child ->
+        removedNodes.asReversed().forEach { child ->
             removeScrollOffset(child)
             nodes.remove(child)?.let(::releasePresentation)
-            parents.remove(child)
         }
-        parents.remove(id)
-        removeScrollOffset(id)
-        (node.parent as? ViewGroup)?.removeView(node)
-        releasePresentation(node)
     }
 
     /** Propagates capture from its actual node through nested native scrollers to the window. */
@@ -608,15 +579,6 @@ internal class HostScene(
         if (pool.size < PRESENTATION_POOL_LIMIT_PER_TYPE) pool.addLast(mounted)
     }
 
-    private fun isDescendant(candidate: Long, ancestor: Long): Boolean {
-        var current = parents[candidate]
-        while (current != null) {
-            if (current == ancestor) return true
-            current = parents[current]
-        }
-        return false
-    }
-
     private fun applyLayout(id: Long, node: HostNode, values: FloatArray) {
         require(values.size >= 8)
         val density = root.resources.displayMetrics.density
@@ -630,7 +592,7 @@ internal class HostScene(
             contentWidth = values[6]
             contentHeight = values[7]
         }
-        val parentNode = parents[id]?.let(nodes::get)
+        val parentNode = topology.parentOf(id)?.let(nodes::get)
         val customHost = parentNode?.mountedElement?.childrenHost() != null
         node.setLayoutPosition(
             (node.geometry.x - if (customHost) parentNode!!.geometry.contentX else 0f) * density,

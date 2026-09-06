@@ -278,6 +278,16 @@ impl LayoutTree {
         self.nodes.contains_key(&node)
     }
 
+    /// Returns a live node's retained layout style.
+    pub fn style(&self, node: NodeId) -> Option<&ComputedLayoutStyle> {
+        self.nodes.get(&node).map(|node| &node.style)
+    }
+
+    /// Returns whether a live node participates in intrinsic measurement.
+    pub fn is_measurable(&self, node: NodeId) -> Option<bool> {
+        self.nodes.get(&node).map(|node| node.measurable)
+    }
+
     /// Validates that a computed style can be represented by this backend.
     ///
     /// This performs the same conversion used by node creation and updates

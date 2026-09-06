@@ -1,6 +1,6 @@
 //! Surface-level orchestration of retained scene and layout state.
 
-use std::{collections::HashMap, error::Error, fmt};
+use std::{collections::HashMap, error::Error, fmt, rc::Rc};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
@@ -200,18 +200,19 @@ struct LayoutInputs {
 ///
 /// This is the sole mutable owner of the paired [`Scene`] and [`LayoutTree`].
 /// Structural operations update both retained trees, while a successful layout
-/// pass projects only changed rectangles into the scene journal.
+/// pass projects only changed rectangles into the scene journal. Clones share
+/// unchanged state and copy each subsystem only when it is mutated.
 #[derive(Clone, Debug)]
 pub struct SurfaceEngine {
     scene: Scene,
-    layout: LayoutTree,
-    last_layout: Option<LayoutSnapshot>,
+    layout: Rc<LayoutTree>,
+    last_layout: Option<Rc<LayoutSnapshot>>,
     last_inputs: Option<LayoutInputs>,
     layout_dirty: bool,
     layout_provisional: bool,
-    transforms: HashMap<NodeId, ComputedTransformStyle>,
-    radial_backgrounds: HashMap<NodeId, Vec<RadialBackgroundSource>>,
-    measurements: MeasurementCoordinator,
+    transforms: Rc<HashMap<NodeId, ComputedTransformStyle>>,
+    radial_backgrounds: Rc<HashMap<NodeId, Vec<RadialBackgroundSource>>>,
+    measurements: Rc<MeasurementCoordinator>,
 }
 
 impl SurfaceEngine {
@@ -224,14 +225,14 @@ impl SurfaceEngine {
     pub fn with_protocol(surface: SurfaceId, protocol: whisker_protocol::ProtocolVersion) -> Self {
         Self {
             scene: Scene::with_protocol(surface, protocol),
-            layout: LayoutTree::new(),
+            layout: Rc::new(LayoutTree::new()),
             last_layout: None,
             last_inputs: None,
             layout_dirty: false,
             layout_provisional: false,
-            transforms: HashMap::new(),
-            radial_backgrounds: HashMap::new(),
-            measurements: MeasurementCoordinator::default(),
+            transforms: Rc::new(HashMap::new()),
+            radial_backgrounds: Rc::new(HashMap::new()),
+            measurements: Rc::new(MeasurementCoordinator::default()),
         }
     }
 
@@ -246,13 +247,13 @@ impl SurfaceEngine {
     }
 
     /// Returns the retained layout tree without allowing structural mutation.
-    pub const fn layout_tree(&self) -> &LayoutTree {
+    pub fn layout_tree(&self) -> &LayoutTree {
         &self.layout
     }
 
     /// Returns the most recent successful layout snapshot.
-    pub const fn last_layout(&self) -> Option<&LayoutSnapshot> {
-        self.last_layout.as_ref()
+    pub fn last_layout(&self) -> Option<&LayoutSnapshot> {
+        self.last_layout.as_deref()
     }
 
     /// Returns whether retained inputs require another layout pass.
@@ -444,7 +445,7 @@ impl SurfaceEngine {
     ) -> Result<NodeId, SurfaceError> {
         LayoutTree::validate_style(&style)?;
         let node = self.scene.create_node(element_type)?;
-        self.layout
+        Rc::make_mut(&mut self.layout)
             .create_node(node, style)
             .expect("a validated style and fresh scene ID must enter layout");
         self.layout_dirty = true;
@@ -456,13 +457,13 @@ impl SurfaceEngine {
         let mut removed = Vec::new();
         collect_scene_subtree(&self.scene, node, &mut removed)?;
         self.scene.delete_node(node)?;
-        self.layout
+        Rc::make_mut(&mut self.layout)
             .remove_subtree(node)
             .expect("scene and layout trees remain structurally synchronized");
         for removed in removed {
-            self.transforms.remove(&removed);
-            self.radial_backgrounds.remove(&removed);
-            self.measurements.remove_node(removed);
+            Rc::make_mut(&mut self.transforms).remove(&removed);
+            Rc::make_mut(&mut self.radial_backgrounds).remove(&removed);
+            Rc::make_mut(&mut self.measurements).remove_node(removed);
         }
         self.layout_dirty = true;
         Ok(())
@@ -476,7 +477,7 @@ impl SurfaceEngine {
         index: u32,
     ) -> Result<(), SurfaceError> {
         self.scene.insert_child(parent, child, index)?;
-        self.layout
+        Rc::make_mut(&mut self.layout)
             .reparent(child, parent, index as usize)
             .expect("scene and layout trees remain structurally synchronized");
         self.layout_dirty = true;
@@ -492,7 +493,7 @@ impl SurfaceEngine {
             .expect("validated parent remains live")
             .children()
             .to_vec();
-        self.layout
+        Rc::make_mut(&mut self.layout)
             .set_children(parent, &children)
             .expect("scene and layout trees remain structurally synchronized");
         self.layout_dirty = true;
@@ -507,7 +508,7 @@ impl SurfaceEngine {
         index: u32,
     ) -> Result<(), SurfaceError> {
         self.scene.move_child(parent, child, index)?;
-        self.layout
+        Rc::make_mut(&mut self.layout)
             .reparent(child, parent, index as usize)
             .expect("scene and layout trees remain structurally synchronized");
         self.layout_dirty = true;
@@ -521,7 +522,10 @@ impl SurfaceEngine {
         style: ComputedLayoutStyle,
     ) -> Result<PropertyImpactSet, SurfaceError> {
         self.ensure_mutable()?;
-        let impact = self.layout.update_style(node, style)?;
+        if self.layout.style(node) == Some(&style) {
+            return Ok(PropertyImpactSet::default());
+        }
+        let impact = Rc::make_mut(&mut self.layout).update_style(node, style)?;
         if impact.contains(PropertyImpactSet::LAYOUT) {
             self.layout_dirty = true;
         }
@@ -597,7 +601,9 @@ impl SurfaceEngine {
         self.scene
             .set_cursor(node, lower_cursor(style.cursor()))
             .expect("the retained scene node was validated above");
-        self.transforms.insert(node, lowered.transform);
+        if transform_changed {
+            Rc::make_mut(&mut self.transforms).insert(node, lowered.transform);
+        }
         if let Some(transform) = projected_transform.flatten() {
             self.scene
                 .set_transform(node, transform)
@@ -633,9 +639,11 @@ impl SurfaceEngine {
         }
         self.scene.set_background_layers(node, layers)?;
         if sources.is_empty() {
-            self.radial_backgrounds.remove(&node);
-        } else {
-            self.radial_backgrounds.insert(node, sources);
+            if self.radial_backgrounds.contains_key(&node) {
+                Rc::make_mut(&mut self.radial_backgrounds).remove(&node);
+            }
+        } else if self.radial_backgrounds.get(&node) != Some(&sources) {
+            Rc::make_mut(&mut self.radial_backgrounds).insert(node, sources);
         }
         Ok(())
     }
@@ -645,7 +653,10 @@ impl SurfaceEngine {
     /// Returns whether retained measurement behavior changed.
     pub fn set_measurable(&mut self, node: NodeId, measurable: bool) -> Result<bool, SurfaceError> {
         self.ensure_mutable()?;
-        let changed = self.layout.set_measurable(node, measurable)?;
+        if self.layout.is_measurable(node) == Some(measurable) {
+            return Ok(false);
+        }
+        let changed = Rc::make_mut(&mut self.layout).set_measurable(node, measurable)?;
         self.layout_dirty |= changed;
         Ok(changed)
     }
@@ -670,14 +681,14 @@ impl SurfaceEngine {
             return Err(LayoutError::UnknownNode(node).into());
         }
         let measurable = spec.is_some();
-        let spec_changed = self.measurements.set_spec(node, element_type, spec)?;
-        let behavior_changed = self
-            .layout
-            .set_measurable(node, measurable)
-            .expect("scene-validated node remains in synchronized layout");
+        let spec_changed = !self
+            .measurements
+            .matches_spec(node, element_type, spec.as_ref())
+            && Rc::make_mut(&mut self.measurements).set_spec(node, element_type, spec)?;
+        let behavior_changed = self.set_measurable(node, measurable)?;
         let changed = spec_changed || behavior_changed;
         if changed {
-            self.layout
+            Rc::make_mut(&mut self.layout)
                 .invalidate_measurement(node)
                 .expect("configured measurement node remains in synchronized layout");
             self.layout_dirty = true;
@@ -739,7 +750,7 @@ impl SurfaceEngine {
         }
         let intrinsic = impacts.contains(PropertyImpactSet::INTRINSIC_MEASURE);
         if intrinsic {
-            self.layout.invalidate_measurement(node)?;
+            Rc::make_mut(&mut self.layout).invalidate_measurement(node)?;
         }
         let requires_layout = intrinsic || impacts.contains(PropertyImpactSet::LAYOUT);
         self.layout_dirty |= requires_layout;
@@ -759,7 +770,7 @@ impl SurfaceEngine {
             return Ok(LayoutUpdate::default());
         }
 
-        let snapshot = self.layout.compute(root, viewport, measurer)?;
+        let snapshot = Rc::make_mut(&mut self.layout).compute(root, viewport, measurer)?;
         let update = self.project_layout(snapshot, inputs)?;
         self.layout_provisional = false;
         Ok(update)
@@ -777,11 +788,13 @@ impl SurfaceEngine {
         environment_epoch: u64,
     ) -> Result<LayoutProgress, SurfaceError> {
         self.ensure_mutable()?;
-        for node in self.measurements.set_environment(environment_epoch) {
-            self.layout
-                .invalidate_measurement(node)
-                .expect("measurement specs remain synchronized with layout nodes");
-            self.layout_dirty = true;
+        if self.measurements.environment_epoch() != Some(environment_epoch) {
+            for node in Rc::make_mut(&mut self.measurements).set_environment(environment_epoch) {
+                Rc::make_mut(&mut self.layout)
+                    .invalidate_measurement(node)
+                    .expect("measurement specs remain synchronized with layout nodes");
+                self.layout_dirty = true;
+            }
         }
         let inputs = LayoutInputs { root, viewport };
         if !self.layout_dirty && self.last_inputs == Some(inputs) {
@@ -797,16 +810,18 @@ impl SurfaceEngine {
         }
 
         for node in self.measurements.unresolved_nodes() {
-            self.layout
+            Rc::make_mut(&mut self.layout)
                 .invalidate_measurement(node)
                 .expect("measurement consumers remain synchronized with layout nodes");
         }
 
-        self.measurements.begin_pass();
-        let snapshot = self
-            .layout
-            .compute(root, viewport, &mut self.measurements)?;
-        let pass = self.measurements.finish_pass()?;
+        Rc::make_mut(&mut self.measurements).begin_pass();
+        let snapshot = Rc::make_mut(&mut self.layout).compute(
+            root,
+            viewport,
+            Rc::<MeasurementCoordinator>::make_mut(&mut self.measurements),
+        )?;
+        let pass = Rc::make_mut(&mut self.measurements).finish_pass()?;
         let ready_nodes = self.measurements.ready_nodes();
         self.sync_text_presentations(&ready_nodes);
         if pass.blocking {
@@ -840,10 +855,10 @@ impl SurfaceEngine {
         responses: &[MeasurementResponse],
     ) -> Result<MeasurementApply, SurfaceError> {
         self.ensure_mutable()?;
-        let apply = self.measurements.apply_batch(responses)?;
+        let apply = Rc::make_mut(&mut self.measurements).apply_batch(responses)?;
         self.sync_text_presentations(apply.invalidated_nodes());
         for node in apply.invalidated_nodes() {
-            self.layout
+            Rc::make_mut(&mut self.layout)
                 .invalidate_measurement(*node)
                 .expect("response consumers remain synchronized with layout nodes");
         }
@@ -857,10 +872,10 @@ impl SurfaceEngine {
         ready: &MeasurementReady,
     ) -> Result<DeferredMeasurementApply, SurfaceError> {
         self.ensure_mutable()?;
-        let apply = self.measurements.apply_ready(ready)?;
+        let apply = Rc::make_mut(&mut self.measurements).apply_ready(ready)?;
         self.sync_text_presentations(apply.invalidated_nodes());
         for node in apply.invalidated_nodes() {
-            self.layout
+            Rc::make_mut(&mut self.layout)
                 .invalidate_measurement(*node)
                 .expect("deferred consumers remain synchronized with layout nodes");
         }
@@ -1019,7 +1034,7 @@ impl SurfaceEngine {
                 .set_background_layers(node, layers)
                 .expect("canonical radial backgrounds preserve protocol validity");
         }
-        self.last_layout = Some(snapshot);
+        self.last_layout = Some(Rc::new(snapshot));
         self.last_inputs = Some(inputs);
         self.layout_dirty = false;
         Ok(LayoutUpdate::computed(changed.len()))
@@ -1126,6 +1141,85 @@ mod tests {
 
     use super::*;
     use crate::{FrameSink, RecordingRenderer};
+
+    #[test]
+    fn snapshots_share_unchanged_nodes_and_isolate_mutations() {
+        let mut surface = SurfaceEngine::new(surface_id());
+        let changed = surface
+            .create_node(element_type(), sized(40.0, 20.0))
+            .unwrap();
+        let untouched = surface
+            .create_node(element_type(), sized(10.0, 10.0))
+            .unwrap();
+        let snapshot = surface.clone();
+        surface.set_opacity(changed, 0.5).unwrap();
+        assert!(std::ptr::eq(
+            surface.node(untouched).unwrap(),
+            snapshot.node(untouched).unwrap()
+        ));
+        assert!(!std::ptr::eq(
+            surface.node(changed).unwrap(),
+            snapshot.node(changed).unwrap()
+        ));
+        assert_ne!(surface.node(changed), snapshot.node(changed));
+    }
+
+    #[test]
+    fn paint_updates_share_layout_and_measurement_snapshots() {
+        let initial =
+            resolve_style(&SpecifiedStyle::new(), None, StyleEnvironment::default()).unwrap();
+        let painted = resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Opacity,
+                StyleValue::Number(StyleNumber::new(0.5)),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        let mut surface = SurfaceEngine::new(surface_id());
+        let root = surface
+            .create_node(element_type(), initial.computed().layout().clone())
+            .unwrap();
+        surface
+            .update_computed_style(root, initial.computed())
+            .unwrap();
+        surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 1)
+            .unwrap();
+        let snapshot = surface.clone();
+        surface
+            .update_computed_style(root, painted.computed())
+            .unwrap();
+        surface.set_measurement(root, None).unwrap();
+        surface.set_background_layers(root, Vec::new()).unwrap();
+        assert!(std::ptr::eq(surface.layout_tree(), snapshot.layout_tree()));
+        assert!(Rc::ptr_eq(&surface.measurements, &snapshot.measurements));
+        assert!(Rc::ptr_eq(&surface.transforms, &snapshot.transforms));
+        assert!(Rc::ptr_eq(
+            &surface.radial_backgrounds,
+            &snapshot.radial_backgrounds
+        ));
+        assert!(std::ptr::eq(
+            surface.last_layout().unwrap(),
+            snapshot.last_layout().unwrap()
+        ));
+        assert!(!surface.needs_layout());
+        surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 1)
+            .unwrap();
+        assert!(Rc::ptr_eq(&surface.measurements, &snapshot.measurements));
+        assert!(std::ptr::eq(surface.layout_tree(), snapshot.layout_tree()));
+        surface
+            .update_layout_style(root, sized(50.0, 50.0))
+            .unwrap();
+        assert!(!std::ptr::eq(surface.layout_tree(), snapshot.layout_tree()));
+        assert_eq!(
+            snapshot.layout_tree().style(root),
+            Some(initial.computed().layout())
+        );
+        assert_ne!(surface.node(root), snapshot.node(root));
+    }
 
     fn surface_id() -> SurfaceId {
         SurfaceId::new(1).expect("test surface")
@@ -1284,7 +1378,7 @@ mod tests {
             .update_layout_style(root, sized(100.0, 100.0))
             .expect("resize style");
         surface
-            .compute_layout(root, LayoutSize::new(100.0, 100.0), &mut zero_measure)
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 1)
             .expect("resized layout");
         let (_, _, resized_radii, resized_stops) =
             radial_parts(&surface.node(root).unwrap().background_layers()[0].image)
@@ -1565,9 +1659,7 @@ mod tests {
         let invalid_root = invalid_projection
             .create_node(element_type(), sized(40.0, 20.0))
             .unwrap();
-        invalid_projection
-            .transforms
-            .insert(invalid_root, invalid.clone());
+        Rc::make_mut(&mut invalid_projection.transforms).insert(invalid_root, invalid.clone());
         assert_eq!(
             invalid_projection.compute_layout(
                 invalid_root,
