@@ -1,0 +1,112 @@
+{
+  "build": "debug",
+  "device": "emulator-5554, sdk_gphone16k_arm64, Android API 37",
+  "capture": "gfxinfo, one valid APK-swap cycle per build, no concurrent builds/profilers",
+  "measurements": [
+    {
+      "action": "group-open",
+      "baseline": {
+        "action": "group-open",
+        "elapsed": 3.116,
+        "frames": 99.0,
+        "jank_percent": 5.05,
+        "p50_ms": 20.0,
+        "p95_ms": 44.0,
+        "p99_ms": 150.0
+      },
+      "optimized": {
+        "action": "group-open",
+        "elapsed": 3.11,
+        "frames": 98.0,
+        "jank_percent": 4.08,
+        "p50_ms": 17.0,
+        "p95_ms": 25.0,
+        "p99_ms": 150.0
+      }
+    },
+    {
+      "action": "reader-open",
+      "baseline": {
+        "action": "reader-open",
+        "elapsed": 3.1,
+        "frames": 97.0,
+        "jank_percent": 8.25,
+        "p50_ms": 17.0,
+        "p95_ms": 48.0,
+        "p99_ms": 150.0
+      },
+      "optimized": {
+        "action": "reader-open",
+        "elapsed": 3.091,
+        "frames": 102.0,
+        "jank_percent": 5.88,
+        "p50_ms": 17.0,
+        "p95_ms": 28.0,
+        "p99_ms": 48.0
+      }
+    },
+    {
+      "action": "reader-back",
+      "baseline": {
+        "action": "reader-back",
+        "elapsed": 3.099,
+        "frames": 28.0,
+        "jank_percent": 35.71,
+        "p50_ms": 27.0,
+        "p95_ms": 97.0,
+        "p99_ms": 101.0
+      },
+      "optimized": {
+        "action": "reader-back",
+        "elapsed": 3.069,
+        "frames": 32.0,
+        "jank_percent": 15.62,
+        "p50_ms": 18.0,
+        "p95_ms": 34.0,
+        "p99_ms": 36.0
+      }
+    },
+    {
+      "action": "scroll",
+      "baseline": {
+        "action": "scroll",
+        "elapsed": 6.421,
+        "frames": 193.0,
+        "jank_percent": 30.05,
+        "p50_ms": 34.0,
+        "p95_ms": 48.0,
+        "p99_ms": 53.0
+      },
+      "optimized": {
+        "action": "scroll",
+        "elapsed": 6.381,
+        "frames": 186.0,
+        "jank_percent": 35.48,
+        "p50_ms": 32.0,
+        "p95_ms": 48.0,
+        "p99_ms": 61.0
+      }
+    },
+    {
+      "action": "group-back",
+      "baseline": {
+        "action": "group-back",
+        "elapsed": 3.064,
+        "frames": 25.0,
+        "jank_percent": 36.0,
+        "p50_ms": 17.0,
+        "p95_ms": 117.0,
+        "p99_ms": 117.0
+      },
+      "optimized": {
+        "action": "group-back",
+        "elapsed": 3.071,
+        "frames": 34.0,
+        "jank_percent": 14.71,
+        "p50_ms": 17.0,
+        "p95_ms": 36.0,
+        "p99_ms": 40.0
+      }
+    }
+  ]
+}
