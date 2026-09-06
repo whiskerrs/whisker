@@ -758,7 +758,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 35,
+        template_version: 36,
     })
 }
 
@@ -1106,11 +1106,56 @@ mod tests {
         let out = tmp.join("gen/android");
         sync(&out, &sample_inputs()).unwrap();
         let mut next = sample_inputs();
-        next.target_sdk = 35;
+        next.target_sdk = 36;
         let regenerated = sync(&out, &next).unwrap();
         assert!(regenerated);
         let app_gradle = std::fs::read_to_string(out.join("app/build.gradle.kts")).unwrap();
-        assert!(app_gradle.contains("compileSdk = 35"));
+        assert!(app_gradle.contains("compileSdk = 36"));
+        assert!(app_gradle.contains("targetSdk = 36"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sync_upgrades_cached_android_build_tools() {
+        let mut config = Config::default();
+        config.name("HelloWorld").bundle_id("rs.whisker.hello");
+        let inputs = inputs_from(
+            &config,
+            "hello_world".into(),
+            PathBuf::from("../.."),
+            "hello-world".into(),
+            "0.1.0".into(),
+            "0.1.0".into(),
+            "https://example.invalid/maven".into(),
+        )
+        .unwrap();
+        let mut previous = inputs.clone();
+        previous.template_version = 35;
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/android");
+        sync(&out, &previous).unwrap();
+        let build = out.join("build.gradle.kts");
+        let wrapper = out.join("gradle/wrapper/gradle-wrapper.properties");
+        std::fs::write(&build, ROOT_BUILD_GRADLE_KTS.replace("8.10.1", "8.6.1")).unwrap();
+        std::fs::write(
+            &wrapper,
+            std::fs::read_to_string(&wrapper)
+                .unwrap()
+                .replace("8.11.1", "8.10.2"),
+        )
+        .unwrap();
+
+        assert!(sync(&out, &inputs).unwrap());
+        let build = std::fs::read_to_string(build).unwrap();
+        assert!(build.contains("id(\"com.android.application\") version \"8.10.1\""));
+        assert!(build.contains("id(\"com.android.library\") version \"8.10.1\""));
+        assert!(
+            std::fs::read_to_string(wrapper)
+                .unwrap()
+                .contains("gradle-8.11.1-bin.zip")
+        );
+        assert!(!sync(&out, &inputs).unwrap());
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
