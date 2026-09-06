@@ -104,8 +104,14 @@ final class WhiskerNodeView: UIView {
         }
     }
 
+    override func willMove(toSuperview newSuperview: UIView?) {
+        invalidateAncestorScrollExtent()
+        super.willMove(toSuperview: newSuperview)
+    }
+
     override func didMoveToSuperview() {
         super.didMoveToSuperview()
+        invalidateAncestorScrollExtent()
         updateAncestorScrollObservations()
         updateOverflowMask()
     }
@@ -143,6 +149,7 @@ final class WhiskerNodeView: UIView {
         updateBackdropBlurGeometry()
         updateOverflowMask()
         updateClipPathMask()
+        invalidateAncestorScrollExtent()
     }
 
     func setPresentationTransform(_ values: UnsafeBufferPointer<Float>) {
@@ -165,6 +172,7 @@ final class WhiskerNodeView: UIView {
         transform.m43 = CGFloat(values[14])
         transform.m44 = CGFloat(values[15])
         layer.transform = transform
+        invalidateAncestorScrollExtent()
     }
 
     func setOverflowClip(horizontal: Bool, vertical: Bool) {
@@ -173,6 +181,7 @@ final class WhiskerNodeView: UIView {
         clipsToBounds = false
         updateAncestorScrollObservations()
         updateOverflowMask()
+        invalidateAncestorScrollExtent()
     }
 
     func sceneChildrenHost() -> UIView {
@@ -182,6 +191,10 @@ final class WhiskerNodeView: UIView {
     func mountedContentDidInstall() {
         mountedElement?.view.layer.zPosition = 2
         bringSubviewToFront(defaultChildrenHost)
+        (mountedElement?.view as? WhiskerScrollContainerView)?
+            .installWhiskerContentExtentSource { [weak self] in
+                self?.scrollableChildrenExtent() ?? .zero
+            }
         scrollOffsetObservation = (mountedElement?.view as? UIScrollView)?.observe(
             \.contentOffset,
             options: [.new]
@@ -189,6 +202,46 @@ final class WhiskerNodeView: UIView {
             self?.updateOverflowMaskPosition(scrollView)
         }
         updateOverflowMask()
+    }
+
+    private func invalidateAncestorScrollExtent() {
+        var ancestor = superview
+        while let current = ancestor {
+            if let scroll = current as? WhiskerScrollContainerView {
+                scroll.invalidateWhiskerContentExtent()
+                return
+            }
+            ancestor = current.superview
+        }
+    }
+
+    private func scrollableChildrenExtent() -> CGSize {
+        let host = sceneChildrenHost()
+        var right: CGFloat = 0
+        var bottom: CGFloat = 0
+        for child in host.subviews {
+            let childBounds = (child as? WhiskerNodeView)?.scrollableOverflowBounds() ?? child.bounds
+            let extent = child.convert(childBounds, to: host)
+            right = max(right, extent.maxX)
+            bottom = max(bottom, extent.maxY)
+        }
+        return CGSize(width: right, height: bottom)
+    }
+
+    private func scrollableOverflowBounds() -> CGRect {
+        // Nested scroll contents belong to their own viewport, not the outer scroll range.
+        guard !(mountedElement?.view is UIScrollView) else { return bounds }
+        layoutIfNeeded()
+        let extent = scrollableChildrenExtent()
+        let host = sceneChildrenHost()
+        let rect = host.convert(CGRect(origin: .zero, size: extent), to: self)
+        return CGRect(
+            origin: bounds.origin,
+            size: CGSize(
+                width: clipsOverflowHorizontally ? bounds.width : max(bounds.width, rect.maxX - bounds.minX),
+                height: clipsOverflowVertically ? bounds.height : max(bounds.height, rect.maxY - bounds.minY)
+            )
+        )
     }
 
     func boxPaintDidChange() {
