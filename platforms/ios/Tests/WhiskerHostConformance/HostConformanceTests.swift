@@ -6,6 +6,13 @@ import WhiskerCBridge
 @testable import WhiskerModule
 import XCTest
 
+private final class ClipAnimationProbe: NSObject, CAAction {
+    var events: [String] = []
+    func run(forKey event: String, object: Any, arguments: [AnyHashable: Any]?) {
+        events.append(event)
+    }
+}
+
 private final class EventLifecycleTestModule: Module {
     var starts = 0
     var stops = 0
@@ -840,8 +847,15 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertNil(scrollView.contentView.layer.mask)
         XCTAssertGreaterThan(scrollView.contentSize.height, scrollView.bounds.height)
 
+        let mask = try XCTUnwrap(scrollView.layer.mask)
+        let animation = ClipAnimationProbe()
+        mask.actions = ["position": animation, "bounds": animation, "path": animation]
+        CATransaction.begin()
+        CATransaction.setDisableActions(false)
         scrollView.contentOffset = CGPoint(x: 0, y: 100)
         scrollView.layoutIfNeeded()
+        CATransaction.commit()
+        XCTAssertTrue(animation.events.isEmpty, "viewport clipping must follow scrolling immediately: \(animation.events)")
         XCTAssertTrue(scrollView.layer.mask != nil)
         XCTAssertNil(scrollView.contentView.layer.mask)
         XCTAssertEqual(scrollView.layer.mask?.frame.minY, scrollView.bounds.minY)
@@ -860,8 +874,14 @@ final class HostConformanceTests: XCTestCase {
         let mask = try XCTUnwrap(node.sceneChildrenHost().layer.mask)
         let initialY = mask.frame.minY
 
+        let animation = ClipAnimationProbe()
+        mask.actions = ["position": animation, "bounds": animation, "path": animation]
+        CATransaction.begin()
+        CATransaction.setDisableActions(false)
         scrollView.contentOffset = CGPoint(x: 0, y: 60)
+        CATransaction.commit()
 
+        XCTAssertTrue(animation.events.isEmpty, "ancestor scrolling must not animate the clipping viewport: \(animation.events)")
         XCTAssertEqual(mask.frame.minY, initialY + 60, accuracy: 0.001)
     }
 

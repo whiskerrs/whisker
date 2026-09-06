@@ -1,6 +1,11 @@
 import UIKit
 import WhiskerModule
 
+private final class OverflowMaskLayer: CAShapeLayer {
+    // The clipping viewport must track native scrolling without implicit interpolation.
+    override func action(forKey event: String) -> CAAction? { nil }
+}
+
 /// Common iOS wrapper for every built-in or custom Whisker element.
 ///
 /// The scene owner controls hierarchy and geometry. Element modules only own
@@ -13,7 +18,7 @@ final class WhiskerNodeView: UIView {
     var mountedElement: WhiskerMountedElement?
     private let defaultChildrenHost = WhiskerChildrenHostView(frame: .zero)
     private lazy var paintView = HostNodePaintView(painter: boxPainter)
-    private let overflowMask = CAShapeLayer()
+    private let overflowMask = OverflowMaskLayer()
     private var overflowMaskScrollOrigin = CGPoint.zero
     private var overflowMaskCompositionBounds = CGRect.zero
     private var ancestorScrollObservations: [NSKeyValueObservation] = []
