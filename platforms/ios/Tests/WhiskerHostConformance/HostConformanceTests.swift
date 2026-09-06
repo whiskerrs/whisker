@@ -665,9 +665,78 @@ final class HostConformanceTests: XCTestCase {
             return XCTFail("scroll must emit a map payload")
         }
         XCTAssertEqual(values["scrollTop"], .float(120))
+        XCTAssertEqual(values["deltaY"], .float(120))
+        XCTAssertEqual(values["deltaX"], .float(0))
+        XCTAssertEqual(values["isDragging"], .bool(false))
         XCTAssertEqual(values["viewportHeight"], .float(80))
         XCTAssertEqual(values["scrollHeight"], .float(300))
         XCTAssertEqual(presentedOffset, CGPoint(x: 0, y: 120))
+    }
+
+    func testScrollDragLifecycleAndReleaseVelocityWithoutOffsetChange() {
+        let scroll = WhiskerScrollContainerView(frame: CGRect(x: 0, y: 0, width: 100, height: 80))
+        var events: [[String: WhiskerValue]] = []
+        scroll.installWhiskerEventSink { name, value in
+            if name == "scroll", case let .map(detail) = value { events.append(detail) }
+        }
+        scroll.scrollViewWillBeginDragging(scroll)
+        var target = CGPoint.zero
+        scroll.scrollViewWillEndDragging(scroll, withVelocity: CGPoint(x: 0, y: 0.8), targetContentOffset: &target)
+        scroll.delegate?.scrollViewDidEndDragging?(scroll, willDecelerate: true)
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events.first?["isDragging"], .bool(true))
+        XCTAssertEqual(events.last?["isDragging"], .bool(false))
+        XCTAssertEqual(events.last?["deltaY"], .float(0))
+        XCTAssertEqual(events.last?["velocityY"], .float(800))
+        XCTAssertEqual(events.last?["velocityX"], .float(0))
+        XCTAssertEqual(events.last?["isDragCancelled"], .bool(false))
+        scroll.scrollViewDidScroll(scroll)
+        XCTAssertEqual(events.last?["velocityY"], .float(0), "release velocity must not leak into later events")
+    }
+
+    func testHorizontalScrollReleaseAndProgrammaticDelta() {
+        let scroll = WhiskerScrollContainerView(frame: CGRect(x: 0, y: 0, width: 100, height: 80))
+        scroll.setScrollOrientation("horizontal")
+        scroll.contentView.addSubview(UIView(frame: CGRect(x: 0, y: 0, width: 1000, height: 80)))
+        scroll.layoutIfNeeded()
+        var events: [[String: WhiskerValue]] = []
+        scroll.installWhiskerEventSink { _, value in
+            if case let .map(detail) = value { events.append(detail) }
+        }
+        scroll.scrollToLogicalOffset(200, smooth: false)
+        XCTAssertEqual(events.last?["deltaX"], .float(200))
+        XCTAssertEqual(events.last?["isDragging"], .bool(false))
+        scroll.scrollViewWillBeginDragging(scroll)
+        var target = CGPoint(x: 100, y: 0)
+        scroll.scrollViewWillEndDragging(scroll, withVelocity: CGPoint(x: -1.2, y: 0.4), targetContentOffset: &target)
+        scroll.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        XCTAssertEqual(events.last?["velocityX"], .float(-1200))
+        XCTAssertEqual(events.last?["velocityY"], .float(0))
+        scroll.scrollToLogicalOffset(180, smooth: false)
+        XCTAssertEqual(events.last?["deltaX"], .float(-20))
+        XCTAssertEqual(events.last?["velocityX"], .float(0))
+    }
+
+    func testDisablingScrollCancelsDragOnlyOnceAndClearsReleaseVelocity() {
+        let scroll = WhiskerScrollContainerView(frame: .zero)
+        var events: [[String: WhiskerValue]] = []
+        scroll.installWhiskerEventSink { _, value in
+            if case let .map(detail) = value { events.append(detail) }
+        }
+        scroll.scrollViewWillBeginDragging(scroll)
+        var target = CGPoint.zero
+        scroll.scrollViewWillEndDragging(scroll, withVelocity: CGPoint(x: 0, y: 1), targetContentOffset: &target)
+        scroll.isScrollEnabled = false
+        scroll.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events.last?["isDragCancelled"], .bool(true))
+        XCTAssertEqual(events.last?["isDragging"], .bool(false))
+        XCTAssertEqual(events.last?["velocityY"], .float(0))
+        scroll.isScrollEnabled = true
+        scroll.scrollViewWillBeginDragging(scroll)
+        scroll.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        XCTAssertEqual(events.last?["isDragCancelled"], .bool(false))
+        XCTAssertEqual(events.last?["velocityY"], .float(0))
     }
 
     func testHiddenScrollViewSuppressesOnlyItsNativeIndicators() throws {

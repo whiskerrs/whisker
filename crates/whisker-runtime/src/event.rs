@@ -388,20 +388,24 @@ pub struct ScrollEvent {
 }
 
 /// Scroll geometry carried by a [`ScrollEvent`]'s `detail` map.
+///
+/// Android/iOS also emit when dragging begins or ends without an offset change.
+/// A `true` → `false` transition in `is_dragging` identifies release/cancellation;
+/// release velocity is a one-event snapshot, not a continuous velocity stream.
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct ScrollDetail {
-    /// Horizontal content offset (px).
+    /// Horizontal content offset (logical pixels).
     #[serde(default)]
     pub scroll_left: f64,
-    /// Vertical content offset (px).
+    /// Vertical content offset (logical pixels).
     #[serde(default)]
     pub scroll_top: f64,
-    /// Total scrollable content width (px).
+    /// Total scrollable content width (logical pixels).
     #[serde(default)]
     pub scroll_width: f64,
-    /// Total scrollable content height (px).
+    /// Total scrollable content height (logical pixels).
     #[serde(default)]
     pub scroll_height: f64,
     /// Visible content width in logical pixels.
@@ -410,15 +414,28 @@ pub struct ScrollDetail {
     /// Visible content height in logical pixels.
     #[serde(default)]
     pub viewport_height: f64,
-    /// Horizontal delta since the previous scroll event (px).
+    /// Horizontal delta since the previous scroll event (logical pixels).
     #[serde(default)]
     pub delta_x: f64,
-    /// Vertical delta since the previous scroll event (px).
+    /// Vertical delta since the previous scroll event (logical pixels).
     #[serde(default)]
     pub delta_y: f64,
     /// Whether the user's finger is currently dragging the scroll view.
     #[serde(default)]
     pub is_dragging: bool,
+    /// Content velocity at drag release, in logical pixels per second.
+    /// Positive values increase `scroll_left`. Android/iOS supply this only on
+    /// the event ending a drag; other events and unsupported hosts use zero.
+    #[serde(default)]
+    pub velocity_x: f64,
+    /// Vertical release velocity, with the same contract as [`Self::velocity_x`].
+    /// Positive values increase `scroll_top`.
+    #[serde(default)]
+    pub velocity_y: f64,
+    /// True on an Android/iOS drag cancellation (with zero release velocity).
+    /// False on a normal release and on all other scroll events.
+    #[serde(default)]
+    pub is_drag_cancelled: bool,
 }
 
 // list events (beyond the shared `ScrollEvent` used for
@@ -757,6 +774,39 @@ mod tests {
         assert_eq!(e.detail.scroll_left, 640.0);
         assert_eq!(e.detail.scroll_width, 832.0);
         assert!(e.detail.is_dragging);
+    }
+
+    #[test]
+    fn native_scroll_release_payload_and_legacy_defaults() {
+        let detail: ScrollDetail = WhiskerValue::map([
+            ("scrollLeft", WhiskerValue::Float(120.0)),
+            ("deltaX", WhiskerValue::Float(-20.0)),
+            ("isDragging", WhiskerValue::Bool(false)),
+            ("velocityX", WhiskerValue::Float(-1200.0)),
+            ("velocityY", WhiskerValue::Float(0.0)),
+            ("isDragCancelled", WhiskerValue::Bool(false)),
+        ])
+        .deserialize_into()
+        .unwrap();
+        assert_eq!(detail.scroll_left, 120.0);
+        assert_eq!(detail.delta_x, -20.0);
+        assert_eq!(detail.velocity_x, -1200.0);
+        assert_eq!(detail.velocity_y, 0.0);
+        assert!(!detail.is_dragging);
+        assert!(!detail.is_drag_cancelled);
+        let legacy: ScrollDetail = WhiskerValue::map([("scrollTop", WhiskerValue::Float(40.0))])
+            .deserialize_into()
+            .unwrap();
+        assert_eq!(legacy.scroll_top, 40.0);
+        assert_eq!(legacy.velocity_x, 0.0);
+        assert_eq!(legacy.velocity_y, 0.0);
+        assert!(!legacy.is_drag_cancelled);
+        let cancelled: ScrollDetail =
+            WhiskerValue::map([("isDragCancelled", WhiskerValue::Bool(true))])
+                .deserialize_into()
+                .unwrap();
+        assert!(cancelled.is_drag_cancelled);
+        assert_eq!(cancelled.velocity_x, 0.0);
     }
 
     #[test]

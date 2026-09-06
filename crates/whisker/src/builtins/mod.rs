@@ -536,7 +536,10 @@ impl ScrollView {
 
     /// `scroll` — fired continuously while scrolling. The
     /// [`ScrollEvent`] `detail` carries the current offset, content
-    /// size, per-event delta, and drag state.
+    /// size, per-event delta, and drag state. Android/iOS also notify at drag
+    /// begin/end without offset movement, with release velocity and cancellation
+    /// in [`crate::event::ScrollDetail`]. This allows app-owned paging using instant
+    /// [`crate::ScrollViewHandle::scroll_to`] commands.
     pub fn on_scroll<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
         bind_typed(self.handle, "scroll", BindType::Bind, f);
         self
