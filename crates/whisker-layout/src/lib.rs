@@ -1725,7 +1725,9 @@ mod tests {
         let mut tree = LayoutTree::new();
         let mut root_style = sized(100.5, 40.5);
         root_style.padding.left = ComputedLengthPercentage::new(0.25, 0.0);
-        tree.create_node(root, root_style).unwrap();
+        tree.create_node(root, root_style.clone()).unwrap();
+        assert_eq!(tree.style(root), Some(&root_style));
+        assert_eq!(tree.style(id(99)), None);
 
         let first_style = ComputedLayoutStyle {
             order: 1,
@@ -1863,9 +1865,12 @@ mod tests {
 
         let root = id(1);
         let mut tree = LayoutTree::default();
+        assert_eq!(tree.is_measurable(root), None);
         tree.create_node(root, ComputedLayoutStyle::default())
             .unwrap();
+        assert_eq!(tree.is_measurable(root), Some(false));
         tree.set_measurable(root, true).unwrap();
+        assert_eq!(tree.is_measurable(root), Some(true));
         tree.set_measurable(root, true).unwrap();
 
         let calls = Cell::new(0);

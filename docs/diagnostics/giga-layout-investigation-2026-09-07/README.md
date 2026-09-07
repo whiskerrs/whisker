@@ -18,7 +18,7 @@
 - 元の実装、Text の高さキー正規化だけ、Taffy のキャッシュ保持変更だけ、の3種類を各2周。変更を重ねず、原因を別々に検証した。
 - Perfetto の既存区間に加え、Taffy root 計算、snapshot 収集、copy-on-write の時間、キャッシュ hit/miss、ユニークな計算対象ノード数、dirty ノード数、Host 計測条件・要求数を記録。
 - カウンターはパス単位で集約。テキスト本文は記録せず、ノードID・内容とスタイルのハッシュ・制約のみ記録した。
-- `passes.csv` は実際に計算したパスの全件。`chains.json` は要求がなくなるまでの連続パスをまとめたもの。元のトレースでも、Reader 復帰の該当4パスは同一 tick 内で実行されている。
+- `passes.csv` は実際に計算したパスの全件。`chains.csv` は要求がなくなるまでの連続パスをまとめたもの。元のトレースでも、Reader 復帰の該当4パスは同一 tick 内で実行されている。
 - 計測自体にコストがある。特にキャッシュ参照ごとのカウンターと集合への挿入、パス終了後のファイル出力が加わるため、時間は製品ビルドの性能保証ではない。比較の強い根拠は2回で一致した仕事量の差。
 - CPU 内訳には前回の simpleperf 結果も使用した。今回の実験 APK で新たな CPU サンプリングは行っていない。
 
@@ -85,6 +85,6 @@ Android の `platforms/android/runtime/src/main/kotlin/rs/whisker/runtime/measur
 
 - 生トレース・制約ログ・APK・実験スクリプト：`/tmp/giga-layout-investigation`。
 - 再現操作：`python3 /tmp/giga-layout-investigation/round.py <label>`。Homeを起点に5操作を実行し、PID維持とフレーム発生を検査する。診断用APKと同ディレクトリの補助スクリプトを前提とする。
-- 集計：`passes.csv`、`chains.json`。3条件×2周×5操作、計30キャプチャ。
+- 集計：`passes.csv`、`chains.csv`。3条件×2周×5操作、計30キャプチャ。
 - 実験変更は `/tmp` の依存コピーだけ。Whisker の製品ソースに追加していない。
 - GIGA の manifest / lockfile と一時 SDK 参照を復元し、計測ログを端末から削除。エミュレーターには調査前の計測なし APK を再インストールし、Homeの表示を確認済み。アプリデータは保持した。
