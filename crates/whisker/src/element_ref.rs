@@ -99,17 +99,20 @@ impl ElementRef {
     }
 
     /// Currently-bound `Element` handle, or `None` if the ref hasn't
-    /// seen a mount yet (or has been cleared by unmount). Non-reactive
+    /// seen a mount yet, has unmounted, or its owner is disposed. Non-reactive
     /// (uses `get_untracked()`), so calling from inside an
     /// `effect(...)` doesn't subscribe the effect to the binding.
     pub fn element(&self) -> Option<Element> {
+        if self.inner.is_disposed() {
+            return None;
+        }
         self.inner.get_untracked()
     }
 
     /// `true` iff bound to a live element right now. Non-reactive.
     /// For reactive observation, use [`bound`](Self::bound).
     pub fn is_bound(&self) -> bool {
-        self.inner.get_untracked().is_some()
+        self.element().is_some()
     }
 
     /// Reactive read of "is the underlying element mounted right now?"
@@ -136,8 +139,9 @@ impl ElementRef {
     /// The command is schema-validated and ordered with the next frame. A
     /// successful return means it was enqueued; Host execution happens later
     /// and cannot synchronously return a value.
+    /// Returns [`RefError::NotBound`] after unmount or owner disposal.
     pub fn command(&self, command: &str, parameters: WhiskerValue) -> Result<(), RefError> {
-        let Some(element) = self.inner.get_untracked() else {
+        let Some(element) = self.element() else {
             return Err(RefError::NotBound);
         };
         if !parameters.is_data() {
@@ -184,6 +188,7 @@ impl ElementRef {
     /// mounted in the same owner) `try_set` no-ops gracefully.
     #[doc(hidden)]
     pub fn __unbind(&self) {
+        crate::focus::note_blurred(*self);
         let _ = self.inner.try_set(None);
     }
 }
@@ -215,7 +220,7 @@ impl Default for ElementRef {
 impl std::fmt::Debug for ElementRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ElementRef")
-            .field("element", &self.inner.get_untracked())
+            .field("element", &self.element())
             .finish()
     }
 }

@@ -122,3 +122,36 @@ pub(crate) fn on_page_change_confirm(gesture: bool) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whisker::Owner;
+    use whisker::runtime::view::Element;
+    use whisker::runtime::{RuntimeContext, RuntimeWakeHandle};
+
+    #[test]
+    fn gesture_completion_ignores_a_disposed_input() {
+        for commit in [false, true] {
+            let runtime = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+            runtime.enter(|| {
+                let owner = Owner::new(None);
+                let input = owner.with(ElementRef::new);
+                input.__bind(Element::from_raw(42));
+                whisker::focus::note_focused(input);
+                on_page_change_start();
+                owner.dispose();
+                STARTED_AT.with(|s| s.set(Some(Instant::now() - KEYBOARD_FLASH_GUARD)));
+
+                if commit {
+                    on_page_change_confirm(true);
+                } else {
+                    on_page_change_cancel();
+                }
+
+                assert!(REMEMBERED.with(Cell::get).is_none());
+                assert!(STARTED_AT.with(Cell::get).is_none());
+            });
+        }
+    }
+}

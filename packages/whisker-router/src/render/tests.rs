@@ -2184,3 +2184,23 @@ mod replace_repro {
         });
     }
 }
+
+#[test]
+fn navigation_after_focused_form_disposal_reaches_home() {
+    with_runtime(|| {
+        let router = simple_handle();
+        router.navigate("/detail/form").unwrap();
+        let form = Owner::new(None);
+        let input = form.with(whisker::ElementRef::new);
+        input.__bind(whisker::runtime::view::Element::from_raw(42));
+        form.with(|| whisker::on_cleanup(move || input.__unbind()));
+        whisker::focus::note_focused(input);
+
+        router.navigate("/detail/connections").unwrap();
+        form.dispose();
+        router.navigate("/").unwrap();
+
+        assert_eq!(router.state().get().current().location.pathname, "/");
+        assert_eq!(whisker::focus::focused_element(), None);
+    });
+}
