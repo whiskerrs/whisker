@@ -288,6 +288,22 @@ impl MeasurementCoordinator {
         self.specs.keys().copied().collect()
     }
 
+    pub(crate) fn environment_epoch(&self) -> Option<u64> {
+        self.environment_epoch
+    }
+
+    pub(crate) fn matches_spec(
+        &self,
+        node: NodeId,
+        element_type: ElementTypeId,
+        spec: Option<&MeasurementSpec>,
+    ) -> bool {
+        self.specs
+            .get(&node)
+            .map(|state| (state.element_type, &state.spec))
+            == spec.map(|spec| (element_type, spec))
+    }
+
     pub(crate) fn set_spec(
         &mut self,
         node: NodeId,
@@ -307,12 +323,7 @@ impl MeasurementCoordinator {
         {
             return Err(MeasurementError::InvalidPlaceholder { node });
         }
-        if self
-            .specs
-            .get(&node)
-            .map(|state| (&state.element_type, &state.spec))
-            == spec.as_ref().map(|spec| (&element_type, spec))
-        {
+        if self.matches_spec(node, element_type, spec.as_ref()) {
             return Ok(false);
         }
 
@@ -399,14 +410,49 @@ impl MeasurementCoordinator {
         &mut self,
         responses: &[MeasurementResponse],
     ) -> Result<MeasurementApply, MeasurementError> {
-        let mut next = self.clone();
+        let mut consumed = BTreeSet::new();
+        let mut pending_ids = BTreeSet::new();
+        let mut validated = Vec::with_capacity(responses.len());
         let mut apply = MeasurementApply::default();
-        let mut invalidated = BTreeSet::new();
         for response in responses {
-            next.apply_one(response, &mut apply, &mut invalidated)?;
+            let key = response.key();
+            let current = self.outstanding.get(&key).is_some_and(|outstanding| {
+                outstanding.request.environment_epoch == response.environment_epoch()
+                    && self.environment_epoch == Some(response.environment_epoch())
+            });
+            if !current || !consumed.insert(key) {
+                apply.stale += 1;
+                continue;
+            }
+            match response {
+                MeasurementResponse::Ready { metrics, .. } => {
+                    self.validate_metrics(key, metrics)?
+                }
+                MeasurementResponse::Pending {
+                    request_id,
+                    provisional,
+                    ..
+                } => {
+                    if self.pending.contains_key(request_id) || !pending_ids.insert(*request_id) {
+                        return Err(MeasurementError::DuplicateRequestId {
+                            request_id: *request_id,
+                        });
+                    }
+                    if let Some(metrics) = provisional {
+                        self.validate_metrics(key, metrics)?;
+                    }
+                }
+                MeasurementResponse::Unsupported { .. } => {}
+            }
+            validated.push(response);
+        }
+
+        let mut invalidated = BTreeSet::new();
+        for response in validated {
+            self.commit_response(response, &mut invalidated);
+            apply.applied += 1;
         }
         apply.invalidated_nodes = invalidated.into_iter().collect();
-        *self = next;
         Ok(apply)
     }
 
@@ -449,46 +495,16 @@ impl MeasurementCoordinator {
         })
     }
 
-    fn apply_one(
+    fn commit_response(
         &mut self,
         response: &MeasurementResponse,
-        apply: &mut MeasurementApply,
         invalidated: &mut BTreeSet<NodeId>,
-    ) -> Result<(), MeasurementError> {
+    ) {
         let key = response.key();
-        let Some(outstanding) = self.outstanding.get(&key).cloned() else {
-            apply.stale += 1;
-            return Ok(());
-        };
-        if outstanding.request.environment_epoch != response.environment_epoch()
-            || self.environment_epoch != Some(response.environment_epoch())
-        {
-            apply.stale += 1;
-            return Ok(());
-        }
-
-        match response {
-            MeasurementResponse::Ready { metrics, .. } => {
-                self.validate_metrics(key, metrics)?;
-            }
-            MeasurementResponse::Pending {
-                request_id,
-                provisional,
-                ..
-            } => {
-                if self.pending.contains_key(request_id) {
-                    return Err(MeasurementError::DuplicateRequestId {
-                        request_id: *request_id,
-                    });
-                }
-                if let Some(metrics) = provisional {
-                    self.validate_metrics(key, metrics)?;
-                }
-            }
-            MeasurementResponse::Unsupported { .. } => {}
-        }
-
-        self.outstanding.remove(&key);
+        let outstanding = self
+            .outstanding
+            .remove(&key)
+            .expect("validated responses consume each outstanding request once");
         self.outstanding_by_cache.remove(&outstanding.cache_key);
         invalidated.extend(&outstanding.consumers);
         let state = match response {
@@ -524,8 +540,6 @@ impl MeasurementCoordinator {
                 consumers: outstanding.consumers,
             },
         );
-        apply.applied += 1;
-        Ok(())
     }
 
     fn validate_metrics(
@@ -643,6 +657,14 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
                 .error
                 .get_or_insert(MeasurementError::MissingSpec { node });
             return LayoutSize::default();
+        };
+        let constraints = if state.spec.payload.kind() == MeasurementKind::Text {
+            MeasureConstraints {
+                available_space: [constraints.available_space[0], AvailableSpace::MaxContent],
+                ..constraints
+            }
+        } else {
+            constraints
         };
         let epoch = self.environment_epoch.unwrap_or(0);
         let cache_key = Self::cache_key(&state, constraints, epoch);
@@ -830,6 +852,108 @@ mod tests {
                 ..LayoutRect::default()
             }),
             prepared_content: PreparedContentId::new(3),
+        }
+    }
+
+    #[test]
+    fn text_measurement_shares_intrinsic_height_constraints() {
+        let mut coordinator = MeasurementCoordinator::default();
+        coordinator.set_environment(1);
+        let node = NodeId::new(1).unwrap();
+        coordinator
+            .set_spec(
+                node,
+                ElementTypeId::new(1).unwrap(),
+                Some(spec(MeasurementKind::Text, PendingMeasurePolicy::Block)),
+            )
+            .unwrap();
+        coordinator.begin_pass();
+        for height in [
+            AvailableSpace::MinContent,
+            AvailableSpace::MaxContent,
+            AvailableSpace::Definite(16.0),
+            AvailableSpace::Definite(20.0),
+        ] {
+            coordinator.measure(
+                node,
+                MeasureConstraints {
+                    known_dimensions: [Some(100.0), None],
+                    available_space: [AvailableSpace::Definite(100.0), height],
+                },
+            );
+        }
+        let pass = coordinator.finish_pass().unwrap();
+        assert_eq!(pass.requests.len(), 1);
+        assert_eq!(
+            pass.requests[0].constraints.available_space[1],
+            AvailableSpace::MaxContent
+        );
+    }
+
+    #[test]
+    fn text_height_reuse_preserves_width_known_height_and_other_measurement_kinds() {
+        let mut coordinator = MeasurementCoordinator::default();
+        coordinator.set_environment(1);
+        for (index, kind) in [
+            MeasurementKind::Text,
+            MeasurementKind::ReplacedContent,
+            MeasurementKind::NativeControl,
+            MeasurementKind::EmbeddedSurface,
+            MeasurementKind::Custom { version: 1 },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let node = node(index as u64 + 1);
+            coordinator
+                .set_spec(
+                    node,
+                    element(),
+                    Some(spec(kind, PendingMeasurePolicy::Block)),
+                )
+                .unwrap();
+            coordinator.begin_pass();
+            for width in [100.0, 101.0] {
+                for known_height in [None, Some(20.0)] {
+                    for height in [AvailableSpace::MaxContent, AvailableSpace::Definite(16.0)] {
+                        coordinator.measure(
+                            node,
+                            MeasureConstraints {
+                                known_dimensions: [Some(width), known_height],
+                                available_space: [AvailableSpace::Definite(width), height],
+                            },
+                        );
+                    }
+                }
+            }
+            let pass = coordinator.finish_pass().unwrap();
+            assert_eq!(
+                pass.requests.len(),
+                if kind == MeasurementKind::Text { 4 } else { 8 }
+            );
+            let responses = pass
+                .requests
+                .iter()
+                .map(|request| MeasurementResponse::Ready {
+                    key: request.key,
+                    environment_epoch: 1,
+                    metrics: metrics(100.0, 20.0),
+                })
+                .collect::<Vec<_>>();
+            coordinator.apply_batch(&responses).unwrap();
+            coordinator.begin_pass();
+            let size = coordinator.measure(
+                node,
+                MeasureConstraints {
+                    known_dimensions: [Some(100.0), None],
+                    available_space: [
+                        AvailableSpace::Definite(100.0),
+                        AvailableSpace::Definite(16.0),
+                    ],
+                },
+            );
+            assert_eq!(size, LayoutSize::new(100.0, 20.0));
+            assert!(coordinator.finish_pass().unwrap().requests.is_empty());
         }
     }
 
@@ -1128,6 +1252,55 @@ mod tests {
         );
         assert!(coordinator.cache.is_empty());
         assert_eq!(coordinator.outstanding.len(), 2);
+    }
+
+    #[test]
+    fn batches_validate_before_commit_and_preserve_response_order() {
+        let mut coordinator = MeasurementCoordinator::default();
+        coordinator.set_environment(1);
+        coordinator
+            .set_spec(
+                node(1),
+                element(),
+                Some(spec(
+                    MeasurementKind::Custom { version: 1 },
+                    PendingMeasurePolicy::Block,
+                )),
+            )
+            .unwrap();
+        coordinator.begin_pass();
+        coordinator.measure(node(1), constraints(10.0));
+        coordinator.measure(node(1), constraints(20.0));
+        let requests = coordinator.finish_pass().unwrap().requests;
+        let ready = |key, width| MeasurementResponse::Ready {
+            key,
+            environment_epoch: 1,
+            metrics: metrics(width, 1.0),
+        };
+        let first = ready(requests[0].key, 10.0);
+        let invalid = ready(requests[1].key, -1.0);
+        assert!(coordinator.apply_batch(&[first.clone(), invalid]).is_err());
+        assert_eq!(coordinator.outstanding.len(), 2);
+        assert!(coordinator.cache.is_empty());
+        assert!(coordinator.last_ready(node(1)).is_none());
+
+        let stale_epoch = MeasurementResponse::Ready {
+            key: requests[0].key,
+            environment_epoch: 0,
+            metrics: metrics(-1.0, 1.0),
+        };
+        let applied = coordinator
+            .apply_batch(&[
+                stale_epoch,
+                first,
+                ready(requests[0].key, -1.0),
+                ready(requests[1].key, 20.0),
+            ])
+            .unwrap();
+        assert_eq!(applied.applied(), 2);
+        assert_eq!(applied.stale(), 2);
+        assert_eq!(applied.invalidated_nodes(), &[node(1)]);
+        assert_eq!(coordinator.last_ready(node(1)), Some(&metrics(20.0, 1.0)));
     }
 
     #[test]

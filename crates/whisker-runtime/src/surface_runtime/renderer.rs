@@ -166,31 +166,50 @@ impl DynRenderer for SurfaceRuntime {
             }
             let previous = entry.specified.clone();
             let batched = state.mutation_batch.is_some();
+            let captures_descendants = state.style_changes_inheritance(handle, style)?;
             let capture_change = batched
                 && !state.mutation_batch.as_ref().is_some_and(|batch| {
-                    batch
-                        .style_changes
-                        .iter()
-                        .any(|(element, _)| *element == handle)
+                    batch.style_changes.iter().any(|(element, change)| {
+                        *element == handle && (!captures_descendants || change.captures_descendants)
+                    })
                 });
             let snapshots = (!batched || capture_change)
-                .then(|| state.motion_snapshots(handle))
+                .then(|| state.motion_snapshots(handle, captures_descendants))
                 .transpose()?;
             state.element_mut(handle)?.specified = style.clone();
             if batched {
                 if let Some(snapshots) = snapshots {
-                    state
+                    let changes = &mut state
                         .mutation_batch
                         .as_mut()
                         .expect("a batched style change keeps its transaction")
-                        .style_changes
-                        .push((
+                        .style_changes;
+                    if let Some((_, change)) =
+                        changes.iter_mut().find(|(element, _)| *element == handle)
+                    {
+                        // A later write may introduce an inherited change.
+                        // Expand the capture without replacing earlier targets.
+                        let captured = change
+                            .snapshots
+                            .iter()
+                            .map(|snapshot| snapshot.element)
+                            .collect::<std::collections::HashSet<_>>();
+                        change.snapshots.extend(
+                            snapshots
+                                .into_iter()
+                                .filter(|snapshot| !captured.contains(&snapshot.element)),
+                        );
+                        change.captures_descendants |= captures_descendants;
+                    } else {
+                        changes.push((
                             handle,
                             PendingStyleChange {
                                 previous,
                                 snapshots,
+                                captures_descendants,
                             },
                         ));
+                    }
                 }
                 state.mark_subtree_dirty(handle);
                 return Ok(());

@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 use whisker_protocol::{
     Accessibility, BackgroundLayer, BoxClip, BoxPaint, CommandId, Cursor, ElementTypeId,
@@ -311,7 +312,7 @@ pub struct Scene {
     next_node_id: u64,
     next_frame_id: u64,
     needs_snapshot: bool,
-    nodes: BTreeMap<NodeId, SceneNode>,
+    nodes: BTreeMap<NodeId, Arc<SceneNode>>,
     pointer_captures: BTreeMap<PointerId, NodeId>,
     journal: ChangeJournal,
     pending: Option<FramePacket>,
@@ -362,7 +363,7 @@ impl Scene {
 
     /// Returns a retained node when it is live.
     pub fn node(&self, node: NodeId) -> Option<&SceneNode> {
-        self.nodes.get(&node)
+        self.nodes.get(&node).map(Arc::as_ref)
     }
 
     /// Returns the node currently retaining one pointer capture.
@@ -390,7 +391,8 @@ impl Scene {
         self.ensure_mutable()?;
         let node = NodeId::new(self.next_node_id).ok_or(SceneError::NodeIdExhausted)?;
         self.next_node_id = self.next_node_id.checked_add(1).unwrap_or(0);
-        self.nodes.insert(node, SceneNode::new(element_type));
+        self.nodes
+            .insert(node, Arc::new(SceneNode::new(element_type)));
         self.journal
             .push_barrier(Operation::CreateNode { node, element_type });
         Ok(node)
@@ -403,6 +405,7 @@ impl Scene {
         if let Some(parent) = state.parent {
             self.nodes
                 .get_mut(&parent)
+                .map(Arc::make_mut)
                 .expect("attached parent remains live")
                 .children
                 .retain(|candidate| *candidate != node);
@@ -413,7 +416,7 @@ impl Scene {
                 .nodes
                 .remove(&current)
                 .expect("retained subtree is internally complete");
-            pending.extend(removed.children);
+            pending.extend(removed.children.iter().copied());
         }
         self.pointer_captures
             .retain(|_, target| self.nodes.contains_key(target));
@@ -450,11 +453,13 @@ impl Scene {
         }
         self.nodes
             .get_mut(&parent)
+            .map(Arc::make_mut)
             .expect("parent checked above")
             .children
             .insert(index, child);
         self.nodes
             .get_mut(&child)
+            .map(Arc::make_mut)
             .expect("child checked above")
             .parent = Some(parent);
         self.journal.push_barrier(Operation::InsertChild {
@@ -472,6 +477,7 @@ impl Scene {
         let children = &mut self
             .nodes
             .get_mut(&parent)
+            .map(Arc::make_mut)
             .expect("parent checked above")
             .children;
         let position = children
@@ -481,6 +487,7 @@ impl Scene {
         children.remove(position);
         self.nodes
             .get_mut(&child)
+            .map(Arc::make_mut)
             .expect("child checked above")
             .parent = None;
         self.journal
@@ -500,6 +507,7 @@ impl Scene {
         let children = &mut self
             .nodes
             .get_mut(&parent)
+            .map(Arc::make_mut)
             .expect("parent checked above")
             .children;
         let old_index = children
@@ -541,6 +549,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .layout = Some(geometry);
         self.journal.push_coalesced(
@@ -561,6 +570,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .box_paint = Some(paint.clone());
         self.journal.push_coalesced(
@@ -586,6 +596,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .background_layers = layers.clone();
         self.journal.push_coalesced(
@@ -610,6 +621,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .visual_effects = effects.clone();
         self.journal.push_coalesced(
@@ -625,7 +637,11 @@ impl Scene {
         if self.require_node(node)?.clip == Some(clip) {
             return Ok(());
         }
-        self.nodes.get_mut(&node).expect("node checked above").clip = Some(clip);
+        self.nodes
+            .get_mut(&node)
+            .map(Arc::make_mut)
+            .expect("node checked above")
+            .clip = Some(clip);
         self.journal
             .push_coalesced(DirtySlot::Clip(node), Operation::SetClip { node, clip });
         Ok(())
@@ -642,6 +658,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .transform = Some(transform);
         self.journal.push_coalesced(
@@ -662,6 +679,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .opacity = Some(opacity);
         self.journal.push_coalesced(
@@ -683,6 +701,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .visibility = Some(visibility);
         self.journal.push_coalesced(
@@ -700,6 +719,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .z_order = Some(z_order);
         self.journal.push_coalesced(
@@ -718,7 +738,11 @@ impl Scene {
         if self.require_node(node)?.text.as_ref() == Some(&content) {
             return Ok(());
         }
-        self.nodes.get_mut(&node).expect("node checked above").text = Some(content.clone());
+        self.nodes
+            .get_mut(&node)
+            .map(Arc::make_mut)
+            .expect("node checked above")
+            .text = Some(content.clone());
         self.journal
             .push_coalesced(DirtySlot::Text(node), Operation::SetText { node, content });
         Ok(())
@@ -740,6 +764,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .text_style = Some(style.clone());
         self.journal.push_coalesced(
@@ -762,6 +787,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .properties
             .insert(property, value.clone());
@@ -782,6 +808,7 @@ impl Scene {
         if self
             .nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .ok_or(SceneError::UnknownNode { node })?
             .properties
             .remove(&property)
@@ -804,6 +831,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .event_mask = Some(event_mask);
         self.journal.push_coalesced(
@@ -825,6 +853,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .accessibility = Some(accessibility.clone());
         self.journal.push_coalesced(
@@ -849,6 +878,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .hit_test = Some(behavior);
         self.journal.push_coalesced(
@@ -874,6 +904,7 @@ impl Scene {
         self.require_node(node)?;
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .host_scroll_offset = offset;
         Ok(())
@@ -887,6 +918,7 @@ impl Scene {
         }
         self.nodes
             .get_mut(&node)
+            .map(Arc::make_mut)
             .expect("node checked above")
             .cursor = Some(cursor.clone());
         self.journal.push_coalesced(
@@ -1047,7 +1079,7 @@ impl Scene {
         // Reset the Rust mirror at the same recovery boundary to keep hit
         // testing aligned with the pixels the Host presents.
         for node in self.nodes.values_mut() {
-            node.host_scroll_offset = [0.0; 2];
+            Arc::make_mut(node).host_scroll_offset = [0.0; 2];
         }
         if !self.needs_snapshot {
             self.scene_epoch = self
@@ -1070,6 +1102,7 @@ impl Scene {
     fn require_node(&self, node: NodeId) -> Result<&SceneNode, SceneError> {
         self.nodes
             .get(&node)
+            .map(Arc::as_ref)
             .ok_or(SceneError::UnknownNode { node })
     }
 

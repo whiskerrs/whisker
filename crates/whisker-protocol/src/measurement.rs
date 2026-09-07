@@ -479,6 +479,11 @@ pub struct MeasureConstraints {
     /// Dimensions already fixed by the layout algorithm.
     pub known_dimensions: [Option<f32>; 2],
     /// Remaining width and height availability.
+    ///
+    /// Text measures its intrinsic block extent: available height does not
+    /// constrain shaping or clipping. Text requests use `MaxContent` on this
+    /// axis; `known_dimensions[1]` and the payload's `max_lines` still apply.
+    /// Other measurement kinds may depend on both available dimensions.
     pub available_space: [AvailableSpace; 2],
 }
 

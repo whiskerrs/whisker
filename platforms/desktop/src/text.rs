@@ -186,12 +186,7 @@ impl NativeTextHost {
         };
         let width = request.constraints.known_dimensions[0].or(available_width);
         let line_limit_height = payload.max_lines.map(|lines| lines as f32 * line_height);
-        let available_height = match request.constraints.available_space[1] {
-            AvailableSpace::Definite(value) => Some(value.max(0.0)),
-            AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
-        };
         let height = request.constraints.known_dimensions[1]
-            .or(available_height)
             .map(|value| line_limit_height.map_or(value, |limit| value.min(limit)))
             .or(line_limit_height);
         let display_text = if payload.word_break == MeasureTextWordBreak::KeepAll {
@@ -452,6 +447,45 @@ mod tests {
         assert!(metrics.last_baseline.is_some());
         let prepared = metrics.prepared_content.unwrap();
         assert!(host.prepared.contains_key(&prepared));
+    }
+
+    #[test]
+    fn intrinsic_text_height_ignores_available_height_and_honors_explicit_limits() {
+        let payload = TextMeasurePayload {
+            text: "First line\nSecond line\nThird line".into(),
+            style: whisker_protocol::TextMeasureStyle::default(),
+            locale: None,
+            direction: whisker_protocol::MeasureTextDirection::Auto,
+            alignment: whisker_protocol::MeasureTextAlignment::Start,
+            indent: Default::default(),
+            wrap: MeasureTextWrap::Wrap,
+            word_break: Default::default(),
+            max_lines: None,
+            overflow: MeasureTextOverflow::Clip,
+        };
+        let mut host = NativeTextHost::new(registry());
+        let mut request = request(7, MeasurementPayload::Text(payload.clone()));
+        request.constraints.known_dimensions = [Some(300.0), None];
+        request.constraints.available_space =
+            [AvailableSpace::Definite(300.0), AvailableSpace::MaxContent];
+        let (_, expected) = host.prepare_text(&payload, &request);
+        assert!(expected.size.height > payload.style.font_size * 2.0);
+        for height in [
+            AvailableSpace::MinContent,
+            AvailableSpace::Definite(0.0),
+            AvailableSpace::Definite(1.0),
+            AvailableSpace::Definite(1000.0),
+        ] {
+            request.constraints.available_space[1] = height;
+            let (_, measured) = host.prepare_text(&payload, &request);
+            assert_eq!(measured, expected);
+        }
+        request.constraints.known_dimensions[1] = Some(10.0);
+        assert_eq!(host.prepare_text(&payload, &request).1.size.height, 10.0);
+        request.constraints.known_dimensions[1] = None;
+        let mut limited = payload;
+        limited.max_lines = Some(1);
+        assert!(host.prepare_text(&limited, &request).1.size.height < expected.size.height);
     }
 
     #[test]

@@ -406,6 +406,10 @@ impl SurfaceRuntime {
                 mutation_batch: None,
                 #[cfg(test)]
                 surface_snapshot_count: 0,
+                #[cfg(test)]
+                style_resolution_count: std::cell::Cell::new(0),
+                #[cfg(test)]
+                motion_snapshot_count: std::cell::Cell::new(0),
             })),
         }
     }
@@ -757,6 +761,9 @@ impl SurfaceRuntime {
             (layout, notifications, batch_end_notifications)
         };
         if !notifications.is_empty() || !batch_end_notifications.is_empty() {
+            // List observers can mount several rows and resize their spacers.
+            // Commit those mutations together, as we do for reactive updates.
+            self.begin_mutation_batch();
             with_installed_renderer(self.renderer(), || {
                 for (callback, observation) in notifications {
                     callback(observation);
@@ -765,6 +772,8 @@ impl SurfaceRuntime {
                     callback();
                 }
             });
+            self.finish_mutation_batch()
+                .map_err(RuntimeLayoutError::Binding)?;
         }
         Ok(layout)
     }
@@ -951,6 +960,10 @@ struct BindingState {
     mutation_batch: Option<MutationBatch>,
     #[cfg(test)]
     surface_snapshot_count: usize,
+    #[cfg(test)]
+    style_resolution_count: std::cell::Cell<usize>,
+    #[cfg(test)]
+    motion_snapshot_count: std::cell::Cell<usize>,
 }
 
 struct MutationBatch {
@@ -967,6 +980,7 @@ struct MutationBatch {
 struct PendingStyleChange {
     previous: SpecifiedStyle,
     snapshots: Vec<MotionSnapshot>,
+    captures_descendants: bool,
 }
 
 struct EnvironmentStyleUpdate {
@@ -1024,8 +1038,7 @@ impl BindingState {
             .take()
             .expect("the outermost mutation batch remains installed");
         let recorded_error = self.error.take();
-        let roots = self.minimal_dirty_roots(batch.dirty_elements);
-        if let Err(error) = self.apply_subtrees_now(&roots) {
+        if let Err(error) = self.apply_subtrees_now(&batch.dirty_elements) {
             Self::restore_style_changes(&mut self.elements, batch.style_changes);
             return Err(error);
         }
@@ -1472,8 +1485,21 @@ impl BindingState {
     }
 
     fn apply_subtrees_now(&mut self, elements: &[Element]) -> Result<(), RuntimeBindingError> {
-        if elements.is_empty() {
+        let roots = self.minimal_dirty_roots(elements.to_vec());
+        if roots.is_empty() {
             return Ok(());
+        }
+        // Keep paths to explicitly changed descendants even when an ancestor
+        // is also dirty but its inherited style is unchanged.
+        let mut dirty_paths = HashSet::new();
+        for element in elements {
+            let mut current = Some(*element);
+            while let Some(element) = current {
+                if !dirty_paths.insert(element) {
+                    break;
+                }
+                current = self.elements.get(&element).and_then(|entry| entry.parent);
+            }
         }
         #[cfg(test)]
         {
@@ -1486,7 +1512,7 @@ impl BindingState {
         let externally_used = self.externally_used_resource_ids();
         let mut updates = Vec::new();
         let mut resource_commands = Vec::new();
-        for element in elements {
+        for element in &roots {
             let parent_style = self
                 .element(*element)?
                 .parent
@@ -1501,6 +1527,7 @@ impl BindingState {
                 &externally_used,
                 &mut updates,
                 &mut resource_commands,
+                &dirty_paths,
             )?;
         }
         Self::reapply_active_transitions(&self.elements, &mut surface)?;
@@ -1524,11 +1551,15 @@ impl BindingState {
         externally_used: &HashSet<ResourceId>,
         updates: &mut Vec<(Element, ResolvedNodeStyle)>,
         resource_commands: &mut Vec<ResourceCommand>,
+        dirty_paths: &HashSet<Element>,
     ) -> Result<(), RuntimeBindingError> {
         let entry = self.element(element)?;
         let Some(node) = entry.node else {
             return Ok(());
         };
+        #[cfg(test)]
+        self.style_resolution_count
+            .set(self.style_resolution_count.get() + 1);
         let resolved = resolve_style(&entry.effective_specified(), parent_style, self.environment)?;
         surface.update_computed_style(node, resolved.computed())?;
         if entry.kind.receives_text_style() {
@@ -1545,18 +1576,23 @@ impl BindingState {
         if let Some(text) = &entry.text {
             surface.set_plain_text(node, text, resolved.computed())?;
         }
-        let children = entry.children.clone();
+        let inherited_changed = entry.resolved.as_ref().is_none_or(|previous| {
+            previous.inherited_for_children() != resolved.inherited_for_children()
+        });
         updates.push((element, resolved.clone()));
-        for child in children {
-            if self.element(child)?.node.is_some() {
+        for child in &entry.children {
+            if (inherited_changed || dirty_paths.contains(child))
+                && self.element(*child)?.node.is_some()
+            {
                 self.prepare_subtree(
-                    child,
+                    *child,
                     Some(resolved.inherited_for_children()),
                     surface,
                     background_resources,
                     externally_used,
                     updates,
                     resource_commands,
+                    dirty_paths,
                 )?;
             }
         }
@@ -1590,10 +1626,48 @@ impl BindingState {
         Ok(elements)
     }
 
-    fn motion_snapshots(&self, root: Element) -> Result<Vec<MotionSnapshot>, RuntimeBindingError> {
-        self.element_subtree(root)?
+    fn style_changes_inheritance(
+        &self,
+        root: Element,
+        style: &SpecifiedStyle,
+    ) -> Result<bool, RuntimeBindingError> {
+        let entry = self.element(root)?;
+        let parent_style = entry
+            .parent
+            .and_then(|parent| self.elements.get(&parent))
+            .and_then(|parent| parent.resolved.as_ref())
+            .map(ResolvedNodeStyle::inherited_for_children);
+        let next = resolve_style(
+            &entry.base_specified.clone().merge(style.clone()),
+            parent_style,
+            self.environment,
+        );
+        let inherited_unchanged =
+            next.as_ref()
+                .ok()
+                .zip(entry.resolved.as_ref())
+                .is_some_and(|(next, previous)| {
+                    next.inherited_for_children() == previous.inherited_for_children()
+                });
+        Ok(!inherited_unchanged)
+    }
+
+    fn motion_snapshots(
+        &self,
+        root: Element,
+        include_descendants: bool,
+    ) -> Result<Vec<MotionSnapshot>, RuntimeBindingError> {
+        let elements = if include_descendants {
+            self.element_subtree(root)?
+        } else {
+            vec![root]
+        };
+        elements
             .into_iter()
             .map(|element| {
+                #[cfg(test)]
+                self.motion_snapshot_count
+                    .set(self.motion_snapshot_count.get() + 1);
                 let entry = self.element(element)?;
                 let resolved = entry
                     .resolved
@@ -1996,6 +2070,282 @@ mod layout_observer_tests {
             )
             .push(StyleProperty::Width, px(width))
             .push(StyleProperty::Height, px(height))
+    }
+
+    #[test]
+    fn layout_notifications_commit_row_and_spacer_updates_together() {
+        crate::reactive::__reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(94).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        let rows = Rc::new(RefCell::new(Vec::new()));
+        runtime
+            .mount({
+                let rows = Rc::clone(&rows);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    let spacer = create_element(ElementTag::View);
+                    append_child(root, spacer);
+                    let resized = Rc::new(Cell::new(false));
+                    observe_layout(
+                        root,
+                        Box::new(move |_| {
+                            set_specified_style(spacer, &absolute_box(320.0, 48_000.0));
+                        }),
+                    );
+                    observe_layout_batch_end(
+                        root,
+                        Box::new(move || {
+                            if resized.replace(true) {
+                                return;
+                            }
+                            for _ in 0..24 {
+                                let row = create_element(ElementTag::View);
+                                set_specified_style(row, &absolute_box(320.0, 60.0));
+                                append_child(root, row);
+                                rows.borrow_mut().push(row);
+                            }
+                            set_specified_style(spacer, &absolute_box(320.0, 46_560.0));
+                        }),
+                    );
+                    root
+                }
+            })
+            .unwrap();
+
+        surface.reset_surface_snapshot_count();
+        surface
+            .drive_layout(
+                LayoutSize::new(320.0, 480.0),
+                1,
+                &mut NoMeasurements,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+        assert_eq!(rows.borrow().len(), 24);
+        assert_eq!(surface.surface_snapshot_count(), 1);
+        surface
+            .drive_layout(
+                LayoutSize::new(320.0, 480.0),
+                1,
+                &mut NoMeasurements,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+        let state = surface.state.borrow();
+        for row in rows.borrow().iter() {
+            let node = state.element(*row).unwrap().node.unwrap();
+            assert_eq!(
+                state
+                    .surface
+                    .last_layout()
+                    .unwrap()
+                    .get(node)
+                    .unwrap()
+                    .border_box
+                    .height,
+                60.0
+            );
+        }
+    }
+
+    #[test]
+    fn failed_layout_notification_commit_restores_styles_and_closes_batch() {
+        crate::reactive::__reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(96).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        let handle = Rc::new(Cell::new(None));
+        runtime
+            .mount({
+                let handle = Rc::clone(&handle);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    set_specified_style(root, &absolute_box(20.0, 20.0));
+                    handle.set(Some(root));
+                    let first = Cell::new(true);
+                    observe_layout(
+                        root,
+                        Box::new(move |_| {
+                            if first.replace(false) {
+                                set_specified_style(
+                                    root,
+                                    &absolute_box(30.0, 30.0).push(
+                                        StyleProperty::Opacity,
+                                        StyleValue::Number(StyleNumber::new(f32::NAN)),
+                                    ),
+                                );
+                            }
+                        }),
+                    );
+                    root
+                }
+            })
+            .unwrap();
+        let result = surface.drive_layout(
+            LayoutSize::new(320.0, 480.0),
+            1,
+            &mut NoMeasurements,
+            LayoutOptions::default(),
+        );
+        assert!(matches!(result, Err(RuntimeLayoutError::Binding(_))));
+        {
+            let state = surface.state.borrow();
+            assert!(state.mutation_batch.is_none());
+            assert_eq!(
+                state.element(handle.get().unwrap()).unwrap().specified,
+                absolute_box(20.0, 20.0)
+            );
+        }
+        with_installed_renderer(surface.renderer(), || {
+            assert!(set_specified_style(
+                handle.get().unwrap(),
+                &absolute_box(40.0, 40.0)
+            ));
+        });
+        surface
+            .drive_layout(
+                LayoutSize::new(320.0, 480.0),
+                1,
+                &mut NoMeasurements,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn non_inherited_styles_skip_clean_descendants_but_keep_nested_changes() {
+        crate::reactive::__reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(95).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        let handles = Rc::new(RefCell::new(Vec::new()));
+        runtime
+            .mount({
+                let handles = Rc::clone(&handles);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    handles.borrow_mut().push(root);
+                    for _ in 0..24 {
+                        let child = create_element(ElementTag::View);
+                        set_specified_style(child, &absolute_box(40.0, 60.0));
+                        append_child(root, child);
+                        handles.borrow_mut().push(child);
+                    }
+                    root
+                }
+            })
+            .unwrap();
+        let root = handles.borrow()[0];
+        let child = handles.borrow()[1];
+        let opacity = |value| {
+            SpecifiedStyle::new().push(
+                StyleProperty::Opacity,
+                StyleValue::Number(StyleNumber::new(value)),
+            )
+        };
+        surface.state.borrow().style_resolution_count.set(0);
+        surface.state.borrow().motion_snapshot_count.set(0);
+        with_installed_renderer(surface.renderer(), || {
+            set_specified_style(root, &opacity(0.5));
+        });
+        assert_eq!(surface.state.borrow().style_resolution_count.get(), 1);
+        assert_eq!(surface.state.borrow().motion_snapshot_count.get(), 1);
+
+        surface.state.borrow().style_resolution_count.set(0);
+        surface.begin_mutation_batch();
+        with_installed_renderer(surface.renderer(), || {
+            set_specified_style(root, &opacity(0.75));
+            set_specified_style(child, &absolute_box(80.0, 60.0));
+        });
+        surface.finish_mutation_batch().unwrap();
+        assert_eq!(surface.state.borrow().style_resolution_count.get(), 2);
+        surface
+            .drive_layout(
+                LayoutSize::new(320.0, 480.0),
+                1,
+                &mut NoMeasurements,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+        {
+            let state = surface.state.borrow();
+            let node = state.element(child).unwrap().node.unwrap();
+            assert_eq!(
+                state
+                    .surface
+                    .last_layout()
+                    .unwrap()
+                    .get(node)
+                    .unwrap()
+                    .border_box
+                    .width,
+                80.0
+            );
+        }
+
+        surface.state.borrow().style_resolution_count.set(0);
+        with_installed_renderer(surface.renderer(), || {
+            set_specified_style(
+                root,
+                &opacity(0.75).push(
+                    StyleProperty::Color,
+                    StyleValue::Color(whisker_style::ColorValue::Named("red".into())),
+                ),
+            );
+        });
+        let state = surface.state.borrow();
+        assert_eq!(state.style_resolution_count.get(), 25);
+        let inherited = state
+            .element(root)
+            .unwrap()
+            .resolved
+            .as_ref()
+            .unwrap()
+            .inherited_for_children();
+        for child in handles.borrow().iter().skip(1) {
+            assert_eq!(
+                state
+                    .element(*child)
+                    .unwrap()
+                    .resolved
+                    .as_ref()
+                    .unwrap()
+                    .inherited_for_children(),
+                inherited
+            );
+        }
+        drop(state);
+
+        surface.begin_mutation_batch();
+        with_installed_renderer(surface.renderer(), || {
+            for (value, color) in [(0.9, "red"), (0.8, "blue")] {
+                set_specified_style(
+                    root,
+                    &opacity(value).push(
+                        StyleProperty::Color,
+                        StyleValue::Color(whisker_style::ColorValue::Named(color.into())),
+                    ),
+                );
+            }
+        });
+        {
+            let state = surface.state.borrow();
+            let changes = &state.mutation_batch.as_ref().unwrap().style_changes;
+            assert_eq!(changes.len(), 1);
+            assert_eq!(changes[0].1.snapshots.len(), 25);
+            assert_eq!(changes[0].1.snapshots[0].opacity_target, 0.75);
+        }
+        surface.finish_mutation_batch().unwrap();
     }
 
     #[test]
