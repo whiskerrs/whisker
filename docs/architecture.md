@@ -1,291 +1,314 @@
-# Whisker — Architecture Overview
+# Whisker architecture
 
-How the workspace is sliced into crates, what each crate is for, and how
-the **`whisker run` dev loop** wires them together.
+Whisker is a UI framework for writing applications in Rust. Its **shared
+Runtime** executes application code and determines the UI's structure, styles,
+and layout. A **Host** connects that Runtime to a particular platform: it owns
+the window and event loop, measures platform content, and draws the UI.
 
-Whisker is a cross-platform UI framework with a Rust-owned retained scene,
-layout, and scheduling model.
-App code remains plain Rust — a `#[whisker::main]` entry point and
-`render! { … }` views over fine-grained reactive signals. CNG-generated
-Android and iOS launch shells consume the retained frame protocol
-through a narrow FFI Driver; Desktop and Web compose the same runtime directly.
+**Runtime and Host are separated by responsibility, not by language or thread.**
+The Web and Desktop Hosts are also written in Rust. On each platform, the Host
+calls into the Runtime on its UI thread, and the Runtime calls back into Host
+services when it needs measurement or presentation.
 
-## Crate graph
+This document explains that division, follows an update through the system,
+and points to the code that owns each part. For building and running an
+example, start with [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-```
-                                  whisker-macros
-                                  (#[main], #[component],
-                                   #[module_element], render!)
-                                        │  emits ::whisker::… paths
-                                        ▼
-   whisker-config ──────────► whisker (umbrella)
-   (Config types)                  │   prelude
-                                   │   re-export root
-                                   │
-                                   ├──► whisker-runtime
-                                   │    (reactive runtime, element tree,
-                                   │     events, tasks). Renderer-agnostic.
-                                   │
-                                   ├──► whisker-css
-                                   │    (typed css! authoring facade)
-                                   │             │
-                                   │             ▼
-                                   │         whisker-style
-                                   │         (typed inline-style model,
-                                   │          stable property registry)
-                                   │
-                                   └─ Android/iOS only ─► whisker-driver
-                                                        └─► whisker-driver-sys
-                                         (safe FFI adapter)    (raw borrowed
-                                                                 mobile ABI)
+## The Runtime–Host boundary
 
-   whisker-protocol
-   (Host-independent frame, measurement, and input model with strict batch
-    validation and a transactional reference validator)
+Here, **Runtime** means the shared execution and UI implementation, including
+`whisker-runtime`, `whisker-engine`, `whisker-style`, and `whisker-layout`.
+The crate named `whisker-runtime` supplies reactivity and orchestration; it
+delegates scene management and layout to the other crates inside this boundary.
 
-   whisker-engine ──────────► whisker-layout + whisker-style
-          │                  (surface orchestration + dirty layout)
-          └────────────────► whisker-protocol
-   (Host-independent retained scene + incremental frame journal + batched
-    measurement state machine + Rust-facing Host traits; wired through
-    SurfaceRuntime into every platform Host)
+```mermaid
+flowchart TB
+    App["Application: components, signals, event handlers"]
+    subgraph Shared["Shared Runtime — platform-independent UI rules and state"]
+        Runtime["whisker-runtime: reactivity, lifecycle, events, tasks"]
+        Engine["whisker-engine: scene and frame production"]
+        Layout["whisker-style / whisker-layout: styles and Taffy geometry"]
+        Runtime --> Engine
+        Engine --> Layout
+        Layout --> Engine
+    end
+    subgraph Platform["Host — platform implementation"]
+        Loop["Window, UI event loop, input"]
+        Services["Text measurement, presentation, native resources"]
+    end
 
-   whisker-layout ──────────► whisker-style + whisker-protocol
-   (Host-independent retained Taffy tree + intrinsic-measurement boundary;
-    paired with the retained scene by whisker-engine::SurfaceEngine)
-
-   subsecond  (= whisker-subsecond, [lib] name = "subsecond")
-     pulled into whisker when `hot-reload` is on.
-
-   User crate (e.g. examples/podcast)
-   ├── src/lib.rs   — `#[whisker::main] fn app() -> Element { render!{…} }`
-   ├── whisker.rs   — `fn configure(&mut Config)` (app metadata)
-   └── Cargo.toml   — depends on `whisker` (umbrella)
-       Platform projects are GENERATED under gen/<platform>/ by CNG —
-       not committed.
-
-   Host tooling (never in the shipped app)
-   whisker-cli      — the `whisker` / `cargo-whisker` binary:
-                      run / doctor / new / new-module
-   ├── probe.rs     — compile+run user's whisker.rs → Config
-   ├── platforms.rs — drives whisker-cng (CNG sync) before a build
-   └── run.rs       — Config → dev_server::Config (flat)
-        │
-        ▼
-   whisker-dev-server  — the mobile dev loop: file-watch → platform build →
-                         install/launch. Manifest-agnostic (flat Config).
-        │
-        ▼
-   whisker-build       — per-platform builds and packaging. The mobile
-                         bootstrap delegates to Gradle/Xcode and links the
-                         Rust runtime through the mobile ABI.
-
-   whisker-cng         — Continuous Native Generation: renders
-                         complete gen/<platform>/ projects from Config. Mobile
-                         application targets contain only their composition
-                         root; Host implementation comes from the platform SDK.
-
-   platforms/android   — Gradle SDK libraries: the module API plus the Android
-                         WhiskerView, measurement, retained scene, and paint.
-   platforms/ios       — SwiftPM SDK libraries with the same split between the
-                         module API and UIKit WhiskerRuntime.
-
-   platforms/desktop   — shared native Desktop Host services: cosmic-text
-                         measurement/prepared glyphs, retained FrameSink
-                         projection, common winit frame/event shell, and wgpu
-                         paint.
-                         Scene, batching, shaders, and GPU resources are common
-                         to macOS, Windows, and Linux.
-   platforms/macos     — macOS-named generated app interface and seam for
-                         genuine native macOS integration.
-   platforms/windows   — symmetric Windows target interface.
-   platforms/linux     — symmetric Linux target interface.
-   platforms/web       — Rust/WASM browser Host: DOM text measurement,
-                         requestAnimationFrame scheduling, and semantic frame
-                         application to explicitly positioned DOM nodes.
-   whisker-plugin      — CNG plugin trait + JSON envelope + subprocess
-                         runner for 3rd-party plugins.
+    Runtime -->|"runs"| App
+    App -->|"state and element changes"| Runtime
+    Loop -->|"lifecycle, input, frame callbacks"| Runtime
+    Runtime -->|"request a frame"| Loop
+    Engine -->|"measurement requests and frame packets"| Services
+    Services -->|"measurements and acceptance results"| Engine
 ```
 
-## Crate responsibilities
+### Who decides what
 
-| Crate | One-line | Depended on by |
+| Concern | Shared Runtime | Host |
 |---|---|---|
-| `whisker` | Authoring umbrella. Users `use whisker::prelude::*`; macros, styles, element refs, back/focus helpers, and core types are surfaced through one import root. Platform-independent runtime ownership lives below it in `whisker-runtime`. | user crates |
-| `whisker-config` | `Config` metadata types users build in `whisker.rs`. Intentionally tiny. | `whisker`, `whisker-cli`, `whisker-cng` |
-| `whisker-runtime` | Complete Host-independent runtime: signals/effects, renderer-agnostic view operations, element registry, `SurfaceRuntime`, `RuntimeInstance`, module dispatch, events, tasks, wake handles, and background-to-UI dispatch. `RuntimeContext` isolates each mounted instance while the Host drives short transactions on one UI thread. | `whisker`, all Hosts, `whisker-driver` |
-| `whisker-style` | Renderer-independent typed inline-style model and stable common-property registry. It owns declaration composition, fixed inheritance for seven text properties, and computed text plus box/flex layout inputs without exposing Taffy types. | `whisker-css`, future UI modules, `whisker-layout`, and `whisker-engine` |
-| `whisker-css` | Typed authoring facade for the existing `css!` API. It constructs and re-exports `whisker-style` identities rather than owning renderer semantics or parsing raw style strings. | `whisker` |
-| `whisker-driver-sys` | Single Rust source of truth for the raw, borrowed Android/iOS ABI: version/tag constants, C-layout frame/measurement/resource/module values, callbacks, exported entry points, and Android's JNI entry shim. Checked-in C, Swift-imported, and Kotlin representations are generated and drift-checked from it. It contains no renderer or runtime ownership. Unsafe-only. | `whisker-driver` |
-| `whisker-driver` | Safe Android/iOS FFI adapter. It owns the opaque runtime handle, borrowed-value conversion, native callback adapters, and delegates lifecycle/frame/input work to `whisker-runtime`. It does not redefine the wire ABI. | `whisker` on Android/iOS only |
-| `whisker-dev-runtime` | Development WebSocket/log support used by tooling paths. It is not a runtime or Host abstraction. | development tooling |
-| `whisker-macros` | `#[whisker::main]`, `#[component]`, `#[module_element]`, and the `render!` DSL. | `whisker` |
-| `whisker-cli` | The `whisker` / `cargo-whisker` binary: `run`, `doctor`, `new`, `new-module`. Resolves Config via the `whisker.rs` probe; hands a flat Config to dev-server. | (binary) |
-| `whisker-dev-server` | Host dev loop, manifest-agnostic. Android/iOS currently use explicit full rebuild → install → relaunch; the retained mobile ABI will re-enable Rust hot reload. | `whisker-cli` |
-| `whisker-build` | Per-platform builds and packaging, including generated mobile shell builds and native macOS `.app` assembly. | `whisker-cli`, `whisker-dev-server` |
-| `whisker-cng` | Continuous Native Generation: pure, fingerprint-gated renderer of complete `gen/<platform>/` projects from Config. No CLI surface. | `whisker-cli` |
-| `whisker-runtime-android` | Android Host SDK library. It owns `WhiskerView`, frame scheduling, intrinsic measurement, retained View projection, module dispatch, and paint. Generated apps only compose it from `MainActivity`. | generated `gen/android` app |
-| `WhiskerRuntime` | iOS Host SwiftPM library with the symmetric UIKit ownership. Generated apps receive it transitively through `WhiskerModules` and only compose it from `AppDelegate`. | generated `gen/ios` app |
-| `whisker-desktop` | Common native Rust Desktop Host services and direct runtime composition seam. It owns cosmic-text intrinsic measurement with reusable prepared content, the transactionally retained Host projection, common frame driving, the shared winit lifecycle/event translation, and wgpu scene lowering, batching, shaders, and painting. Host conformance scenarios can drive measurement and frame presentation without `RuntimeInstance`, record normalized input at a mock Rust sink, and run offscreen GPU checkpoints. | macOS/Windows/Linux target crates |
-| `whisker-macos` | Thin macOS target crate preserving the OS-named interface consumed by generated projects and providing the seam for future native-only integration. Common winit behavior remains in `whisker-desktop`. | generated `gen/macos` app |
-| `whisker-windows` | Symmetric Windows target crate over `whisker-desktop`; CNG/build/run integration follows separately. | future generated `gen/windows` app |
-| `whisker-linux` | Symmetric Linux target crate over `whisker-desktop`; CNG/build/run integration follows separately. | future generated `gen/linux` app |
-| `whisker-web` | Browser DOM Host. It drives `RuntimeInstance` from `requestAnimationFrame`, supplies current browser viewport/scale metrics, measures intrinsic text in the DOM, and applies layout/paint/text operations without making browser layout authoritative. | generated `gen/web` WASM app |
-| `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
-| `whisker-protocol` | Host-independent semantic frame, intrinsic-measurement, and normalized input types; stable IDs; strict batch validation; and transactional retained-tree validation. Plain text and common box paint are retained semantic presentation, while pointer/provider events enter Rust through typed input values. | scene engine and Host providers |
-| `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, frame acceptance/recovery, and retained measurement coordination. `SurfaceEngine` is the core surface state machine: it pairs Scene and Taffy, batches Host measurements, lowers computed text/box paint and overflow clips, presents directly through `FrameSink`, and applies acknowledgements. The mobile packed ABI and Android/iOS providers cover bootstrap, measurement, frames, module values, and the typed resource lifecycle; later protocol groups extend that ABI additively. | scene runtime and renderer providers |
-| `whisker-layout` | Host-independent retained box layout. It privately owns Taffy and a protocol-invisible, viewport-sized `SurfaceRoot`, accepts `ComputedLayoutStyle` and stable `NodeId`s, calls an abstract intrinsic measurer using protocol-owned constraints, and returns deterministic logical-pixel border/content geometry. The application root is the surface root's flex child, so viewport stretch, growth, percentages, and absolute positioning use normal layout semantics without Host style overrides. `whisker-engine::SurfaceEngine` owns its coordination with scene/frame production. | `whisker-engine`, future scene runtime |
-| `whisker-subsecond` | Whisker's fork of DioxusLabs `subsecond` — anchors the ASLR-slide lookup on `whisker_aslr_anchor` (emitted by `#[whisker::main]`) instead of `main`. `[lib] name = "subsecond"` keeps `use subsecond::*`. | `whisker`, development tooling |
+| Application state | Owns signals, effects, component scopes, and Rust event handlers | Delivers external events to the mounted instance |
+| UI structure | Decides which elements exist, their hierarchy, and their properties | Creates the platform objects needed to represent those elements |
+| Layout | Resolves styles and computes box sizes and positions with Taffy | Supplies viewport metrics and intrinsic content measurements; applies the computed geometry |
+| Text | Supplies text, resolved text style, and measurement constraints | Shapes and measures text using its font system, then draws it |
+| Frames | Tracks pending work, advances shared animations, and produces frame packets | Owns the clock and event loop; schedules callbacks and presents accepted frames |
+| Input | Routes shared events and runs application callbacks | Receives OS/browser input and translates it into the shared model |
+| Scrolling | Owns scroll content layout, List virtualization, and application scroll commands | Executes scrolling, including platform physics, and reports the actual offset |
+| Native services | Dispatches module calls and delivers results to application code | Implements the service and owns its native objects and resources |
 
-### Modules and the router (`packages/*`)
+For example, the Host answers “how large is this text under these constraints?”
+The Runtime uses that answer to decide where the text and its siblings belong.
+The Host then draws those boxes. Measuring a leaf is a Host responsibility;
+laying out the application tree is a Runtime responsibility.
 
-First-party, app-facing add-on crates that depend on `whisker` like any
-user crate would. They are *not* part of the framework core:
+### What crosses the boundary
 
-- **`whisker-router`** — type-safe,
-  signal-backed routing over the shared Rust runtime, custom transitions, nested
-  layouts (tabs/modal). `StackLayout` uses `Owner::pause`/`resume` to
-  freeze off-screen back-stack entries.
-- **Platform modules** (`whisker-local-store`, `whisker-safe-area`,
-  `whisker-audio`, `whisker-video`, `whisker-image`) — native bridges
-  exposed through `#[module_element]` / the `module!` macro and
-  reactive signals fed by native events.
-- **Widgets** (`whisker-svg`, `whisker-icons`) — pure-Rust components
-  built on the public API.
+| Initiator → receiver | Request | Result or later notification |
+|---|---|---|
+| Host → Runtime | Mount, pause, resume, unmount, or deliver input | Runtime lifecycle and application state are updated |
+| Host → Runtime | `RuntimeInstance::drive_frame` with time and viewport metrics | Frame work completes; the Runtime indicates whether more work is needed |
+| Runtime → Host | `RuntimeWakeHandle::wake` | The Host schedules a UI callback; this does not execute a frame on the caller's thread |
+| Runtime → Host | `MeasurementProvider::measure_batch` | Measurements, or deferred completion through `measurement_ready` |
+| Runtime → Host | `FrameSink::present` with a `FramePacket` | Acceptance, a snapshot request, or an error |
+| Runtime → Host | A module function call or element command | A return value, async completion, or subsequent module/element event |
 
-`whisker-local-store` doubles as the documented template for writing a
-first-party module; see [`module-api-design.md`](module-api-design.md).
+`MeasurementProvider` and `FrameSink` are interfaces defined by the shared
+crates and implemented by Hosts. Their location in `whisker-engine` describes
+what the Runtime needs; the platform implementation performs the actual work.
 
-## Host conformance boundary
+During `drive_frame`, the Runtime can call the Host's measurement and
+presentation interfaces before returning to the Host event loop. These are
+cooperating parts of one application, not separate processes or dedicated
+threads. The Host owns the mounted Runtime's lifetime and initiates lifecycle
+transitions; the Runtime implements what those transitions do to UI state.
 
-Every Host is testable without starting the Rust runtime. Shared scenarios
-under `tests/host-conformance` stand in for Rust by supplying intrinsic
-measurement requests, frame packets, viewport changes, clock advances, and
-input fixtures. A recording event sink captures the Host-to-Rust direction.
-Only those boundary peers are mocked: measurement, retained projection, and
-painting use the same code as the shipped Host. The initial input scenario
-establishes the recording-sink contract; native event conversion joins that
-path as each OS adapter implements input.
+Android and iOS carry these interactions through the mobile FFI Driver.
+Web and Desktop use Rust calls directly. The Driver adapts the boundary; it
+does not take over layout, scheduling policy, or platform drawing.
 
-Each backend owns a runner beside its implementation. Desktop uses direct Rust
-calls and a real or offscreen `wgpu` surface, Web runs against a real browser,
-Android uses instrumentation tests, and iOS uses XCTest. Selected WPT cases
-are converted into attributed, revision-pinned shared scenarios. The same case
-identifier is checked by Rust semantic lowering, every required Host runner,
-and a smaller full-stack suite, so neither side can define conformance by
-recording the other side's current output.
+### Shared UI terms
 
-## The runtime layers
+A few terms recur throughout the implementation:
 
-Three layers, each renderer-agnostic until the bottom:
+- **Retained** means that state survives between frames. The engine keeps the
+  element descriptions and layout tree; it updates them when something changes.
+- A **surface** is one UI tree with a viewport and a destination for its frames.
+  The viewport supplies the available width, height, and display scale.
+- A **frame packet** describes changes the Host should apply, such as creating
+  an element, moving a box, changing text, or releasing a resource. It contains
+  semantic operations, not a screenshot or a list of GPU instructions.
 
-1. **Reactive runtime** (`whisker-runtime/src/reactive`) — fine-grained
-   signals, effects, computed, owners/scopes, batching scheduler. No
-   virtual DOM and **no diff pass**. See
-   [`reactivity-design.md`](reactivity-design.md).
-2. **View / renderer** (`whisker-runtime/src/view`) — `Element` is a small,
-   `Copy`, runtime-local handle. The installed renderer maps it to a retained
-   `NodeId`. `render!`
-   creates the tree and dynamic props use effects to emit typed mutations.
-3. **Retained surface** (`whisker_runtime::SurfaceRuntime` → `whisker-engine`) — maps
-   authoring operations into scene/layout state, routes input in Rust, batches
-   Host measurement, and presents transactional frame packets.
+There is no virtual-DOM comparison of a freshly rendered application tree on
+every update. Reactive dependencies identify which expressions need to run;
+the engine collects the resulting element changes for presentation.
 
-The Host boundary branches only at composition. Android/iOS instantiate the
-runtime through `whisker-driver` because Swift/Kotlin require an FFI handle.
-Desktop/Web instantiate `RuntimeInstance` directly and supply ordinary Rust
-`MeasurementProvider` and `FrameSink` implementations. Core contains no
-platform `cfg` selecting one model over the other.
+## From a tap to an updated screen
 
-## `hot-reload` feature flow
+Consider a button that increments a signal displayed by a `Text` element.
 
-The `hot-reload` feature is **off by default**. Release builds get a compact
-binary with no subsecond. Hot dispatch belongs to the authoring umbrella and
-the user crate; it is not part of the FFI Driver.
+1. **The Host receives input.** It translates platform input into the shared
+   event model. The runtime resolves the target and invokes the Rust handler.
+2. **The handler changes the signal.** Expressions that read that signal become
+   eligible to run again. The runtime's wake handle asks the Host to schedule
+   work on its UI event loop.
+3. **The runtime applies reactive updates.** During a frame callback it advances
+   animations, runs ready tasks, and flushes reactive work. A text binding emits
+   a text change; it does not rebuild the entire application.
+4. **The engine updates layout where needed.** A text change may affect its
+   size. The layout layer calculates boxes, asking the Host for intrinsic
+   measurements when necessary. Changes that affect only paint need not trigger
+   a new box-layout calculation.
+5. **The Host applies the frame.** The engine sends the resulting changes to the
+   Host, which updates its retained views, DOM nodes, or drawing data. The engine
+   advances its accepted frame revision after the Host accepts the packet.
 
-```
-$ whisker run <platform>
-            │
-            ▼  (cli adds `--features whisker/hot-reload`)
-whisker = { features = ["hot-reload"] }
-  └── subsecond                              ← so `subsecond::call(…)`
-                                                exists in user code's
-                                                compilation unit
-```
+Input handlers can flush some work during event delivery as well. The frame
+callback is where ready work, layout, and presentation are brought together;
+it is not the only entry point into the runtime.
 
-The user crate needs no `hot-reload` feature of its own — `whisker`'s
-feature gates do everything.
+An initial mount needs a full scene snapshot. Later frames usually contain
+only changes. If the Host cannot apply a delta to its current revision, it can
+request a new snapshot. Revision tracking keeps the producer and receiver from
+silently continuing with different trees.
 
-## The `whisker run` dev loop
+## Layout and drawing are separate jobs
 
-`whisker run <platform>` is the developer's primary command. The CLI is
-a thin wrapper: it probes `whisker.rs` into a `Config`, runs CNG to
-materialise `gen/<platform>/`, then starts the target's development loop. The
-mobile paths hand a flat `Config` to `whisker-dev-server`; the macOS path
-builds the same generated Cargo project used by `whisker build macos`, launches
-its `.app`, and automatically rebuilds/relaunches on source changes:
+[`whisker-style`](../crates/whisker-style/src/lib.rs) defines the shared style
+values. [`whisker-layout`](../crates/whisker-layout/src/lib.rs) translates layout
+inputs into a retained [Taffy](../crates/whisker-layout/Cargo.toml) tree and
+calculates element sizes and positions. The tree has an internal root sized to
+the viewport, so the application's root participates in ordinary flex layout.
 
-The Web path emits a minimal Cargo composition project and browser shell at
-`gen/web`. `whisker run web` compiles it to WebAssembly, runs wasm-bindgen,
-serves the generated directory, opens the browser, and applies Rust edits as
-subsecond WebAssembly side-module patches. Android and iOS generate plain AGP
-and Xcode/UIKit projects respectively, build them, install them on an emulator
-or Simulator, and launch them against the Whisker Host SDK.
+Layout uses logical pixels or points. The Host handles conversion to physical
+pixels and the platform's drawing APIs. Even on Web, Rust calculates the box
+geometry; the browser Host positions DOM nodes using those results.
 
-```
-  edit src/lib.rs
-        │
-        ▼
-  watcher (notify)  →  ChangeKind::{RustCode | CargoToml | Other}
-        │
-        ▼
-  platform loop
-   ├── Web: thin Cargo compile → WASM side module → browser patch
-   ├── macOS: thin Cargo compile → native patch
-   └── Android/iOS: thin Cargo compile → native patch
-```
+Some sizes depend on platform content. For example, Rust can constrain a text
+box to a particular width, but the Host knows how its fonts shape and wrap the
+text. The engine batches these measurement requests through
+[`MeasurementProvider`](../crates/whisker-engine/src/layout.rs), validates the
+responses, and continues layout. Measurement results can be reused while their
+inputs remain valid; deferred results can request another frame when ready.
 
-Dependency-shaped changes and an explicit `R` use each platform's Full Reload
-path: Web rebuilds and reloads the document; native platforms rebuild,
-install, and relaunch through their Host toolchain.
+[`FrameSink`](../crates/whisker-engine/src/recording.rs) is the other main
+Rust-facing boundary: it receives a complete frame packet for presentation.
+The shared [`whisker-protocol`](../crates/whisker-protocol/src/lib.rs) defines
+frame, measurement, input, resource, and capability types. Platform drawing
+objects and Taffy's internal types do not become part of that contract.
 
-The end-to-end mechanics of both tiers — captured-args replay, the ASLR
-anchor, the jump-table math, and the per-component remount strategy —
-are documented in
-[`hot-reload-internals.md`](hot-reload-internals.md).
+This separation lets the platforms share layout rules while using their own
+text and rendering systems. It does not promise identical font rasterization
+or native scroll physics across platforms.
 
-## Why this layering
+## State, ownership, and threads
 
-- **dev-server is manifest-agnostic.** It accepts flat fields, not
-  `Config`. The cli does the `whisker.rs` → probe → `Config` → flat
-  translation, so a future editor plugin can construct the same flat
-  Config and reuse the dev loop without dragging in `whisker-config`.
+UI state exists on both sides of the boundary. The Host retains a platform
+representation of the scene, not the application's reactive state:
 
-- **`whisker-config` is intentionally tiny.** It's the only crate the
-  `whisker run` config-probe binary depends on (plus `serde_json`).
-  Pulling in the umbrella `whisker` crate would inflate probe builds
-  from seconds to minutes (`whisker-runtime`, renderer dependencies, …).
+| Structure | Owner | Purpose |
+|---|---|---|
+| Reactive owner tree | Runtime (`whisker-runtime`) | Owns signals, effects, and cleanup; determines their lifetime |
+| Element tree and scene | Runtime (`whisker-runtime` and `whisker-engine`) | Retains UI hierarchy, properties, styles, and event targets |
+| Layout tree | Runtime (`whisker-layout`) | Retains box constraints, cached calculations, and geometry |
+| Presentation state | Host | Retains native views, DOM nodes, drawing data, and resources for the accepted scene |
 
-- **Native projects are generated, not committed.** CNG (Expo-style)
-  treats `whisker.rs`'s `Config` as the source of truth and renders complete
-  `gen/<platform>/` projects on demand, fingerprint-gated so the fast path is
-  a single file read. Regeneration is implicit — the command that needs
-  the native tree syncs it first.
+An `Element` is a small handle into the current runtime, not an owned native
+view. Likewise, copying a signal handle does not extend the life of its owner.
+When an owner is disposed, code must no longer read its signals. Pausing an
+owner is different: it retains state for later resumption, which the router
+uses for off-screen navigation entries. See [reactivity-design.md](reactivity-design.md)
+for the lifetime and scheduling rules.
 
-- **`whisker-driver-sys` is unsafe-only.** The complete raw mobile ABI and the
-  Android link anchor live there; `cargo xtask mobile-abi generate` materializes
-  checked-in Host declarations, while CI's `mobile-abi check` rejects drift.
-  Application builds consume those checked-in declarations and do not depend
-  on xtask or CNG. Ownership and protocol conversion remain confined to safe
-  wrappers in `whisker-driver`. The standard `*-sys` crate pattern.
+The implementation separates three responsibilities inside the runtime:
 
-- **`whisker-dev-runtime` is feature-gated end-to-end.** Without
-  `hot-reload`, the crate compiles to nothing — no tokio, no
-  tungstenite, no subsecond.
+- [`RuntimeContext`](../crates/whisker-runtime/src/runtime_context.rs) contains
+  the instance's reactive, task, and other runtime-local state. Entering it
+  makes that state available to the APIs running on the UI thread.
+- [`RuntimeInstance`](../crates/whisker-runtime/src/runtime_instance.rs) implements
+  mounting, pausing, resuming, unmounting, event delivery, and frame driving
+  when called by the Host.
+- [`SurfaceRuntime`](../crates/whisker-runtime/src/surface_runtime.rs) connects
+  element operations to the retained scene and layout engine.
 
-- **subsecond is in-tree, not a published-crate dep.** The fork swaps
-  the ASLR anchor from `main` to `whisker_aslr_anchor`. On Android,
-  multiple `main` symbols can share the linker namespace
-  (`app_process64`'s, prior memfd patches'); a `dlsym` for the upstream
-  sentinel returns garbage and the dispatch math fails. See
-  `crates/whisker-subsecond/src/lib.rs`.
+UI code runs on a Host-owned UI thread. Local async tasks are polled there;
+waking a task from another thread requests a UI callback rather than polling
+UI code on the worker. Blocking work runs separately and returns its result to
+the UI task. A `RuntimeDispatcher` provides an instance-specific way to post
+work back to that thread.
+
+Thread placement alone is not enough to call a native module. Module dispatch
+also needs the active runtime's module Host binding. Worker code must not
+assume it can use signals or native module APIs just because it has copied a
+handle. The relevant boundaries are in
+[`tasks.rs`](../crates/whisker-runtime/src/tasks.rs),
+[`dispatch.rs`](../crates/whisker-runtime/src/dispatch.rs), and
+[`module`](../crates/whisker-runtime/src/module.rs).
+
+## What each Host implements
+
+All Hosts implement the shared measurement, presentation, and input contracts.
+They differ in how they connect to the operating system or browser.
+
+| Host | Runtime connection | Platform work |
+|---|---|---|
+| [Android](../platforms/android/runtime/) | Kotlin/JNI and the mobile FFI Driver | Android views, frame callbacks, text measurement, drawing, and native modules |
+| [iOS](../platforms/ios/) | Swift and the mobile FFI Driver | UIKit views, frame callbacks, text measurement, drawing, and native modules |
+| [Web](../platforms/web/src/lib.rs) | Direct Rust calls from WebAssembly | DOM presentation, browser measurement and input, `requestAnimationFrame` scheduling |
+| [Desktop](../platforms/desktop/src/lib.rs) | Direct Rust calls | A shared `winit` window/event loop, `cosmic-text` measurement, and `wgpu` drawing |
+
+The macOS, Windows, and Linux target crates sit above the common Desktop Host.
+They provide OS-named entry points and a place for platform-specific integration;
+the common renderer lives in `platforms/desktop`.
+
+Android and iOS need a foreign-function interface because their launch shells
+are written in Kotlin and Swift:
+
+- [`whisker-driver-sys`](../crates/whisker-driver-sys/src/lib.rs) defines the raw
+  mobile ABI: C-compatible values, callbacks, and entry points. Host declarations
+  are generated from this definition and checked for drift.
+- [`whisker-driver`](../crates/whisker-driver/src/lib.rs) owns the opaque runtime
+  handle, translates borrowed values, and adapts callbacks to the Rust runtime.
+
+Web and Desktop do not pass through this mobile ABI. They instantiate the
+runtime directly and supply Rust implementations of the same Host boundaries.
+
+### Scrolling, lists, and platform modules
+
+A `ScrollView` makes the boundary especially visible. The Runtime lays out its
+viewport and content. During a gesture, the Host moves the content and reports
+the current offset back to the Runtime; an application `scroll_to` request
+travels in the opposite direction as a command. The Runtime uses reported
+offsets for input routing and List reconciliation. This transient presentation
+state is why a scroll is not a new flex-layout pass for every finger movement.
+
+`List` builds on that `ScrollView` in Rust. It chooses the keyed item subtrees
+to mount, keeps track of item extents, and uses spacers for unmounted ranges.
+The Host receives ordinary elements; there is no separate native List protocol.
+See [list-design.md](list-design.md) for virtualization and scroll reconciliation.
+
+The crates under [`packages/`](../packages/) provide routing, animation,
+widgets, and platform services on top of the public framework API. A module
+can expose native functions, events, or an element such as an image or media
+view. Its platform implementation supplies the native behavior while the shared
+scene controls its place in the UI. Start with
+[module-api-design.md](module-api-design.md) when adding a module.
+
+## How an application is built and reloaded
+
+Application code lives in `src/`; `whisker.rs` describes app metadata and build
+configuration. **Continuous Native Generation (CNG)** turns that configuration
+and registered build plugins into platform projects under `gen/<platform>/`.
+Generated mobile projects compose the application with the Android or iOS Host
+SDK instead of containing a copy of the Host implementation.
+
+The tooling has a different lifetime from the shipped UI runtime:
+
+| Tooling crate | Responsibility |
+|---|---|
+| [`whisker-cli`](../crates/whisker-cli/) | Reads configuration and selects the command and target |
+| [`whisker-config`](../crates/whisker-config/) | Defines the configuration consumed by generation and builds |
+| [`whisker-cng`](../crates/whisker-cng/) and [`whisker-plugin`](../crates/whisker-plugin/) | Generate platform projects and incorporate module build requirements |
+| [`whisker-build`](../crates/whisker-build/) | Compiles and packages application artifacts with the target toolchain |
+| [`whisker-dev-server`](../crates/whisker-dev-server/) | Coordinates the native development session, watching, patch delivery, and reload commands |
+
+`whisker run` generates the target project, builds and launches it, then watches
+for changes. Hot Reload compiles eligible Rust edits into patches and applies
+them to the running process. The native patch path uses `whisker-subsecond`;
+Web uses WebAssembly side modules. Development support is feature-gated and is
+not needed by the release application.
+
+Hot Reload and Full Reload are distinct operations. In the native development
+loop, dependency changes or an unavailable patch path prompt for an explicit
+Full Reload (`R`), which rebuilds and relaunches the app. A patch may also remount
+components, so preserving the process does not guarantee that all component
+state survives. Native hot patching supports Android, macOS, and the iOS
+Simulator; iOS hardware has additional code-loading restrictions. Details and
+platform differences belong in [hot-reload-internals.md](hot-reload-internals.md).
+
+## Where to start when changing the framework
+
+| Change | Start here |
+|---|---|
+| Element builders, `render!`, or `css!` authoring | [`whisker`](../crates/whisker/src/lib.rs), [`whisker-macros`](../crates/whisker-macros/), [`whisker-css`](../crates/whisker-css/) |
+| Reactive dependencies or component lifetime | [`whisker-runtime/src/reactive`](../crates/whisker-runtime/src/reactive/) |
+| Scheduling, lifecycle, input, or module dispatch | [`whisker-runtime`](../crates/whisker-runtime/src/lib.rs) |
+| Style semantics | [`whisker-style`](../crates/whisker-style/src/lib.rs) |
+| Box layout and layout invalidation | [`whisker-layout`](../crates/whisker-layout/src/lib.rs) |
+| Scene changes, measurement coordination, or frame production | [`whisker-engine`](../crates/whisker-engine/src/lib.rs) |
+| A shared Host contract | [`whisker-protocol`](../crates/whisker-protocol/src/lib.rs), then the affected Hosts |
+| Mobile ABI conversion | [`whisker-driver`](../crates/whisker-driver/src/lib.rs) and [`whisker-driver-sys`](../crates/whisker-driver-sys/src/lib.rs) |
+| A platform's visible behavior | Its implementation under [`platforms/`](../platforms/) |
+| Application-facing modules or widgets | [`packages/`](../packages/) |
+
+Core tests can exercise the runtime and engine with a Rust-only recording Host.
+[Host conformance scenarios](../tests/host-conformance/README.md) exercise the
+platform side with shared frame and input fixtures. Full-stack tests then check
+that the two sides work together. A layout calculation, a correct frame packet,
+and correct pixels on a device are separate things to verify.
+
+For focused explanations, continue with [reactivity](reactivity-design.md),
+[lists](list-design.md), [routing](router-design.md), or
+[animation](animation-design.md). These documents describe the current design;
+issues, PRs, and Git history preserve the discussions behind it.
