@@ -36,7 +36,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 
-use crate::tasks::spawn_local;
+use crate::tasks::spawn_cancelable;
 
 use super::runtime::NodeId;
 use super::signal::RwSignal;
@@ -169,11 +169,8 @@ impl<T: Clone + 'static> Resource<T> {
 /// [`ResourceState::Loading`]; the first fetch is spawned during the
 /// effect's synchronous initial run.
 ///
-/// Owner discipline: the underlying [`RwSignal`] and the driving effect
-/// are registered with whatever owner is current at call time. If that
-/// owner is disposed, the effect stops re-running and any eventual
-/// write is a no-op (the signal node is gone), so no stale write hits a
-/// re-mounted owner.
+/// The registering Owner cancels the fetcher on disposal; dependency changes
+/// cancel the previous fetch before starting its replacement.
 ///
 /// For tests / already-in-memory values, prefer [`resource_sync`] — it
 /// runs the fetcher inline once, untracked, and doesn't depend on the
@@ -190,6 +187,7 @@ where
     // counter still matches at completion time (generation guard).
     let generation = Rc::new(Cell::new(0u64));
     let fetcher = Rc::new(fetcher);
+    let mut pending: Option<crate::lifetime::Cancellation> = None;
 
     super::effect::effect(move || {
         // Captured so the spawned future can re-install it as the
@@ -197,6 +195,9 @@ where
         // this node too.
         let node = super::current_tracker().expect("resource effect must run under a tracker");
 
+        if let Some(previous) = pending.take() {
+            previous.cancel();
+        }
         let my_gen = generation.get().wrapping_add(1);
         generation.set(my_gen);
 
@@ -208,13 +209,13 @@ where
         // or it re-triggers itself forever.
         state.update_untracked(|s| *s = ResourceState::Loading);
 
-        spawn_local(ScopedFetch {
+        pending = Some(spawn_cancelable(ScopedFetch {
             node,
             my_gen,
             generation: generation.clone(),
             state,
             fut: Box::pin(fut),
-        });
+        }));
     });
 
     Resource { state }

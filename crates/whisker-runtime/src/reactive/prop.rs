@@ -124,6 +124,19 @@ impl<T: 'static> Clone for Signal<T> {
 impl<T: 'static> Copy for Signal<T> {}
 
 impl<T: 'static + Clone> Signal<T> {
+    pub fn try_get(&self) -> Option<T> {
+        match self {
+            Self::Stored(value) => value.try_get(),
+            Self::Dynamic(signal) => signal.try_get(),
+        }
+    }
+    pub fn try_get_untracked(&self) -> Option<T> {
+        match self {
+            Self::Stored(value) => value.try_get(),
+            Self::Dynamic(signal) => signal.try_get_untracked(),
+        }
+    }
+
     /// Read the current value.
     ///
     /// - For [`Signal::Stored`]: returns a clone of the held value.

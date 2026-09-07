@@ -729,6 +729,10 @@ const TAP_TIMEOUT_MS: f64 = 500.0;
 const LONGPRESS_TIMEOUT_MS: f64 = 500.0;
 
 impl RuntimeInstance {
+    #[cfg(test)]
+    pub(crate) fn with_context<R>(&self, f: impl FnOnce() -> R) -> R {
+        self.context.enter(f)
+    }
     /// Creates an unmounted runtime connected to one Host wake-up endpoint.
     pub fn new(surface: SurfaceRuntime, wake: RuntimeWakeHandle) -> Self {
         let wake_enabled = Arc::new(AtomicBool::new(false));

@@ -73,6 +73,15 @@ impl ModuleHost {
     {
         let id = self.next_listener.get();
         self.next_listener.set(id.saturating_add(1));
+        let cleanup = ModuleSubscription {
+            id,
+            host: Rc::downgrade(self),
+            error: None,
+        };
+        let scoped = crate::lifetime::Scoped::new((callback, cleanup));
+        let callback = move |value| {
+            scoped.with(|(callback, _)| callback(value));
+        };
         let first = {
             let mut listeners = self.listeners.borrow_mut();
             let first = !listeners
@@ -99,19 +108,18 @@ impl ModuleHost {
     }
 
     fn remove_listener(&self, id: i32) {
-        let last = {
-            let mut listeners = self.listeners.borrow_mut();
-            let Some(removed) = listeners.remove(&id) else {
-                return;
-            };
-            (!listeners.values().any(|listener| {
-                listener.module == removed.module && listener.event == removed.event
-            }))
-            .then_some((removed.module, removed.event))
+        let removed = self.listeners.borrow_mut().remove(&id);
+        let Some(removed) = removed else {
+            return;
         };
-        if let Some((module, event)) = last {
-            (self.observe)(&module, &event, false);
+        let last =
+            !self.listeners.borrow().values().any(|listener| {
+                listener.module == removed.module && listener.event == removed.event
+            });
+        if last {
+            (self.observe)(&removed.module, &removed.event, false);
         }
+        drop(removed);
     }
 
     /// Delivers a Host event to matching Rust subscriptions.
@@ -119,12 +127,14 @@ impl ModuleHost {
         let callbacks: Vec<_> = self
             .listeners
             .borrow()
-            .values()
-            .filter(|listener| listener.module == module && listener.event == event)
-            .map(|listener| Rc::clone(&listener.callback))
+            .iter()
+            .filter(|(_, listener)| listener.module == module && listener.event == event)
+            .map(|(id, listener)| (*id, Rc::clone(&listener.callback)))
             .collect();
-        for callback in &callbacks {
-            callback(payload.clone());
+        for (id, callback) in &callbacks {
+            if self.listeners.borrow().contains_key(id) {
+                callback(payload.clone());
+            }
         }
         !callbacks.is_empty()
     }
@@ -250,7 +260,7 @@ impl PlatformModule {
     }
 }
 
-/// RAII handle for a module event subscription.
+/// Retains an event subscription until this handle drops or its registering Owner is disposed.
 pub struct ModuleSubscription {
     id: i32,
     host: Weak<ModuleHost>,

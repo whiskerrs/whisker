@@ -95,6 +95,13 @@ pub(crate) fn with_runtime<R>(f: impl FnOnce(&mut ReactiveRuntime) -> R) -> R {
     RUNTIME.with_borrow_mut(f)
 }
 
+pub(crate) fn try_with_runtime<R>(f: impl FnOnce(&mut ReactiveRuntime) -> R) -> Option<R> {
+    RUNTIME
+        .try_with(|runtime| runtime.try_borrow_mut().ok().map(|mut rt| f(&mut rt)))
+        .ok()
+        .flatten()
+}
+
 pub(crate) fn swap_runtime(runtime: &mut ReactiveRuntime) {
     RUNTIME.with_borrow_mut(|active| std::mem::swap(active, runtime));
 }

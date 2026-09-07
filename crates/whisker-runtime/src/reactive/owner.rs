@@ -42,7 +42,16 @@ impl Owner {
     /// the route resumes.
     pub fn new(parent: Option<Owner>) -> Owner {
         with_runtime(|rt| {
+            assert!(
+                !rt.shutting_down,
+                "cannot create an owner during runtime shutdown"
+            );
             let parent = parent.or_else(|| rt.current_owner());
+            assert!(
+                parent
+                    .is_none_or(|parent| rt.owners.get(parent).is_some_and(|owner| !owner.closing)),
+                "cannot create a child of a disposed owner"
+            );
             let parent_paused = parent
                 .and_then(|p| rt.owners.get(p))
                 .map(|o| o.paused)
@@ -59,29 +68,16 @@ impl Owner {
         })
     }
 
-    /// Create a parentless **root** owner, ignoring whatever owner is
-    /// currently on the stack.
-    ///
-    /// Unlike [`Owner::new(None)`](Owner::new) — which adopts the
-    /// current top-of-stack owner as parent — this always produces a
-    /// detached root. Use it for **runtime-local singletons** whose
-    /// lifetime must not be tied to the (possibly short-lived) owner
-    /// that happens to be active when the singleton is first touched.
-    ///
-    /// The canonical case is a module that lazily mints an
-    /// arena-backed handle on first access (e.g.
-    /// `whisker-safe-area`): if that first access lands inside a
-    /// per-route / per-component owner, minting under `new(None)` would
-    /// free the handle when that scope disposes, and a later read would
-    /// hit a disposed node. Minting under a `detached_root()` (then
-    /// never disposing it) keeps the handle alive until the runtime ends.
-    /// It does not make an arena handle portable between runtime instances.
-    ///
-    /// The returned owner is never auto-disposed; the caller is
-    /// expected to retain it until explicit disposal or let the runtime release
-    /// its arena on shutdown. Dropping the handle alone does not dispose it.
+    /// Creates a parentless owner whose Copy handle does not dispose it on drop.
+    /// Call `dispose` explicitly; use [`crate::runtime_local!`] for Runtime-owned caches.
     pub fn detached_root() -> Owner {
-        with_runtime(|rt| rt.owners.insert(Scope::new(None)))
+        with_runtime(|rt| {
+            assert!(
+                !rt.shutting_down,
+                "cannot create an owner during runtime shutdown"
+            );
+            rt.owners.insert(Scope::new(None))
+        })
     }
 
     /// Push `self` as the current scope, run `f`, pop back.
@@ -90,16 +86,32 @@ impl Owner {
     /// will belong to this owner.
     pub fn with<R>(self, f: impl FnOnce() -> R) -> R {
         with_runtime(|rt| rt.owner_stack.push(self));
-        let result = f();
-        with_runtime(|rt| {
-            let popped = rt.owner_stack.pop();
-            debug_assert_eq!(
-                popped,
-                Some(self),
-                "Owner::with: stack imbalance — owner pop didn't match push"
-            );
-        });
-        result
+        struct Restore(Owner);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                with_runtime(|rt| {
+                    let popped = rt.owner_stack.pop();
+                    debug_assert_eq!(popped, Some(self.0));
+                });
+            }
+        }
+        let _restore = Restore(self);
+        f()
+    }
+
+    pub(crate) fn service() -> Self {
+        if let Some(owner) = with_runtime(|rt| rt.service_owner) {
+            return owner;
+        }
+        let owner = Self::detached_root();
+        with_runtime(|rt| rt.service_owner = Some(owner));
+        owner
+    }
+
+    /// Whether this owner still accepts new work.
+    #[doc(hidden)]
+    pub fn is_alive(self) -> bool {
+        with_runtime(|rt| rt.owners.get(self).is_some_and(|scope| !scope.closing))
     }
 
     /// Dispose `self`, freeing all its descendants, nodes, and
@@ -108,6 +120,38 @@ impl Owner {
     /// Recursive — disposes children first, then this owner. Safe
     /// to call even if the owner has already been disposed (no-op).
     pub fn dispose(self) {
+        let drain = with_runtime(|rt| {
+            if rt.owners.get(self).is_none_or(|scope| scope.closing) {
+                return false;
+            }
+            let mut pending = vec![self];
+            while let Some(owner) = pending.pop() {
+                if let Some(scope) = rt.owners.get_mut(owner) {
+                    scope.closing = true;
+                    pending.extend(scope.children.iter().copied());
+                }
+            }
+            rt.disposing.push(self);
+            rt.execution_depth == 0
+        });
+        if drain {
+            Self::drain_disposals();
+        }
+    }
+
+    pub(crate) fn drain_disposals() {
+        loop {
+            let owners = with_runtime(|rt| std::mem::take(&mut rt.disposing));
+            if owners.is_empty() {
+                break;
+            }
+            for owner in owners {
+                owner.dispose_now();
+            }
+        }
+    }
+
+    fn dispose_now(self) {
         // Everything is pulled out under a short borrow rather than
         // held across the recursion — deeper levels re-enter the
         // runtime.
@@ -117,6 +161,7 @@ impl Owner {
         let parent;
         let mount_fn;
         let elements;
+        let registrations;
         {
             let removed = with_runtime(|rt| rt.owners.remove(self));
             let Some(o) = removed else { return };
@@ -126,6 +171,7 @@ impl Owner {
             parent = o.parent;
             mount_fn = o.mount_fn;
             elements = o.elements;
+            registrations = o.registrations;
         }
 
         // A component owner must leave the hot-reload registry, or
@@ -181,7 +227,7 @@ impl Owner {
         }
 
         for child in children {
-            child.dispose();
+            child.dispose_now();
         }
 
         // Cleanups run before this owner's nodes are freed, so an
@@ -190,6 +236,10 @@ impl Owner {
         // already disposed above, so a *child's* signal still reads as
         // gone. LIFO, and with no runtime borrow held — a cleanup may
         // re-enter the runtime.
+        for (_, cancel) in registrations {
+            cancel();
+        }
+
         for cleanup in cleanups.into_iter().rev() {
             cleanup();
         }
@@ -199,28 +249,30 @@ impl Owner {
         // Arc-signal back-refs are collected here and unsubscribed
         // below, outside the borrow — those callees re-enter the
         // runtime.
+        let mut removed_nodes = Vec::new();
         let arc_unsubscribes: Vec<(Rc<dyn super::runtime::ArcSubscription>, NodeId)> =
             with_runtime(|rt| {
                 let mut out: Vec<(Rc<dyn super::runtime::ArcSubscription>, NodeId)> = Vec::new();
                 for node_id in &nodes {
-                    let Some(node) = rt.nodes.remove(*node_id) else {
+                    let Some(mut node) = rt.nodes.remove(*node_id) else {
                         continue;
                     };
-                    for source in node.sources {
+                    for source in std::mem::take(&mut node.sources) {
                         if let Some(src_node) = rt.nodes.get_mut(source) {
                             src_node.subscribers.remove(node_id);
                         }
                     }
                     // A signal this owner held may have been read by an
                     // outer effect, so clear the reverse edge too.
-                    for sub in node.subscribers {
+                    for sub in std::mem::take(&mut node.subscribers) {
                         if let Some(sub_node) = rt.nodes.get_mut(sub) {
                             sub_node.sources.remove(node_id);
                         }
                     }
-                    for arc_src in node.arc_sources {
+                    for arc_src in std::mem::take(&mut node.arc_sources) {
                         out.push((arc_src, *node_id));
                     }
+                    removed_nodes.push(node);
                 }
                 // A scheduled node left in these queues would be re-run
                 // from its freed slot on the next flush / resume.
@@ -232,6 +284,7 @@ impl Owner {
         // An Arc-backed signal outlives its subscribers, so pruning
         // here is what keeps its list from accumulating dead
         // `NodeId`s across transient subscribers.
+        drop(removed_nodes);
         for (arc_src, subscriber) in arc_unsubscribes {
             arc_src.unsubscribe(subscriber);
         }

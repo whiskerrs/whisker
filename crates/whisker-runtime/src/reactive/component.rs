@@ -73,19 +73,20 @@ pub fn unmount_component(owner: Owner) {
 /// Register `f` as a post-mount callback for the current owner. Fires
 /// once on the next [`flush_mounts`] call, which runs after the
 /// component's view is appended to its parent.
+/// Disposing the Owner before delivery cancels the callback.
 ///
 /// No-op (with debug-build warning) if there is no current owner.
 pub fn on_mount(f: impl FnOnce() + 'static) {
-    let registered = with_runtime(|rt| {
-        if rt.current_owner().is_none() {
-            return false;
-        }
-        rt.pending_mounts.push(Box::new(f));
-        true
-    });
-    if !registered {
+    if Owner::current().is_none() {
         super::warn_no_owner("on_mount");
+        return;
     }
+    let callback = crate::lifetime::Scoped::new(Some(f));
+    with_runtime(|rt| {
+        rt.pending_mounts.push(Box::new(move || {
+            callback.with_mut(|f| f.take().expect("mount callback runs once")());
+        }))
+    });
 }
 
 /// Run all queued on_mount callbacks in registration order. Called

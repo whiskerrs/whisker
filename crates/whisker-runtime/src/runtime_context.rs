@@ -110,27 +110,48 @@ impl RuntimeContext {
             !self.entered.get(),
             "Whisker RuntimeContext cannot shut down while entered"
         );
-        if self.closed.replace(true) {
+        if self.closed.get() {
             return;
         }
+        self.enter(|| {
+            crate::reactive::with_runtime(|rt| rt.shutting_down = true);
+            if let Some(dispatcher) = crate::runtime_dispatcher() {
+                dispatcher.close();
+            }
+            let owners = crate::reactive::with_runtime(|rt| {
+                rt.owners
+                    .iter()
+                    .filter_map(|(owner, scope)| {
+                        (scope.parent.is_none() && Some(owner) != rt.service_owner).then_some(owner)
+                    })
+                    .collect::<Vec<_>>()
+            });
+            for owner in owners {
+                owner.dispose();
+            }
+            tasks::clear();
+            crate::runtime_local::dispose_caches();
+            if let Some(owner) = crate::reactive::with_runtime(|rt| rt.service_owner) {
+                owner.dispose();
+            }
+            crate::runtime_local::clear();
+            let mut animation = AnimationState::new();
+            anim_hook::swap_state(&mut animation);
+            drop(animation);
+        });
+        self.closed.set(true);
         let mut state = self.state.borrow_mut();
-        if let Some(dispatcher) = &state.dispatcher {
-            dispatcher.close();
-        }
-        state.reactive = ReactiveRuntime::new();
         state.view = ViewRuntimeState::new();
-        state.tasks = TaskState::new();
         state.animation = AnimationState::new();
         state.runtime_local = RuntimeLocalState::new();
+        state.reactive = ReactiveRuntime::new();
         state.pending_mount = None;
     }
 }
 
 impl Drop for RuntimeContext {
     fn drop(&mut self) {
-        if let Some(dispatcher) = &self.state.get_mut().dispatcher {
-            dispatcher.close();
-        }
+        self.shutdown();
     }
 }
 

@@ -12,10 +12,13 @@ use crate::reactive::{__reset_for_tests, Owner, ResourceState, flush, resource, 
 use crate::tasks;
 
 fn with_test_owner<R>(f: impl FnOnce() -> R) -> R {
-    __reset_for_tests();
-    tasks::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(f)
+    let runtime = crate::RuntimeContext::new(crate::RuntimeWakeHandle::new(|| {}));
+    runtime.enter(|| {
+        __reset_for_tests();
+        tasks::__reset_for_tests();
+        let owner = Owner::new(None);
+        owner.with(f)
+    })
 }
 
 #[test]
@@ -384,84 +387,89 @@ mod cross_thread_wake {
 
     #[test]
     fn reactive_resource_reading_signal_with_run_blocking_completes_after_refetch() {
-        use std::cell::Cell;
-        use std::rc::Rc;
+        let runtime = crate::RuntimeContext::new(crate::RuntimeWakeHandle::new(|| {
+            DRIVE_REQUESTED.store(true, Ordering::Release)
+        }));
+        runtime.enter(|| {
+            use std::cell::Cell;
+            use std::rc::Rc;
 
-        let _g = lock();
-        __reset_for_tests();
-        tasks::__reset_for_tests();
-        install_host();
+            let _g = lock();
+            __reset_for_tests();
+            tasks::__reset_for_tests();
+            install_host();
 
-        let runs = Rc::new(Cell::new(0u32));
-        let runs_for_fetcher = runs.clone();
+            let runs = Rc::new(Cell::new(0u32));
+            let runs_for_fetcher = runs.clone();
 
-        let owner = Owner::new(None);
-        owner.with(|| {
-            let query = RwSignal::new(1_i32);
-            let r = resource::<i32, _, _>(move || {
-                runs_for_fetcher.set(runs_for_fetcher.get() + 1);
-                // Sync-prefix read of the tracked signal (the canonical
-                // "fetch keyed by a signal" pattern).
-                let q = query.get();
-                async move {
-                    // Blocking IO offloaded to a worker thread, result
-                    // marshaled back through the host wake callback. A small
-                    // sleep makes the worker outlive the spawning frame
-                    // so the cross-thread wake (not an inline poll) is
-                    // what resumes the fetch — as on device.
-                    let v = run_blocking(move || {
-                        std::thread::sleep(Duration::from_millis(15));
-                        q * 10
-                    })
-                    .await;
-                    Ok::<i32, String>(v)
-                }
-            });
+            let owner = Owner::new(None);
+            owner.with(|| {
+                let query = RwSignal::new(1_i32);
+                let r = resource::<i32, _, _>(move || {
+                    runs_for_fetcher.set(runs_for_fetcher.get() + 1);
+                    // Sync-prefix read of the tracked signal (the canonical
+                    // "fetch keyed by a signal" pattern).
+                    let q = query.get();
+                    async move {
+                        // Blocking IO offloaded to a worker thread, result
+                        // marshaled back through the host wake callback. A small
+                        // sleep makes the worker outlive the spawning frame
+                        // so the cross-thread wake (not an inline poll) is
+                        // what resumes the fetch — as on device.
+                        let v = run_blocking(move || {
+                            std::thread::sleep(Duration::from_millis(15));
+                            q * 10
+                        })
+                        .await;
+                        Ok::<i32, String>(v)
+                    }
+                });
 
-            // A consuming effect, as a component's render would have: it
-            // reads the resource state, so each commit (`state.set`)
-            // schedules a re-run on the trailing flush.
-            let seen = Rc::new(Cell::new(0i32));
-            let seen_for_effect = seen.clone();
-            crate::reactive::effect::effect(move || {
-                if let ResourceState::Ready(v) = r.state() {
-                    seen_for_effect.set(v);
-                }
-            });
+                // A consuming effect, as a component's render would have: it
+                // reads the resource state, so each commit (`state.set`)
+                // schedules a re-run on the trailing flush.
+                let seen = Rc::new(Cell::new(0i32));
+                let seen_for_effect = seen.clone();
+                crate::reactive::effect::effect(move || {
+                    if let ResourceState::Ready(v) = r.state() {
+                        seen_for_effect.set(v);
+                    }
+                });
 
-            // Drive the INITIAL fetch to completion.
-            drive_until(|| !r.loading());
-            assert_eq!(
-                r.get(),
-                Some(10),
-                "initial reactive+run_blocking fetch must complete (query=1 → 10)"
-            );
+                // Drive the INITIAL fetch to completion.
+                drive_until(|| !r.loading());
+                assert_eq!(
+                    r.get(),
+                    Some(10),
+                    "initial reactive+run_blocking fetch must complete (query=1 → 10)"
+                );
 
-            // Deliberately no inline flush: let the tick loop pick up
-            // the frame request the write's wake made, as the host does.
-            query.set(7);
+                // Deliberately no inline flush: let the tick loop pick up
+                // the frame request the write's wake made, as the host does.
+                query.set(7);
 
-            // Drive the RE-FETCH to completion — the case where loading
-            // flips true but the result never arrives.
-            drive_until(|| matches!(r.state(), ResourceState::Ready(70)));
-            assert_eq!(
-                r.get(),
-                Some(70),
-                "reactive resource + run_blocking must finish the re-fetch \
+                // Drive the RE-FETCH to completion — the case where loading
+                // flips true but the result never arrives.
+                drive_until(|| matches!(r.state(), ResourceState::Ready(70)));
+                assert_eq!(
+                    r.get(),
+                    Some(70),
+                    "reactive resource + run_blocking must finish the re-fetch \
                  after the tracked signal changes (query=7 → 70), not stay Loading"
-            );
-            assert_eq!(
-                runs.get(),
-                2,
-                "fetcher must run exactly twice (initial + one re-fetch); a \
+                );
+                assert_eq!(
+                    runs.get(),
+                    2,
+                    "fetcher must run exactly twice (initial + one re-fetch); a \
                  spurious extra run would bump the generation and abandon the \
                  in-flight fetch"
-            );
-            assert_eq!(seen.get(), 70, "consumer effect observed the final value");
-        });
+                );
+                assert_eq!(seen.get(), 70, "consumer effect observed the final value");
+            });
 
-        owner.dispose();
-        reset_host();
+            owner.dispose();
+            reset_host();
+        });
     }
 
     /// After-`.await` variant: the tracked signal is read AFTER the
@@ -469,40 +477,45 @@ mod cross_thread_wake {
     /// cross-thread-woken poll, inside `with_observer`.
     #[test]
     fn reactive_resource_signal_read_after_run_blocking_await_refetches() {
-        let _g = lock();
-        __reset_for_tests();
-        tasks::__reset_for_tests();
-        install_host();
+        let runtime = crate::RuntimeContext::new(crate::RuntimeWakeHandle::new(|| {
+            DRIVE_REQUESTED.store(true, Ordering::Release)
+        }));
+        runtime.enter(|| {
+            let _g = lock();
+            __reset_for_tests();
+            tasks::__reset_for_tests();
+            install_host();
 
-        let owner = Owner::new(None);
-        owner.with(|| {
-            let multiplier = RwSignal::new(2_i32);
-            let r = resource::<i32, _, _>(move || async move {
-                // Blocking IO FIRST (a real cross-thread suspension),
-                // then read the tracked signal AFTER resuming.
-                let base = run_blocking(|| {
-                    std::thread::sleep(Duration::from_millis(15));
-                    10_i32
-                })
-                .await;
-                let m = multiplier.get();
-                Ok::<i32, String>(base * m)
+            let owner = Owner::new(None);
+            owner.with(|| {
+                let multiplier = RwSignal::new(2_i32);
+                let r = resource::<i32, _, _>(move || async move {
+                    // Blocking IO FIRST (a real cross-thread suspension),
+                    // then read the tracked signal AFTER resuming.
+                    let base = run_blocking(|| {
+                        std::thread::sleep(Duration::from_millis(15));
+                        10_i32
+                    })
+                    .await;
+                    let m = multiplier.get();
+                    Ok::<i32, String>(base * m)
+                });
+
+                drive_until(|| !r.loading());
+                assert_eq!(r.get(), Some(20), "initial: 10 * multiplier(2) = 20");
+
+                multiplier.set(5);
+                drive_until(|| matches!(r.state(), ResourceState::Ready(50)));
+                assert_eq!(
+                    r.get(),
+                    Some(50),
+                    "after-await tracked read + run_blocking must re-fetch (10*5=50)"
+                );
             });
 
-            drive_until(|| !r.loading());
-            assert_eq!(r.get(), Some(20), "initial: 10 * multiplier(2) = 20");
-
-            multiplier.set(5);
-            drive_until(|| matches!(r.state(), ResourceState::Ready(50)));
-            assert_eq!(
-                r.get(),
-                Some(50),
-                "after-await tracked read + run_blocking must re-fetch (10*5=50)"
-            );
+            owner.dispose();
+            reset_host();
         });
-
-        owner.dispose();
-        reset_host();
     }
 
     /// Overlapping re-fetch: the tracked signal changes WHILE the first
@@ -513,58 +526,63 @@ mod cross_thread_wake {
     /// one.
     #[test]
     fn reactive_resource_overlapping_refetch_completes_latest() {
-        use std::cell::Cell;
-        use std::rc::Rc;
+        let runtime = crate::RuntimeContext::new(crate::RuntimeWakeHandle::new(|| {
+            DRIVE_REQUESTED.store(true, Ordering::Release)
+        }));
+        runtime.enter(|| {
+            use std::cell::Cell;
+            use std::rc::Rc;
 
-        let _g = lock();
-        __reset_for_tests();
-        tasks::__reset_for_tests();
-        install_host();
+            let _g = lock();
+            __reset_for_tests();
+            tasks::__reset_for_tests();
+            install_host();
 
-        let owner = Owner::new(None);
-        owner.with(|| {
-            let query = RwSignal::new(1_i32);
-            let r = resource::<i32, _, _>(move || {
-                let q = query.get();
-                async move {
-                    let v = run_blocking(move || {
-                        // Long enough that the second change lands while
-                        // this worker is still asleep.
-                        std::thread::sleep(Duration::from_millis(40));
-                        q * 10
-                    })
-                    .await;
-                    Ok::<i32, String>(v)
-                }
-            });
+            let owner = Owner::new(None);
+            owner.with(|| {
+                let query = RwSignal::new(1_i32);
+                let r = resource::<i32, _, _>(move || {
+                    let q = query.get();
+                    async move {
+                        let v = run_blocking(move || {
+                            // Long enough that the second change lands while
+                            // this worker is still asleep.
+                            std::thread::sleep(Duration::from_millis(40));
+                            q * 10
+                        })
+                        .await;
+                        Ok::<i32, String>(v)
+                    }
+                });
 
-            let seen = Rc::new(Cell::new(0i32));
-            let seen_for_effect = seen.clone();
-            crate::reactive::effect::effect(move || {
-                if let ResourceState::Ready(v) = r.state() {
-                    seen_for_effect.set(v);
-                }
-            });
+                let seen = Rc::new(Cell::new(0i32));
+                let seen_for_effect = seen.clone();
+                crate::reactive::effect::effect(move || {
+                    if let ResourceState::Ready(v) = r.state() {
+                        seen_for_effect.set(v);
+                    }
+                });
 
-            // Kick the first fetch (do NOT wait for it).
-            tick();
-            assert!(r.loading());
+                // Kick the first fetch (do NOT wait for it).
+                tick();
+                assert!(r.loading());
 
-            // Change the signal while the first worker is still asleep.
-            query.set(7);
+                // Change the signal while the first worker is still asleep.
+                query.set(7);
 
-            // Drive to the LATEST result.
-            drive_until(|| matches!(r.state(), ResourceState::Ready(70)));
-            assert_eq!(
-                r.get(),
-                Some(70),
-                "overlapping re-fetch must settle on the latest query (7 → 70), \
+                // Drive to the LATEST result.
+                drive_until(|| matches!(r.state(), ResourceState::Ready(70)));
+                assert_eq!(
+                    r.get(),
+                    Some(70),
+                    "overlapping re-fetch must settle on the latest query (7 → 70), \
                  not hang in Loading"
-            );
-        });
+                );
+            });
 
-        owner.dispose();
-        reset_host();
+            owner.dispose();
+            reset_host();
+        });
     }
 }
 
