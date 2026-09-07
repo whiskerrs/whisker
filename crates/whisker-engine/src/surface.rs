@@ -526,9 +526,7 @@ impl SurfaceEngine {
             return Ok(PropertyImpactSet::default());
         }
         let impact = Rc::make_mut(&mut self.layout).update_style(node, style)?;
-        if impact.contains(PropertyImpactSet::LAYOUT) {
-            self.layout_dirty = true;
-        }
+        self.layout_dirty = true;
         Ok(impact)
     }
 
@@ -685,7 +683,9 @@ impl SurfaceEngine {
             .measurements
             .matches_spec(node, element_type, spec.as_ref())
             && Rc::make_mut(&mut self.measurements).set_spec(node, element_type, spec)?;
-        let behavior_changed = self.set_measurable(node, measurable)?;
+        let behavior_changed = self
+            .set_measurable(node, measurable)
+            .expect("measurement node was validated on a mutable surface");
         let changed = spec_changed || behavior_changed;
         if changed {
             Rc::make_mut(&mut self.layout)
@@ -1389,6 +1389,37 @@ mod tests {
         assert!(
             (resized_stops[1].position.unwrap().fraction - 25.0 / resized_expected).abs() < 0.0001
         );
+    }
+
+    #[test]
+    fn clearing_radial_backgrounds_drops_retained_geometry_sources() {
+        let mut surface = SurfaceEngine::new(surface_id());
+        let root = surface
+            .create_node(element_type(), sized(200.0, 100.0))
+            .unwrap();
+        surface
+            .set_background_layers(
+                root,
+                vec![radial_background(
+                    RadialGradientShape::Circle,
+                    RadialGradientExtent::FarthestCorner,
+                    None,
+                )],
+            )
+            .unwrap();
+        surface
+            .compute_layout(root, LayoutSize::new(200.0, 100.0), &mut zero_measure)
+            .unwrap();
+        let snapshot = surface.clone();
+        surface.set_background_layers(root, Vec::new()).unwrap();
+        surface
+            .update_layout_style(root, sized(100.0, 100.0))
+            .unwrap();
+        surface
+            .compute_layout(root, LayoutSize::new(200.0, 100.0), &mut zero_measure)
+            .unwrap();
+        assert!(surface.node(root).unwrap().background_layers().is_empty());
+        assert_eq!(snapshot.node(root).unwrap().background_layers().len(), 1);
     }
 
     #[test]

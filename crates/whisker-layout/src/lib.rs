@@ -6,6 +6,8 @@
 
 #![warn(missing_docs)]
 
+mod backend;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -234,6 +236,7 @@ struct RetainedNode {
 #[derive(Clone, Debug)]
 pub struct LayoutTree {
     backend: TaffyTree<NodeId>,
+    layout_state: backend::LayoutState,
     surface_root: taffy::NodeId,
     surface_child: Option<NodeId>,
     surface_viewport: Option<LayoutSize>,
@@ -256,6 +259,7 @@ impl LayoutTree {
             .expect("valid private surface-root style");
         Self {
             backend,
+            layout_state: backend::LayoutState::default(),
             surface_root,
             surface_child: None,
             surface_viewport: None,
@@ -509,6 +513,7 @@ impl LayoutTree {
         self.collect_postorder(node, &mut postorder);
         for removed in postorder {
             let retained = self.nodes.remove(&removed).expect("collected live node");
+            self.layout_state.remove(retained.backend);
             self.backend
                 .remove(retained.backend)
                 .expect("retained backend node");
@@ -570,39 +575,38 @@ impl LayoutTree {
             self.surface_child = Some(root);
         }
         let mut invalid_measurements = BTreeSet::new();
-        self.backend
-            .compute_layout_with_measure(
-                self.surface_root,
-                Size {
-                    width: TaffyAvailableSpace::Definite(viewport.width),
-                    height: TaffyAvailableSpace::Definite(viewport.height),
-                },
-                |known, available, _, context, _| {
-                    let Some(node) = context.copied() else {
-                        return Size::ZERO;
-                    };
-                    let measured = measurer.measure(
-                        node,
-                        MeasureRequest {
-                            known_dimensions: [known.width, known.height],
-                            available_space: [
-                                from_taffy_available(available.width),
-                                from_taffy_available(available.height),
-                            ],
-                        },
-                    );
-                    if !measured.is_valid() {
-                        invalid_measurements.insert(node);
-                        Size::ZERO
-                    } else {
-                        Size {
-                            width: measured.width,
-                            height: measured.height,
-                        }
+        self.layout_state.compute(
+            &mut self.backend,
+            self.surface_root,
+            Size {
+                width: TaffyAvailableSpace::Definite(viewport.width),
+                height: TaffyAvailableSpace::Definite(viewport.height),
+            },
+            |known, available, context: Option<&NodeId>| {
+                let Some(node) = context.copied() else {
+                    return Size::ZERO;
+                };
+                let measured = measurer.measure(
+                    node,
+                    MeasureRequest {
+                        known_dimensions: [known.width, known.height],
+                        available_space: [
+                            from_taffy_available(available.width),
+                            from_taffy_available(available.height),
+                        ],
+                    },
+                );
+                if !measured.is_valid() {
+                    invalid_measurements.insert(node);
+                    Size::ZERO
+                } else {
+                    Size {
+                        width: measured.width,
+                        height: measured.height,
                     }
-                },
-            )
-            .expect("retained backend root");
+                }
+            },
+        );
         if let Some(node) = invalid_measurements.first().copied() {
             for invalid in invalid_measurements {
                 let backend = self
@@ -672,10 +676,7 @@ impl LayoutTree {
     ) {
         let retained = self.nodes.get(&node).expect("retained snapshot node");
         let suppressed = ancestor_suppressed || retained.style.display == DisplayValue::None;
-        let layout = self
-            .backend
-            .layout(retained.backend)
-            .expect("retained backend node");
+        let layout = self.layout_state.layout(retained.backend);
         snapshot.boxes.insert(
             node,
             (

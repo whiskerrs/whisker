@@ -658,6 +658,14 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
                 .get_or_insert(MeasurementError::MissingSpec { node });
             return LayoutSize::default();
         };
+        let constraints = if state.spec.payload.kind() == MeasurementKind::Text {
+            MeasureConstraints {
+                available_space: [constraints.available_space[0], AvailableSpace::MaxContent],
+                ..constraints
+            }
+        } else {
+            constraints
+        };
         let epoch = self.environment_epoch.unwrap_or(0);
         let cache_key = Self::cache_key(&state, constraints, epoch);
 
@@ -844,6 +852,108 @@ mod tests {
                 ..LayoutRect::default()
             }),
             prepared_content: PreparedContentId::new(3),
+        }
+    }
+
+    #[test]
+    fn text_measurement_shares_intrinsic_height_constraints() {
+        let mut coordinator = MeasurementCoordinator::default();
+        coordinator.set_environment(1);
+        let node = NodeId::new(1).unwrap();
+        coordinator
+            .set_spec(
+                node,
+                ElementTypeId::new(1).unwrap(),
+                Some(spec(MeasurementKind::Text, PendingMeasurePolicy::Block)),
+            )
+            .unwrap();
+        coordinator.begin_pass();
+        for height in [
+            AvailableSpace::MinContent,
+            AvailableSpace::MaxContent,
+            AvailableSpace::Definite(16.0),
+            AvailableSpace::Definite(20.0),
+        ] {
+            coordinator.measure(
+                node,
+                MeasureConstraints {
+                    known_dimensions: [Some(100.0), None],
+                    available_space: [AvailableSpace::Definite(100.0), height],
+                },
+            );
+        }
+        let pass = coordinator.finish_pass().unwrap();
+        assert_eq!(pass.requests.len(), 1);
+        assert_eq!(
+            pass.requests[0].constraints.available_space[1],
+            AvailableSpace::MaxContent
+        );
+    }
+
+    #[test]
+    fn text_height_reuse_preserves_width_known_height_and_other_measurement_kinds() {
+        let mut coordinator = MeasurementCoordinator::default();
+        coordinator.set_environment(1);
+        for (index, kind) in [
+            MeasurementKind::Text,
+            MeasurementKind::ReplacedContent,
+            MeasurementKind::NativeControl,
+            MeasurementKind::EmbeddedSurface,
+            MeasurementKind::Custom { version: 1 },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let node = node(index as u64 + 1);
+            coordinator
+                .set_spec(
+                    node,
+                    element(),
+                    Some(spec(kind, PendingMeasurePolicy::Block)),
+                )
+                .unwrap();
+            coordinator.begin_pass();
+            for width in [100.0, 101.0] {
+                for known_height in [None, Some(20.0)] {
+                    for height in [AvailableSpace::MaxContent, AvailableSpace::Definite(16.0)] {
+                        coordinator.measure(
+                            node,
+                            MeasureConstraints {
+                                known_dimensions: [Some(width), known_height],
+                                available_space: [AvailableSpace::Definite(width), height],
+                            },
+                        );
+                    }
+                }
+            }
+            let pass = coordinator.finish_pass().unwrap();
+            assert_eq!(
+                pass.requests.len(),
+                if kind == MeasurementKind::Text { 4 } else { 8 }
+            );
+            let responses = pass
+                .requests
+                .iter()
+                .map(|request| MeasurementResponse::Ready {
+                    key: request.key,
+                    environment_epoch: 1,
+                    metrics: metrics(100.0, 20.0),
+                })
+                .collect::<Vec<_>>();
+            coordinator.apply_batch(&responses).unwrap();
+            coordinator.begin_pass();
+            let size = coordinator.measure(
+                node,
+                MeasureConstraints {
+                    known_dimensions: [Some(100.0), None],
+                    available_space: [
+                        AvailableSpace::Definite(100.0),
+                        AvailableSpace::Definite(16.0),
+                    ],
+                },
+            );
+            assert_eq!(size, LayoutSize::new(100.0, 20.0));
+            assert!(coordinator.finish_pass().unwrap().requests.is_empty());
         }
     }
 
