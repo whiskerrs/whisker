@@ -10,14 +10,19 @@ not become independent descriptions of the same API.
 | `docs/` in this repository | Whisker contributors and Host/module maintainers | Architecture, invariants, crate boundaries, build and runtime internals, design rationale | Tutorials or exhaustive public API reference |
 | `../website/src/content/docs/` | Application and module authors | Getting started, concepts, guides, supported platforms, task-oriented examples | Internal implementation details that users cannot rely on |
 | Rustdoc in each crate | Rust callers of that crate | Exact public items, contracts, errors, safety, short compiling examples | Long tutorials or cross-platform product documentation |
-| `docs/rfcs/` | Design history and accepted decisions | Why a change was proposed and what was accepted at that time | A guarantee that the described implementation is still current |
 
 The implementation and its tests are the source of truth. Rustdoc is the
 closest prose representation of the public Rust API; the website links concepts
 to those exact names instead of duplicating full signatures. Current-design
 documents explain seams and invariants that cannot be understood from one API
-item. RFCs remain historical records and may therefore mention removed systems
-such as Lynx.
+item. Design discussions and the history of decisions belong in issues, PRs,
+and Git history.
+
+Temporary research, diagnostic logs, performance captures, and migration
+checklists belong outside the repository. Keep an issue or PR as the tracking
+record, and incorporate conclusions needed for future maintenance into a current
+design document. `docs/` should remain a guide to the system rather
+than a chronological record of investigations.
 
 ## Required updates with a change
 
@@ -27,9 +32,9 @@ such as Lynx.
   updates the relevant current-design document under `docs/`.
 - A user-visible workflow or platform-support change updates the website and the
   root README.
-- An architectural decision that needs durable rationale gets an RFC. Once the
-  implementation lands, the current-design docs must also be updated; changing
-  only the RFC is insufficient.
+- Discuss architectural proposals in issues or PRs. When the implementation
+  lands, record the resulting design and its rationale in the relevant current
+  document in the same change.
 
 ## Rustdoc standard
 
@@ -70,8 +75,8 @@ incrementally before enabling the same lint there.
   builders. The builder API is the semantic contract.
 - Call Android, iOS, Web, and Desktop implementations **Hosts**. Android/iOS use
   the FFI Driver; Web/Desktop compose the Rust runtime directly.
-- Do not describe Lynx as a current dependency. It may be named in RFC history
-  or compatibility rationale, with past-tense wording.
+- Do not describe Lynx as a current dependency. Name it only when explaining
+  a compatibility constraint that still applies, using past-tense wording.
 - Copy non-trivial code from a checked example or test whenever possible. If a
   standalone snippet cannot be compiled in CI, identify the source file beside
   it so future updates have an implementation reference.
