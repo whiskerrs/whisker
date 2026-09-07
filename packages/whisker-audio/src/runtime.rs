@@ -98,8 +98,7 @@ impl Player {
     pub fn new(source: impl Into<String>) -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let source = source.into();
-        let runtime = whisker::runtime::runtime_local::state::<AudioRuntimeState>();
-        install_status_listener(&runtime);
+        let runtime = AUDIO.with(Clone::clone);
         let status = ArcRwSignal::new(PlaybackStatus::default());
         runtime.borrow_mut().entries.insert(id, status.clone());
         module!("WhiskerAudio").invoke(
@@ -249,6 +248,14 @@ struct AudioRuntimeState {
     subscription: Option<ModuleSubscription>,
 }
 
+whisker::runtime_local! {
+    static AUDIO: Rc<RefCell<AudioRuntimeState>> = {
+        let runtime = Rc::new(RefCell::new(AudioRuntimeState::default()));
+        install_status_listener(&runtime);
+        runtime
+    };
+}
+
 /// One-shot install of the `statusChanged` subscription. Stale
 /// events for ids that were already released drop silently.
 fn install_status_listener(runtime: &Rc<RefCell<AudioRuntimeState>>) {
@@ -292,4 +299,44 @@ fn read_f64(fields: &BTreeMap<String, WhiskerValue>, key: &str) -> f64 {
 
 fn read_bool(fields: &BTreeMap<String, WhiskerValue>, key: &str) -> bool {
     matches!(fields.get(key), Some(WhiskerValue::Bool(true)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whisker::Owner;
+    use whisker::runtime::module::{ModuleHost, with_module_host};
+    use whisker::runtime::{RuntimeContext, RuntimeWakeHandle};
+
+    #[test]
+    fn status_subscription_outlives_the_first_component_and_ends_with_its_runtime() {
+        let runtime = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        let log = observations.clone();
+        let host = ModuleHost::new(
+            |_, _, _, _, _| false,
+            move |_, _, active| log.borrow_mut().push(active),
+        );
+        let player = runtime.enter(|| {
+            with_module_host(&host, || {
+                let owner = Owner::new(None);
+                let player = owner.with(|| Player::new("test.mp3"));
+                owner.dispose();
+                host.dispatch_event(
+                    module!("WhiskerAudio").name(),
+                    "statusChanged",
+                    WhiskerValue::Map(BTreeMap::from([
+                        ("playerId".into(), WhiskerValue::Int(player.inner.id as i64)),
+                        ("position".into(), WhiskerValue::Float(12.0)),
+                    ])),
+                );
+                assert_eq!(player.inner.status.get().position, 12.0);
+                assert_eq!(*observations.borrow(), vec![true]);
+                player
+            })
+        });
+        runtime.shutdown();
+        assert_eq!(*observations.borrow(), vec![true, false]);
+        drop(player);
+    }
 }

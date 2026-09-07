@@ -103,10 +103,7 @@ impl ElementRef {
     /// (uses `get_untracked()`), so calling from inside an
     /// `effect(...)` doesn't subscribe the effect to the binding.
     pub fn element(&self) -> Option<Element> {
-        if self.inner.is_disposed() {
-            return None;
-        }
-        self.inner.get_untracked()
+        self.inner.try_get_untracked().flatten()
     }
 
     /// `true` iff bound to a live element right now. Non-reactive.

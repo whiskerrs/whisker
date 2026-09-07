@@ -25,11 +25,14 @@ use crate::render::transition::RouteTransition;
 /// Run `f` under a fresh runtime + a live owner (so `computed` reads have
 /// somewhere to allocate), then tear it down.
 fn with_runtime<F: FnOnce() -> T, T>(f: F) -> T {
-    whisker::runtime::reactive::__reset_for_tests();
-    let owner = Owner::new(None);
-    let out = owner.with(f);
-    owner.dispose();
-    out
+    let runtime =
+        whisker::runtime::RuntimeContext::new(whisker::runtime::RuntimeWakeHandle::new(|| {}));
+    runtime.enter(|| {
+        let owner = Owner::new(None);
+        let out = owner.with(f);
+        owner.dispose();
+        out
+    })
 }
 
 /// Drain the reactive queue so persistent `computed`s created *before* a
@@ -496,10 +499,8 @@ fn settle_animations() {
 
 #[test]
 fn push_pauses_the_covered_under_once_the_slide_finishes() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -534,10 +535,8 @@ fn can_pop_is_derivable_from_state_before_any_reconcile() {
     // The platform enabled effect computes can-pop from the state
     // signal; the gesture bridges update one reconcile later and must
     // not be its source.
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -560,10 +559,8 @@ fn can_pop_is_derivable_from_state_before_any_reconcile() {
 
 #[test]
 fn pop_settles_survivor_to_active_pose() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -598,15 +595,12 @@ fn pop_settles_survivor_to_active_pose() {
             "survivor settled to active 0% pose; role={role:?} progress={progress}"
         );
     });
-    owner.dispose();
 }
 
 #[test]
 fn push_settles_top_to_full_progress() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -628,17 +622,14 @@ fn push_settles_top_to_full_progress() {
             "top settles at progress 1.0 after push"
         );
     });
-    owner.dispose();
 }
 
 /// `replace` must slide the new screen in (drive 0 → 1) using the route
 /// transition, not snap it to its final pose.
 #[test]
 fn replace_animates_the_new_top_in() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -680,7 +671,6 @@ fn replace_animates_the_new_top_in() {
             "replaced top settles at progress 1.0"
         );
     });
-    owner.dispose();
 }
 
 /// After a `replace`, a `back` must still animate the revealed survivor (the
@@ -688,10 +678,8 @@ fn replace_animates_the_new_top_in() {
 /// for the "Home doesn't animate on back after replace" report.
 #[test]
 fn back_after_replace_animates_the_revealed_survivor() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -727,17 +715,14 @@ fn back_after_replace_animates_the_revealed_survivor() {
             "the revealed survivor must animate in on back-after-replace; traj={traj:?}"
         );
     });
-    owner.dispose();
 }
 
 /// Same as above but with a layout Route above the Stack (the tabbed example's
 /// shape). Reproduces the "Home doesn't animate on back after replace" report.
 #[test]
 fn back_after_replace_animates_under_a_layout_route() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = layout_slide_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -770,7 +755,6 @@ fn back_after_replace_animates_under_a_layout_route() {
             "survivor must animate in on back-after-replace under a layout route; traj={traj:?}"
         );
     });
-    owner.dispose();
 }
 
 /// An interactive swipe-back keeps buried route content paused while its
@@ -779,10 +763,8 @@ fn back_after_replace_animates_under_a_layout_route() {
 /// top entry's params during the preview.
 #[test]
 fn swipe_back_animates_under_presentation_without_resuming_its_content() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = layout_slide_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -830,15 +812,12 @@ fn swipe_back_animates_under_presentation_without_resuming_its_content() {
             "under presentation follows the scrubbed top controller",
         );
     });
-    owner.dispose();
 }
 
 #[test]
 fn pop_animates_outgoing_top_through_intermediate_frames() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -872,15 +851,12 @@ fn pop_animates_outgoing_top_through_intermediate_frames() {
              slide-out), not pop instantly; traj={traj:?}"
         );
     });
-    owner.dispose();
 }
 
 #[test]
 fn popped_leaf_content_survives_until_exit_animation_finishes() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         // Detail's render fn registers an `on_cleanup` bumping a counter,
         // so we can observe exactly WHEN its content subtree is disposed.
         let cleanups = Rc::new(RefCell::new(0usize));
@@ -938,7 +914,6 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
             "detail content disposed exactly once, on exit-animation finish"
         );
     });
-    owner.dispose();
 }
 
 // The native module delivery can't run headless, but the mapping Android's
@@ -965,10 +940,8 @@ fn back_progress_reads_payload() {
 
 #[test]
 fn predictive_back_progress_scrubs_top_controller() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -996,15 +969,12 @@ fn predictive_back_progress_scrubs_top_controller() {
         scrub(&bridge, back_progress(&progress_payload(1.0)));
         assert_eq!(ctrl.value().get_untracked(), 0.0, "progress 1 → fully away");
     });
-    owner.dispose();
 }
 
 #[test]
 fn predictive_back_invoke_commits_pop() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -1023,17 +993,14 @@ fn predictive_back_invoke_commits_pop() {
 
         assert_eq!(h.current().get().path, NodePath(vec![0]), "popped to home");
     });
-    owner.dispose();
 }
 
 #[test]
 fn settle_commit_animates_from_current_value_without_jumping_back() {
     // A *partial* release commits by animating from the current value to 0
     // — it must NOT jump backward (toward 1) first.
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -1069,17 +1036,14 @@ fn settle_commit_animates_from_current_value_without_jumping_back() {
         settle_animations();
         assert_eq!(h.current().get().path, NodePath(vec![0]), "commits the pop");
     });
-    owner.dispose();
 }
 
 #[test]
 fn settle_full_drag_commits_immediately() {
     // A full drag (value already ≈ 0) commits with no extra animation —
     // the dismiss is already visually complete; it just pops.
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -1093,15 +1057,12 @@ fn settle_full_drag_commits_immediately() {
         settle_animations();
         assert_eq!(h.current().get().path, NodePath(vec![0]), "commits the pop");
     });
-    owner.dispose();
 }
 
 #[test]
 fn predictive_back_cancel_restores_top() {
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
@@ -1118,7 +1079,6 @@ fn predictive_back_cancel_restores_top() {
         assert_eq!(ctrl.value().get_untracked(), 1.0, "top restored to present");
         assert_eq!(h.current().get().path, NodePath(vec![1]), "still on detail");
     });
-    owner.dispose();
 }
 
 /// Verify that predictive-back works for a **grouped tabbed** tree (the
@@ -1127,10 +1087,8 @@ fn predictive_back_cancel_restores_top() {
 #[test]
 fn predictive_back_works_with_grouped_tabs() {
     use crate::core::{RouteDef, RouteTree};
-    whisker::runtime::reactive::__reset_for_tests();
-    whisker_animation::__reset_for_tests();
-    let owner = Owner::new(None);
-    owner.with(|| {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
         let tree = CompiledTree::new(RouteTree::route_with(
             RouteDef {
                 id: "tabs_layout".into(),
@@ -1219,7 +1177,6 @@ fn predictive_back_works_with_grouped_tabs() {
             "commits the pop to home"
         );
     });
-    owner.dispose();
 }
 
 fn progress_payload(p: f64) -> WhiskerValue {
@@ -2202,5 +2159,39 @@ fn navigation_after_focused_form_disposal_reaches_home() {
 
         assert_eq!(router.state().get().current().location.pathname, "/");
         assert_eq!(whisker::focus::focused_element(), None);
+    });
+}
+
+#[test]
+fn router_drop_disposes_detached_state_owner() {
+    with_runtime(|| {
+        let router = simple_handle();
+        let state = router.state();
+        drop(router);
+        assert!(
+            state.is_disposed(),
+            "last RouterHandle drop must release its state owner"
+        );
+    });
+}
+
+#[test]
+fn stack_unmount_removes_registered_gesture_bridge() {
+    with_runtime(|| {
+        let router = slide_stack_handle();
+        let screen = Owner::new(None);
+        screen.with(|| mount_node(&router, NodePath::root()));
+        router.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+        let bridge = router.active_stack_bridge().unwrap();
+        screen.dispose();
+        assert!(router.active_stack_bridge().is_none());
+        crate::render::platform_navigation::scrub(&bridge, 0.5);
+        crate::render::platform_navigation::settle(&router, &bridge, true, None);
+        assert_eq!(
+            router.state().get().current().location.pathname,
+            "/detail/1"
+        );
     });
 }

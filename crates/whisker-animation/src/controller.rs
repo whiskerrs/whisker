@@ -53,6 +53,8 @@ enum Dir {
     Backward,
 }
 
+type FinishCallback = whisker_runtime::lifetime::Scoped<Box<dyn FnMut(bool)>>;
+
 /// Mutable controller state, shared between the [`AnimationController`]
 /// handle, the scheduler's active list, and the registered cleanup.
 struct ControllerState {
@@ -97,7 +99,7 @@ struct ControllerState {
     /// when it was stopped or interrupted by a new run (Reanimated's
     /// completion callback). Callbacks are `FnMut` and stay registered
     /// across runs.
-    on_finish: Vec<Box<dyn FnMut(bool)>>,
+    on_finish: Vec<FinishCallback>,
 }
 
 impl ControllerState {
@@ -239,8 +241,9 @@ impl ControllerState {
     fn fire_on_finish(&mut self, finished: bool) {
         let mut cbs = std::mem::take(&mut self.on_finish);
         for cb in cbs.iter_mut() {
-            cb(finished);
+            cb.with_mut(|cb| cb(finished));
         }
+        cbs.retain(|cb| cb.is_active());
         // Preserve any callbacks a re-entrant run may have registered.
         if self.on_finish.is_empty() {
             self.on_finish = cbs;
@@ -671,10 +674,12 @@ impl AnimationController {
     /// reached its target naturally, `false` when it was cancelled by
     /// [`stop`](Self::stop) or interrupted by a new run (Reanimated's
     /// completion callback). Callbacks are `FnMut`, accumulate, and stay
-    /// registered across runs. Owner-dispose does **not** fire them (it is
-    /// teardown, not a logical cancel).
+    /// registered across runs until the registering Owner is disposed, which cancels them silently.
     pub fn on_finish(&self, cb: impl FnMut(bool) + 'static) {
-        self.state.borrow_mut().on_finish.push(Box::new(cb));
+        self.state
+            .borrow_mut()
+            .on_finish
+            .push(whisker_runtime::lifetime::Scoped::new(Box::new(cb)));
     }
 
     /// Run forward to `1.0`, then restart from `0.0` and run forward

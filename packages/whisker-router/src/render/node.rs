@@ -589,6 +589,8 @@ fn reconcile_stack(
         mode: w.pose_mode,
     };
     let bridge = crate::render::handle::StackBridge {
+        owner: Owner::current().expect("stack reconcile owner"),
+        registration: None,
         top_ctrl: top_w.map(|w| w.ctrl.clone()),
         top_pose: top_w.map(pose_of),
         under_pose: under_w.map(pose_of),

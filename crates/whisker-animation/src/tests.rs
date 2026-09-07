@@ -920,3 +920,23 @@ fn step_survives_active_controller_with_freed_value_node() {
     let _ = ctrl;
     owner.dispose();
 }
+
+#[test]
+fn on_finish_does_not_outlive_its_registering_owner() {
+    fresh();
+    let parent = Owner::new(None);
+    let child = Owner::new(Some(parent));
+    let controller = parent.with(|| AnimationController::new(AnimConfig::linear(100)));
+    child.with(|| {
+        let signal = whisker_runtime::reactive::RwSignal::new(42);
+        controller.on_finish(move |_| {
+            let _ = signal.get();
+        });
+    });
+    child.dispose();
+    controller.forward();
+    __step_for_tests(0.0);
+    __step_for_tests(100.0);
+    assert_eq!(controller.value().get(), 1.0);
+    parent.dispose();
+}
