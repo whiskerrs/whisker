@@ -255,7 +255,7 @@ whisker = { path = "../whisker" }
     assert!(updated.contains("features = [\"hot-reload\"]"));
 }
 
-fn fixture() -> tempfile::TempDir {
+pub(super) fn fixture() -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write(
@@ -308,7 +308,7 @@ fn fixture() -> tempfile::TempDir {
     directory
 }
 
-fn write(root: &Path, path: &str, text: &str) {
+pub(super) fn write(root: &Path, path: &str, text: &str) {
     let path = root.join(path);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
@@ -323,6 +323,7 @@ fn fixture_plan(root: &Path) -> ReleasePlan {
         ios: Some("0.1.14".into()),
         subsecond: None,
         crates: BTreeMap::new(),
+        selective: None,
     }
 }
 

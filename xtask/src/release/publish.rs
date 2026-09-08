@@ -35,10 +35,11 @@ pub(super) fn run(root: &Path) -> Result<()> {
     );
 
     let agent = http();
+    let publishing = plan.publishing();
     let started = Instant::now();
     for attempt in 1..=80 {
         let mut pending = Vec::new();
-        for (name, value) in &plan.crates {
+        for (name, value) in &publishing {
             if !is_published(&agent, name, value)? {
                 pending.push(name.clone());
             }
@@ -60,7 +61,7 @@ pub(super) fn run(root: &Path) -> Result<()> {
                         &plan.tag(),
                         "--verify-tag",
                         "--title",
-                        &format!("Whisker {}", plan.version),
+                        &format!("Whisker {}", plan.label()),
                         "--notes-file",
                         &plan.notes_path(),
                     ],
@@ -68,7 +69,7 @@ pub(super) fn run(root: &Path) -> Result<()> {
             }
             println!(
                 "All {} crates verified; one GitHub Release: {}",
-                plan.crates.len(),
+                publishing.len(),
                 plan.tag()
             );
             return Ok(());
