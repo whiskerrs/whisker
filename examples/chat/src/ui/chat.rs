@@ -36,14 +36,14 @@ pub fn chat_screen() -> Element {
                             connection
                                 .get()
                                 .map(|c| format!("{} · {}", c.name, c.model))
-                                .unwrap_or_else(|| "接続先を設定してください".into())
+                                .unwrap_or_else(|| "Set up a connection".into())
                         }),
                         max_lines: 1u32,
                         style: theme::muted().margin_top(px(3)),
                     )
                 }
                 Button(
-                    label: "設定",
+                    label: "Settings",
                     on_press: move |()| {
                         settings.persist();
                         settings.page().set(Page::Connection);
@@ -53,11 +53,11 @@ pub fn chat_screen() -> Element {
             Show(when: move || turns.with(Vec::is_empty)) {
                 View(style: theme::fill().padding(px(28)).padding_top(px(72))) {
                     Text(
-                        value: "今日は、何を考えましょう。",
+                        value: "What would you like to explore?",
                         style: theme::text(25.0),
                     )
                     Text(
-                        value: "書きかけの文章、コードの疑問、\nまだまとまらないアイデア。",
+                        value: "A draft to refine, a coding question,\nor an idea taking shape.",
                         style: theme::muted().margin_top(px(16)),
                     )
                 }
@@ -81,7 +81,7 @@ pub fn chat_screen() -> Element {
             }
             Show(when: move || !following.get()) {
                 Button(
-                    label: "↓ 最新へ",
+                    label: "↓ Latest message",
                     on_press: {
                         let latest = latest.clone();
                         move |()| {
@@ -92,12 +92,12 @@ pub fn chat_screen() -> Element {
                 )
             }
             View(style: theme::column().padding(px(16)).gap(px(10)).flex_shrink(0.0)) {
-                Text(value: "メッセージ", style: theme::muted())
+                Text(value: "Message", style: theme::muted())
                 Input(
                     text: draft,
                     multiline: true,
                     lines: 3u32,
-                    placeholder: "メッセージを入力…",
+                    placeholder: "Type a message…",
                     style: theme::field().height(px(88)),
                     on_blur: move |()| save.persist(),
                 )
@@ -107,15 +107,15 @@ pub fn chat_screen() -> Element {
                         .gap(px(10)),
                 ) {
                     Text(
-                        value: "回答は誤りを含むことがあります",
+                        value: "AI can make mistakes.",
                         style: theme::muted(),
                     )
                     Button(
                         label: computed(move || {
                             if busy.get() {
-                                "停止".into()
+                                "Stop".into()
                             } else {
-                                "送信 ↑".into()
+                                "Send ↑".into()
                             }
                         }),
                         primary: true,
@@ -140,7 +140,7 @@ pub fn chat_screen() -> Element {
                     },
                 ) {
                     Button(
-                        label: "最後の質問を再試行",
+                        label: "Retry last question",
                         on_press: {
                             let retry = retry.clone();
                             move |()| retry.retry()

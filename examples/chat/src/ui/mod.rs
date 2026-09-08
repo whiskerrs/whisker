@@ -32,13 +32,13 @@ pub fn root() -> Element {
             }
             Show(when: move || page.get() == Page::Loading) {
                 Text(
-                    value: "Whisker Chat — 読み込み中…",
+                    value: "Whisker Chat — Loading…",
                     style: theme::text(20.0).padding(px(24)),
                 )
             }
             Show(when: move || page.get() == Page::RestoreError) {
                 Button(
-                    label: "読み込みを再試行",
+                    label: "Try loading again",
                     on_press: {
                         let app = app.clone();
                         move |()| app.restore()

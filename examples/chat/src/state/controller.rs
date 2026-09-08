@@ -139,11 +139,11 @@ impl AppState {
     ) -> Result<(), String> {
         connection.validate()?;
         if connection.model.is_empty() {
-            return Err("モデルIDを指定してください。".into());
+            return Err("Enter a model ID.".into());
         }
         let key = key.trim().to_owned();
         if key.is_empty() {
-            return Err("APIキーを入力してください。".into());
+            return Err("Enter your API key.".into());
         }
         storage::save_key(&connection, &key, remember)?;
         storage::save_connection(&connection)?;

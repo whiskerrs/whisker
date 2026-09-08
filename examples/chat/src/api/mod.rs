@@ -19,18 +19,16 @@ pub enum ApiError {
 impl ApiError {
     pub fn message(&self) -> String {
         match self {
-            Self::Unauthorized => "APIキーを確認してください。認証に失敗しました。".into(),
-            Self::RateLimited => {
-                "利用制限または残高を確認し、しばらくしてから再試行してください。".into()
-            }
+            Self::Unauthorized => "Authentication failed. Check your API key.".into(),
+            Self::RateLimited => "Check your usage limits or balance, then try again later.".into(),
             Self::ModelsUnsupported => {
-                "モデル一覧を取得できません。モデルIDを手入力して保存できます。".into()
+                "Model discovery is unavailable. You can enter a model ID manually.".into()
             }
-            Self::Http(status) => format!("接続先がエラーを返しました（HTTP {status}）。"),
-            Self::Network => "接続できませんでした。通信状態と接続先を確認してください。".into(),
-            Self::Timeout => "応答が途切れました。通信状態を確認して再試行してください。".into(),
-            Self::InvalidResponse => "接続先からの応答を読み取れませんでした。".into(),
-            Self::Interrupted => "回答の完了前に接続が切れました。".into(),
+            Self::Http(status) => format!("The provider returned an error (HTTP {status})."),
+            Self::Network => "Could not connect. Check your network and API base URL.".into(),
+            Self::Timeout => "The response timed out. Check your connection and try again.".into(),
+            Self::InvalidResponse => "Could not read the response from the provider.".into(),
+            Self::Interrupted => "The connection closed before the response was complete.".into(),
         }
     }
 }

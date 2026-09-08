@@ -28,11 +28,11 @@ pub fn connection_screen() -> Element {
             View(style: theme::column().padding(px(24)).flex_shrink(0.0)) {
                 Text(value: "WHISKER CHAT", style: theme::muted().margin_bottom(px(20)))
                 Text(
-                    value: "考えるための、\n静かな場所。",
+                    value: "A quiet place\nto think.",
                     style: theme::text(32.0).margin_bottom(px(16)),
                 )
                 Text(
-                    value: "自分のAPIキーで、いつものAIと。\n会話はこの端末に保存されます。",
+                    value: "Your AI, with your own API key.\nConversations stay on this device.",
                     style: theme::muted().margin_bottom(px(28)),
                 )
                 View(style: theme::row().gap(px(8)).margin_bottom(px(20))) {
@@ -57,10 +57,10 @@ pub fn connection_screen() -> Element {
                         },
                     )
                 }
-                Text(value: "接続名", style: theme::muted().margin_bottom(px(6)))
+                Text(value: "Connection name", style: theme::muted().margin_bottom(px(6)))
                 Input(text: name, style: theme::field())
                 Text(
-                    value: "APIベースURL",
+                    value: "API base URL",
                     style: theme::muted().margin_top(px(16)).margin_bottom(px(6)),
                 )
                 Input(
@@ -76,7 +76,7 @@ pub fn connection_screen() -> Element {
                     },
                 )
                 Text(
-                    value: "APIキー",
+                    value: "API key",
                     style: theme::muted().margin_top(px(16)).margin_bottom(px(6)),
                 )
                 Input(
@@ -84,16 +84,16 @@ pub fn connection_screen() -> Element {
                     secure: true,
                     auto_capitalize: AutoCapitalize::None,
                     autocorrect: false,
-                    placeholder: "APIキーを入力",
+                    placeholder: "Enter your API key",
                     style: theme::field(),
                 )
                 View(style: theme::column().margin_top(px(12))) {
                     Button(
                         label: computed(move || {
                             if checking.get() {
-                                "確認中…".into()
+                                "Checking…".into()
                             } else {
-                                "モデル一覧を取得".into()
+                                "Fetch models".into()
                             }
                         }),
                         on_press: move |()| {
@@ -111,7 +111,7 @@ pub fn connection_screen() -> Element {
                             }
                             let secret = key.get_untracked().trim().to_owned();
                             if secret.is_empty() {
-                                notice.set("APIキーを入力してください。".into());
+                                notice.set("Enter your API key.".into());
                                 return;
                             }
                             let client = match api.clone() {
@@ -134,7 +134,7 @@ pub fn connection_screen() -> Element {
                                 match result {
                                     Ok(ids) => {
                                         notice.set(format!(
-                                            "{}件のモデルを取得しました。モデルIDを選択または入力してください。",
+                                            "Models found: {}. Select a model or enter its ID.",
                                             ids.len()
                                         ));
                                         models.set(ids);
@@ -146,12 +146,12 @@ pub fn connection_screen() -> Element {
                     )
                 }
                 Text(
-                    value: "モデルID",
+                    value: "Model ID",
                     style: theme::muted().margin_top(px(16)).margin_bottom(px(6)),
                 )
                 Input(
                     text: model,
-                    placeholder: "モデルIDを入力",
+                    placeholder: "Enter a model ID",
                     auto_capitalize: AutoCapitalize::None,
                     autocorrect: false,
                     style: theme::field(),
@@ -178,9 +178,9 @@ pub fn connection_screen() -> Element {
                         Button(
                             label: computed(move || {
                                 if remember.get() {
-                                    "✓ キーを安全に保存".into()
+                                    "✓ Store key securely".into()
                                 } else {
-                                    "今回だけ使用".into()
+                                    "Use for this session only".into()
                                 }
                             }),
                             on_press: move |()| remember.update(|value| *value = !*value),
@@ -189,14 +189,14 @@ pub fn connection_screen() -> Element {
                 }
                 Show(when: || !storage::persistent_keys_available()) {
                     Text(
-                        value: "APIキーは今回だけ使用します。再起動時に再入力してください。",
+                        value: "Your API key is kept for this session only. Enter it again after restarting.",
                         style: theme::muted().margin_top(px(12)),
                     )
                 }
                 Text(value: notice, style: theme::muted().margin_top(px(12)))
                 View(style: theme::column().margin_top(px(20)).gap(px(12))) {
                     Button(
-                        label: "チャットをはじめる",
+                        label: "Start chatting",
                         primary: true,
                         on_press: move |()| {
                             let connection = Connection {
@@ -212,11 +212,11 @@ pub fn connection_screen() -> Element {
                         },
                     )
                     Show(when: move || can_back) {
-                        Button(label: "会話に戻る", on_press: move |()| page.set(Page::Chat))
+                        Button(label: "Back to chat", on_press: move |()| page.set(Page::Chat))
                     }
                 }
                 Text(
-                    value: "APIの利用料金は接続先のアカウントに発生します。\nモデル一覧の取得では回答を生成しません。",
+                    value: "API usage is billed to your provider account.\nFetching models does not generate a response.",
                     style: theme::muted().margin_top(px(20)),
                 )
             }

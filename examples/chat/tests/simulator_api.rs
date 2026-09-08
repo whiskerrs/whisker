@@ -74,7 +74,7 @@ async fn respond(mut socket: tokio::net::TcpStream) -> std::io::Result<()> {
             )
             .await?;
         for index in 1..=30 {
-            let value = serde_json::json!({"choices":[{"delta":{"content":format!("{index}. これはローカルAPIの回答です。日本語の表示とスクロールを確認できます。\n\n")},"finish_reason":null}]});
+            let value = serde_json::json!({"choices":[{"delta":{"content":format!("{index}. This response comes from the local test API. Use it to check streaming text and scrolling.\n\n")},"finish_reason":null}]});
             let event = format!("data: {value}\n\n");
             for bytes in event.as_bytes().chunks(13) {
                 socket.write_all(bytes).await?;

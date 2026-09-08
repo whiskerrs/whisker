@@ -11,7 +11,7 @@ pub struct Connection {
 impl Connection {
     pub fn validate(&mut self) -> Result<(), String> {
         let url =
-            url::Url::parse(self.base_url.trim()).map_err(|_| "接続先URLを確認してください。")?;
+            url::Url::parse(self.base_url.trim()).map_err(|_| "Enter a valid API base URL.")?;
         let loopback = cfg!(debug_assertions)
             && url.scheme() == "http"
             && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
@@ -22,7 +22,9 @@ impl Connection {
             || url.query().is_some()
             || url.fragment().is_some()
         {
-            return Err("認証情報やクエリを含まないHTTPSのURLを指定してください。".into());
+            return Err(
+                "Use an HTTPS URL without credentials, query parameters, or a fragment.".into(),
+            );
         }
         self.base_url = url.as_str().trim_end_matches('/').to_owned();
         self.name = self.name.trim().to_owned();
@@ -69,12 +71,12 @@ pub struct Turn {
 impl Turn {
     pub fn status_text(&self) -> String {
         match &self.status {
-            AnswerStatus::Running if self.answer.is_empty() => "応答を待っています…".into(),
-            AnswerStatus::Running => "生成中…".into(),
+            AnswerStatus::Running if self.answer.is_empty() => "Waiting for a response…".into(),
+            AnswerStatus::Running => "Generating…".into(),
             AnswerStatus::Complete => String::new(),
-            AnswerStatus::Stopped => "生成を停止しました".into(),
+            AnswerStatus::Stopped => "Generation stopped".into(),
             AnswerStatus::Failed(message) => message.clone(),
-            AnswerStatus::Interrupted => "生成が中断されました".into(),
+            AnswerStatus::Interrupted => "Generation interrupted".into(),
         }
     }
 }

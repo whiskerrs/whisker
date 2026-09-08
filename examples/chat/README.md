@@ -72,7 +72,7 @@ cargo test -p whisker-chat --test simulator_api -- --ignored --nocapture
 
 It serves `http://127.0.0.1:8787/v1`, accepts the non-secret key `test-key`, and
 lists `test-model`. The `disconnect` and `rate-limit` prompts simulate incomplete
-responses and HTTP 429. Other prompts produce a streamed Japanese response.
+responses and HTTP 429. Other prompts produce a streamed English response.
 Loopback HTTP is accepted only when Rust debug assertions are enabled; remote
 endpoints always require HTTPS. This fixture never contacts an external API.
 

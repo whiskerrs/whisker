@@ -26,14 +26,14 @@ pub fn save_conversation(conversation: &Conversation) -> Result<(), String> {
 
 fn load<T: serde::de::DeserializeOwned>(key: &str) -> Result<Option<T>, String> {
     let Some(json) =
-        WhiskerLocalStore::load(key.into()).map_err(|_| "保存データを読み込めませんでした。")?
+        WhiskerLocalStore::load(key.into()).map_err(|_| "Could not load your saved data.")?
     else {
         return Ok(None);
     };
     let stored: Stored<T> = serde_json::from_str(&json)
-        .map_err(|_| "保存データを読み取れませんでした。データは削除されていません。")?;
+        .map_err(|_| "Could not read your saved data. It has not been deleted.")?;
     if stored.version != 1 {
-        return Err("このバージョンでは保存データを読み込めません。".into());
+        return Err("This app version cannot read your saved data.".into());
     }
     Ok(Some(stored.data))
 }
@@ -43,10 +43,10 @@ fn save<T: Serialize>(key: &str, value: &T) -> Result<(), String> {
         version: 1,
         data: value,
     })
-    .map_err(|_| "保存データを作成できませんでした。")?;
+    .map_err(|_| "Could not prepare your data for saving.")?;
     match WhiskerLocalStore::save(key.into(), json) {
         Ok(true) => Ok(()),
-        _ => Err("変更を保存できていません。空き容量を確認してください。".into()),
+        _ => Err("Changes have not been saved. Check your available storage.".into()),
     }
 }
 
@@ -60,7 +60,7 @@ pub fn load_key(connection: &Connection) -> Result<Option<String>, String> {
         "chat.api-key.v1:{}",
         connection.base_url
     ))
-    .map_err(|_| "APIキーを復元できませんでした。接続設定から再入力してください。".into());
+    .map_err(|_| "Could not restore your API key. Enter it again in Settings.".into());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = connection;
@@ -77,14 +77,15 @@ pub fn save_key(connection: &Connection, key: &str, remember: bool) -> Result<()
                 format!("chat.api-key.v1:{}", connection.base_url),
                 key.into(),
             )
-            .map_err(|_| "APIキーを安全に保存できません。今回だけ使用する方法を選択できます。")?
-            {
+            .map_err(
+                |_| "Could not store your API key securely. You can use it for this session only.",
+            )? {
                 return Ok(());
             }
-            return Err("APIキーを安全に保存できませんでした。".into());
+            return Err("Could not store your API key securely.".into());
         }
         WhiskerSecureStore::remove(format!("chat.api-key.v1:{}", connection.base_url))
-            .map_err(|_| "保存済みAPIキーを削除できませんでした。".into())
+            .map_err(|_| "Could not remove the saved API key.".into())
     }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
