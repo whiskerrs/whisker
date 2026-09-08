@@ -8256,6 +8256,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "toml_edit 0.22.27",
  "ureq",

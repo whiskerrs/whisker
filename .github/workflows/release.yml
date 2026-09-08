@@ -3,9 +3,13 @@ name: release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Rust workspace version (e.g. 0.13.4)
+      release_id:
+        description: Release identifier independent of crate versions (e.g. 20260908.1)
         required: true
+      version:
+        description: New core version (blank for packages-only releases)
+      package_versions:
+        description: 'Optional JSON overrides, e.g. {"whisker-router":"minor"}; changed package groups default to patch'
       sdk_version:
         description: Android SDK version (blank to reuse the current SDK)
       gradle_version:
@@ -50,6 +54,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          PACKAGE_VERSIONS: ${{ inputs.package_versions }}
           SDK_VERSION: ${{ inputs.sdk_version }}
           GRADLE_VERSION: ${{ inputs.gradle_version }}
           IOS_VERSION: ${{ inputs.ios_version }}

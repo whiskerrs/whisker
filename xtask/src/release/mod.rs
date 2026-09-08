@@ -15,6 +15,9 @@ use toml_edit::DocumentMut;
 mod native;
 mod prepare;
 mod publish;
+mod selection;
+#[cfg(test)]
+mod selection_tests;
 #[cfg(test)]
 mod tests;
 
@@ -33,12 +36,17 @@ struct ReleasePlan {
     ios: Option<String>,
     subsecond: Option<String>,
     crates: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selective: Option<selection::SelectivePlan>,
 }
 
 impl ReleasePlan {
     fn read(root: &Path) -> Result<Self> {
         let plan: Self = serde_json::from_str(&fs::read_to_string(root.join(PLAN_PATH))?)?;
         version(&plan.version)?;
+        if let Some(selection) = &plan.selective {
+            selection::validate_id(&selection.id)?;
+        }
         for value in [&plan.sdk, &plan.gradle, &plan.ios, &plan.subsecond]
             .into_iter()
             .flatten()
@@ -49,11 +57,32 @@ impl ReleasePlan {
     }
 
     fn notes_path(&self) -> String {
-        format!("releases/{}.md", self.version)
+        format!("releases/{}.md", self.label())
+    }
+
+    fn label(&self) -> &str {
+        self.selective
+            .as_ref()
+            .map_or(&self.version, |selection| &selection.id)
     }
 
     fn tag(&self) -> String {
-        format!("whisker-v{}", self.version)
+        match &self.selective {
+            Some(selection) => format!("whisker-release-{}", selection.id),
+            None => format!("whisker-v{}", self.version),
+        }
+    }
+
+    fn publishing(&self) -> BTreeMap<String, String> {
+        self.crates
+            .iter()
+            .filter(|(name, _)| {
+                self.selective
+                    .as_ref()
+                    .is_none_or(|selection| selection.publish.contains(*name))
+            })
+            .map(|(name, version)| (name.clone(), version.clone()))
+            .collect()
     }
 
     fn validate_checkout(&self, root: &Path) -> Result<()> {
@@ -84,6 +113,9 @@ impl ReleasePlan {
             "release notes are missing"
         );
         git(root, &["merge-base", "--is-ancestor", &self.source, "HEAD"])?;
+        if let Some(selection) = &self.selective {
+            selection.validate(root, &self.crates)?;
+        }
         Ok(())
     }
 
@@ -123,6 +155,7 @@ impl ReleasePlan {
 pub fn run(root: &Path, mode: &str, args: Vec<String>) -> Result<()> {
     match (mode, args.as_slice()) {
         ("prepare", []) => prepare::run(root),
+        ("preview", []) => prepare::preview(root),
         ("plan", []) => plan(root),
         ("publish", []) => publish::run(root),
         ("native-check", [stream, value]) => native::check(root, stream, value),
@@ -131,7 +164,7 @@ pub fn run(root: &Path, mode: &str, args: Vec<String>) -> Result<()> {
         ("native-tag", [stream, value]) => native::tag(root, stream, value),
         ("native-verify", [stream, value]) => native::verify(stream, value),
         _ => bail!(
-            "usage: cargo xtask release <prepare|plan|publish>\n       cargo xtask release <native-check|native-stamp|native-tag|native-verify> <sdk|gradle|ios> <version>"
+            "usage: cargo xtask release <preview|prepare|plan|publish>\n       cargo xtask release <native-check|native-stamp|native-tag|native-verify> <sdk|gradle|ios> <version>"
         ),
     }
 }
