@@ -26,12 +26,13 @@ use super::handle::Element;
 use super::list::{ListRef, ListScrollTarget, ScrollAlignment, ScrollAxis};
 use super::renderer::{
     BindType, append_child, children_of, create_element, insert_child_at, observe_layout,
-    observe_layout_batch_end, remove_child, set_event_listener, set_specified_style,
-    specified_style, try_invoke_element_command,
+    observe_layout_batch_end, remove_child, request_list_layout, set_event_listener,
+    set_specified_style, specified_style, try_invoke_element_command,
 };
 
 const DEFAULT_ITEM_SIZE: f32 = 44.0;
 const DEFAULT_VIEWPORT_SIZE: f32 = 600.0;
+const INITIAL_MEASUREMENT_TRACKS: usize = 2;
 const DEFAULT_OVERSCAN_ITEMS: usize = 2;
 const DEFAULT_OVERSCAN_VIEWPORTS: f32 = 1.0;
 
@@ -437,18 +438,52 @@ where
         let end_track = first_after_overscan
             .max(first_after_viewport.saturating_add(DEFAULT_OVERSCAN_ITEMS))
             .min(track_count);
-        let start = self.track_start_item(start_track);
-        let end = self.track_start_item(end_track);
+        self.track_window(start_track, end_track)
+    }
 
+    fn mount_window(
+        &self,
+        geometry: ScrollGeometry,
+        initial_target: Option<&ListScrollTarget<K>>,
+    ) -> LayoutWindow {
+        let geometry = ScrollGeometry {
+            offset: initial_target
+                .and_then(|target| resolve_layout_target(self, target, geometry))
+                .unwrap_or(geometry.offset),
+            ..geometry
+        };
+        if self.measured_sizes.is_empty() && !self.items.is_empty() {
+            let target_item = match initial_target {
+                Some(ListScrollTarget::Index { index, .. }) if *index < self.items.len() => {
+                    Some(*index)
+                }
+                Some(ListScrollTarget::Key { key, .. }) => self.key_to_index.get(key).copied(),
+                Some(ListScrollTarget::End) => self.items.len().checked_sub(1),
+                _ => None,
+            };
+            let target_track = target_item
+                .map(|item| self.track_for_item(item))
+                .unwrap_or_else(|| self.first_track_with_end_after(geometry.offset));
+            let start = target_track.min(
+                self.track_count()
+                    .saturating_sub(INITIAL_MEASUREMENT_TRACKS),
+            );
+            let end = (start + INITIAL_MEASUREMENT_TRACKS).min(self.track_count());
+            return self.track_window(start, end);
+        }
+        self.window(geometry)
+    }
+
+    fn track_window(&self, start_track: usize, end_track: usize) -> LayoutWindow {
         LayoutWindow {
             generation: self.generation,
             source_generation: self.source_generation,
-            start,
-            end,
+            start: self.track_start_item(start_track),
+            end: self.track_start_item(end_track),
             start_track,
             end_track,
             leading_extent: self.track_start(start_track) - self.header_extent,
-            trailing_extent: self.track_start(track_count) - self.track_start(end_track),
+            trailing_extent: self.track_start(self.track_count()) - self.track_start(end_track),
         }
     }
 }
@@ -679,6 +714,7 @@ pub fn virtualize<T, K>(
         let observe_track = Rc::clone(&observe_track);
         let virtual_layout = virtual_layout.clone();
         let configured_scroll_extent = Rc::clone(&configured_scroll_extent);
+        let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
         Rc::new(move || {
             let geometry = *geometry.borrow();
             let window = {
@@ -690,7 +726,8 @@ pub fn virtualize<T, K>(
                     configured_scroll_extent.set(total_extent);
                     set_scroll_extent_size(scroll_extent, total_extent, axis);
                 }
-                let window = layout.window(geometry);
+                let window =
+                    layout.mount_window(geometry, pending_initial_scroll.borrow().as_ref());
                 if rendered_window
                     .get()
                     .is_some_and(|rendered| rendered.identity() == window.identity())
@@ -699,6 +736,8 @@ pub fn virtualize<T, K>(
                 }
                 window
             };
+
+            request_list_layout();
 
             set_spacer_size(leading_spacer, window.leading_extent, axis);
             set_spacer_size(trailing_spacer, window.trailing_extent, axis);
@@ -1741,6 +1780,19 @@ mod tests {
     }
 
     #[test]
+    fn grid_bootstrap_measures_complete_tracks_at_the_initial_target() {
+        let mut index = LayoutIndex::new(3, 8.0);
+        index.replace((0_u32..31).collect(), |item| *item);
+        let window = index.mount_window(
+            ScrollGeometry::default(),
+            Some(&ListScrollTarget::index(7, ScrollAlignment::Start)),
+        );
+        assert_eq!((window.start, window.end), (6, 12));
+        let window = index.mount_window(ScrollGeometry::default(), Some(&ListScrollTarget::End));
+        assert_eq!((window.start, window.end), (27, 31));
+    }
+
+    #[test]
     fn key_index_is_rebuilt_after_source_reordering() {
         let mut index = LayoutIndex::new(1, 0.0);
         index.replace(vec!["alpha", "beta", "gamma"], |item| *item);
@@ -1796,6 +1848,8 @@ mod tests {
 
         assert_eq!(index.estimated_track_size, DEFAULT_ITEM_SIZE);
         assert_eq!(index.total_extent(), 800.0 * DEFAULT_ITEM_SIZE);
+        let bootstrap = index.mount_window(ScrollGeometry::default(), None);
+        assert_eq!((bootstrap.start, bootstrap.end), (0, 2));
         let window = index.window(ScrollGeometry {
             offset: 0.0,
             viewport: 768.0,
