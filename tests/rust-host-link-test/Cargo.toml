@@ -1,0 +1,21 @@
+[package]
+name = "rust-host-link-test"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-audio = { path = "../../packages/whisker-audio" }
+whisker-haptics = { path = "../../packages/whisker-haptics" }
+whisker-image = { path = "../../packages/whisker-image" }
+whisker-input = { path = "../../packages/whisker-input" }
+whisker-keyboard = { path = "../../packages/whisker-keyboard" }
+whisker-local-store = { path = "../../packages/whisker-local-store" }
+whisker-router = { path = "../../packages/whisker-router" }
+whisker-svg = { path = "../../packages/whisker-svg" }
+whisker-video = { path = "../../packages/whisker-video" }
+whisker-web-browser = { path = "../../packages/whisker-web-browser" }

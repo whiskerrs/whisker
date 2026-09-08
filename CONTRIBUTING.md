@@ -46,17 +46,17 @@ baked into the binary) are actually used:
 
 ```sh
 # From the repo root, pick any example:
-cargo run -p whisker-cli --bin whisker -- run ios     --manifest-path examples/asset-demo/Cargo.toml
-cargo run -p whisker-cli --bin whisker -- run android --manifest-path examples/asset-demo/Cargo.toml
+cargo run -p whisker-cli --bin whisker -- run ios     --manifest-path packages/whisker-input/example/Cargo.toml
+cargo run -p whisker-cli --bin whisker -- run android --manifest-path packages/whisker-input/example/Cargo.toml
 
 # …or from inside the example crate (manifest is auto-resolved from cwd):
-cd examples/asset-demo
+cd packages/whisker-input/example
 cargo run -p whisker-cli -- run ios
 ```
 
 `whisker run`:
 
-1. Generates the native project tree under `examples/<app>/gen/{ios,android}/`
+1. Generates the native project tree under the app's `gen/{ios,android}/`
    (see the native pipeline below).
 2. Cross-compiles the user crate to a native lib, builds the app
    (xcodebuild / Gradle), installs, and launches it on the booted
