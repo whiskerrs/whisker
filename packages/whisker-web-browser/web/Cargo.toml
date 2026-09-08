@@ -1,6 +1,6 @@
 [package]
 name = "whisker-web-browser-web"
-version.workspace = true
+version = "0.13.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,6 +8,6 @@ repository.workspace = true
 description = "Web Host implementation for whisker-web-browser."
 
 [dependencies]
-whisker = { workspace = true }
-whisker-web = { workspace = true }
+whisker = { path = "../../../crates/whisker", version = "0.13.8" }
+whisker-web = { path = "../../../platforms/web", version = "0.13.8" }
 web-sys = { version = "0.3", features = ["Location", "Window"] }

@@ -1,6 +1,6 @@
 [package]
 name = "whisker-image-web"
-version.workspace = true
+version = "0.13.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Web Host implementation for whisker-image."
 
 [dependencies]
-whisker-web = { workspace = true }
+whisker-web = { path = "../../../platforms/web", version = "0.13.8" }
 web-sys = { version = "0.3", features = [
     "CssStyleDeclaration",
     "Document",

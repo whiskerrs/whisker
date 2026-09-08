@@ -1,6 +1,6 @@
 [package]
 name = "whisker-haptics-web"
-version.workspace = true
+version = "0.13.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,5 +9,5 @@ description = "Web Host implementation for whisker-haptics."
 
 [dependencies]
 js-sys = "0.3"
-whisker-web = { workspace = true }
+whisker-web = { path = "../../../platforms/web", version = "0.13.8" }
 web-sys = { version = "0.3", features = ["Navigator", "Window"] }

@@ -1,6 +1,6 @@
 [package]
 name = "whisker-audio"
-version.workspace = true
+version = "0.13.9"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -64,12 +64,12 @@ doc = false
 # so user app crates that depend on `whisker-audio` for actual
 # audio playback get the Player runtime without any feature
 # flag dance.
-whisker = { workspace = true, optional = true }
+whisker = { path = "../../crates/whisker", version = "0.13.9", optional = true }
 
 # Plugin support — always on. Light deps (trait + IR types +
 # JSON envelope + subprocess runner) so the probe-build path stays
 # cheap when `runtime` is disabled.
-whisker-plugin = { workspace = true }
+whisker-plugin = { path = "../../crates/whisker-plugin", version = "0.13.9" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 
