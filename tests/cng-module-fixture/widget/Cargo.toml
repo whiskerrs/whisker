@@ -1,0 +1,10 @@
+[package]
+name = "cng-test-widget"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata.whisker.module.platforms]
+ios = { manifest = "Package.swift" }
+web = { manifest = "web/Cargo.toml" }
+desktop = { manifest = "desktop/Cargo.toml" }

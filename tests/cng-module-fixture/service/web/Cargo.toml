@@ -1,0 +1,5 @@
+[package]
+name = "cng-test-service-web"
+version = "0.0.0"
+edition = "2024"
+publish = false

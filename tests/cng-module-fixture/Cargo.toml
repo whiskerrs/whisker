@@ -1,0 +1,13 @@
+[package]
+name = "cng-module-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+resolver = "2"
+members = ["widget", "widget/desktop", "widget/web", "service", "service/web"]
+
+[dependencies]
+cng-test-widget = { path = "widget" }
+cng-test-service = { path = "service" }

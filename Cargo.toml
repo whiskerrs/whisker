@@ -83,6 +83,7 @@ members = [
     "packages/whisker-webview/example",
 ]
 exclude = [
+    "tests/cng-module-fixture",
     # Throwaway cdylib the dev-server's `thin_rebuild` integration
     # test compiles standalone. Must NOT be a workspace member or
     # cargo would try to build it as part of the regular workspace

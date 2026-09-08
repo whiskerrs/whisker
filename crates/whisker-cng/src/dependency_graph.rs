@@ -44,19 +44,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn one_project_snapshot_contains_runtime_modules_and_cng_plugins() {
+    fn one_project_snapshot_contains_fixture_modules_and_no_plugins() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
             .unwrap()
-            .join("Cargo.toml");
-        let graph = ProjectDependencyGraph::resolve(&workspace, "whisker-svg-example").unwrap();
-        assert!(
-            graph
-                .modules
-                .iter()
-                .any(|module| module.package == "whisker-svg")
-        );
+            .join("tests/cng-module-fixture/Cargo.toml");
+        let graph = ProjectDependencyGraph::resolve(&workspace, "cng-module-fixture").unwrap();
+        let mut packages: Vec<_> = graph
+            .modules
+            .iter()
+            .map(|module| module.package.as_str())
+            .collect();
+        packages.sort_unstable();
+        assert_eq!(packages, ["cng-test-service", "cng-test-widget"]);
         assert_eq!(graph.cng_plugins.len(), 0);
     }
 }
