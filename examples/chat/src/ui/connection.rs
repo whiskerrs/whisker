@@ -1,10 +1,11 @@
-use super::{button::Button, theme};
+use super::{button::Button, navigation, theme};
 use crate::{
-    state::{AppState, Connection, Page},
+    state::{AppState, Connection},
     storage,
 };
 use whisker::prelude::*;
 use whisker_input::{AutoCapitalize, Input, KeyboardType};
+use whisker_router::use_navigator;
 
 #[component]
 pub fn connection_screen() -> Element {
@@ -20,7 +21,8 @@ pub fn connection_screen() -> Element {
     let remember = signal(storage::persistent_keys_available());
     let api = app.client();
     let save_app = app.clone();
-    let page = app.page();
+    let nav = use_navigator();
+    let back_nav = nav.clone();
     let can_back =
         app.connection().get_untracked().is_some() || !app.turns().with_untracked(Vec::is_empty);
     render! {
@@ -208,11 +210,19 @@ pub fn connection_screen() -> Element {
                                 save_app.configure(connection, key.get_untracked(), remember.get_untracked())
                             {
                                 notice.set(error);
+                            } else {
+                                navigation::return_to_chat(&nav, notice);
                             }
                         },
                     )
                     Show(when: move || can_back) {
-                        Button(label: "Back to chat", on_press: move |()| page.set(Page::Chat))
+                        Button(
+                            label: "Back to chat",
+                            on_press: {
+                                let nav = back_nav.clone();
+                                move |()| navigation::return_to_chat(&nav, notice)
+                            },
+                        )
                     }
                 }
                 Text(

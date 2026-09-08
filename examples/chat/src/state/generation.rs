@@ -1,26 +1,24 @@
-use super::{AnswerStatus, AppState, Conversation, Page, Turn, controller::Generation};
+use super::{AnswerStatus, AppState, Connection, Conversation, Turn, controller::Generation};
 use crate::api::{ApiClient, delay};
 use futures_util::future::{AbortHandle, Abortable, select};
 use std::{cell::RefCell, rc::Rc, time::Duration};
 use whisker::{RwSignal, spawn_local};
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum SendError {
+    MissingConnection,
+}
+
 impl AppState {
-    pub fn send(&self) {
+    pub fn send(&self) -> Result<(), SendError> {
         if self.0.busy.get_untracked() {
-            return;
+            return Ok(());
         }
         let question = self.0.draft.get_untracked().trim().to_owned();
         if question.is_empty() {
-            return;
+            return Ok(());
         }
-        let Some(connection) = self.0.connection.get_untracked() else {
-            self.0.page.set(Page::Connection);
-            return;
-        };
-        if !self.has_key() {
-            self.0.page.set(Page::Connection);
-            return;
-        }
+        let connection = self.generation_connection()?;
         let id = *self.0.next_id.borrow();
         *self.0.next_id.borrow_mut() += 1;
         let turn = self.0.owner.with(|| {
@@ -35,16 +33,15 @@ impl AppState {
         self.0.turns.update(|turns| turns.push(turn));
         self.0.draft.set(String::new());
         self.start(turn);
+        Ok(())
     }
 
-    pub fn retry(&self) {
-        if self.0.busy.get_untracked() || !self.has_key() {
-            return;
+    pub fn retry(&self) -> Result<(), SendError> {
+        if self.0.busy.get_untracked() {
+            return Ok(());
         }
         if let Some(turn) = self.0.turns.with_untracked(|turns| turns.last().copied()) {
-            let Some(connection) = self.0.connection.get_untracked() else {
-                return;
-            };
+            let connection = self.generation_connection()?;
             turn.update(|turn| {
                 turn.answer.clear();
                 turn.connection = connection;
@@ -52,6 +49,17 @@ impl AppState {
             });
             self.start(turn);
         }
+        Ok(())
+    }
+
+    fn generation_connection(&self) -> Result<Connection, SendError> {
+        if !self.has_key() {
+            return Err(SendError::MissingConnection);
+        }
+        self.0
+            .connection
+            .get_untracked()
+            .ok_or(SendError::MissingConnection)
     }
 
     pub fn stop(&self) {

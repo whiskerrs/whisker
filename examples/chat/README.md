@@ -12,6 +12,7 @@ build-time API key is required.
 - Streamed text, cancellation, manual retry, and partial-answer recovery.
 - Keychain/Keystore storage on iOS/Android; explicit session-only storage elsewhere.
 - A fixed header and composer, a virtualized message list, and optional tail following.
+- Stack navigation through `whisker-router`, including platform back gestures.
 
 Restored conversations initially open at the beginning; use the latest-message
 button to move to the end. New requests enable tail following.
@@ -48,11 +49,16 @@ automatically retried.
 | `src/api` | HTTP requests, deadlines, SSE framing, and safe error classification |
 | `src/state` | Conversation data, app-owned generation, cancellation, and restore |
 | `src/storage` | Versioned persistence and platform-specific credential storage |
-| `src/ui` | Screens, small controls, and shared styling |
+| `src/ui` | Router routes, startup state, screens, small controls, and shared styling |
 | `tests/simulator_api.rs` | Optional local HTTP fixture for simulator verification |
 
-The app Owner owns generation tasks. Screen disposal does not cancel an active
-answer. Generation IDs reject late updates, while an abort handle drops the
+The router maps `/` to the conversation and `/settings` to connection settings.
+Startup restores saved data before mounting the route outlet. First-time setup
+replaces its settings entry with the conversation; returning from settings
+reveals the existing conversation without adding another stack entry.
+
+The app Owner is created above the router and owns generation tasks. Covering
+or disposing a screen does not cancel an active answer. Generation IDs reject late updates, while an abort handle drops the
 request when the user stops. Text updates are batched approximately every 32 ms;
 partial answers are checkpointed approximately once per second.
 

@@ -6406,6 +6406,7 @@ dependencies = [
  "whisker-input",
  "whisker-keyboard",
  "whisker-local-store",
+ "whisker-router",
  "whisker-safe-area",
  "whisker-secure-store",
 ]

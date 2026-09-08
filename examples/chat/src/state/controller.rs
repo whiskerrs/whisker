@@ -4,14 +4,6 @@ use futures_util::future::AbortHandle;
 use std::{cell::RefCell, rc::Rc};
 use whisker::{Owner, RwSignal, on_cleanup};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Page {
-    Loading,
-    Connection,
-    Chat,
-    RestoreError,
-}
-
 pub(super) struct Generation {
     pub id: u64,
     pub abort: AbortHandle,
@@ -20,7 +12,6 @@ pub(super) struct Generation {
 
 pub(super) struct Inner {
     pub owner: Owner,
-    pub page: RwSignal<Page>,
     pub connection: RwSignal<Option<Connection>>,
     pub turns: RwSignal<Vec<RwSignal<Turn>>>,
     pub draft: RwSignal<String>,
@@ -40,7 +31,6 @@ impl AppState {
     pub fn new() -> Self {
         let state = Self(Rc::new(Inner {
             owner: Owner::current().expect("AppState requires the app Owner"),
-            page: RwSignal::new(Page::Loading),
             connection: RwSignal::new(None),
             turns: RwSignal::new(Vec::new()),
             draft: RwSignal::new(String::new()),
@@ -63,9 +53,6 @@ impl AppState {
         state
     }
 
-    pub fn page(&self) -> RwSignal<Page> {
-        self.0.page
-    }
     pub fn connection(&self) -> RwSignal<Option<Connection>> {
         self.0.connection
     }
@@ -91,44 +78,30 @@ impl AppState {
         !self.0.key.borrow().is_empty()
     }
 
-    pub fn restore(&self) {
+    pub fn restore(&self) -> Result<(), String> {
         self.0.notice.set(String::new());
-        let loaded = storage::load_connection().and_then(|connection| {
-            storage::load_conversation().map(|conversation| (connection, conversation))
+        let connection = storage::load_connection()?;
+        let mut conversation = storage::load_conversation()?;
+        conversation.restore();
+        *self.0.next_id.borrow_mut() = conversation
+            .turns
+            .iter()
+            .map(|turn| turn.id)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        self.0.owner.with(|| {
+            self.0
+                .turns
+                .set(conversation.turns.into_iter().map(RwSignal::new).collect());
         });
-        match loaded {
-            Ok((connection, mut conversation)) => {
-                conversation.restore();
-                *self.0.next_id.borrow_mut() = conversation
-                    .turns
-                    .iter()
-                    .map(|turn| turn.id)
-                    .max()
-                    .unwrap_or(0)
-                    + 1;
-                self.0.owner.with(|| {
-                    self.0
-                        .turns
-                        .set(conversation.turns.into_iter().map(RwSignal::new).collect());
-                });
-                self.0.draft.set(conversation.draft);
-                match connection.as_ref().map(storage::load_key).transpose() {
-                    Ok(key) => *self.0.key.borrow_mut() = key.flatten().unwrap_or_default(),
-                    Err(error) => self.0.notice.set(error),
-                }
-                let page = if connection.is_some() || !self.0.turns.with_untracked(Vec::is_empty) {
-                    Page::Chat
-                } else {
-                    Page::Connection
-                };
-                self.0.connection.set(connection);
-                self.0.page.set(page);
-            }
-            Err(error) => {
-                self.0.notice.set(error);
-                self.0.page.set(Page::RestoreError);
-            }
+        self.0.draft.set(conversation.draft);
+        match connection.as_ref().map(storage::load_key).transpose() {
+            Ok(key) => *self.0.key.borrow_mut() = key.flatten().unwrap_or_default(),
+            Err(error) => self.0.notice.set(error),
         }
+        self.0.connection.set(connection);
+        Ok(())
     }
 
     pub fn configure(
@@ -150,7 +123,6 @@ impl AppState {
         *self.0.key.borrow_mut() = key;
         self.0.connection.set(Some(connection));
         self.0.notice.set(String::new());
-        self.0.page.set(Page::Chat);
         Ok(())
     }
 

@@ -1,11 +1,15 @@
-use super::{button::Button, theme};
-use crate::state::{AppState, Page, Turn};
+use super::{button::Button, navigation, theme};
+use crate::state::{AppState, SendError, Turn};
 use whisker::prelude::*;
 use whisker_input::Input;
+use whisker_router::use_navigator;
 
 #[component]
 pub fn chat_screen() -> Element {
     let app = use_context::<AppState>().expect("AppState context");
+    let nav = use_navigator();
+    let settings_nav = nav.clone();
+    let retry_nav = nav.clone();
     let turns = app.turns();
     let draft = app.draft();
     let busy = app.busy();
@@ -46,7 +50,7 @@ pub fn chat_screen() -> Element {
                     label: "Settings",
                     on_press: move |()| {
                         settings.persist();
-                        settings.page().set(Page::Connection);
+                        navigation::open_settings(&settings_nav, settings.notice());
                     },
                 )
             }
@@ -124,7 +128,9 @@ pub fn chat_screen() -> Element {
                                 send.stop();
                             } else {
                                 following.set(true);
-                                send.send();
+                                if let Err(SendError::MissingConnection) = send.send() {
+                                    navigation::open_settings(&nav, send.notice());
+                                }
                             }
                         },
                     )
@@ -143,7 +149,12 @@ pub fn chat_screen() -> Element {
                         label: "Retry last question",
                         on_press: {
                             let retry = retry.clone();
-                            move |()| retry.retry()
+                            let nav = retry_nav.clone();
+                            move |()| {
+                                if let Err(SendError::MissingConnection) = retry.retry() {
+                                    navigation::open_settings(&nav, retry.notice());
+                                }
+                            }
                         },
                     )
                 }
