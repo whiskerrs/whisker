@@ -3963,6 +3963,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 
 [[package]]
+name = "pulldown-cmark"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
+dependencies = [
+ "bitflags 2.13.1",
+ "memchr",
+ "unicase",
+]
+
+[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6397,12 +6408,14 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "gloo-timers",
+ "pulldown-cmark",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "url",
  "whisker",
+ "whisker-icons",
  "whisker-input",
  "whisker-keyboard",
  "whisker-local-store",
@@ -6702,6 +6715,7 @@ dependencies = [
 name = "whisker-input-web"
 version = "0.13.8"
 dependencies = [
+ "wasm-bindgen-test",
  "web-sys",
  "whisker-protocol",
  "whisker-web",

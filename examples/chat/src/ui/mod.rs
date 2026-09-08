@@ -1,9 +1,14 @@
 mod button;
 mod chat;
+mod composer;
 mod connection;
-mod navigation;
+mod history;
+mod markdown;
+mod messages;
+pub(crate) mod navigation;
 mod startup;
 mod theme;
+mod welcome;
 
 use crate::state::AppState;
 use startup::Startup;

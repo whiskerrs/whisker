@@ -1,8 +1,10 @@
-use super::{button::Button, navigation, theme};
-use crate::{
-    state::{AppState, Connection},
-    storage,
+use super::{
+    button::Button,
+    navigation,
+    theme::{self, color, size, space},
 };
+use crate::{hooks::use_connection_form, state::AppState, storage};
+use whisker::css::AlignSelf;
 use whisker::prelude::*;
 use whisker_input::{AutoCapitalize, Input, KeyboardType};
 use whisker_router::use_navigator;
@@ -10,224 +12,130 @@ use whisker_router::use_navigator;
 #[component]
 pub fn connection_screen() -> Element {
     let app = use_context::<AppState>().expect("AppState context");
-    let initial = app.connection().get_untracked().unwrap_or_default();
-    let name = signal(initial.name);
-    let base_url = signal(initial.base_url);
-    let model = signal(initial.model);
-    let key = signal(String::new());
-    let notice = signal(String::new());
-    let checking = signal(false);
-    let models = signal(Vec::<String>::new());
-    let remember = signal(storage::persistent_keys_available());
-    let api = app.client();
-    let save_app = app.clone();
     let nav = use_navigator();
     let back_nav = nav.clone();
-    let can_back =
-        app.connection().get_untracked().is_some() || !app.turns().with_untracked(Vec::is_empty);
+    let notice = app.notice();
+    let form = use_connection_form(Callback::new(move |()| {
+        navigation::return_to_chat(&nav, notice)
+    }));
+    let can_back = app.connection().get_untracked().is_some();
     render! {
         ScrollView(style: theme::screen()) {
-            View(style: theme::column().padding(px(24)).flex_shrink(0.0)) {
-                Text(value: "WHISKER CHAT", style: theme::muted().margin_bottom(px(20)))
+            View(
+                style: theme::column()
+                    .width(percent(100))
+                    .max_width(px(size::FORM))
+                    .align_self(AlignSelf::Center)
+                    .padding(px(space::XL))
+                    .gap(px(space::XL))
+                    .flex_shrink(0.0),
+            ) {
+                Text(value: "WHISKER CHAT / CONNECTION", style: theme::muted())
+                Text(value: "Your models.\nYour space.", style: theme::display())
                 Text(
-                    value: "A quiet place\nto think.",
-                    style: theme::text(32.0).margin_bottom(px(16)),
+                    value: "Connect a provider to start a conversation.\nYour key stays on this device.",
+                    style: theme::muted(),
                 )
-                Text(
-                    value: "Your AI, with your own API key.\nConversations stay on this device.",
-                    style: theme::muted().margin_bottom(px(28)),
-                )
-                View(style: theme::row().gap(px(8)).margin_bottom(px(20))) {
-                    Button(
-                        label: "OpenAI",
-                        on_press: move |()| {
-                            name.set("OpenAI".into());
-                            base_url.set("https://api.openai.com/v1".into());
-                            key.set(String::new());
-                            model.set(String::new());
-                            models.set(Vec::new());
-                        },
-                    )
-                    Button(
-                        label: "DeepSeek",
-                        on_press: move |()| {
-                            name.set("DeepSeek".into());
-                            base_url.set("https://api.deepseek.com".into());
-                            key.set(String::new());
-                            model.set(String::new());
-                            models.set(Vec::new());
-                        },
-                    )
+                View(style: theme::row().gap(px(space::SM))) {
+                    Button(label: "OpenAI", on_press: move |()| form.preset(false))
+                    Button(label: "DeepSeek", on_press: move |()| form.preset(true))
                 }
-                Text(value: "Connection name", style: theme::muted().margin_bottom(px(6)))
-                Input(text: name, style: theme::field())
-                Text(
-                    value: "API base URL",
-                    style: theme::muted().margin_top(px(16)).margin_bottom(px(6)),
-                )
-                Input(
-                    text: base_url,
-                    keyboard_type: KeyboardType::Url,
-                    auto_capitalize: AutoCapitalize::None,
-                    autocorrect: false,
-                    style: theme::field(),
-                    on_input: move |_: String| {
-                        key.set(String::new());
-                        models.set(Vec::new());
-                        notice.set(String::new());
-                    },
-                )
-                Text(
-                    value: "API key",
-                    style: theme::muted().margin_top(px(16)).margin_bottom(px(6)),
-                )
-                Input(
-                    text: key,
-                    secure: true,
-                    auto_capitalize: AutoCapitalize::None,
-                    autocorrect: false,
-                    placeholder: "Enter your API key",
-                    style: theme::field(),
-                )
-                View(style: theme::column().margin_top(px(12))) {
+                View(style: theme::card()) {
+                    Text(value: "Connection", style: theme::title())
+                    Text(value: "Name", style: theme::muted())
+                    Input(text: form.name, style: theme::field())
+                    Text(value: "API base URL", style: theme::muted())
+                    Input(
+                        text: form.base_url,
+                        keyboard_type: KeyboardType::Url,
+                        auto_capitalize: AutoCapitalize::None,
+                        autocorrect: false,
+                        style: theme::field(),
+                        on_input: move |_: String| form.endpoint_changed(),
+                    )
+                    Text(value: "API key", style: theme::muted())
+                    Input(
+                        text: form.key,
+                        secure: true,
+                        auto_capitalize: AutoCapitalize::None,
+                        autocorrect: false,
+                        placeholder: "Enter a key, or keep your saved key",
+                        style: theme::field(),
+                    )
                     Button(
                         label: computed(move || {
-                            if checking.get() {
-                                "Checking…".into()
+                            if form.checking.get() {
+                                "Connecting…".into()
                             } else {
-                                "Fetch models".into()
+                                "Test connection & find models".into()
                             }
                         }),
-                        on_press: move |()| {
-                            if checking.get_untracked() {
-                                return;
-                            }
-                            let mut connection = Connection {
-                                name: name.get_untracked(),
-                                base_url: base_url.get_untracked(),
-                                model: model.get_untracked(),
-                            };
-                            if let Err(error) = connection.validate() {
-                                notice.set(error);
-                                return;
-                            }
-                            let secret = key.get_untracked().trim().to_owned();
-                            if secret.is_empty() {
-                                notice.set("Enter your API key.".into());
-                                return;
-                            }
-                            let client = match api.clone() {
-                                Ok(client) => client,
-                                Err(error) => {
-                                    notice.set(error.message());
-                                    return;
-                                }
-                            };
-                            let requested_url = base_url.get_untracked();
-                            let requested_key = key.get_untracked();
-                            checking.set(true);
-                            notice.set(String::new());
-                            spawn_local(async move {
-                                let result = client.models(&connection, &secret).await;
-                                checking.set(false);
-                                if base_url.get_untracked() != requested_url || key.get_untracked() != requested_key {
-                                    return;
-                                }
-                                match result {
-                                    Ok(ids) => {
-                                        notice.set(format!(
-                                            "Models found: {}. Select a model or enter its ID.",
-                                            ids.len()
-                                        ));
-                                        models.set(ids);
-                                    }
-                                    Err(error) => notice.set(error.message()),
-                                }
-                            });
-                        },
+                        disabled: form.checking,
+                        on_press: form.discover,
                     )
-                }
-                Text(
-                    value: "Model ID",
-                    style: theme::muted().margin_top(px(16)).margin_bottom(px(6)),
-                )
-                Input(
-                    text: model,
-                    placeholder: "Enter a model ID",
-                    auto_capitalize: AutoCapitalize::None,
-                    autocorrect: false,
-                    style: theme::field(),
-                )
-                Show(when: move || !models.with(Vec::is_empty)) {
-                    List(
-                        each: move || models.get(),
-                        key: |id: &String| id.clone(),
-                        children: move |id: ReadSignal<String>| render! {
-                            Text(
-                                value: id,
-                                on_tap: move |_| model.set(id.get_untracked()),
-                                style: theme::text(14.0).padding(px(10)),
-                            )
-                        },
-                        style: theme::column()
-                            .height(px(160))
-                            .flex_shrink(0.0)
-                            .margin_top(px(8)),
+                    Text(value: "Model", style: theme::muted())
+                    Input(
+                        text: form.model,
+                        placeholder: "Model ID",
+                        auto_capitalize: AutoCapitalize::None,
+                        autocorrect: false,
+                        style: theme::field(),
                     )
-                }
-                Show(when: storage::persistent_keys_available) {
-                    View(style: theme::column().margin_top(px(16))) {
+                    Show(when: move || !form.models.with(Vec::is_empty)) {
+                        List(
+                            each: move || form.models.get(),
+                            key: |id: &String| id.clone(),
+                            children: move |id: ReadSignal<String>| render! {
+                                Button(
+                                    label: id,
+                                    on_press: move |()| form.model.set(id.get_untracked()),
+                                )
+                            },
+                            style: theme::column().height(px(132)).flex_shrink(0.0),
+                        )
+                    }
+                    Show(when: storage::persistent_keys_available) {
                         Button(
                             label: computed(move || {
-                                if remember.get() {
-                                    "✓ Store key securely".into()
+                                if form.remember.get() {
+                                    "✓ Remember key securely".into()
                                 } else {
-                                    "Use for this session only".into()
+                                    "Session only".into()
                                 }
                             }),
-                            on_press: move |()| remember.update(|value| *value = !*value),
+                            on_press: move |()| form.remember.update(|remember| *remember = !*remember),
                         )
                     }
-                }
-                Show(when: || !storage::persistent_keys_available()) {
-                    Text(
-                        value: "Your API key is kept for this session only. Enter it again after restarting.",
-                        style: theme::muted().margin_top(px(12)),
+                    Show(when: || !storage::persistent_keys_available()) {
+                        Text(
+                            value: "Session-only key. Re-enter it after restarting.",
+                            style: theme::muted(),
+                        )
+                    }
+                    Show(when: move || !form.notice.with(String::is_empty)) {
+                        Text(
+                            value: form.notice,
+                            style: theme::text(size::LABEL).color(Color::hex(color::ACCENT)),
+                        )
+                    }
+                    Button(
+                        label: if can_back { "Save connection" } else { "Start chatting" },
+                        primary: true,
+                        on_press: form.save,
                     )
                 }
-                Text(value: notice, style: theme::muted().margin_top(px(12)))
-                View(style: theme::column().margin_top(px(20)).gap(px(12))) {
+                Show(when: move || can_back) {
                     Button(
-                        label: "Start chatting",
-                        primary: true,
-                        on_press: move |()| {
-                            let connection = Connection {
-                                name: name.get_untracked(),
-                                base_url: base_url.get_untracked(),
-                                model: model.get_untracked(),
-                            };
-                            if let Err(error) =
-                                save_app.configure(connection, key.get_untracked(), remember.get_untracked())
-                            {
-                                notice.set(error);
-                            } else {
-                                navigation::return_to_chat(&nav, notice);
-                            }
+                        label: "Back to chat",
+                        on_press: {
+                            let nav = back_nav.clone();
+                            move |()| navigation::return_to_chat(&nav, notice)
                         },
                     )
-                    Show(when: move || can_back) {
-                        Button(
-                            label: "Back to chat",
-                            on_press: {
-                                let nav = back_nav.clone();
-                                move |()| navigation::return_to_chat(&nav, notice)
-                            },
-                        )
-                    }
                 }
                 Text(
-                    value: "API usage is billed to your provider account.\nFetching models does not generate a response.",
-                    style: theme::muted().margin_top(px(20)),
+                    value: "Usage is billed by your provider. Conversations are saved locally on this device.",
+                    style: theme::muted(),
                 )
             }
         }

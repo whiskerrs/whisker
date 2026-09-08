@@ -1,66 +1,80 @@
 # Whisker Chat
 
-A native, bring-your-own-key chat application built with Whisker's public APIs.
-The first runnable milestone targets iOS. The application calls OpenAI,
-DeepSeek, or an OpenAI-compatible endpoint directly; no application server or
-build-time API key is required.
+A bring-your-own-key chat application built with Whisker's public APIs. Connect
+OpenAI, DeepSeek, or an OpenAI-compatible endpoint directly from the app. There
+is no application server, build-time credential, or bundled API key.
 
-## First milestone
+## Features
 
-- Connection settings, secure key entry, model discovery, and manual model IDs.
-- One persistent conversation with a draft and independently updated turns.
-- Streamed text, cancellation, manual retry, and partial-answer recovery.
-- Keychain/Keystore storage on iOS/Android; explicit session-only storage elsewhere.
-- A fixed header and composer, a virtualized message list, and optional tail following.
-- Stack navigation through `whisker-router`, including platform back gestures.
+- Provider presets, secure key entry, model discovery, and manual model IDs.
+- Multiple local conversations, search, rename, Trash, and restore.
+- Streamed answers, stop, regenerate, and previous-answer navigation.
+- Markdown headings, paragraphs, lists, quotes, and code blocks.
+- Saved drafts and partial-answer recovery after an interrupted session.
+- A fixed composer, virtualized conversation list, and optional tail following.
+- Mobile stack navigation and a collapsible desktop/browser conversation sidebar.
 
-Restored conversations initially open at the beginning; use the latest-message
-button to move to the end. New requests enable tail following.
+Markdown inline formatting is currently flattened to text, and link destinations
+are displayed as text. Embedded HTML is never executed. Attachments, agent tools,
+cloud sync, clipboard actions, and desktop keyboard shortcuts are not included.
 
-Responses are currently rendered as plain text. Multiple conversations,
-Markdown, answer alternatives, desktop shortcuts, responsive navigation, and
-desktop credential-store integration belong to subsequent milestones. Other
-platforms are not yet runtime-validated.
+## Run
 
-## Run on iOS
-
-From the repository root, with Xcode and an iOS Simulator installed:
+From the repository root, select a target with its platform toolchain installed:
 
 ```sh
 cargo run -p whisker-cli --bin whisker -- run ios --manifest-path examples/chat/Cargo.toml
+cargo run -p whisker-cli --bin whisker -- run android --manifest-path examples/chat/Cargo.toml
+cargo run -p whisker-cli --bin whisker -- run web --manifest-path examples/chat/Cargo.toml
+cargo run -p whisker-cli --bin whisker -- run desktop --manifest-path examples/chat/Cargo.toml
 ```
 
-Enter an API base URL, your own API key, and a model ID in the application.
-OpenAI and DeepSeek presets fill the base URL. Model discovery uses `GET /models`
-and does not generate a billable answer. Generation uses streamed Chat
-Completions; model availability and usage charges are controlled by the provider.
+Enter your API base URL and key, discover models or enter a model ID, and save
+the connection. Model discovery calls `GET /models`; generation uses streamed
+Chat Completions. Availability and usage charges are controlled by your provider.
+Browser connections require the provider to permit cross-origin requests.
 
-API keys never enter the conversation store. Changing the base URL clears the
-key field. Native keys are scoped to the normalized endpoint in the OS secure
-store. Web and Desktop currently retain keys in memory only. Conversation data
-is local and is not encrypted. Failed or interrupted answers remain visible but
-are excluded from subsequent assistant context. Generation requests are never
-automatically retried.
+On Desktop, **Chats** toggles the sidebar; **Hide sidebar** gives the conversation
+more room. The browser starts with the sidebar closed. On iOS and Android,
+**Chats** opens a separate history screen through `whisker-router`.
 
-## Layout of the application
+## Data and credentials
+
+Conversation data is local JSON and is not encrypted. Trash is reversible and
+retains the conversation on the device. Native keys use endpoint-scoped
+Keychain/Keystore storage when **Remember key securely** is selected. Web and
+Desktop retain keys in memory only. Changing the endpoint clears the key field;
+a retained key is never reused for another endpoint. Keys are excluded from
+conversation storage and provider error messages.
+
+One answer can run at a time. Generation belongs to the app Owner above the
+router, so covering or switching a screen preserves the active request. Stop
+always targets that request, including when another conversation is selected.
+Requests are never automatically retried. Failed or interrupted answers remain
+visible but are excluded from subsequent assistant context.
+
+Drafts save after a short idle interval and on blur. Text updates are batched
+approximately every 32 ms; partial answers are checkpointed approximately once
+per second. Abrupt termination can lose updates since the last checkpoint.
+Restored conversations open at the beginning; **Latest** moves to the end.
+
+## Code organization
 
 | Directory | Responsibility |
 | --- | --- |
+| `src/design` | Color, typography, spacing, dimensions, and shared style tokens |
 | `src/api` | HTTP requests, deadlines, SSE framing, and safe error classification |
-| `src/state` | Conversation data, app-owned generation, cancellation, and restore |
+| `src/state` | Conversations, app-owned generation, cancellation, and restoration |
 | `src/storage` | Versioned persistence and platform-specific credential storage |
-| `src/ui` | Router routes, startup state, screens, small controls, and shared styling |
-| `tests/simulator_api.rs` | Optional local HTTP fixture for simulator verification |
+| `src/hooks` | Composable screen state and actions using signals, effects, and resources |
+| `src/ui` | Router routes, screens, message rendering, and small controls |
+| `tests/simulator_api.rs` | Optional local HTTP fixture for platform verification |
 
-The router maps `/` to the conversation and `/settings` to connection settings.
-Startup restores saved data before mounting the route outlet. First-time setup
-replaces its settings entry with the conversation; returning from settings
-reveals the existing conversation without adding another stack entry.
-
-The app Owner is created above the router and owns generation tasks. Covering
-or disposing a screen does not cancel an active answer. Generation IDs reject late updates, while an abort handle drops the
-request when the user stops. Text updates are batched approximately every 32 ms;
-partial answers are checkpointed approximately once per second.
+`use_connection_form` groups connection fields, discovery, and validation.
+`use_chat` groups draft autosave, tail following, and conversation actions.
+These are ordinary Rust functions called within a component Owner. Session and
+turn signals belong to the app Owner; temporary form signals belong to their
+screen. Generation captures its endpoint, key, and context before spawning.
 
 ## Verification without an API key
 
@@ -70,19 +84,20 @@ whisker fmt $(rg --files examples/chat -g '*.rs')
 whisker fmt --check $(rg --files examples/chat -g '*.rs')
 ```
 
-To run a deterministic local API for simulator testing:
+For a deterministic local streaming API:
 
 ```sh
 cargo test -p whisker-chat --test simulator_api -- --ignored --nocapture
 ```
 
 It serves `http://127.0.0.1:8787/v1`, accepts the non-secret key `test-key`, and
-lists `test-model`. The `disconnect` and `rate-limit` prompts simulate incomplete
-responses and HTTP 429. Other prompts produce a streamed English response.
-Loopback HTTP is accepted only when Rust debug assertions are enabled; remote
-endpoints always require HTTPS. This fixture never contacts an external API.
+lists `test-model`. `disconnect` simulates an unfinished stream; `rate-limit`
+returns HTTP 429. Other prompts produce a streamed English response. The fixture
+permits browser CORS and never contacts an external API. For Android Emulator,
+run `adb reverse tcp:8787 tcp:8787` before connecting to this loopback endpoint.
 
-For the local fixture with a non-hot-patch iOS build, enable debug assertions:
+Loopback HTTP is accepted only with Rust debug assertions; remote endpoints
+require HTTPS. For a non-hot-patch iOS build against the local fixture:
 
 ```sh
 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true cargo run -p whisker-cli --bin whisker -- run ios --manifest-path examples/chat/Cargo.toml --no-hot-patch

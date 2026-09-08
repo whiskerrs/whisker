@@ -1,79 +1,112 @@
-use super::{button::Button, navigation, theme};
-use crate::state::{AppState, SendError, Turn};
+use super::{
+    button::Button,
+    composer::Composer,
+    history::HistoryPanel,
+    messages::TurnRow,
+    theme::{self, color, space},
+    welcome::Welcome,
+};
+use crate::{
+    hooks::use_chat,
+    state::{AppState, Session, Turn},
+};
+use whisker::css::FontWeight;
 use whisker::prelude::*;
-use whisker_input::Input;
+use whisker_icons::lucide;
 use whisker_router::use_navigator;
 
 #[component]
 pub fn chat_screen() -> Element {
     let app = use_context::<AppState>().expect("AppState context");
-    let nav = use_navigator();
-    let settings_nav = nav.clone();
-    let retry_nav = nav.clone();
-    let turns = app.turns();
-    let draft = app.draft();
-    let busy = app.busy();
-    let connection = app.connection();
-    let revision = app.revision();
-    let following = signal(turns.with_untracked(Vec::is_empty));
-    let list = ListHandle::<u64>::new();
-    let scroll = list.clone();
-    effect(move || {
-        revision.get();
-        turns.with(Vec::len);
-        if following.get_untracked() {
-            let _ = scroll.scroll_to(ListScrollTarget::End, ScrollBehavior::Instant);
-        }
-    });
-    let settings = app.clone();
-    let send = app.clone();
-    let retry = app.clone();
-    let save = app.clone();
-    let latest = list.clone();
+    let selected = app.clone();
+    let sidebar = signal(cfg!(not(any(
+        target_os = "ios",
+        target_os = "android",
+        target_arch = "wasm32"
+    ))));
     render! {
-        View(style: theme::screen()) {
-            View(style: theme::row().padding(px(16)).gap(px(12)).flex_shrink(0.0)) {
-                View(style: theme::column().flex_grow(1.0).flex_shrink(1.0)) {
-                    Text(value: "Whisker Chat", style: theme::text(21.0))
+        View(style: theme::screen().flex_direction(FlexDirection::Row)) {
+            Show(when: move || sidebar.get()) {
+                HistoryPanel(sidebar: true, closed: move |()| sidebar.set(false))
+            }
+            ForEach(
+                each: move || selected.active().into_iter().collect::<Vec<_>>(),
+                key: |session: &Session| session.id,
+                children: move |session: Session| render! {
+                    ConversationView(session: session, sidebar: sidebar)
+                },
+            )
+        }
+    }
+}
+
+#[component]
+fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
+    let app = use_context::<AppState>().expect("AppState context");
+    let actions = use_chat(session);
+    let nav = use_navigator();
+    let notice = app.notice();
+    let connection = app.connection();
+    let following = actions.following;
+    let list_ref = actions.list.r();
+    render! {
+        View(style: theme::fill()) {
+            View(
+                style: theme::row()
+                    .padding(px(space::LG))
+                    .gap(px(space::SM))
+                    .flex_shrink(0.0)
+                    .border_bottom_width(px(1))
+                    .border_bottom_color(Color::hex(color::BORDER)),
+            ) {
+                Button(
+                    label: "Chats",
+                    icon: lucide::PanelLeft,
+                    on_press: move |()| {
+                        if cfg!(any(target_os = "ios", target_os = "android")) {
+                            if nav.navigate("/history").is_err() {
+                                notice.set("Could not open conversations.".into());
+                            }
+                        } else {
+                            sidebar.update(|open| *open = !*open);
+                        }
+                    },
+                )
+                View(style: theme::fill()) {
+                    Text(
+                        value: session.title,
+                        max_lines: 1u32,
+                        style: theme::text(15.0).font_weight(FontWeight::Bold),
+                    )
                     Text(
                         value: computed(move || {
                             connection
                                 .get()
-                                .map(|c| format!("{} · {}", c.name, c.model))
-                                .unwrap_or_else(|| "Set up a connection".into())
+                                .map(|c| c.model)
+                                .unwrap_or_else(|| "Connect a model".into())
                         }),
                         max_lines: 1u32,
-                        style: theme::muted().margin_top(px(3)),
+                        style: theme::muted(),
                     )
                 }
                 Button(
-                    label: "Settings",
-                    on_press: move |()| {
-                        settings.persist();
-                        navigation::open_settings(&settings_nav, settings.notice());
-                    },
+                    label: "",
+                    icon: lucide::Settings2,
+                    accessible_label: "Settings",
+                    on_press: actions.settings,
                 )
             }
-            Show(when: move || turns.with(Vec::is_empty)) {
-                View(style: theme::fill().padding(px(28)).padding_top(px(72))) {
-                    Text(
-                        value: "What would you like to explore?",
-                        style: theme::text(25.0),
-                    )
-                    Text(
-                        value: "A draft to refine, a coding question,\nor an idea taking shape.",
-                        style: theme::muted().margin_top(px(16)),
-                    )
-                }
+            Show(when: move || session.turns.with(Vec::is_empty)) {
+                Welcome(draft: session.draft)
             }
-            Show(when: move || !turns.with(Vec::is_empty)) {
+            Show(when: move || !session.turns.with(Vec::is_empty)) {
                 List(
-                    each: move || turns.get(),
-                    key: |turn: &RwSignal<Turn>| turn.with_untracked(|turn| turn.id),
+                    each: move || session.turns.get(),
+                    key: |turn: &RwSignal<Turn>| turn.with_untracked(|t| t.id),
                     children: |turn: ReadSignal<RwSignal<Turn>>| render! {
                         TurnRow(turn: turn.get_untracked())
                     },
-                    list_ref: list.clone().r(),
+                    list_ref: list_ref.clone(),
                     on_scroll: move |event| {
                         let d = event.detail;
                         if d.is_dragging || d.delta_y < 0.0 {
@@ -84,113 +117,15 @@ pub fn chat_screen() -> Element {
                 )
             }
             Show(when: move || !following.get()) {
-                Button(
-                    label: "↓ Latest message",
-                    on_press: {
-                        let latest = latest.clone();
-                        move |()| {
-                            following.set(true);
-                            let _ = latest.scroll_to(ListScrollTarget::End, ScrollBehavior::Smooth);
-                        }
-                    },
-                )
-            }
-            View(style: theme::column().padding(px(16)).gap(px(10)).flex_shrink(0.0)) {
-                Text(value: "Message", style: theme::muted())
-                Input(
-                    text: draft,
-                    multiline: true,
-                    lines: 3u32,
-                    placeholder: "Type a message…",
-                    style: theme::field().height(px(88)),
-                    on_blur: move |()| save.persist(),
-                )
                 View(
                     style: theme::row()
-                        .justify_content(JustifyContent::SpaceBetween)
-                        .gap(px(10)),
+                        .justify_content(JustifyContent::Center)
+                        .padding(px(space::XS)),
                 ) {
-                    Text(
-                        value: "AI can make mistakes.",
-                        style: theme::muted(),
-                    )
-                    Button(
-                        label: computed(move || {
-                            if busy.get() {
-                                "Stop".into()
-                            } else {
-                                "Send ↑".into()
-                            }
-                        }),
-                        primary: true,
-                        on_press: move |()| {
-                            if busy.get_untracked() {
-                                send.stop();
-                            } else {
-                                following.set(true);
-                                if let Err(SendError::MissingConnection) = send.send() {
-                                    navigation::open_settings(&nav, send.notice());
-                                }
-                            }
-                        },
-                    )
-                }
-                Show(
-                    when: move || {
-                        !busy.get()
-                            && turns.with(|turns| {
-                                turns.last().is_some_and(|turn| {
-                                    turn.with(|turn| !matches!(turn.status, crate::state::AnswerStatus::Complete))
-                                })
-                            })
-                    },
-                ) {
-                    Button(
-                        label: "Retry last question",
-                        on_press: {
-                            let retry = retry.clone();
-                            let nav = retry_nav.clone();
-                            move |()| {
-                                if let Err(SendError::MissingConnection) = retry.retry() {
-                                    navigation::open_settings(&nav, retry.notice());
-                                }
-                            }
-                        },
-                    )
+                    Button(label: "Latest", icon: lucide::ArrowDown, on_press: actions.latest)
                 }
             }
-        }
-    }
-}
-
-#[component]
-fn turn_row(turn: RwSignal<Turn>) -> Element {
-    render! {
-        View(style: theme::column().padding(px(20)).gap(px(20))) {
-            View(
-                style: theme::column()
-                    .align_self(whisker::css::AlignSelf::FlexEnd)
-                    .max_width(percent(88))
-                    .background_color(Color::hex(0xe4ebe4))
-                    .border_radius(px(18))
-                    .padding(px(16)),
-            ) {
-                Text(
-                    value: computed(move || turn.with(|t| t.question.clone())),
-                    style: theme::text(16.0),
-                )
-            }
-            View(style: theme::column().gap(px(8))) {
-                Text(
-                    value: computed(move || turn.with(|t| format!("{} · {}", t.connection.name, t.connection.model))),
-                    style: theme::muted(),
-                )
-                Text(
-                    value: computed(move || turn.with(|t| t.answer.clone())),
-                    style: theme::text(16.0),
-                )
-                Text(value: computed(move || turn.with(Turn::status_text)), style: theme::muted())
-            }
+            Composer(session: session, actions: actions)
         }
     }
 }

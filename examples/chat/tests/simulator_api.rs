@@ -43,18 +43,22 @@ async fn respond(mut socket: tokio::net::TcpStream) -> std::io::Result<()> {
         }
     }
     let request = String::from_utf8_lossy(&request);
+    if request.starts_with("OPTIONS ") {
+        socket.write_all(b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: authorization, content-type\r\nConnection: close\r\n\r\n").await?;
+        return Ok(());
+    }
     if !request
         .to_ascii_lowercase()
         .contains("authorization: bearer test-key\r\n")
     {
         socket
             .write_all(
-                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
             )
             .await?;
     } else if request.starts_with("GET /v1/models ") {
         let body = r#"{"data":[{"id":"test-model"}]}"#;
-        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await?;
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await?;
     } else {
         let json: serde_json::Value =
             serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap_or("{}"))
@@ -65,12 +69,12 @@ async fn respond(mut socket: tokio::net::TcpStream) -> std::io::Result<()> {
             .and_then(|message| message["content"].as_str())
             .unwrap_or("");
         if question.eq_ignore_ascii_case("rate-limit") {
-            socket.write_all(b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await?;
+            socket.write_all(b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n").await?;
             return Ok(());
         }
         socket
             .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
             )
             .await?;
         for index in 1..=30 {

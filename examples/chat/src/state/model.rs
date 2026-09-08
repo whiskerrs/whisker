@@ -61,6 +61,8 @@ pub enum AnswerStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Turn {
+    #[serde(default)]
+    pub alternatives: Vec<Answer>,
     pub id: u64,
     pub question: String,
     pub answer: String,
@@ -68,10 +70,10 @@ pub struct Turn {
     pub status: AnswerStatus,
 }
 
-impl Turn {
-    pub fn status_text(&self) -> String {
-        match &self.status {
-            AnswerStatus::Running if self.answer.is_empty() => "Waiting for a response…".into(),
+impl AnswerStatus {
+    pub fn label(&self, empty: bool) -> String {
+        match self {
+            AnswerStatus::Running if empty => "Waiting for a response…".into(),
             AnswerStatus::Running => "Generating…".into(),
             AnswerStatus::Complete => String::new(),
             AnswerStatus::Stopped => "Generation stopped".into(),
@@ -81,8 +83,21 @@ impl Turn {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Answer {
+    pub text: String,
+    pub status: AnswerStatus,
+    pub connection: Connection,
+}
+
 #[derive(Default, Serialize, Deserialize)]
 pub struct Conversation {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub trashed: bool,
     pub turns: Vec<Turn>,
     pub draft: String,
 }
@@ -151,11 +166,13 @@ mod tests {
             draft: "draft".into(),
             turns: vec![Turn {
                 id: 1,
+                alternatives: Vec::new(),
                 question: "question".into(),
                 answer: "partial".into(),
                 connection: Connection::default(),
                 status: AnswerStatus::Running,
             }],
+            ..Conversation::default()
         };
         conversation.restore();
         assert_eq!(conversation.turns[0].status, AnswerStatus::Interrupted);
@@ -167,5 +184,67 @@ mod tests {
             Conversation::context(&conversation.turns)[1].content,
             "partial"
         );
+    }
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Library {
+    pub active: u64,
+    pub conversations: Vec<Conversation>,
+}
+
+impl Library {
+    pub fn normalize(&mut self) {
+        let mut next = self.conversations.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+        let mut used = std::collections::HashSet::new();
+        for conversation in &mut self.conversations {
+            if conversation.id == 0 || !used.insert(conversation.id) {
+                conversation.id = next;
+                used.insert(next);
+                next += 1;
+            }
+            conversation.restore();
+            if conversation.title.is_empty() {
+                conversation.title = conversation
+                    .turns
+                    .first()
+                    .map(|t| t.question.chars().take(52).collect())
+                    .unwrap_or_else(|| "New conversation".into());
+            }
+        }
+        if !self
+            .conversations
+            .iter()
+            .any(|c| c.id == self.active && !c.trashed)
+        {
+            self.active = self
+                .conversations
+                .iter()
+                .find(|c| !c.trashed)
+                .map(|c| c.id)
+                .unwrap_or(0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod library_tests {
+    use super::*;
+    #[test]
+    fn migrates_old_conversation_without_losing_content() {
+        let legacy = r#"{"draft":"keep this","turns":[{"id":1,"question":"First question","answer":"partial","connection":{"name":"Local","base_url":"https://example.com","model":"test"},"status":"Running"}]}"#;
+        let conversation: Conversation = serde_json::from_str(legacy).unwrap();
+        let mut library = Library {
+            active: 0,
+            conversations: vec![conversation],
+        };
+        library.normalize();
+        let c = &library.conversations[0];
+        assert_eq!(library.active, c.id);
+        assert_ne!(c.id, 0);
+        assert_eq!(c.title, "First question");
+        assert_eq!(c.draft, "keep this");
+        assert_eq!(c.turns[0].status, AnswerStatus::Interrupted);
+        assert!(c.turns[0].alternatives.is_empty());
     }
 }

@@ -1,4 +1,4 @@
-use super::{chat::ChatScreen, connection::ConnectionScreen};
+use super::{chat::ChatScreen, connection::ConnectionScreen, history::HistoryScreen};
 use whisker::RwSignal;
 use whisker_router::{NavError, RouteSet, RouterHandle, routes};
 
@@ -10,6 +10,7 @@ pub fn routes() -> RouteSet {
         Stack {
             Route(path: "", component: ChatScreen)
             Route(path: "settings", component: ConnectionScreen)
+            Route(path: "history", component: HistoryScreen)
         }
     }
 }

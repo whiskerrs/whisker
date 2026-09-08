@@ -11,7 +11,9 @@ pub fn startup() -> Element {
     let restore = Callback::new(move |()| {
         let result = app.restore().and_then(|()| {
             if app.connection().get_untracked().is_none()
-                && app.turns().with_untracked(Vec::is_empty)
+                && app
+                    .active()
+                    .is_none_or(|s| s.turns.with_untracked(Vec::is_empty))
             {
                 navigation::start_setup(&nav)?;
             }

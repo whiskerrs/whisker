@@ -9,6 +9,8 @@ crate-type = ["rlib"]
 
 [dependencies]
 whisker = { workspace = true, features = ["tokio"] }
+whisker-icons = { path = "../../packages/whisker-icons" }
+pulldown-cmark = { version = "0.13", default-features = false }
 whisker-router = { path = "../../packages/whisker-router" }
 whisker-input = { path = "../../packages/whisker-input" }
 whisker-keyboard = { path = "../../packages/whisker-keyboard" }

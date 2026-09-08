@@ -1,4 +1,4 @@
-use crate::state::{Connection, Conversation};
+use crate::state::{Connection, Conversation, Library};
 use serde::{Deserialize, Serialize};
 use whisker_local_store::WhiskerLocalStore;
 
@@ -14,14 +14,21 @@ struct Stored<T> {
 pub fn load_connection() -> Result<Option<Connection>, String> {
     load(SETTINGS)
 }
-pub fn load_conversation() -> Result<Conversation, String> {
-    Ok(load(CONVERSATION)?.unwrap_or_default())
+pub fn load_library() -> Result<Library, String> {
+    if let Some(library) = load("chat.library.v2")? {
+        return Ok(library);
+    }
+    let legacy: Conversation = load(CONVERSATION)?.unwrap_or_default();
+    Ok(Library {
+        active: 0,
+        conversations: vec![legacy],
+    })
 }
 pub fn save_connection(connection: &Connection) -> Result<(), String> {
     save(SETTINGS, connection)
 }
-pub fn save_conversation(conversation: &Conversation) -> Result<(), String> {
-    save(CONVERSATION, conversation)
+pub fn save_library(library: &Library) -> Result<(), String> {
+    save("chat.library.v2", library)
 }
 
 fn load<T: serde::de::DeserializeOwned>(key: &str) -> Result<Option<T>, String> {
