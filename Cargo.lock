@@ -232,13 +232,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anim-smoke"
-version = "0.1.0"
-dependencies = [
- "whisker",
-]
-
-[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -352,15 +345,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bb44936d800fea8f016d7f2311c6a4f97aebd5dc86f09906139ec848cf3a46f"
 dependencies = [
  "libloading",
-]
-
-[[package]]
-name = "asset-demo"
-version = "0.1.0"
-dependencies = [
- "whisker",
- "whisker-asset",
- "whisker-image",
 ]
 
 [[package]]
@@ -630,14 +614,6 @@ dependencies = [
  "atspi-common",
  "serde",
  "zbus",
-]
-
-[[package]]
-name = "aurora-wallet"
-version = "0.1.0"
-dependencies = [
- "whisker",
- "whisker-icons",
 ]
 
 [[package]]
@@ -1004,13 +980,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "carousel"
-version = "0.1.0"
-dependencies = [
- "whisker",
 ]
 
 [[package]]
@@ -2490,14 +2459,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "host-smoke"
-version = "0.1.0"
-dependencies = [
- "whisker",
- "whisker-svg",
-]
-
-[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3273,21 +3234,6 @@ name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
-
-[[package]]
-name = "list-benchmark"
-version = "0.1.0"
-dependencies = [
- "whisker",
- "whisker-engine",
-]
-
-[[package]]
-name = "list-smoke"
-version = "0.1.0"
-dependencies = [
- "whisker",
-]
 
 [[package]]
 name = "litemap"
@@ -4329,106 +4275,6 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide 0.8.9",
-]
-
-[[package]]
-name = "podcast"
-version = "0.1.0"
-dependencies = [
- "podcast-domain",
- "podcast-feature-browse",
- "podcast-feature-detail",
- "podcast-feature-search",
- "podcast-routing",
- "podcast-theme",
- "podcast-ui-kit",
- "whisker",
- "whisker-audio",
- "whisker-router",
-]
-
-[[package]]
-name = "podcast-data"
-version = "0.1.0"
-dependencies = [
- "podcast-domain",
- "serde",
- "serde_json",
- "ureq",
-]
-
-[[package]]
-name = "podcast-domain"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "podcast-feature-browse"
-version = "0.1.0"
-dependencies = [
- "podcast-data",
- "podcast-domain",
- "podcast-routing",
- "podcast-theme",
- "podcast-ui-kit",
- "whisker",
-]
-
-[[package]]
-name = "podcast-feature-detail"
-version = "0.1.0"
-dependencies = [
- "podcast-data",
- "podcast-domain",
- "podcast-routing",
- "podcast-theme",
- "whisker",
- "whisker-audio",
- "whisker-icons",
- "whisker-image",
- "whisker-router",
- "whisker-safe-area",
-]
-
-[[package]]
-name = "podcast-feature-search"
-version = "0.1.0"
-dependencies = [
- "podcast-data",
- "podcast-domain",
- "podcast-routing",
- "podcast-theme",
- "whisker",
- "whisker-icons",
- "whisker-image",
- "whisker-input",
- "whisker-safe-area",
-]
-
-[[package]]
-name = "podcast-routing"
-version = "0.1.0"
-
-[[package]]
-name = "podcast-theme"
-version = "0.1.0"
-dependencies = [
- "whisker-css",
-]
-
-[[package]]
-name = "podcast-ui-kit"
-version = "0.1.0"
-dependencies = [
- "podcast-domain",
- "podcast-theme",
- "whisker",
- "whisker-audio",
- "whisker-icons",
- "whisker-image",
- "whisker-safe-area",
 ]
 
 [[package]]
@@ -5838,15 +5684,6 @@ checksum = "b0c85f2c3ef0b1cd58b36682f4b17aaa995f0e5db534d85692b4903abce21f67"
 dependencies = [
  "rustls",
  "tokio",
-]
-
-[[package]]
-name = "tokio-smoke"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "tokio",
- "whisker",
 ]
 
 [[package]]

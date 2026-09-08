@@ -631,48 +631,53 @@ mod tests {
     }
 
     #[test]
-    fn discovers_rfc0004_rust_host_crates_by_convention() {
+    fn discovers_declared_rust_host_manifests() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
             .unwrap()
-            .join("Cargo.toml");
-        let modules = discover(&workspace, "host-smoke").unwrap();
-        let svg = modules
+            .join("tests/cng-module-fixture/Cargo.toml");
+        let modules = discover(&workspace, "cng-module-fixture").unwrap();
+        let widget = modules
             .iter()
-            .find(|module| module.package == "whisker-svg")
+            .find(|module| module.package == "cng-test-widget")
             .unwrap();
-        let desktop = svg.rust_host(ModulePlatform::Desktop).unwrap();
-        assert_eq!(desktop.package, "whisker-svg-desktop");
+        let desktop = widget.rust_host(ModulePlatform::Desktop).unwrap();
+        assert_eq!(desktop.package, "cng-test-widget-desktop");
         assert!(matches!(
             &desktop.source,
-            ResolvedRustHostSource::Path(path) if path.ends_with("whisker-svg/desktop")
+            ResolvedRustHostSource::Path(path) if path.ends_with("widget/desktop")
         ));
-        let web = svg.rust_host(ModulePlatform::Web).unwrap();
-        assert_eq!(web.package, "whisker-svg-web");
+        let web = widget.rust_host(ModulePlatform::Web).unwrap();
+        assert_eq!(web.package, "cng-test-widget-web");
         assert!(matches!(
             &web.source,
-            ResolvedRustHostSource::Path(path) if path.ends_with("whisker-svg/web")
+            ResolvedRustHostSource::Path(path) if path.ends_with("widget/web")
         ));
     }
 
     #[test]
-    fn discovers_router_history_as_a_service_only_web_host() {
+    fn discovers_service_with_a_web_host_and_common_desktop_support() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
             .unwrap()
-            .join("Cargo.toml");
-        let modules = discover(&workspace, "whisker-router-example").unwrap();
-        let router = modules
+            .join("tests/cng-module-fixture/Cargo.toml");
+        let modules = discover(&workspace, "cng-module-fixture").unwrap();
+        let service = modules
             .iter()
-            .find(|module| module.package == "whisker-router")
+            .find(|module| module.package == "cng-test-service")
             .unwrap();
-        let web = router.rust_host(ModulePlatform::Web).unwrap();
-        assert_eq!(web.package, "whisker-router-web");
+        assert!(matches!(
+            service.platforms.desktop,
+            Some(platforms::ResolvedPlatformImplementation::Common)
+        ));
+        assert!(service.rust_host(ModulePlatform::Desktop).is_none());
+        let web = service.rust_host(ModulePlatform::Web).unwrap();
+        assert_eq!(web.package, "cng-test-service-web");
         assert!(matches!(
             &web.source,
-            ResolvedRustHostSource::Path(path) if path.ends_with("whisker-router/web")
+            ResolvedRustHostSource::Path(path) if path.ends_with("service/web")
         ));
     }
 }

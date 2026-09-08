@@ -33,20 +33,11 @@ members = [
     "platforms/windows",
     "platforms/linux",
     "platforms/web",
-    "examples/host-smoke",
-    "examples/anim-smoke",
-    "examples/asset-demo",
-    "examples/aurora-wallet",
-    "examples/podcast",
-    "examples/tokio-smoke",
     "examples/bluesky",
     "examples/bluesky/crates/bsky-domain",
     "examples/bluesky/crates/bsky-auth",
     "examples/bluesky/crates/bsky-theme",
     "examples/bluesky/crates/bsky-ui-kit",
-    "examples/list-smoke",
-    "examples/list-benchmark",
-    "examples/carousel",
     "tests/mobile-link-test",
     "tests/rust-host-link-test",
     "packages/whisker-haptics",
@@ -92,6 +83,7 @@ members = [
     "packages/whisker-webview/example",
 ]
 exclude = [
+    "tests/cng-module-fixture",
     # Throwaway cdylib the dev-server's `thin_rebuild` integration
     # test compiles standalone. Must NOT be a workspace member or
     # cargo would try to build it as part of the regular workspace

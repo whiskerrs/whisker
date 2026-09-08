@@ -379,33 +379,50 @@ mod tests {
     }
 
     #[test]
-    fn host_smoke_dependency_wires_svg_into_generated_rust_hosts() {
+    fn fixture_modules_are_wired_into_generated_hosts() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
-            .unwrap();
+            .unwrap()
+            .join("tests/cng-module-fixture");
         let crate_dir = tempdir();
         let mut config = Config::default();
-        config.name("Host Smoke").bundle_id("rs.whisker.hostsmoke");
+        config
+            .name("CNG Module Fixture")
+            .bundle_id("rs.whisker.cngfixture");
 
-        let macos =
-            sync_for_target(Target::Macos, &config, &crate_dir, workspace, "host-smoke").unwrap();
+        let macos = sync_for_target(
+            Target::Macos,
+            &config,
+            &crate_dir,
+            &workspace,
+            "cng-module-fixture",
+        )
+        .unwrap();
         let macos_source = std::fs::read_to_string(macos.gen_dir.join("src/main.rs")).unwrap();
-        assert!(macos_source.contains("whisker_svg::__whisker_element_module_definition()"));
-        assert!(macos_source.contains("whisker_svg_desktop::__whisker_module_definition()"));
+        assert!(macos_source.contains("cng_test_widget::__whisker_element_module_definition()"));
+        assert!(macos_source.contains("cng_test_widget_desktop::__whisker_module_definition()"));
+        assert!(!macos_source.contains("cng_test_service"));
 
-        let web =
-            sync_for_target(Target::Web, &config, &crate_dir, workspace, "host-smoke").unwrap();
+        let web = sync_for_target(
+            Target::Web,
+            &config,
+            &crate_dir,
+            &workspace,
+            "cng-module-fixture",
+        )
+        .unwrap();
         let web_source = std::fs::read_to_string(web.gen_dir.join("src/lib.rs")).unwrap();
-        assert!(web_source.contains("whisker_svg::__whisker_element_module_definition()"));
-        assert!(web_source.contains("whisker_svg_web::__whisker_module_definition()"));
+        assert!(web_source.contains("cng_test_widget::__whisker_element_module_definition()"));
+        assert!(web_source.contains("cng_test_widget_web::__whisker_module_definition()"));
+        assert!(web_source.contains("cng_test_service_web::__whisker_module_definition()"));
 
         let ios = sync_for_target(
             Target::IosSimulator,
             &config,
             &crate_dir,
-            workspace,
-            "host-smoke",
+            &workspace,
+            "cng-module-fixture",
         )
         .unwrap();
         let package =
@@ -415,8 +432,9 @@ mod tests {
                 .join("whisker_modules/Sources/WhiskerModules/RegisterAll.swift"),
         )
         .unwrap();
-        assert!(package.contains("WhiskerSvg"));
-        assert!(registrar.contains("_whiskerRegisterModules_WhiskerSvg()"));
+        assert!(package.contains("CngTestWidget"));
+        assert!(registrar.contains("_whiskerRegisterModules_CngTestWidget()"));
+        assert!(!registrar.contains("CngTestService"));
         std::fs::remove_dir_all(crate_dir).ok();
     }
 }

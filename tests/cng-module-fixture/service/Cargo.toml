@@ -1,0 +1,10 @@
+[package]
+name = "cng-test-service"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata.whisker.module.platforms]
+ios = { kind = "common" }
+web = { manifest = "web/Cargo.toml" }
+desktop = { kind = "common" }
