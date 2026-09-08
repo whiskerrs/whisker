@@ -1,6 +1,6 @@
 [package]
 name = "whisker-secure-store"
-version.workspace = true
+version = "0.13.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -35,4 +35,4 @@ android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 
 [dependencies]
-whisker = { workspace = true }
+whisker = { path = "../../crates/whisker", version = "0.13.8" }

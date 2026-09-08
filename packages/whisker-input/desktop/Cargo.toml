@@ -1,6 +1,6 @@
 [package]
 name = "whisker-input-desktop"
-version.workspace = true
+version = "0.13.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,5 +11,5 @@ description = "Native Desktop Host implementation for whisker-input."
 csscolorparser = "0.7.2"
 glyphon = "0.9.0"
 unicode-segmentation = "1"
-whisker-desktop = { workspace = true }
-whisker-protocol = { workspace = true }
+whisker-desktop = { path = "../../../platforms/desktop", version = "0.13.8" }
+whisker-protocol = { path = "../../../crates/whisker-protocol", version = "0.13.8" }

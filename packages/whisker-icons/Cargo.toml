@@ -1,6 +1,6 @@
 [package]
 name = "whisker-icons"
-version.workspace = true
+version = "0.13.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -27,5 +27,5 @@ include = [
 crate-type = ["rlib"]
 
 [dependencies]
-whisker = { workspace = true }
+whisker = { path = "../../crates/whisker", version = "0.13.8" }
 whisker-svg = { path = "../whisker-svg", version = "0.13.8" }

@@ -1,6 +1,6 @@
 [package]
 name = "whisker-keyboard"
-version.workspace = true
+version = "0.13.9"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -34,4 +34,4 @@ web = { manifest = "web/Cargo.toml" }
 desktop = { kind = "common" }
 
 [dependencies]
-whisker = { workspace = true }
+whisker = { path = "../../crates/whisker", version = "0.13.9" }

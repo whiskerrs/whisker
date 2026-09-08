@@ -1,6 +1,6 @@
 [package]
 name = "whisker-haptics"
-version.workspace = true
+version = "0.13.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -58,11 +58,11 @@ doc = false
 # can pull this crate with `default-features = false` and skip the
 # full runtime and Host protocol build. Default-on so normal app deps
 # "just work".
-whisker = { workspace = true, optional = true }
+whisker = { path = "../../crates/whisker", version = "0.13.8", optional = true }
 
 # Plugin support — always on (light deps: trait + IR types + JSON
 # envelope + subprocess runner).
-whisker-plugin = { workspace = true }
+whisker-plugin = { path = "../../crates/whisker-plugin", version = "0.13.8" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 
