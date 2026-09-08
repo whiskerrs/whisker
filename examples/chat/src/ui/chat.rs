@@ -1,0 +1,185 @@
+use super::{button::Button, theme};
+use crate::state::{AppState, Page, Turn};
+use whisker::prelude::*;
+use whisker_input::Input;
+
+#[component]
+pub fn chat_screen() -> Element {
+    let app = use_context::<AppState>().expect("AppState context");
+    let turns = app.turns();
+    let draft = app.draft();
+    let busy = app.busy();
+    let connection = app.connection();
+    let revision = app.revision();
+    let following = signal(turns.with_untracked(Vec::is_empty));
+    let list = ListHandle::<u64>::new();
+    let scroll = list.clone();
+    effect(move || {
+        revision.get();
+        turns.with(Vec::len);
+        if following.get_untracked() {
+            let _ = scroll.scroll_to(ListScrollTarget::End, ScrollBehavior::Instant);
+        }
+    });
+    let settings = app.clone();
+    let send = app.clone();
+    let retry = app.clone();
+    let save = app.clone();
+    let latest = list.clone();
+    render! {
+        View(style: theme::fill()) {
+            View(style: theme::row().padding(px(16)).gap(px(12)).flex_shrink(0.0)) {
+                View(style: theme::column().flex_grow(1.0).flex_shrink(1.0)) {
+                    Text(value: "Whisker Chat", style: theme::text(21.0))
+                    Text(
+                        value: computed(move || {
+                            connection
+                                .get()
+                                .map(|c| format!("{} · {}", c.name, c.model))
+                                .unwrap_or_else(|| "接続先を設定してください".into())
+                        }),
+                        max_lines: 1u32,
+                        style: theme::muted().margin_top(px(3)),
+                    )
+                }
+                Button(
+                    label: "設定",
+                    on_press: move |()| {
+                        settings.persist();
+                        settings.page().set(Page::Connection);
+                    },
+                )
+            }
+            Show(when: move || turns.with(Vec::is_empty)) {
+                View(style: theme::fill().padding(px(28)).padding_top(px(72))) {
+                    Text(
+                        value: "今日は、何を考えましょう。",
+                        style: theme::text(25.0),
+                    )
+                    Text(
+                        value: "書きかけの文章、コードの疑問、\nまだまとまらないアイデア。",
+                        style: theme::muted().margin_top(px(16)),
+                    )
+                }
+            }
+            Show(when: move || !turns.with(Vec::is_empty)) {
+                List(
+                    each: move || turns.get(),
+                    key: |turn: &RwSignal<Turn>| turn.with_untracked(|turn| turn.id),
+                    children: |turn: ReadSignal<RwSignal<Turn>>| render! {
+                        TurnRow(turn: turn.get_untracked())
+                    },
+                    list_ref: list.clone().r(),
+                    on_scroll: move |event| {
+                        let d = event.detail;
+                        if d.is_dragging || d.delta_y < 0.0 {
+                            following.set(d.scroll_height - d.viewport_height - d.scroll_top < 48.0);
+                        }
+                    },
+                    style: theme::fill(),
+                )
+            }
+            Show(when: move || !following.get()) {
+                Button(
+                    label: "↓ 最新へ",
+                    on_press: {
+                        let latest = latest.clone();
+                        move |()| {
+                            following.set(true);
+                            let _ = latest.scroll_to(ListScrollTarget::End, ScrollBehavior::Smooth);
+                        }
+                    },
+                )
+            }
+            View(style: theme::column().padding(px(16)).gap(px(10)).flex_shrink(0.0)) {
+                Text(value: "メッセージ", style: theme::muted())
+                Input(
+                    text: draft,
+                    multiline: true,
+                    lines: 3u32,
+                    placeholder: "メッセージを入力…",
+                    style: theme::field().height(px(88)),
+                    on_blur: move |()| save.persist(),
+                )
+                View(
+                    style: theme::row()
+                        .justify_content(JustifyContent::SpaceBetween)
+                        .gap(px(10)),
+                ) {
+                    Text(
+                        value: "回答は誤りを含むことがあります",
+                        style: theme::muted(),
+                    )
+                    Button(
+                        label: computed(move || {
+                            if busy.get() {
+                                "停止".into()
+                            } else {
+                                "送信 ↑".into()
+                            }
+                        }),
+                        primary: true,
+                        on_press: move |()| {
+                            if busy.get_untracked() {
+                                send.stop();
+                            } else {
+                                following.set(true);
+                                send.send();
+                            }
+                        },
+                    )
+                }
+                Show(
+                    when: move || {
+                        !busy.get()
+                            && turns.with(|turns| {
+                                turns.last().is_some_and(|turn| {
+                                    turn.with(|turn| !matches!(turn.status, crate::state::AnswerStatus::Complete))
+                                })
+                            })
+                    },
+                ) {
+                    Button(
+                        label: "最後の質問を再試行",
+                        on_press: {
+                            let retry = retry.clone();
+                            move |()| retry.retry()
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn turn_row(turn: RwSignal<Turn>) -> Element {
+    render! {
+        View(style: theme::column().padding(px(20)).gap(px(20))) {
+            View(
+                style: theme::column()
+                    .align_self(whisker::css::AlignSelf::FlexEnd)
+                    .max_width(percent(88))
+                    .background_color(Color::hex(0xe4ebe4))
+                    .border_radius(px(18))
+                    .padding(px(16)),
+            ) {
+                Text(
+                    value: computed(move || turn.with(|t| t.question.clone())),
+                    style: theme::text(16.0),
+                )
+            }
+            View(style: theme::column().gap(px(8))) {
+                Text(
+                    value: computed(move || turn.with(|t| format!("{} · {}", t.connection.name, t.connection.model))),
+                    style: theme::muted(),
+                )
+                Text(
+                    value: computed(move || turn.with(|t| t.answer.clone())),
+                    style: theme::text(16.0),
+                )
+                Text(value: computed(move || turn.with(Turn::status_text)), style: theme::muted())
+            }
+        }
+    }
+}
