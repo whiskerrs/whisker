@@ -617,17 +617,6 @@ fn js_error(message: &str) -> wasm_bindgen::JsValue {
     wasm_bindgen::JsValue::from_str(message)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn module_exports_input_factory() {
-        let definition = InputModule::definition();
-        assert_eq!(definition.factories().len(), 1);
-    }
-}
-
 fn set_max_length(
     input: &web_sys::HtmlInputElement,
     textarea: &web_sys::HtmlTextAreaElement,
@@ -640,6 +629,17 @@ fn set_max_length(
         let value = value.min(i32::MAX as i64).to_string();
         input.set_attribute("maxlength", &value)?;
         textarea.set_attribute("maxlength", &value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn module_exports_input_factory() {
+        let definition = InputModule::definition();
+        assert_eq!(definition.factories().len(), 1);
     }
 }
 
