@@ -589,7 +589,8 @@ impl LayoutTree {
                 let measured = measurer.measure(
                     node,
                     MeasureRequest {
-                        known_dimensions: [known.width, known.height],
+                        known_dimensions: [known.width, known.height]
+                            .map(|dimension| dimension.map(|value| value.max(0.0))),
                         available_space: [
                             from_taffy_available(available.width),
                             from_taffy_available(available.height),
@@ -741,7 +742,7 @@ fn convert_surface_child_style(
 
 fn from_taffy_available(value: TaffyAvailableSpace) -> AvailableSpace {
     match value {
-        TaffyAvailableSpace::Definite(value) => AvailableSpace::Definite(value),
+        TaffyAvailableSpace::Definite(value) => AvailableSpace::Definite(value.max(0.0)),
         TaffyAvailableSpace::MinContent => AvailableSpace::MinContent,
         TaffyAvailableSpace::MaxContent => AvailableSpace::MaxContent,
     }
@@ -1715,6 +1716,42 @@ mod tests {
                 },
             );
         }
+    }
+
+    #[test]
+    fn constrained_content_measurements_have_non_negative_dimensions() {
+        let mut tree = LayoutTree::new();
+        let root = id(1);
+        let child = id(2);
+        let mut style = sized(20.0, 20.0);
+        style.flex_direction = FlexDirectionValue::Column;
+        style.max_size.width = ComputedSizeValue::Value(ComputedLengthPercentage::new(0.0, 0.0));
+        style.padding.left = ComputedLengthPercentage::new(50.0, 0.0);
+        style.padding.right = ComputedLengthPercentage::new(50.0, 0.0);
+        tree.create_node(root, style).unwrap();
+        tree.create_node(child, ComputedLayoutStyle::default())
+            .unwrap();
+        tree.set_measurable(child, true).unwrap();
+        tree.set_children(root, &[child]).unwrap();
+        let mut calls = 0;
+        tree.compute(
+            root,
+            LayoutSize::new(20.0, 20.0),
+            &mut |_, request: MeasureRequest| {
+                calls += 1;
+                for dimension in request.known_dimensions.into_iter().flatten() {
+                    assert!(dimension >= 0.0, "negative known dimension: {request:?}");
+                }
+                for available in request.available_space {
+                    if let AvailableSpace::Definite(value) = available {
+                        assert!(value >= 0.0, "negative available dimension: {request:?}");
+                    }
+                }
+                LayoutSize::new(10.0, 10.0)
+            },
+        )
+        .unwrap();
+        assert!(calls > 0);
     }
 
     #[test]
