@@ -703,6 +703,7 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
         )
         .unwrap();
     item_clones.set(0);
+    let scroll_frame = renderer.frames().len();
 
     with_installed_renderer(surface.renderer(), || {
         surface
@@ -746,7 +747,7 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
         item_clones.get() <= 5,
         "scrolling plus automatic size feedback should clone only window-edge rows"
     );
-    let structural_operations = renderer.frames()[2]
+    let structural_operations = renderer.frames()[scroll_frame]
         .packet
         .operations
         .iter()

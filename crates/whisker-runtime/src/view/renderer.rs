@@ -213,6 +213,9 @@ pub trait DynRenderer {
     /// layout notification batches may ignore it.
     fn observe_layout_batch_end(&self, _handle: Element, _callback: Box<dyn Fn() + 'static>) {}
 
+    #[doc(hidden)]
+    fn request_list_layout(&self) {}
+
     /// Plan how a reported event (`event_name` at `target_sign`,
     /// carrying `body`) propagates through Whisker's reconstructed
     /// chain — capture phase (root → target) then bubble phase
@@ -966,6 +969,10 @@ pub fn observe_layout_batch_end(handle: Element, callback: Box<dyn Fn() + 'stati
         |renderer| renderer.observe_layout_batch_end(handle, callback),
         (),
     )
+}
+
+pub(crate) fn request_list_layout() {
+    with_renderer(|renderer| renderer.request_list_layout(), ())
 }
 
 /// Gives the installed renderer the first opportunity to handle an element

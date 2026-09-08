@@ -314,6 +314,10 @@ impl DynRenderer for SurfaceRuntime {
         state.record(result);
     }
 
+    fn request_list_layout(&self) {
+        self.state.borrow_mut().list_layout_requested = true;
+    }
+
     fn invoke_element_command(
         &self,
         handle: Element,

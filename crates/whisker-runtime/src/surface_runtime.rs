@@ -39,6 +39,8 @@ use whisker_engine::{
     lower_color, lower_paint, lower_transform,
 };
 
+const MAX_LIST_LAYOUT_PASSES: usize = 4;
+
 /// A mutation emitted by `render!` that could not enter the retained surface.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeBindingError {
@@ -404,6 +406,7 @@ impl SurfaceRuntime {
                 resource_events: HashMap::new(),
                 background_resources: BackgroundResourceManager::default(),
                 mutation_batch: None,
+                list_layout_requested: false,
                 #[cfg(test)]
                 surface_snapshot_count: 0,
                 #[cfg(test)]
@@ -818,9 +821,22 @@ impl SurfaceRuntime {
         sink: &mut Sink,
         options: LayoutOptions,
     ) -> Result<RuntimeFrame, RuntimeFrameError<Provider::Error, Sink::Error>> {
-        let layout = self
+        self.state.borrow_mut().list_layout_requested = false;
+        let mut layout = self
             .drive_layout(viewport, environment_epoch, provider, options)
             .map_err(RuntimeFrameError::Layout)?;
+        for _ in 1..MAX_LIST_LAYOUT_PASSES {
+            let needs_list_layout = {
+                let mut state = self.state.borrow_mut();
+                std::mem::take(&mut state.list_layout_requested) && state.surface.needs_layout()
+            };
+            if !layout.has_layout() || !needs_list_layout {
+                break;
+            }
+            layout = self
+                .drive_layout(viewport, environment_epoch, provider, options)
+                .map_err(RuntimeFrameError::Layout)?;
+        }
         let presentation = if layout.has_layout() {
             self.present(viewport_epoch, sink)
                 .map_err(RuntimeFrameError::Present)?
@@ -958,6 +974,7 @@ struct BindingState {
     resource_events: HashMap<(ResourceId, u64), ResourceEvent>,
     background_resources: BackgroundResourceManager,
     mutation_batch: Option<MutationBatch>,
+    list_layout_requested: bool,
     #[cfg(test)]
     surface_snapshot_count: usize,
     #[cfg(test)]

@@ -43,6 +43,246 @@ fn frame(surface: &SurfaceRuntime, renderer: &mut RecordingRenderer, epoch: u32)
 }
 
 #[test]
+fn pager_measures_two_pages_before_expanding_its_window() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(98).unwrap(),
+        StyleEnvironment::new(390.0, 600.0, 1.0, 14.0),
+    );
+    let created = Rc::new(RefCell::new(Vec::new()));
+    let list = owner.with(ListHandle::<u32>::new);
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            let created = created.clone();
+            render! {
+                List(
+                    list_ref: list.r(),
+                    axis: ScrollAxis::Horizontal,
+                    style: css!(width: px(390), height: px(600)),
+                    content_style: css!(height: percent(100)),
+                    each: || (0_u32..800).collect::<Vec<_>>(),
+                    key: |page: &u32| *page,
+                    children: move |page: ReadSignal<u32>| {
+                        created.borrow_mut().push(page.get_untracked());
+                        render! { View(style: css!(width: px(390), height: percent(100), flex_shrink: 0.0)) }
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(
+        *created.borrow(),
+        [0, 1],
+        "unmeasured pages must not fill a 600px viewport using the 44px fallback"
+    );
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    for epoch in 1..=4 {
+        frame(&surface, &mut renderer, epoch);
+    }
+    assert!(
+        created.borrow().len() <= 3,
+        "unexpected speculative pages: {:?}",
+        created.borrow()
+    );
+    let snapshot = list.snapshot().unwrap();
+    assert_eq!(snapshot.viewport_extent, 390.0);
+    assert_eq!(snapshot.visible_keys, [0]);
+    assert_eq!(snapshot.content_extent, 390.0 * 800.0);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn progressive_rows_fill_the_first_presented_viewport() {
+    for height in [44, 60] {
+        __reset_for_tests();
+        let owner = Owner::new(None);
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(99).unwrap(),
+            StyleEnvironment::new(390.0, 600.0, 1.0, 14.0),
+        );
+        let measured = Rc::new(RefCell::new(HashMap::new()));
+        with_installed_renderer(surface.renderer(), || {
+            let root = owner.with(|| {
+                let measured = measured.clone();
+                render! {
+                    List(
+                        style: css!(width: px(390), height: px(600)),
+                        each: || (0_u32..800).collect::<Vec<_>>(),
+                        key: |row: &u32| *row,
+                        children: move |row: ReadSignal<u32>| {
+                            let key = row.get_untracked();
+                            let measured = measured.clone();
+                            let node = render! { View(style: css!(height: px(height), flex_shrink: 0.0)) };
+                            observe_layout(node, Box::new(move |layout| {
+                                measured.borrow_mut().insert(key, layout.geometry.border_box);
+                            }));
+                            node
+                        },
+                    )
+                }
+            });
+            set_root(root);
+        });
+        let mut renderer = RecordingRenderer::new(surface.surface());
+        frame(&surface, &mut renderer, 1);
+        let last_visible = (599 / height) as u32;
+        assert!(
+            measured.borrow().contains_key(&last_visible),
+            "first frame only measured {:?}, viewport needs row {last_visible}",
+            measured.borrow().keys()
+        );
+        assert_eq!(renderer.frames().len(), 1);
+        with_installed_renderer(surface.renderer(), || owner.dispose());
+    }
+}
+
+#[test]
+fn pager_bootstrap_measures_the_requested_page_instead_of_unrelated_pages() {
+    for (target, expected, sample) in [
+        (
+            ListScrollTarget::index(400, ScrollAlignment::Start),
+            400,
+            [400, 401],
+        ),
+        (
+            ListScrollTarget::key(400, ScrollAlignment::Start),
+            400,
+            [400, 401],
+        ),
+        (ListScrollTarget::end(), 799, [798, 799]),
+    ] {
+        __reset_for_tests();
+        let owner = Owner::new(None);
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(100).unwrap(),
+            StyleEnvironment::new(390.0, 600.0, 1.0, 14.0),
+        );
+        let created = Rc::new(RefCell::new(Vec::new()));
+        let list = owner.with(ListHandle::<u32>::new);
+        with_installed_renderer(surface.renderer(), || {
+            let root = owner.with(|| {
+                let created = created.clone();
+                render! {
+                    List(
+                        list_ref: list.r(),
+                        axis: ScrollAxis::Horizontal,
+                        initial_scroll: target,
+                        style: css!(width: px(390), height: px(600)),
+                        content_style: css!(height: percent(100)),
+                        each: || (0_u32..800).collect::<Vec<_>>(),
+                        key: |page: &u32| *page,
+                        children: move |page: ReadSignal<u32>| {
+                            created.borrow_mut().push(page.get_untracked());
+                            render! { View(style: css!(width: px(390), height: percent(100), flex_shrink: 0.0)) }
+                        },
+                    )
+                }
+            });
+            set_root(root);
+        });
+        assert_eq!(*created.borrow(), sample);
+        let mut renderer = RecordingRenderer::new(surface.surface());
+        for epoch in 1..=4 {
+            frame(&surface, &mut renderer, epoch);
+        }
+        assert_eq!(list.snapshot().unwrap().first_visible_key, Some(expected));
+        assert!(
+            created.borrow().len() <= 5,
+            "unexpected pages for target {expected}: {:?}",
+            created.borrow()
+        );
+        with_installed_renderer(surface.renderer(), || owner.dispose());
+    }
+}
+
+#[test]
+fn replacing_a_loading_row_bootstraps_the_new_page_source() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(101).unwrap(),
+        StyleEnvironment::new(390.0, 600.0, 1.0, 14.0),
+    );
+    let loaded = owner.with(|| signal(false));
+    let created = Rc::new(RefCell::new(Vec::new()));
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            let created = created.clone();
+            render! {
+                List(
+                    axis: ScrollAxis::Horizontal,
+                    style: css!(width: px(390), height: px(600)),
+                    content_style: css!(height: percent(100)),
+                    each: move || if loaded.get() { (0_u32..800).collect::<Vec<_>>() } else { vec![999] },
+                    key: |page: &u32| *page,
+                    children: move |page: ReadSignal<u32>| {
+                        let page = page.get_untracked();
+                        created.borrow_mut().push(page);
+                        render! { View(style: css!(width: px(if page == 999 { 640 } else { 390 }), height: percent(100), flex_shrink: 0.0)) }
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    frame(&surface, &mut renderer, 1);
+    created.borrow_mut().clear();
+    with_installed_renderer(surface.renderer(), || {
+        loaded.set(true);
+        whisker::flush();
+    });
+    assert_eq!(*created.borrow(), [0, 1]);
+    frame(&surface, &mut renderer, 2);
+    assert_eq!(*created.borrow(), [0, 1, 2]);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn list_layout_feedback_yields_after_a_bounded_number_of_passes() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(102).unwrap(),
+        StyleEnvironment::new(390.0, 600.0, 1.0, 14.0),
+    );
+    let passes = Rc::new(std::cell::Cell::new(0));
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            let passes = passes.clone();
+            render! {
+                List(
+                    style: css!(width: px(390), height: px(600)),
+                    each: || vec![0_u32],
+                    key: |row: &u32| *row,
+                    children: move |_: ReadSignal<u32>| {
+                        let passes = passes.clone();
+                        let row = View::builder().style(css!(height: px(60))).build();
+                        observe_layout(row, Box::new(move |layout| {
+                            passes.set(passes.get() + 1);
+                            let height = if layout.geometry.border_box.height == 60.0 { 61 } else { 60 };
+                            whisker::runtime::view::set_specified_style(row, &css!(height: px(height)).to_specified_style());
+                        }));
+                        row
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    frame(&surface, &mut renderer, 1);
+    assert!(passes.get() > 1 && passes.get() <= 4);
+    assert_eq!(renderer.frames().len(), 1);
+    let previous = passes.get();
+    frame(&surface, &mut renderer, 2);
+    assert!(passes.get() > previous && passes.get() - previous <= 4);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
 fn giga_row_margin_does_not_move_a_retained_row() {
     for (axis, leading, margin) in [
         (ScrollAxis::Vertical, 0, 0),
