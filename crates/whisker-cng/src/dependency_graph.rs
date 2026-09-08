@@ -50,7 +50,7 @@ mod tests {
             .and_then(Path::parent)
             .unwrap()
             .join("Cargo.toml");
-        let graph = ProjectDependencyGraph::resolve(&workspace, "host-smoke").unwrap();
+        let graph = ProjectDependencyGraph::resolve(&workspace, "whisker-svg-example").unwrap();
         assert!(
             graph
                 .modules

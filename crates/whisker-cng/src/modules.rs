@@ -637,7 +637,7 @@ mod tests {
             .and_then(Path::parent)
             .unwrap()
             .join("Cargo.toml");
-        let modules = discover(&workspace, "host-smoke").unwrap();
+        let modules = discover(&workspace, "whisker-svg-example").unwrap();
         let svg = modules
             .iter()
             .find(|module| module.package == "whisker-svg")

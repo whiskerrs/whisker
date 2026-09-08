@@ -379,23 +379,37 @@ mod tests {
     }
 
     #[test]
-    fn host_smoke_dependency_wires_svg_into_generated_rust_hosts() {
+    fn svg_example_dependency_wires_svg_into_generated_rust_hosts() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
             .unwrap();
         let crate_dir = tempdir();
         let mut config = Config::default();
-        config.name("Host Smoke").bundle_id("rs.whisker.hostsmoke");
+        config
+            .name("SVG Example")
+            .bundle_id("rs.whisker.svgexample");
 
-        let macos =
-            sync_for_target(Target::Macos, &config, &crate_dir, workspace, "host-smoke").unwrap();
+        let macos = sync_for_target(
+            Target::Macos,
+            &config,
+            &crate_dir,
+            workspace,
+            "whisker-svg-example",
+        )
+        .unwrap();
         let macos_source = std::fs::read_to_string(macos.gen_dir.join("src/main.rs")).unwrap();
         assert!(macos_source.contains("whisker_svg::__whisker_element_module_definition()"));
         assert!(macos_source.contains("whisker_svg_desktop::__whisker_module_definition()"));
 
-        let web =
-            sync_for_target(Target::Web, &config, &crate_dir, workspace, "host-smoke").unwrap();
+        let web = sync_for_target(
+            Target::Web,
+            &config,
+            &crate_dir,
+            workspace,
+            "whisker-svg-example",
+        )
+        .unwrap();
         let web_source = std::fs::read_to_string(web.gen_dir.join("src/lib.rs")).unwrap();
         assert!(web_source.contains("whisker_svg::__whisker_element_module_definition()"));
         assert!(web_source.contains("whisker_svg_web::__whisker_module_definition()"));
@@ -405,7 +419,7 @@ mod tests {
             &config,
             &crate_dir,
             workspace,
-            "host-smoke",
+            "whisker-svg-example",
         )
         .unwrap();
         let package =
