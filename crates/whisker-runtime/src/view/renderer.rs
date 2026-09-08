@@ -466,20 +466,23 @@ pub fn release_element(handle: Element) {
     for callback in callbacks.into_iter().flatten() {
         callback.cancel();
     }
-    if is_phantom(handle) {
-        // Phantom never reached Host; tear down mirror state only.
-        PHANTOM_ELEMENTS.with_borrow_mut(|s| {
-            s.remove(&handle);
-        });
-        CHILDREN_OF.with_borrow_mut(|m| {
-            m.remove(&handle);
-        });
-        PARENT_OF.with_borrow_mut(|m| {
-            m.remove(&handle);
-        });
-        return;
+    let parent = PARENT_OF.with_borrow_mut(|parents| parents.remove(&handle));
+    let children = CHILDREN_OF.with_borrow_mut(|entries| {
+        if let Some(parent) = parent.and_then(|parent| entries.get_mut(&parent)) {
+            parent.retain(|child| *child != handle);
+        }
+        entries.remove(&handle).unwrap_or_default()
+    });
+    PARENT_OF.with_borrow_mut(|parents| {
+        for child in children {
+            if parents.get(&child) == Some(&handle) {
+                parents.remove(&child);
+            }
+        }
+    });
+    if !PHANTOM_ELEMENTS.with_borrow_mut(|elements| elements.remove(&handle)) {
+        with_renderer(|renderer| renderer.release_element(handle), ());
     }
-    with_renderer(|r| r.release_element(handle), ())
 }
 
 /// Stores a framework-level element identifier.
@@ -768,8 +771,11 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
 
 /// Detach `child` from `parent` in the mirror. Host-side: any real
 /// descendants of `child` (or `child` itself if it's real) are
-/// removed from the nearest real ancestor.
+/// removed from the nearest real ancestor; an already detached child is ignored.
 pub fn remove_child(parent: Element, child: Element) {
+    if PARENT_OF.with_borrow(|parents| parents.get(&child).copied()) != Some(parent) {
+        return;
+    }
     let parent_is_phantom = is_phantom(parent);
     let child_is_phantom = is_phantom(child);
 
