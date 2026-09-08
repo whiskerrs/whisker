@@ -237,6 +237,13 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
 /// set the shared top controller's progress. Both wrappers re-pose and the
 /// backdrop dim follows automatically via their reactive bindings.
 pub(crate) fn scrub(bridge: &StackBridge, back_progress: f32) {
+    if !bridge
+        .registration
+        .as_ref()
+        .is_some_and(|registration| registration.is_active())
+    {
+        return;
+    }
     if let Some(ctrl) = &bridge.top_ctrl {
         ctrl.set_value(1.0 - back_progress);
     }
@@ -253,6 +260,13 @@ pub(crate) fn settle(
     commit: bool,
     velocity: Option<f32>,
 ) {
+    let Some(registration) = bridge
+        .registration
+        .clone()
+        .filter(|registration| registration.is_active())
+    else {
+        return;
+    };
     let Some(ctrl) = bridge.top_ctrl.clone() else {
         return;
     };
@@ -273,20 +287,22 @@ pub(crate) fn settle(
         // already at 0, so the reconcile's reverse settles instantly).
         let nav = nav.clone();
         let done = Rc::new(RefCell::new(false));
-        ctrl.on_finish(move |finished| {
-            if finished && !*done.borrow() {
-                *done.borrow_mut() = true;
-                // Release the dim drive (→ opacity 0) as the pop commits.
-                if let Some(d) = dim_drive {
-                    d.set(None);
+        bridge.owner.with(|| {
+            ctrl.on_finish(move |finished| {
+                if finished && registration.is_active() && !*done.borrow() {
+                    *done.borrow_mut() = true;
+                    // Release the dim drive (→ opacity 0) as the pop commits.
+                    if let Some(d) = dim_drive {
+                        d.set(None);
+                    }
+                    // Swipe-back commits like any other navigation — the
+                    // field captured at gesture start stays blurred, so a
+                    // search field on the popped screen can't keep a
+                    // hardware-keyboard target (RN `onPageChangeConfirm`).
+                    crate::render::keyboard::on_page_change_confirm(true);
+                    let _ = nav.back();
                 }
-                // Swipe-back commits like any other navigation — the
-                // field captured at gesture start stays blurred, so a
-                // search field on the popped screen can't keep a
-                // hardware-keyboard target (RN `onPageChangeConfirm`).
-                crate::render::keyboard::on_page_change_confirm(true);
-                let _ = nav.back();
-            }
+            })
         });
         match velocity {
             Some(v) => ctrl.reverse_with_velocity(v),
@@ -302,13 +318,15 @@ pub(crate) fn settle(
         // `onPageChangeCancel`), with the flash guard for a fast release.
         crate::render::keyboard::on_page_change_cancel();
         let done = Rc::new(RefCell::new(false));
-        ctrl.on_finish(move |finished| {
-            if finished && !*done.borrow() {
-                *done.borrow_mut() = true;
-                if let Some(d) = dim_drive {
-                    d.set(None);
+        bridge.owner.with(|| {
+            ctrl.on_finish(move |finished| {
+                if finished && registration.is_active() && !*done.borrow() {
+                    *done.borrow_mut() = true;
+                    if let Some(d) = dim_drive {
+                        d.set(None);
+                    }
                 }
-            }
+            })
         });
         match velocity {
             Some(v) => ctrl.forward_with_velocity(v),

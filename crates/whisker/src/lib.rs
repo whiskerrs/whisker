@@ -471,3 +471,5 @@ pub mod prelude {
     // A separate list-item builder is intentionally absent — the `List` render-props
     // builder auto-wraps every item internally.
 }
+
+pub use whisker_runtime::runtime_local;

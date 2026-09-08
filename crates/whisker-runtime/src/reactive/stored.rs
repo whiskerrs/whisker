@@ -105,6 +105,14 @@ impl<T: 'static> StoredValue<T> {
 }
 
 impl<T: 'static + Clone> StoredValue<T> {
+    pub fn try_get(self) -> Option<T> {
+        super::signal::ReadSignal {
+            id: self.id,
+            _ty: PhantomData,
+        }
+        .try_get_untracked()
+    }
+
     pub fn get(self) -> T {
         self.with(|v| v.clone())
     }

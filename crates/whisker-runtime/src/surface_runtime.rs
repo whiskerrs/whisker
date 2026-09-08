@@ -2073,6 +2073,38 @@ mod layout_observer_tests {
     }
 
     #[test]
+    fn layout_batch_skips_observer_after_its_element_is_disposed() {
+        let context = crate::RuntimeContext::new(crate::RuntimeWakeHandle::new(|| {}));
+        context.enter(|| {
+            let surface = SurfaceRuntime::new(
+                SurfaceId::new(94).unwrap(),
+                StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+            );
+            with_installed_renderer(surface.renderer(), || {
+                let owner = crate::reactive::Owner::new(None);
+                let hits = Rc::new(Cell::new(0));
+                let captured_hits = hits.clone();
+                let root = owner.with(|| {
+                    let root = create_element(ElementTag::View);
+                    set_specified_style(root, &absolute_box(100.0, 100.0));
+                    let value = crate::reactive::RwSignal::new(1);
+                    observe_layout(root, Box::new(move |_| owner.dispose()));
+                    observe_layout(root, Box::new(move |_| captured_hits.set(value.get())));
+                    root
+                });
+                crate::view::set_root(root);
+                let _ = surface.drive_layout(
+                    LayoutSize::new(320.0, 480.0),
+                    1,
+                    &mut NoMeasurements,
+                    LayoutOptions::default(),
+                );
+                assert_eq!(hits.get(), 0);
+            });
+        });
+    }
+
+    #[test]
     fn layout_notifications_commit_row_and_spacer_updates_together() {
         crate::reactive::__reset_for_tests();
         let surface = SurfaceRuntime::new(
@@ -2117,23 +2149,27 @@ mod layout_observer_tests {
             .unwrap();
 
         surface.reset_surface_snapshot_count();
-        surface
-            .drive_layout(
-                LayoutSize::new(320.0, 480.0),
-                1,
-                &mut NoMeasurements,
-                LayoutOptions::default(),
-            )
+        runtime
+            .with_context(|| {
+                surface.drive_layout(
+                    LayoutSize::new(320.0, 480.0),
+                    1,
+                    &mut NoMeasurements,
+                    LayoutOptions::default(),
+                )
+            })
             .unwrap();
         assert_eq!(rows.borrow().len(), 24);
         assert_eq!(surface.surface_snapshot_count(), 1);
-        surface
-            .drive_layout(
-                LayoutSize::new(320.0, 480.0),
-                1,
-                &mut NoMeasurements,
-                LayoutOptions::default(),
-            )
+        runtime
+            .with_context(|| {
+                surface.drive_layout(
+                    LayoutSize::new(320.0, 480.0),
+                    1,
+                    &mut NoMeasurements,
+                    LayoutOptions::default(),
+                )
+            })
             .unwrap();
         let state = surface.state.borrow();
         for row in rows.borrow().iter() {
@@ -2188,12 +2224,14 @@ mod layout_observer_tests {
                 }
             })
             .unwrap();
-        let result = surface.drive_layout(
-            LayoutSize::new(320.0, 480.0),
-            1,
-            &mut NoMeasurements,
-            LayoutOptions::default(),
-        );
+        let result = runtime.with_context(|| {
+            surface.drive_layout(
+                LayoutSize::new(320.0, 480.0),
+                1,
+                &mut NoMeasurements,
+                LayoutOptions::default(),
+            )
+        });
         assert!(matches!(result, Err(RuntimeLayoutError::Binding(_))));
         {
             let state = surface.state.borrow();
@@ -2209,13 +2247,15 @@ mod layout_observer_tests {
                 &absolute_box(40.0, 40.0)
             ));
         });
-        surface
-            .drive_layout(
-                LayoutSize::new(320.0, 480.0),
-                1,
-                &mut NoMeasurements,
-                LayoutOptions::default(),
-            )
+        runtime
+            .with_context(|| {
+                surface.drive_layout(
+                    LayoutSize::new(320.0, 480.0),
+                    1,
+                    &mut NoMeasurements,
+                    LayoutOptions::default(),
+                )
+            })
             .unwrap();
     }
 
@@ -2386,13 +2426,15 @@ mod layout_observer_tests {
             .unwrap();
 
         let mut provider = NoMeasurements;
-        surface
-            .drive_layout(
-                LayoutSize::new(320.0, 480.0),
-                1,
-                &mut provider,
-                LayoutOptions::default(),
-            )
+        runtime
+            .with_context(|| {
+                surface.drive_layout(
+                    LayoutSize::new(320.0, 480.0),
+                    1,
+                    &mut provider,
+                    LayoutOptions::default(),
+                )
+            })
             .unwrap();
         assert_eq!(observed.get(), 1);
         assert_eq!(completed_batches.get(), 1);
@@ -2400,13 +2442,15 @@ mod layout_observer_tests {
         with_installed_renderer(surface.renderer(), || {
             set_specified_style(sibling.get().unwrap(), &absolute_box(30.0, 10.0));
         });
-        surface
-            .drive_layout(
-                LayoutSize::new(320.0, 480.0),
-                1,
-                &mut provider,
-                LayoutOptions::default(),
-            )
+        runtime
+            .with_context(|| {
+                surface.drive_layout(
+                    LayoutSize::new(320.0, 480.0),
+                    1,
+                    &mut provider,
+                    LayoutOptions::default(),
+                )
+            })
             .unwrap();
 
         assert_eq!(
@@ -2454,13 +2498,15 @@ mod layout_observer_tests {
             .unwrap();
 
         let mut provider = NoMeasurements;
-        surface
-            .drive_layout(
-                LayoutSize::new(320.0, 480.0),
-                1,
-                &mut provider,
-                LayoutOptions::default(),
-            )
+        runtime
+            .with_context(|| {
+                surface.drive_layout(
+                    LayoutSize::new(320.0, 480.0),
+                    1,
+                    &mut provider,
+                    LayoutOptions::default(),
+                )
+            })
             .unwrap();
         assert_eq!(observations.borrow().len(), 1);
         assert_eq!(
@@ -2477,13 +2523,15 @@ mod layout_observer_tests {
             );
             set_specified_style(root_handle.get().unwrap(), &hidden);
         });
-        surface
-            .drive_layout(
-                LayoutSize::new(320.0, 480.0),
-                1,
-                &mut provider,
-                LayoutOptions::default(),
-            )
+        runtime
+            .with_context(|| {
+                surface.drive_layout(
+                    LayoutSize::new(320.0, 480.0),
+                    1,
+                    &mut provider,
+                    LayoutOptions::default(),
+                )
+            })
             .unwrap();
         assert_eq!(observations.borrow().len(), 2);
         assert_eq!(
@@ -2494,13 +2542,15 @@ mod layout_observer_tests {
         with_installed_renderer(surface.renderer(), || {
             set_specified_style(root_handle.get().unwrap(), &absolute_box(100.0, 100.0));
         });
-        surface
-            .drive_layout(
-                LayoutSize::new(320.0, 480.0),
-                1,
-                &mut provider,
-                LayoutOptions::default(),
-            )
+        runtime
+            .with_context(|| {
+                surface.drive_layout(
+                    LayoutSize::new(320.0, 480.0),
+                    1,
+                    &mut provider,
+                    LayoutOptions::default(),
+                )
+            })
             .unwrap();
         assert_eq!(observations.borrow().len(), 3);
         assert_eq!(

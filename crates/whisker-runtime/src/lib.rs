@@ -20,6 +20,8 @@ mod dispatch;
 pub mod element;
 mod element_registry;
 pub mod event;
+#[doc(hidden)]
+pub mod lifetime;
 pub mod module;
 pub mod reactive;
 mod runtime_context;

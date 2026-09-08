@@ -35,7 +35,7 @@ struct Entry {
 
 impl Entry {
     fn is_active(&self) -> bool {
-        self.owner.is_none_or(|o| !o.is_paused())
+        self.owner.is_none_or(|o| o.is_alive() && !o.is_paused())
     }
 }
 
@@ -66,12 +66,10 @@ fn revision_signal(state: &SharedBackState) -> RwSignal<u64> {
 
 fn bump_revision(state: &SharedBackState) {
     let sig = revision_signal(state);
-    sig.set(sig.get_untracked() + 1);
+    sig.try_update(|revision| *revision += 1);
 }
 
-/// Keeps its [`on_back`] registration alive. Dropping the guard
-/// unregisters the handler; hold it in the registering component's
-/// state so unmount unregisters automatically.
+/// Retains an [`on_back`] handler until this guard drops or its registering Owner is disposed.
 #[must_use = "the handler is unregistered when the guard drops"]
 pub struct BackGuard {
     id: u64,
@@ -83,15 +81,19 @@ impl Drop for BackGuard {
         let Some(state) = self.state.upgrade() else {
             return;
         };
-        state
-            .borrow_mut()
-            .handlers
-            .retain(|entry| entry.id != self.id);
+        let removed = {
+            let mut state = state.borrow_mut();
+            let Some(index) = state.handlers.iter().position(|entry| entry.id == self.id) else {
+                return;
+            };
+            state.handlers.remove(index)
+        };
         bump_revision(&state);
+        drop(removed);
     }
 }
 
-/// Intercept the platform back action while the returned guard lives.
+/// Intercept the platform back action while both the returned guard and its Owner live.
 ///
 /// The handler fires instead of a stack pop or an app exit whenever
 /// back is triggered with this registration active. Registrations
@@ -113,6 +115,14 @@ pub fn on_back(handler: impl Fn() + 'static) -> BackGuard {
         let id = state.next_id;
         state.next_id = id.saturating_add(1);
         id
+    };
+    let cleanup = BackGuard {
+        id,
+        state: Rc::downgrade(&state),
+    };
+    let scoped = whisker_runtime::lifetime::Scoped::new((handler, cleanup));
+    let handler = move || {
+        scoped.with(|(handler, _)| handler());
     };
     state.borrow_mut().handlers.push(Entry {
         id,
@@ -141,7 +151,10 @@ pub fn exit_app() {
 /// Framework wiring: install the platform exit implementation
 /// [`exit_app`] calls. Registered by the platform gesture component.
 pub fn set_exit_impl(f: impl Fn() + 'static) {
-    state().borrow_mut().exit_impl = Some(Rc::new(f));
+    let f = whisker_runtime::lifetime::Scoped::new(f);
+    state().borrow_mut().exit_impl = Some(Rc::new(move || {
+        f.with(|f| f());
+    }));
 }
 
 /// Framework wiring: whether an active (non-paused) handler exists
@@ -197,9 +210,9 @@ mod tests {
 
     fn reset() {
         let state = state();
-        let mut state = state.borrow_mut();
-        state.handlers.clear();
-        state.exit_impl = None;
+        let handlers = std::mem::take(&mut state.borrow_mut().handlers);
+        drop(handlers);
+        state.borrow_mut().exit_impl = None;
     }
 
     #[test]

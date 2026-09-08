@@ -72,12 +72,14 @@
 //! - iOS: `packages/whisker-safe-area/ios/Sources/WhiskerSafeArea/SafeAreaModule.swift`
 //! - Android: `packages/whisker-safe-area/android/src/main/kotlin/rs/whisker/modules/safe_area/SafeAreaModule.kt`
 
+#[cfg(test)]
+use whisker::Owner;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 use whisker::WhiskerValue;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 use whisker::module;
-use whisker::runtime::{module::ModuleSubscription, runtime_local};
-use whisker::{Owner, ReadSignal, RwSignal};
+use whisker::runtime::module::ModuleSubscription;
+use whisker::{ReadSignal, RwSignal};
 
 /// Safe-area inset amounts in **points (iOS) / dp (Android)** — the
 /// same density-independent units that the rest of Whisker's CSS
@@ -103,48 +105,37 @@ pub struct SafeAreaInsets {
 /// Hosts push the current insets when observation starts and whenever they
 /// change. Web and desktop always expose the all-zero value.
 ///
-/// The `Copy` handle lives under a detached owner in this runtime, so disposing
+/// The `Copy` handle belongs to the Runtime cache owner, so disposing
 /// a component or route does not invalidate other readers. It must not be
 /// retained across runtime shutdown or used in a different runtime.
 ///
 /// **Must be called on the runtime's UI thread with that runtime entered.**
 pub fn safe_area_insets() -> ReadSignal<SafeAreaInsets> {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        insets_with_subscription(subscribe_to_native)
-    }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        insets_with_subscription(|_| None)
-    }
+    INSETS.with(|slot| slot.read)
 }
 
 struct Slot {
     read: ReadSignal<SafeAreaInsets>,
-    // Dropping runtime-local state unsubscribes from this slot's original Host.
     _subscription: Option<ModuleSubscription>,
 }
 
-// Keep platform selection separate so host tests exercise the same native
-// subscription and runtime lifecycle without needing an Android or iOS device.
-fn insets_with_subscription(
-    subscribe: impl FnOnce(RwSignal<SafeAreaInsets>) -> Option<ModuleSubscription>,
-) -> ReadSignal<SafeAreaInsets> {
-    let state = runtime_local::state::<Option<Slot>>();
-    let mut state = state.borrow_mut();
-    state
-        .get_or_insert_with(|| {
-            // This owner outlives individual routes, but belongs to the current
-            // runtime's arena. A process-global handle would point into the old
-            // arena after Activity recreation.
-            let root = Owner::detached_root();
-            let signal = root.with(|| RwSignal::new(SafeAreaInsets::default()));
-            Slot {
-                read: signal.read_only(),
-                _subscription: subscribe(signal),
-            }
-        })
-        .read
+impl Slot {
+    fn new(subscribe: impl FnOnce(RwSignal<SafeAreaInsets>) -> Option<ModuleSubscription>) -> Self {
+        let signal = RwSignal::new(SafeAreaInsets::default());
+        Self {
+            read: signal.read_only(),
+            _subscription: subscribe(signal),
+        }
+    }
+}
+
+whisker::runtime_local! {
+    static INSETS: Slot = {
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        { Slot::new(subscribe_to_native) }
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        { Slot::new(|_| None) }
+    };
 }
 
 #[cfg(any(target_os = "android", target_os = "ios", test))]
@@ -228,7 +219,8 @@ mod tests {
     }
 
     fn native_insets() -> ReadSignal<SafeAreaInsets> {
-        insets_with_subscription(subscribe_to_native)
+        whisker::runtime_local! { static NATIVE: Slot = Slot::new(subscribe_to_native); }
+        NATIVE.with(|slot| slot.read)
     }
 
     #[test]
@@ -384,6 +376,6 @@ mod tests {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     #[test]
     fn common_platform_fallback_is_all_zero() {
-        assert_eq!(safe_area_insets().get(), SafeAreaInsets::default());
+        runtime().enter(|| assert_eq!(safe_area_insets().get(), SafeAreaInsets::default()));
     }
 }

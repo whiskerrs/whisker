@@ -236,3 +236,31 @@ fn element_ref_is_copy() {
         assert_eq!(r.element(), r2.element());
     });
 }
+
+#[test]
+fn disposed_ref_rejects_commands_and_reports_unbound() {
+    with_test_env(|| {
+        let owner = Owner::new(None);
+        let input = owner.with(|| {
+            let input = ElementRef::new();
+            let _ = render! { XRefTarget(element_ref: input, value: "x") };
+            input
+        });
+        assert!(input.is_bound());
+        whisker::focus::note_focused(input);
+        owner.dispose();
+
+        assert_eq!(
+            input.command("blur", whisker::WhiskerValue::Null),
+            Err(RefError::NotBound)
+        );
+        assert_eq!(
+            input.command("focus", whisker::WhiskerValue::Null),
+            Err(RefError::NotBound)
+        );
+        assert_eq!(input.element(), None);
+        assert!(!input.is_bound());
+        assert_eq!(whisker::focus::focused_element(), None);
+        assert_eq!(format!("{input:?}"), "ElementRef { element: None }");
+    });
+}

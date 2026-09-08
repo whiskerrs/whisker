@@ -95,6 +95,16 @@ impl<T: 'static> Clone for ReadSignal<T> {
 impl<T: 'static> Copy for ReadSignal<T> {}
 
 impl<T: 'static + Clone> ReadSignal<T> {
+    /// Reads and tracks a live signal in its owning Runtime, returning `None` after disposal.
+    pub fn try_get(self) -> Option<T> {
+        read_value(self.id, true, Clone::clone)
+    }
+
+    /// Reads a live signal without tracking, returning `None` after disposal.
+    pub fn try_get_untracked(self) -> Option<T> {
+        read_value(self.id, false, Clone::clone)
+    }
+
     /// Read the current value, registering this signal as a dependency
     /// of the currently-running effect / computed (if any).
     pub fn get(self) -> T {
@@ -112,44 +122,13 @@ impl<T: 'static> ReadSignal<T> {
     /// Borrowed read with dependency tracking. Useful when `T` is
     /// expensive to clone or doesn't implement `Clone`.
     pub fn with<R>(self, f: impl FnOnce(&T) -> R) -> R {
-        let value = fetch_value(self.id);
-        // Arc-backed storage routes through `ArcRwSignal`'s
-        // tracker-aware path, which subscribes via `arc_sources`; the
-        // arena `subscribers` set stays empty for these entries.
-        let arc_handle: Option<super::arc_signal::ArcRwSignal<T>> = {
-            let borrow = value.borrow();
-            borrow
-                .downcast_ref::<super::arc_signal::ArcRwSignal<T>>()
-                .cloned()
-        };
-        if let Some(arc) = arc_handle {
-            return arc.with(f);
-        }
-        track_node(self.id);
-        let borrow = value.borrow();
-        let typed = borrow
-            .downcast_ref::<T>()
-            .expect("ReadSignal::with: type mismatch — signal storage corrupted");
-        f(typed)
+        read_value(self.id, true, f)
+            .expect("ReadSignal: signal disposed or not a value-bearing node")
     }
 
-    /// Borrowed read without tracking.
     pub fn with_untracked<R>(self, f: impl FnOnce(&T) -> R) -> R {
-        let value = fetch_value(self.id);
-        let arc_handle: Option<super::arc_signal::ArcRwSignal<T>> = {
-            let borrow = value.borrow();
-            borrow
-                .downcast_ref::<super::arc_signal::ArcRwSignal<T>>()
-                .cloned()
-        };
-        if let Some(arc) = arc_handle {
-            return arc.with_untracked(f);
-        }
-        let borrow = value.borrow();
-        let typed = borrow
-            .downcast_ref::<T>()
-            .expect("ReadSignal::with_untracked: type mismatch — signal storage corrupted");
-        f(typed)
+        read_value(self.id, false, f)
+            .expect("ReadSignal: signal disposed or not a value-bearing node")
     }
 }
 
@@ -333,6 +312,16 @@ impl<T: 'static> RwSignal<T> {
 }
 
 impl<T: 'static + Clone> RwSignal<T> {
+    /// Reads and tracks a live signal in its owning Runtime, returning `None` after disposal.
+    pub fn try_get(self) -> Option<T> {
+        self.split().0.try_get()
+    }
+
+    /// Reads a live signal without tracking, returning `None` after disposal.
+    pub fn try_get_untracked(self) -> Option<T> {
+        self.split().0.try_get_untracked()
+    }
+
     pub fn get(self) -> T {
         ReadSignal::<T> {
             id: self.id,
@@ -445,13 +434,26 @@ fn track_node(id: NodeId) {
     })
 }
 
-fn fetch_value(id: NodeId) -> Rc<RefCell<dyn Any>> {
-    with_runtime(|rt| {
-        rt.nodes
-            .get(id)
-            .and_then(|n| n.data.value().cloned())
-            .expect("ReadSignal: signal disposed or not a value-bearing node")
-    })
+fn read_value<T: 'static, R>(id: NodeId, track: bool, f: impl FnOnce(&T) -> R) -> Option<R> {
+    let value = with_runtime(|rt| rt.nodes.get(id).and_then(|node| node.data.value().cloned()))?;
+    let arc = value
+        .borrow()
+        .downcast_ref::<super::arc_signal::ArcRwSignal<T>>()
+        .cloned();
+    if let Some(arc) = arc {
+        return Some(if track {
+            arc.with(f)
+        } else {
+            arc.with_untracked(f)
+        });
+    }
+    if track {
+        track_node(id);
+    }
+    let value = value.borrow();
+    Some(f(value.downcast_ref::<T>().expect(
+        "ReadSignal: type mismatch — signal storage corrupted",
+    )))
 }
 
 /// Mutate the value of signal `id` under `f`, optionally notifying

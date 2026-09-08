@@ -76,6 +76,8 @@ pub(crate) struct PoseBinding {
 /// reconcile so it always points at the current top.
 #[derive(Clone)]
 pub(crate) struct StackBridge {
+    pub owner: Owner,
+    pub registration: Option<whisker::runtime::lifetime::Cancellation>,
     /// The top wrapper's transition controller (what the gesture scrubs).
     pub top_ctrl: Option<AnimationController>,
     /// The top wrapper's pose binding.
@@ -122,16 +124,40 @@ struct Inner {
     /// Registered by [`Stack`](crate::render::Stack) reconcile; read by
     /// the swipe-back gesture to find the deepest active stack's top
     /// wrapper + controller.
-    bridges: RefCell<HashMap<NodePath, StackBridge>>,
+    bridges: RefCell<HashMap<NodePath, BridgeRegistration>>,
     /// Whether a Host history adapter was installed for this Router.
     history_enabled: bool,
     /// Retains the Host `popstate` subscription for this handle's lifetime.
     history_subscription: RefCell<Option<history::Subscription>>,
-    /// Owns the `state` signal. A detached root so the signal lives for
-    /// the handle's lifetime, not the (often transient) owner that
-    /// happened to be current at construction — the same footgun the
-    /// old `RouteStack` guards against. See `Owner::detached_root`.
-    _owner: Owner,
+    owner: whisker::runtime::lifetime::OwnedOwner,
+}
+
+struct BridgeRegistration {
+    identity: Rc<()>,
+    value: whisker::runtime::lifetime::Scoped<(StackBridge, BridgeLease)>,
+}
+
+struct BridgeLease {
+    inner: std::rc::Weak<Inner>,
+    path: NodePath,
+    identity: Rc<()>,
+}
+
+impl Drop for BridgeLease {
+    fn drop(&mut self) {
+        let Some(inner) = self.inner.upgrade() else {
+            return;
+        };
+        let current = inner
+            .bridges
+            .borrow()
+            .get(&self.path)
+            .is_some_and(|entry| Rc::ptr_eq(&entry.identity, &self.identity));
+        if current {
+            let removed = inner.bridges.borrow_mut().remove(&self.path);
+            drop(removed);
+        }
+    }
 }
 
 impl RouterHandle {
@@ -143,7 +169,7 @@ impl RouterHandle {
             registry,
             layouts,
         } = routes.into();
-        let owner = Owner::detached_root();
+        let owner = whisker::runtime::lifetime::OwnedOwner::new();
         let initial_location = history::initialize();
         let history_enabled = initial_location.is_some();
         let mut initial = RouteState::initial(&tree);
@@ -169,10 +195,13 @@ impl RouterHandle {
                 bridges: RefCell::new(HashMap::new()),
                 history_enabled,
                 history_subscription: RefCell::new(None),
-                _owner: owner,
+                owner,
             }),
         };
-        handle.install_history_subscription();
+        handle
+            .inner
+            .owner
+            .with(|| handle.install_history_subscription());
         handle
     }
 
@@ -206,7 +235,21 @@ impl RouterHandle {
     /// Called by [`Stack`](crate::render::Stack) reconcile each time its
     /// top wrapper changes.
     pub(crate) fn set_stack_bridge(&self, path: NodePath, bridge: StackBridge) {
-        self.inner.bridges.borrow_mut().insert(path, bridge);
+        let identity = Rc::new(());
+        let lease = BridgeLease {
+            inner: Rc::downgrade(&self.inner),
+            path: path.clone(),
+            identity: identity.clone(),
+        };
+        let value = whisker::runtime::lifetime::Scoped::new((bridge, lease));
+        let registration = value.cancellation();
+        value.with_mut(|(bridge, _)| bridge.registration = Some(registration));
+        let old = self
+            .inner
+            .bridges
+            .borrow_mut()
+            .insert(path, BridgeRegistration { identity, value });
+        drop(old);
     }
 
     /// (Test only) the bridge registered for the stack at `path`,
@@ -214,7 +257,11 @@ impl RouterHandle {
     /// survivor's resting pose after a coordinated pop.
     #[cfg(test)]
     pub(crate) fn active_stack_bridge_for_test(&self, path: &NodePath) -> Option<StackBridge> {
-        self.inner.bridges.borrow().get(path).cloned()
+        self.inner
+            .bridges
+            .borrow()
+            .get(path)
+            .and_then(|entry| entry.value.with(|(bridge, _)| bridge.clone()))
     }
 
     /// The gesture bridge for the **deepest active stack** — the one a
@@ -226,7 +273,10 @@ impl RouterHandle {
         let mut found: Option<StackBridge> = None;
         for node in state.active_chain() {
             if let RouteState::Stack(s) = node {
-                if let Some(b) = bridges.get(&s.path) {
+                if let Some(b) = bridges
+                    .get(&s.path)
+                    .and_then(|entry| entry.value.with(|(bridge, _)| bridge.clone()))
+                {
                     if b.can_back {
                         found = Some(b.clone());
                     }

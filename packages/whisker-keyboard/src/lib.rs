@@ -2,7 +2,7 @@
 //!
 //! Two capabilities, both routed through one native `Keyboard` module:
 //!
-//! - [`keyboard_height`] — a process-global
+//! - [`keyboard_height`] — a runtime-local
 //!   `ReadSignal<f64>` carrying the keyboard's current overlap from the
 //!   bottom of the Screen (points on iOS, dp on Android), `0.0` when
 //!   hidden. Pad or scroll a container by this value so a focused input
@@ -59,13 +59,12 @@
 //! - iOS: `packages/whisker-keyboard/ios/Sources/WhiskerKeyboard/KeyboardModule.swift`
 //! - Android: `packages/whisker-keyboard/android/src/main/kotlin/rs/whisker/modules/keyboard/KeyboardModule.kt`
 
-use std::sync::OnceLock;
-
 #[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32", test))]
 use whisker::WhiskerValue;
 #[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
 use whisker::module;
-use whisker::{ArcRwSignal, ArcWriteSignal, Owner, ReadSignal};
+use whisker::runtime::module::ModuleSubscription;
+use whisker::{ReadSignal, RwSignal};
 
 /// Dismiss the keyboard by releasing focus globally.
 ///
@@ -85,69 +84,41 @@ pub fn dismiss() {
 /// the overlap from the bottom of the screen in points (iOS) / dp
 /// (Android), `0.0` when the keyboard is hidden.
 ///
-/// All calls share one process-global signal (see [`safe_area_insets`
-/// in `whisker-safe-area`] for the identical pattern and the
-/// detached-root minting rationale). The first call wires the native
-/// subscription; later calls are free. The value stays live for the
-/// process lifetime.
-///
-/// **Must be called from the main thread.** The reactive runtime is
-/// thread-local.
-///
-/// [`safe_area_insets` in `whisker-safe-area`]: https://docs.rs/whisker-safe-area
+/// Calls share a signal within the entered Runtime; its shutdown releases the subscription.
+/// The returned handle must only be used in that Runtime on its UI thread.
 pub fn keyboard_height() -> ReadSignal<f64> {
-    install();
-    SLOT.get().expect("install() ran above").read.inner
+    HEIGHT.with(|slot| slot.read)
 }
 
 struct Slot {
-    read: MainThreadOnly<ReadSignal<f64>>,
-    #[allow(dead_code)]
-    write: MainThreadOnly<ArcWriteSignal<f64>>,
+    read: ReadSignal<f64>,
+    _subscription: Option<ModuleSubscription>,
 }
 
-/// One-shot install of the global signal + native subscription.
-/// Idempotent. The `Copy` arena handle callers receive is minted once
-/// under a never-disposed [`Owner::detached_root`] so a transient
-/// per-route / per-component scope can't free it out from under a
-/// surviving reader.
-fn install() {
-    SLOT.get_or_init(|| {
-        let (read, write) = ArcRwSignal::new(0.0_f64).split();
-        subscribe_to_native(MainThreadOnly {
-            inner: write.clone(),
-        });
-        let root = Owner::detached_root();
-        let read_handle: ReadSignal<f64> = root.with(|| read.into());
-        Slot {
-            read: MainThreadOnly { inner: read_handle },
-            write: MainThreadOnly { inner: write },
-        }
-    });
+whisker::runtime_local! {
+    static HEIGHT: Slot = {
+        let signal = RwSignal::new(0.0_f64);
+        Slot { read: signal.read_only(), _subscription: subscribe_to_native(signal) }
+    };
 }
 
-/// Wire the global signal to the native module's `keyboardChanged`
-/// event. The subscription is intentionally leaked — the signal lives
-/// for the process lifetime.
-fn subscribe_to_native(writer: MainThreadOnly<ArcWriteSignal<f64>>) {
+fn subscribe_to_native(writer: RwSignal<f64>) -> Option<ModuleSubscription> {
     #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
     {
         let _ = writer;
+        None
     }
-
     #[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
     {
-        let module = module!("Keyboard");
-        let sub = module.on_event("keyboardChanged", move |payload| {
+        let sub = module!("Keyboard").on_event("keyboardChanged", move |payload| {
             if let Some(height) = decode_payload(payload) {
-                let w = &writer;
-                w.inner.set(height);
+                writer.set(height);
             }
         });
         if let Some(err) = sub.error() {
             eprintln!("[whisker-keyboard] failed to subscribe: {err}");
         }
-        std::mem::forget(sub);
+        Some(sub)
     }
 }
 
@@ -168,8 +139,6 @@ fn decode_payload(value: WhiskerValue) -> Option<f64> {
     Some(height.max(0.0))
 }
 
-static SLOT: OnceLock<Slot> = OnceLock::new();
-
 /// Empty visual schema paired with the service-only Web keyboard Host module.
 #[doc(hidden)]
 pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
@@ -178,20 +147,6 @@ pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition
         std::iter::empty::<whisker::ElementProviderMetadata>(),
     )
 }
-
-/// Locally-scoped wrapper asserting main-thread-only access to
-/// `inner`. Same pattern (and safety contract) as
-/// `whisker-safe-area`'s `MainThreadOnly`: every access path runs on
-/// the runtime thread by contract.
-#[derive(Copy, Clone)]
-struct MainThreadOnly<T> {
-    inner: T,
-}
-// SAFETY: the signal read (`keyboard_height`) and write (the `on_event`
-// callback) both run on the runtime thread by contract. Misuse would
-// corrupt the reactive arena.
-unsafe impl<T> Send for MainThreadOnly<T> {}
-unsafe impl<T> Sync for MainThreadOnly<T> {}
 
 #[cfg(test)]
 mod tests {
@@ -232,6 +187,8 @@ mod tests {
     #[test]
     fn desktop_fallback_stays_zero() {
         dismiss();
-        assert_eq!(keyboard_height().get(), 0.0);
+        let runtime =
+            whisker::runtime::RuntimeContext::new(whisker::runtime::RuntimeWakeHandle::new(|| {}));
+        runtime.enter(|| assert_eq!(keyboard_height().get(), 0.0));
     }
 }

@@ -43,12 +43,13 @@ use whisker::{ElementRef, WhiskerValue, run_blocking, spawn_local};
 /// keyboard-dismiss tail. Matches RN's 100ms guard.
 const KEYBOARD_FLASH_GUARD: Duration = Duration::from_millis(100);
 
-thread_local! {
+whisker::runtime_local! {
+    static GENERATION: Cell<u64> = Cell::new(0);
     /// The field focused when the current back gesture began — restored
     /// on cancel, dropped on commit.
-    static REMEMBERED: Cell<Option<ElementRef>> = const { Cell::new(None) };
+    static REMEMBERED: Cell<Option<ElementRef>> = Cell::new(None);
     /// When that gesture began, for the flash guard.
-    static STARTED_AT: Cell<Option<Instant>> = const { Cell::new(None) };
+    static STARTED_AT: Cell<Option<Instant>> = Cell::new(None);
 }
 
 /// Blur a specific field. A no-op when the element is unmounted, which is
@@ -72,6 +73,7 @@ pub(crate) fn on_page_change_start() {
     if STARTED_AT.with(|s| s.get().is_some()) {
         return;
     }
+    GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
     let current = whisker::focus::focused_element();
     REMEMBERED.with(|r| r.set(current));
     STARTED_AT.with(|s| s.set(Some(Instant::now())));
@@ -84,20 +86,23 @@ pub(crate) fn on_page_change_start() {
 /// briefly for a too-fast interaction so the keyboard doesn't flash.
 /// (RN `onPageChangeCancel`.)
 pub(crate) fn on_page_change_cancel() {
-    let Some(el) = REMEMBERED.with(Cell::take) else {
-        return;
-    };
     let elapsed = STARTED_AT
         .with(Cell::take)
         .map(|t| t.elapsed())
         .unwrap_or(KEYBOARD_FLASH_GUARD);
+    let Some(el) = REMEMBERED.with(Cell::take) else {
+        return;
+    };
     if elapsed >= KEYBOARD_FLASH_GUARD {
         focus(el);
     } else {
         let wait = KEYBOARD_FLASH_GUARD - elapsed;
+        let generation = GENERATION.with(Cell::get);
         spawn_local(async move {
             run_blocking(move || std::thread::sleep(wait)).await;
-            focus(el);
+            if GENERATION.with(Cell::get) == generation {
+                focus(el);
+            }
         });
     }
 }
@@ -106,13 +111,15 @@ pub(crate) fn on_page_change_cancel() {
 /// (vs a programmatic verb). (RN `onPageChangeConfirm` with `closing`
 /// always true here — the verb already happened.)
 pub(crate) fn on_page_change_confirm(gesture: bool) {
+    GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
+    STARTED_AT.with(|started| started.set(None));
+    let remembered = REMEMBERED.with(Cell::take);
     if gesture {
         // The interactive back committed. The field captured at gesture
         // start stays blurred; just release it.
-        if let Some(el) = REMEMBERED.with(Cell::take) {
+        if let Some(el) = remembered {
             blur(el);
         }
-        STARTED_AT.with(|s| s.set(None));
     } else {
         // Programmatic navigation: blur the currently-focused field, if
         // any. Targeted, so a late-landing blur hits only the departing
@@ -120,5 +127,78 @@ pub(crate) fn on_page_change_confirm(gesture: bool) {
         if let Some(el) = whisker::focus::focused_element() {
             blur(el);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whisker::Owner;
+    use whisker::runtime::view::Element;
+    use whisker::runtime::{RuntimeContext, RuntimeWakeHandle};
+
+    #[test]
+    fn gesture_completion_ignores_a_disposed_input() {
+        for commit in [false, true] {
+            let runtime = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+            runtime.enter(|| {
+                let owner = Owner::new(None);
+                let input = owner.with(ElementRef::new);
+                input.__bind(Element::from_raw(42));
+                whisker::focus::note_focused(input);
+                on_page_change_start();
+                owner.dispose();
+                STARTED_AT.with(|s| s.set(Some(Instant::now() - KEYBOARD_FLASH_GUARD)));
+
+                if commit {
+                    on_page_change_confirm(true);
+                } else {
+                    on_page_change_cancel();
+                }
+
+                assert!(REMEMBERED.with(Cell::get).is_none());
+                assert!(STARTED_AT.with(Cell::get).is_none());
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod runtime_isolation_tests {
+    use super::*;
+    use whisker::runtime::view::Element;
+    use whisker::runtime::{RuntimeContext, RuntimeWakeHandle};
+    use whisker::{Owner, RwSignal};
+
+    #[test]
+    fn keyboard_gesture_state_is_isolated_between_runtimes() {
+        let first = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+        let second = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+        first.enter(|| {
+            let owner = Owner::new(None);
+            let input = owner.with(ElementRef::new);
+            input.__bind(Element::from_raw(42));
+            whisker::focus::note_focused(input);
+            on_page_change_start();
+        });
+        let second_input = second.enter(|| {
+            let owner = Owner::new(None);
+            let input = owner.with(|| {
+                let _ = RwSignal::new(0);
+                ElementRef::new()
+            });
+            input.__bind(Element::from_raw(43));
+            whisker::focus::note_focused(input);
+            on_page_change_start();
+            input
+        });
+        let remembered = second.enter(|| REMEMBERED.with(Cell::take));
+        second.enter(|| STARTED_AT.with(Cell::take));
+        second.enter(|| {
+            assert!(
+                remembered == Some(second_input),
+                "gesture captured an input from another runtime"
+            )
+        });
     }
 }

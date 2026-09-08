@@ -255,6 +255,7 @@ pub trait DynRenderer {
 }
 
 thread_local! {
+    static ELEMENT_CALLBACKS: RefCell<HashMap<Element, Vec<crate::lifetime::Cancellation>>> = RefCell::new(HashMap::new());
     /// The active renderer for this thread. `None` outside any mount.
     ///
     /// Wrapped in `RefCell<Option<Box<dyn>>>` rather than holding the
@@ -299,6 +300,7 @@ thread_local! {
 }
 
 pub(crate) struct ViewRuntimeState {
+    callbacks: HashMap<Element, Vec<crate::lifetime::Cancellation>>,
     children: HashMap<Element, Vec<Element>>,
     parents: HashMap<Element, Element>,
     phantoms: HashSet<Element>,
@@ -308,6 +310,7 @@ pub(crate) struct ViewRuntimeState {
 impl ViewRuntimeState {
     pub(crate) fn new() -> Self {
         Self {
+            callbacks: HashMap::new(),
             children: HashMap::new(),
             parents: HashMap::new(),
             phantoms: HashSet::new(),
@@ -317,6 +320,7 @@ impl ViewRuntimeState {
 }
 
 pub(crate) fn swap_runtime_state(state: &mut ViewRuntimeState) {
+    ELEMENT_CALLBACKS.with_borrow_mut(|active| std::mem::swap(active, &mut state.callbacks));
     CHILDREN_OF.with_borrow_mut(|active| std::mem::swap(active, &mut state.children));
     PARENT_OF.with_borrow_mut(|active| std::mem::swap(active, &mut state.parents));
     PHANTOM_ELEMENTS.with_borrow_mut(|active| std::mem::swap(active, &mut state.phantoms));
@@ -455,6 +459,10 @@ pub fn create_element(tag: ElementTag) -> Element {
 }
 
 pub fn release_element(handle: Element) {
+    let callbacks = ELEMENT_CALLBACKS.with_borrow_mut(|callbacks| callbacks.remove(&handle));
+    for callback in callbacks.into_iter().flatten() {
+        callback.cancel();
+    }
     if is_phantom(handle) {
         // Phantom never reached Host; tear down mirror state only.
         PHANTOM_ELEMENTS.with_borrow_mut(|s| {
@@ -898,6 +906,16 @@ pub fn __reset_children_mirror_for_tests() {
     CHILDREN_OF.with_borrow_mut(|map| map.clear());
 }
 
+fn element_callback<T: 'static>(handle: Element, callback: T) -> crate::lifetime::Scoped<T> {
+    let scoped = crate::lifetime::Scoped::new(callback);
+    ELEMENT_CALLBACKS.with_borrow_mut(|callbacks| {
+        let callbacks = callbacks.entry(handle).or_default();
+        callbacks.retain(crate::lifetime::Cancellation::is_live);
+        callbacks.push(scoped.cancellation());
+    });
+    scoped
+}
+
 pub fn set_event_listener(
     handle: Element,
     event_name: &str,
@@ -909,6 +927,10 @@ pub fn set_event_listener(
         drop(callback);
         return;
     }
+    let scoped = element_callback(handle, callback);
+    let callback = Box::new(move |value| {
+        scoped.with(|f| f(value));
+    });
     with_renderer(
         |r| r.set_event_listener(handle, event_name, bind_type, callback),
         (),
@@ -921,6 +943,10 @@ pub fn observe_layout(handle: Element, callback: Box<dyn Fn(LayoutObservation) +
         drop(callback);
         return;
     }
+    let scoped = element_callback(handle, callback);
+    let callback = Box::new(move |value| {
+        scoped.with(|f| f(value));
+    });
     with_renderer(|renderer| renderer.observe_layout(handle, callback), ())
 }
 
@@ -932,6 +958,10 @@ pub fn observe_layout_batch_end(handle: Element, callback: Box<dyn Fn() + 'stati
         drop(callback);
         return;
     }
+    let scoped = element_callback(handle, callback);
+    let callback = Box::new(move || {
+        scoped.with(|f| f());
+    });
     with_renderer(
         |renderer| renderer.observe_layout_batch_end(handle, callback),
         (),

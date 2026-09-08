@@ -154,6 +154,8 @@ pub trait ArcSubscription {
 /// `use_context`. `cleanups` is the LIFO callback queue from
 /// `on_cleanup`.
 pub struct Scope {
+    pub(crate) closing: bool,
+    pub(crate) registrations: SlotMap<slotmap::DefaultKey, Box<dyn FnOnce()>>,
     pub parent: Option<Owner>,
     pub children: Vec<Owner>,
     pub nodes: Vec<NodeId>,
@@ -189,6 +191,8 @@ impl Scope {
     pub fn new(parent: Option<Owner>) -> Self {
         Self {
             parent,
+            closing: false,
+            registrations: SlotMap::new(),
             children: Vec::new(),
             nodes: Vec::new(),
             contexts: HashMap::new(),
@@ -217,6 +221,11 @@ impl Scope {
 /// running inside a closure can re-enter the runtime (read signals,
 /// write signals, register new effects) without panicking.
 pub struct ReactiveRuntime {
+    pub(crate) identity: Rc<()>,
+    pub(crate) service_owner: Option<Owner>,
+    pub(crate) execution_depth: usize,
+    pub(crate) disposing: Vec<Owner>,
+    pub(crate) shutting_down: bool,
     pub owners: SlotMap<Owner, Scope>,
     pub nodes: SlotMap<NodeId, ReactiveNode>,
     /// Owner stack: the topmost is the "current" owner — new signals,
@@ -269,6 +278,11 @@ pub struct ReactiveRuntime {
 impl ReactiveRuntime {
     pub fn new() -> Self {
         Self {
+            identity: Rc::new(()),
+            service_owner: None,
+            execution_depth: 0,
+            disposing: Vec::new(),
+            shutting_down: false,
             owners: SlotMap::with_key(),
             nodes: SlotMap::with_key(),
             owner_stack: Vec::new(),

@@ -144,6 +144,9 @@ fn run_node_if_alive(node: NodeId) {
     let prep = with_runtime(|rt| {
         let n = rt.nodes.get(node)?;
         let owner = n.owner;
+        if rt.owners.get(owner).is_none_or(|scope| scope.closing) {
+            return None;
+        }
         // Signal nodes have no compute, so the paused-owner gate below
         // only concerns Effect / Computed.
         let compute = match &n.data {
@@ -203,6 +206,7 @@ fn run_node_if_alive(node: NodeId) {
             });
         }
     }
+    let _execution = crate::lifetime::Execution::enter();
     let _run_guard = RunGuard;
 
     // The runtime is unborrowed here, so the compute body is free to
