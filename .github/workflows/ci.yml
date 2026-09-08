@@ -188,6 +188,7 @@ jobs:
           tool: wasm-pack
       - run: cargo xtask host-conformance web
       - run: cargo xtask rust-host-link-test web
+      - run: wasm-pack test --headless --chrome packages/whisker-input/web
 
   rust-host-link-test-desktop:
     name: Rust Host module link (Desktop)

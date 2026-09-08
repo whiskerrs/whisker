@@ -320,19 +320,13 @@ fn input_definition() -> WebViewDefinition<InputWebView> {
     .prop(
         "max-length",
         |view, value| {
-            let value = match expect_int(value, "max-length")? {
-                value if value <= 0 => -1,
-                value => value.min(i32::MAX as i64) as i32,
-            };
-            view.input.set_max_length(value);
-            view.textarea.set_max_length(value);
-            Ok(())
+            set_max_length(
+                &view.input,
+                &view.textarea,
+                expect_int(value, "max-length")?,
+            )
         },
-        |view| {
-            view.input.set_max_length(-1);
-            view.textarea.set_max_length(-1);
-            Ok(())
-        },
+        |view| set_max_length(&view.input, &view.textarea, 0),
     )
     .prop(
         "keyboard-type",
@@ -631,5 +625,48 @@ mod tests {
     fn module_exports_input_factory() {
         let definition = InputModule::definition();
         assert_eq!(definition.factories().len(), 1);
+    }
+}
+
+fn set_max_length(
+    input: &web_sys::HtmlInputElement,
+    textarea: &web_sys::HtmlTextAreaElement,
+    value: i64,
+) -> Result<(), wasm_bindgen::JsValue> {
+    if value <= 0 {
+        input.remove_attribute("maxlength")?;
+        textarea.remove_attribute("maxlength")
+    } else {
+        let value = value.min(i32::MAX as i64).to_string();
+        input.set_attribute("maxlength", &value)?;
+        textarea.set_attribute("maxlength", &value)
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod browser_tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    #[wasm_bindgen_test]
+    fn unlimited_length_can_be_applied_and_restored_without_a_dom_exception() {
+        let document = web_sys::window().unwrap().document().unwrap();
+        let input: web_sys::HtmlInputElement =
+            document.create_element("input").unwrap().unchecked_into();
+        let textarea: web_sys::HtmlTextAreaElement = document
+            .create_element("textarea")
+            .unwrap()
+            .unchecked_into();
+        for limit in [0, 12, 0, -1, 24, 0] {
+            set_max_length(&input, &textarea, limit).unwrap();
+            if limit > 0 {
+                assert_eq!(input.max_length(), limit as i32);
+                assert_eq!(textarea.max_length(), limit as i32);
+            } else {
+                assert!(!input.has_attribute("maxlength"));
+                assert!(!textarea.has_attribute("maxlength"));
+            }
+        }
     }
 }
