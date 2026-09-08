@@ -19,8 +19,7 @@ pub fn root() -> Element {
     render! {
         View(
             style: computed(move || {
-                theme::fill()
-                    .background_color(Color::hex(theme::SURFACE))
+                theme::screen()
                     .padding_top(px(insets.get().top as f32))
                     .padding_bottom(px(insets.get().bottom.max(keyboard.get()) as f32))
             }),

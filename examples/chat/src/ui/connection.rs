@@ -26,7 +26,7 @@ pub fn connection_screen() -> Element {
     let can_back =
         app.connection().get_untracked().is_some() || !app.turns().with_untracked(Vec::is_empty);
     render! {
-        ScrollView(style: theme::fill()) {
+        ScrollView(style: theme::screen()) {
             View(style: theme::column().padding(px(24)).flex_shrink(0.0)) {
                 Text(value: "WHISKER CHAT", style: theme::muted().margin_bottom(px(20)))
                 Text(

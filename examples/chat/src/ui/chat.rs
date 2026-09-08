@@ -31,7 +31,7 @@ pub fn chat_screen() -> Element {
     let save = app.clone();
     let latest = list.clone();
     render! {
-        View(style: theme::fill()) {
+        View(style: theme::screen()) {
             View(style: theme::row().padding(px(16)).gap(px(12)).flex_shrink(0.0)) {
                 View(style: theme::column().flex_grow(1.0).flex_shrink(1.0)) {
                     Text(value: "Whisker Chat", style: theme::text(21.0))

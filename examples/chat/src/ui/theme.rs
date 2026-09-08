@@ -19,6 +19,9 @@ pub fn row() -> Css {
 pub fn fill() -> Css {
     column().flex_grow(1.0).flex_shrink(1.0).min_height(px(0))
 }
+pub fn screen() -> Css {
+    fill().background_color(Color::hex(SURFACE))
+}
 pub fn text(size: f32) -> Css {
     Css::new()
         .font_size(px(size))
