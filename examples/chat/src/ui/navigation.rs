@@ -1,15 +1,20 @@
-use super::{chat::ChatScreen, connection::ConnectionScreen, history::HistoryScreen};
+use super::{
+    chat::ChatScreen, connection::ConnectionScreen, history::HistoryScreen,
+    settings::SettingsScreen,
+};
 use whisker::RwSignal;
 use whisker_router::{NavError, RouteSet, RouterHandle, routes};
 
 const CHAT: &str = "/";
 const SETTINGS: &str = "/settings";
+const CONNECTION: &str = "/settings/connection";
 
 pub fn routes() -> RouteSet {
     routes! {
         Stack {
             Route(path: "", component: ChatScreen)
-            Route(path: "settings", component: ConnectionScreen)
+            Route(path: "settings", component: SettingsScreen)
+            Route(path: "settings/connection", component: ConnectionScreen)
             Route(path: "history", component: HistoryScreen)
         }
     }
@@ -17,12 +22,28 @@ pub fn routes() -> RouteSet {
 
 pub fn start_setup(nav: &RouterHandle) -> Result<(), String> {
     nav.replace(SETTINGS)
-        .map_err(|_| "Could not open connection settings.".into())
+        .map_err(|_| "Could not open settings.".into())
 }
 
 pub fn open_settings(nav: &RouterHandle, notice: RwSignal<String>) {
     if nav.navigate(SETTINGS).is_err() {
-        notice.set("Could not open connection settings.".into());
+        notice.set("Could not open settings.".into());
+    }
+}
+
+pub fn open_connection(nav: &RouterHandle, notice: RwSignal<String>) {
+    if nav.navigate(CONNECTION).is_err() {
+        notice.set("Could not open API connection settings.".into());
+    }
+}
+
+pub fn return_to_settings(nav: &RouterHandle, notice: RwSignal<String>) {
+    let result = match nav.back() {
+        Err(NavError::NothingToPop) => nav.replace(SETTINGS),
+        result => result,
+    };
+    if result.is_err() {
+        notice.set("Could not return to settings.".into());
     }
 }
 
@@ -80,6 +101,32 @@ mod tests {
             open_settings(&nav, notice);
             nav.back().unwrap();
             assert_eq!(use_pathname().get_untracked(), CHAT);
+            assert!(notice.get_untracked().is_empty());
+        });
+    }
+
+    #[test]
+    fn connection_editing_returns_to_settings_before_chat() {
+        with_navigation(|nav, notice| {
+            open_settings(&nav, notice);
+            open_connection(&nav, notice);
+            assert_eq!(use_pathname().get_untracked(), CONNECTION);
+            return_to_settings(&nav, notice);
+            assert_eq!(use_pathname().get_untracked(), SETTINGS);
+            return_to_chat(&nav, notice);
+            assert_eq!(use_pathname().get_untracked(), CHAT);
+            assert_eq!(nav.back(), Err(NavError::NothingToPop));
+            assert!(notice.get_untracked().is_empty());
+        });
+    }
+
+    #[test]
+    fn direct_connection_entry_has_a_settings_fallback() {
+        with_navigation(|nav, notice| {
+            nav.replace(CONNECTION).unwrap();
+            return_to_settings(&nav, notice);
+            assert_eq!(use_pathname().get_untracked(), SETTINGS);
+            assert_eq!(nav.back(), Err(NavError::NothingToPop));
             assert!(notice.get_untracked().is_empty());
         });
     }

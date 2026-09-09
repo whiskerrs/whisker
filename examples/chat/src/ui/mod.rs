@@ -8,6 +8,7 @@ mod history;
 mod markdown;
 mod messages;
 pub(crate) mod navigation;
+mod settings;
 mod startup;
 mod theme;
 mod welcome;

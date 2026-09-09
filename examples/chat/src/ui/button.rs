@@ -7,7 +7,7 @@ use whisker_icons::Icon;
 pub fn button(
     label: Signal<String>,
     on_press: Callback,
-    #[prop(default = false)] primary: bool,
+    #[prop(default = Signal::from(false))] primary: Signal<bool>,
     #[prop(default = "")] icon: &'static str,
     #[prop(default = Signal::from(false))] disabled: Signal<bool>,
     #[prop(default = "")] accessible_label: &'static str,
@@ -45,7 +45,7 @@ pub fn button(
                         Cursor::Pointer
                     })
                     .opacity(if disabled.get() { 0.45 } else { 1.0 })
-                    .background_color(Color::hex(if primary {
+                    .background_color(Color::hex(if primary.get() {
                         palette.accent
                     } else {
                         palette.tint
@@ -60,7 +60,7 @@ pub fn button(
                             let palette = appearance.get().palette();
                             format!(
                                 "#{:06x}",
-                                if primary {
+                                if primary.get() {
                                     palette.on_accent
                                 } else {
                                     palette.ink
@@ -79,7 +79,7 @@ pub fn button(
                             .text(size::LABEL)
                             .pointer_events(PointerEvents::None)
                             .font_weight(FontWeight::Numeric(500))
-                            .color(Color::hex(if primary {
+                            .color(Color::hex(if primary.get() {
                                 palette.on_accent
                             } else {
                                 palette.ink

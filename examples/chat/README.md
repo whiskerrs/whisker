@@ -31,14 +31,16 @@ cargo run -p whisker-cli --bin whisker -- run web --manifest-path examples/chat/
 cargo run -p whisker-cli --bin whisker -- run desktop --manifest-path examples/chat/Cargo.toml
 ```
 
-Enter your API base URL and key, discover models or enter a model ID, and save
-the connection. Model discovery calls `GET /models`; generation uses streamed
-Chat Completions. Availability and usage charges are controlled by your provider.
+Open **Settings → API key & provider**, enter your API base URL and key,
+discover models or enter a model ID, and save the connection. Saving returns to
+Settings; **Back to chat** returns to the conversation. Model discovery calls
+`GET /models`; generation uses streamed Chat Completions. Availability and usage charges are controlled by your provider.
 Browser connections require the provider to permit cross-origin requests.
 
 On Desktop, **Chats** toggles the sidebar; **Hide sidebar** gives the conversation
-more room. The sun/moon button switches appearance without resetting the conversation
-or draft. Dark is the initial default; the selected appearance is restored on launch.
+more room. **Settings → Color theme** switches appearance without resetting the
+conversation or draft. Dark is the initial default; the selected appearance is
+restored on launch.
 The browser starts with the sidebar closed. On iOS and Android,
 **Chats** opens a separate history screen through `whisker-router`.
 

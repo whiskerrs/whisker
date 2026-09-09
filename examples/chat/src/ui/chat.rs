@@ -1,6 +1,6 @@
 use super::{
-    appearance::AppearanceToggle, button::Button, chat_layout, composer::Composer,
-    history::HistoryPanel, messages::TurnRow, theme, welcome::Welcome,
+    button::Button, chat_layout, composer::Composer, history::HistoryPanel, messages::TurnRow,
+    theme, welcome::Welcome,
 };
 use crate::{
     hooks::use_chat,
@@ -109,7 +109,6 @@ fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
                         style: theme::style(move |palette| palette.muted()),
                     )
                 }
-                AppearanceToggle()
                 Button(
                     label: "",
                     icon: lucide::Settings2,

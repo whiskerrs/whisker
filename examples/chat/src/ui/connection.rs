@@ -1,5 +1,4 @@
 use super::{
-    appearance::AppearanceToggle,
     button::Button,
     navigation,
     theme::{self, size, space},
@@ -7,6 +6,7 @@ use super::{
 use crate::{hooks::use_connection_form, state::AppState, storage};
 use whisker::css::AlignSelf;
 use whisker::prelude::*;
+use whisker_icons::lucide;
 use whisker_input::{AutoCapitalize, Input, KeyboardType};
 use whisker_router::use_navigator;
 
@@ -17,9 +17,8 @@ pub fn connection_screen() -> Element {
     let back_nav = nav.clone();
     let notice = app.notice();
     let form = use_connection_form(Callback::new(move |()| {
-        navigation::return_to_chat(&nav, notice)
+        navigation::return_to_settings(&nav, notice)
     }));
-    let can_back = app.connection().get_untracked().is_some();
     render! {
         ScrollView(style: theme::style(move |palette| palette.screen())) {
             View(
@@ -31,15 +30,15 @@ pub fn connection_screen() -> Element {
                     .gap(px(space::XL))
                     .flex_shrink(0.0),
             ) {
-                View(style: theme::row().justify_content(JustifyContent::SpaceBetween)) {
-                    Text(
-                        value: "WHISKER CHAT / SETTINGS",
-                        style: theme::style(move |palette| palette.muted()),
+                View(style: theme::row()) {
+                    Button(
+                        label: "Settings",
+                        icon: lucide::ArrowLeft,
+                        on_press: move |()| navigation::return_to_settings(&back_nav, notice),
                     )
-                    AppearanceToggle()
                 }
                 Text(
-                    value: "Connect your model",
+                    value: "API key & provider",
                     style: theme::style(move |palette| palette.display()),
                 )
                 Text(
@@ -129,18 +128,9 @@ pub fn connection_screen() -> Element {
                         )
                     }
                     Button(
-                        label: if can_back { "Save connection" } else { "Start chatting" },
+                        label: "Save connection",
                         primary: true,
                         on_press: form.save,
-                    )
-                }
-                Show(when: move || can_back) {
-                    Button(
-                        label: "Back to chat",
-                        on_press: {
-                            let nav = back_nav.clone();
-                            move |()| navigation::return_to_chat(&nav, notice)
-                        },
                     )
                 }
                 Text(
