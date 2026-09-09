@@ -432,6 +432,26 @@ fn apply_font_style(
         .iter()
         .map(|family| match family {
             MeasureFontFamily::System => "system-ui".to_string(),
+            MeasureFontFamily::Named(name)
+                if [
+                    "serif",
+                    "sans-serif",
+                    "monospace",
+                    "cursive",
+                    "fantasy",
+                    "system-ui",
+                    "ui-serif",
+                    "ui-sans-serif",
+                    "ui-monospace",
+                    "ui-rounded",
+                    "math",
+                    "fangsong",
+                ]
+                .iter()
+                .any(|keyword| name.eq_ignore_ascii_case(keyword)) =>
+            {
+                name.to_ascii_lowercase()
+            }
             MeasureFontFamily::Named(name) => format!("{name:?}"),
         })
         .collect::<Vec<_>>()
@@ -505,6 +525,60 @@ mod tests {
     use whisker_protocol::{PaintColor, TextDecorationLines, TextShadow};
 
     use super::*;
+
+    #[wasm_bindgen_test]
+    fn generic_font_families_keep_css_keyword_semantics() {
+        let document = web_sys::window().unwrap().document().unwrap();
+        let probe = document.create_element("span").unwrap();
+        set_style(&probe, "display", "inline-block").unwrap();
+        document.body().unwrap().append_child(&probe).unwrap();
+        let mut style = whisker_protocol::TextMeasureStyle {
+            font_size: 24.0,
+            ..Default::default()
+        };
+        for family in [
+            "monospace",
+            "MONOSPACE",
+            "serif",
+            "sans-serif",
+            "system-ui",
+            "ui-monospace",
+        ] {
+            style.font_families = vec![MeasureFontFamily::Named(family.into())];
+            apply_font_style(&probe, &style).unwrap();
+            let computed = web_sys::window()
+                .unwrap()
+                .get_computed_style(&probe)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                computed.get_property_value("font-family").unwrap(),
+                family.to_ascii_lowercase()
+            );
+        }
+        style.font_families = vec![MeasureFontFamily::Named("monospace".into())];
+        apply_font_style(&probe, &style).unwrap();
+        probe.set_text_content(Some("iiiiii"));
+        let narrow = probe.get_bounding_client_rect().width();
+        probe.set_text_content(Some("WWWWWW"));
+        let wide = probe.get_bounding_client_rect().width();
+        assert!(
+            narrow > 0.0 && (narrow - wide).abs() < 0.01,
+            "monospace advances differ: {narrow} vs {wide}"
+        );
+        style.font_families = vec![MeasureFontFamily::Named("A Font, With Commas".into())];
+        apply_font_style(&probe, &style).unwrap();
+        let computed = web_sys::window()
+            .unwrap()
+            .get_computed_style(&probe)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            computed.get_property_value("font-family").unwrap(),
+            "\"A Font, With Commas\""
+        );
+        probe.remove();
+    }
 
     #[wasm_bindgen_test]
     fn combines_decoration_lines_in_css_order() {
