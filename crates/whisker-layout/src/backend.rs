@@ -16,6 +16,9 @@ use taffy::{
 };
 
 mod paragraph;
+mod pending_sizes;
+
+use pending_sizes::{PendingSize, PendingSizes};
 
 const SIZE_CACHE_CAPACITY: usize = 32;
 
@@ -116,6 +119,7 @@ impl LayoutState {
                 tree,
                 state: self,
                 measure,
+                pending_sizes: PendingSizes::default(),
             },
             root,
             available,
@@ -151,6 +155,7 @@ struct LayoutPass<'a, Context, Measure> {
     tree: &'a mut TaffyTree<Context>,
     state: &'a mut LayoutState,
     measure: Measure,
+    pending_sizes: PendingSizes,
 }
 
 impl<Context: Clone, Measure> LayoutPass<'_, Context, Measure>
@@ -171,6 +176,11 @@ where
         if input.run_mode == RunMode::PerformHiddenLayout {
             return compute_hidden_layout(self, node);
         }
+        if let Some(cached) = self.pending_sizes.get(node, &input) {
+            self.state.blocked += u64::from(cached.blocked);
+            self.state.provisional += u64::from(cached.provisional);
+            return cached.output;
+        }
         let before = (self.state.blocked, self.state.provisional);
         let output = compute_cached_layout(self, node, input, |tree, node, input| {
             let display = tree.tree.style(node).expect("retained style").display;
@@ -189,6 +199,15 @@ where
         if before != (self.state.blocked, self.state.provisional) {
             self.cache_clear(node);
             self.state.transient.insert(node);
+            self.pending_sizes.insert(
+                node,
+                input,
+                PendingSize {
+                    output,
+                    blocked: self.state.blocked != before.0,
+                    provisional: self.state.provisional != before.1,
+                },
+            );
         }
         output
     }
@@ -384,6 +403,7 @@ mod tests {
         let mut pass = LayoutPass {
             tree: &mut tree,
             state: &mut state,
+            pending_sizes: PendingSizes::default(),
             measure: |known: Size<Option<f32>>, _, _: Option<&()>, _: &[MeasuredInlineChild]| {
                 calls.set(calls.get() + 1);
                 LayoutSize::new(known.width.unwrap_or(40.0), 20.0).into()
@@ -557,3 +577,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod pending_tests;
