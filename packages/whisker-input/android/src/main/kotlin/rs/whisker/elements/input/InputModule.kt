@@ -73,6 +73,9 @@ class InputModule : Module() {
             // inside WhiskerInputView. Documents the emittable set.
             Events("input", "change", "focus", "blur", "submit")
 
+            Prop("auto-size") { _: WhiskerInputView, _ -> }
+            Measurement(::measureInput)
+
             TextStyle { view: WhiskerInputView, style ->
                 view.applyTextStyle(style)
             }

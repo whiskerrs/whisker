@@ -3,9 +3,7 @@ use whisker::css::{AlignSelf, PositionKind};
 use whisker::prelude::*;
 
 pub const HEADER_HEIGHT: f32 = 64.0;
-pub const COMPOSER_HEIGHT: f32 = 160.0;
 pub const CONTENT_TOP: f32 = HEADER_HEIGHT + space::XL;
-pub const CONTENT_BOTTOM: f32 = COMPOSER_HEIGHT + space::LG;
 
 pub fn header() -> Css {
     theme::row()
@@ -25,15 +23,18 @@ pub fn composer() -> Css {
         .left(px(0))
         .right(px(0))
         .bottom(px(0))
-        .height(px(COMPOSER_HEIGHT))
         .align_items(AlignItems::Center)
         .z_index(2)
 }
 
-pub fn latest() -> Css {
+pub fn content_bottom(input_height: f32) -> f32 {
+    input_height + 2.0 * space::SM + 2.0 + 2.0 * space::LG
+}
+
+pub fn latest(input_height: f32) -> Css {
     theme::row()
         .position(PositionKind::Absolute)
-        .bottom(px(CONTENT_BOTTOM))
+        .bottom(px(content_bottom(input_height)))
         .align_self(AlignSelf::Center)
         .z_index(3)
 }

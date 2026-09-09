@@ -3,6 +3,7 @@ mod button;
 mod chat;
 mod chat_layout;
 mod composer;
+mod composer_action;
 mod connection;
 mod history;
 mod history_dialog;

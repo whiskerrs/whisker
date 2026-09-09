@@ -93,6 +93,8 @@
 //! | `on_submit`        | `Fn(String)`                          | —             | Return / done key pressed. |
 //! | `placeholder`      | `Signal<String>`                      | `""`          | Placeholder text shown when empty. |
 //! | `multiline`        | `bool`                                | `false`       | Single-line field vs multiline area. |
+//! | `auto_size`        | `bool`                                | `false`       | Measure content at its layout width; respects min/max size and overrides `lines`. |
+//! | `on_size_change`   | `Fn(InputSize)`                        | —             | Final size after padding, borders, and style constraints. |
 //! | `lines`            | `u32`                                 | unset (`0`)   | Fixed visible line count (multiline only). |
 //! | `secure`           | `bool`                                | `false`       | Mask Input (password entry). |
 //! | `editable`         | `bool`                                | `true`        | Allow editing. |
@@ -150,9 +152,18 @@
 //!   Windows, and Linux; OS keyboard/IME events enter through
 //!   `platforms/desktop`)
 
+mod measurement;
+
 use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
 use whisker::{Callback, ElementRef, Signal, Style};
+
+/// The input's final border-box size in logical pixels, including padding and border.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InputSize {
+    pub width: f32,
+    pub height: f32,
+}
 
 /// Payload of an input event (`input` / `change` / `submit`).
 ///
@@ -380,7 +391,7 @@ impl Default for InputRef {
 #[doc(hidden)]
 #[whisker::module_element(
     name = "whisker-input:Input",
-    measurement = None,
+    measurement = Custom,
     text_style = true,
     commands = [
         ("focus", Null),
@@ -396,6 +407,7 @@ pub fn native_input(
     caret_color: Signal<String>,
     selection_color: Signal<String>,
     multiline: Signal<bool>,
+    auto_size: Signal<bool>,
     lines: Signal<i32>,
     secure: Signal<bool>,
     editable: Signal<bool>,
@@ -452,7 +464,12 @@ pub fn input(
     /// Multiline area vs single-line field.
     #[prop(default = false)]
     multiline: bool,
-    /// Fixed visible line count (multiline only).
+    /// Measures content height under the current layout width; CSS min/max height still apply.
+    #[prop(default = false)]
+    auto_size: bool,
+    /// Reports the final input border-box size after layout, in logical pixels.
+    on_size_change: Option<Callback<InputSize>>,
+    /// Fixed visible line count (multiline only); ignored when auto_size is enabled.
     lines: Option<u32>,
     /// Mask Input (password entry).
     #[prop(default = false)]
@@ -594,7 +611,8 @@ pub fn input(
         .caret_color(caret_color_prop)
         .selection_color(selection_color_prop)
         .multiline(multiline)
-        .lines(lines_attr)
+        .auto_size(auto_size)
+        .lines(if auto_size { 0 } else { lines_attr })
         .secure(secure)
         .editable(editable)
         .auto_focus(auto_focus)
@@ -611,6 +629,25 @@ pub fn input(
         .on_blur(on_blur_cb)
         .on_submit(on_submit_cb);
 
+    if auto_size {
+        builder = builder.measure_with(measurement::payload);
+    }
+    if let Some(callback) = on_size_change {
+        let previous = std::cell::Cell::new(None);
+        whisker::runtime::view::observe_layout(
+            builder.__element(),
+            Box::new(move |layout| {
+                let rect = layout.geometry.border_box;
+                let size = InputSize {
+                    width: rect.width,
+                    height: rect.height,
+                };
+                if previous.replace(Some(size)) != Some(size) {
+                    callback.run(size);
+                }
+            }),
+        );
+    }
     builder = builder.element_ref(element_ref);
 
     builder.build()

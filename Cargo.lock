@@ -6924,6 +6924,7 @@ name = "whisker-input"
 version = "0.13.8"
 dependencies = [
  "serde",
+ "serde_json",
  "whisker",
 ]
 
@@ -6933,6 +6934,8 @@ version = "0.13.8"
 dependencies = [
  "csscolorparser",
  "glyphon",
+ "serde",
+ "serde_json",
  "unicode-segmentation",
  "whisker-desktop",
  "whisker-protocol",
@@ -6950,6 +6953,8 @@ dependencies = [
 name = "whisker-input-web"
 version = "0.13.8"
 dependencies = [
+ "serde",
+ "serde_json",
  "wasm-bindgen-test",
  "web-sys",
  "whisker-protocol",

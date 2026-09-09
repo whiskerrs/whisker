@@ -17,6 +17,7 @@ pub mod radius {
 
 pub mod size {
     pub const TOUCH: f32 = 44.0;
+    pub const COMPOSER_INPUT_MAX: f32 = 212.0;
     pub const SIDEBAR: f32 = 272.0;
     pub const READING: f32 = 760.0;
     pub const LABEL: f32 = 14.0;

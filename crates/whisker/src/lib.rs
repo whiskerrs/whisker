@@ -106,6 +106,9 @@ pub use whisker_engine::whisker_protocol::LayoutRect as TextRect;
 pub use whisker_runtime::text_query::TextQueryError;
 
 pub use whisker_runtime::module::PlatformModule;
+pub use whisker_runtime::module_measurement::{
+    CustomMeasurePayload, MeasurementPayloadBuilder, ModuleMeasureContext,
+};
 
 pub use attrs::ScrollSnap;
 pub use whisker_runtime::event::Dataset;

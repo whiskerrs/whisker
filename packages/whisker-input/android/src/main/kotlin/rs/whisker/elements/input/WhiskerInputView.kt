@@ -18,13 +18,11 @@ package rs.whisker.elements.input
 
 import android.content.Context
 import android.graphics.Color
-import android.graphics.Typeface
 import android.os.Build
 import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.autofill.AutofillValue
@@ -490,17 +488,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     fun applyTextStyle(style: WhiskerTextStyle) {
         val et = view()
         et.setTextColor(style.color)
-        et.setTextSize(
-            TypedValue.COMPLEX_UNIT_PX,
-            inputTextSizePixels(style.fontSize, et.resources.displayMetrics.density),
-        )
-        val family = style.fontFamilies.firstOrNull()?.takeUnless { it == "system" }
-        val base = Typeface.create(family, Typeface.NORMAL)
-        et.typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            Typeface.create(base, style.fontWeight.coerceIn(1, 1000), false)
-        } else {
-            Typeface.create(base, if (style.fontWeight >= 600) Typeface.BOLD else Typeface.NORMAL)
-        }
+        InputTypography.apply(et, style)
         val horizontal = when (style.alignment) {
             WhiskerTextAlignment.CENTER -> Gravity.CENTER_HORIZONTAL
             WhiskerTextAlignment.END, WhiskerTextAlignment.RIGHT -> Gravity.END

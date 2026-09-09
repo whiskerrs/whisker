@@ -40,6 +40,7 @@ pub fn chat_screen() -> Element {
 fn conversation_view(session: Session, sidebar: SidebarState) -> Element {
     let app = use_context::<AppState>().expect("AppState context");
     let actions = use_chat(session);
+    let input_height = signal(theme::size::TOUCH);
     let nav = use_navigator();
     let notice = app.notice();
     let connection = app.connection();
@@ -58,7 +59,7 @@ fn conversation_view(session: Session, sidebar: SidebarState) -> Element {
     render! {
         View(style: theme::fill().position(PositionKind::Relative)) {
             Show(when: move || session.turns.with(Vec::is_empty)) {
-                Welcome(draft: session.draft)
+                Welcome(draft: session.draft, input_height: input_height)
             }
             Show(when: move || !session.turns.with(Vec::is_empty)) {
                 List(
@@ -69,7 +70,15 @@ fn conversation_view(session: Session, sidebar: SidebarState) -> Element {
                     },
                     list_ref: list_ref.clone(),
                     header: || chat_layout::spacer(chat_layout::CONTENT_TOP),
-                    footer: || chat_layout::spacer(chat_layout::CONTENT_BOTTOM),
+                    footer: move || render! {
+                        View(
+                            style: computed(move || {
+                                theme::column()
+                                    .height(px(chat_layout::content_bottom(input_height.get())))
+                                    .flex_shrink(0.0)
+                            }),
+                        )
+                    },
                     on_scroll: move |event| scroll.changed.run(event),
                     style: theme::fill(),
                 )
@@ -120,13 +129,13 @@ fn conversation_view(session: Session, sidebar: SidebarState) -> Element {
             }
             Show(when: move || !scroll.at_end.get() && !session.turns.with(Vec::is_empty)) {
                 View(
-                    style: chat_layout::latest(),
+                    style: computed(move || chat_layout::latest(input_height.get())),
                 ) {
                     Button(label: "Latest", icon: lucide::ArrowDown, on_press: actions.latest)
                 }
             }
             View(style: chat_layout::composer()) {
-                Composer(session: session, actions: actions)
+                Composer(session: session, actions: actions, input_height: input_height)
             }
         }
     }

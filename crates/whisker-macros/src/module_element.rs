@@ -976,6 +976,7 @@ const RESERVED_EVENT_NAMES: &[&str] = &[
 /// always excluded from the element schema, while the declared children type
 /// determines its child policy.
 const COMMON_ELEMENT_PROP_NAMES: &[&str] = &[
+    "measure_with",
     "id",
     "dataset",
     "accessibility",

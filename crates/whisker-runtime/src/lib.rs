@@ -23,6 +23,7 @@ pub mod event;
 #[doc(hidden)]
 pub mod lifetime;
 pub mod module;
+pub mod module_measurement;
 pub mod reactive;
 mod runtime_context;
 mod runtime_instance;

@@ -8,11 +8,15 @@ repository.workspace = true
 description = "Web Host implementation for whisker-input."
 
 [dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
 whisker-protocol = { path = "../../../crates/whisker-protocol", version = "0.13.8" }
 whisker-web = { path = "../../../platforms/web", version = "0.13.8" }
 web-sys = { version = "0.3", features = [
     "CssStyleDeclaration",
     "Document",
+    "DomRect",
+    "Window",
     "Element",
     "Event",
     "EventTarget",

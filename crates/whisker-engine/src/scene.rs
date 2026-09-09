@@ -67,6 +67,11 @@ impl SceneNode {
         }
     }
 
+    /// Returns the current explicitly set element properties.
+    pub fn properties(&self) -> &BTreeMap<PropertyId, WhiskerValue> {
+        &self.properties
+    }
+
     /// Returns the registered element type.
     pub const fn element_type(&self) -> ElementTypeId {
         self.element_type
