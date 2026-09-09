@@ -71,6 +71,8 @@ impl GpuRenderer {
             backdrop_gpu,
             text_viewport,
             text_atlas,
+            text_cache,
+            paragraph_rasters: Default::default(),
             text_renderers: HashMap::new(),
             image_resources: HashMap::new(),
             native_rasters: HashMap::new(),
@@ -284,12 +286,59 @@ impl GpuRenderer {
                     node,
                     rect,
                     content,
+                    selection,
                     clip,
                     transform,
                     shape_clips,
                     opacity,
                     ..
                 } => {
+                    if let Some(paragraph) = content
+                        .prepared_content
+                        .and_then(|id| text.prepared.get(&id))
+                        .and_then(|prepared| prepared.paragraph.as_ref())
+                    {
+                        super::paragraph::paragraph_primitives(
+                            paragraph,
+                            content,
+                            *rect,
+                            *opacity,
+                            |primitive| {
+                                push_quad_draw(
+                                    &mut vertices,
+                                    &mut draws,
+                                    primitive,
+                                    *transform,
+                                    *clip,
+                                    shape_clips,
+                                    (None, None, false),
+                                );
+                            },
+                        );
+                        if let Some(rects) = selection
+                            .and_then(|range| paragraph.selection_rects(&content.payload, range))
+                        {
+                            for selected in rects {
+                                let selected = whisker_protocol::LayoutRect {
+                                    x: rect.x + selected.x,
+                                    y: rect.y + selected.y,
+                                    ..selected
+                                };
+                                push_quad_draw(
+                                    &mut vertices,
+                                    &mut draws,
+                                    solid_rect_primitive(
+                                        selected,
+                                        [0.2, 0.45, 0.9, 0.3 * *opacity],
+                                    ),
+                                    *transform,
+                                    *clip,
+                                    shape_clips,
+                                    (None, None, false),
+                                );
+                            }
+                        }
+                    }
                     let decoration = &content.paint.decoration;
                     if (decoration.lines.underline || decoration.lines.line_through)
                         && let Some(prepared) = content
@@ -410,6 +459,55 @@ impl GpuRenderer {
             .collect::<HashSet<_>>();
         self.text_renderers
             .retain(|node, _| live_text_nodes.contains(node));
+        let mut paragraph_glyphs = HashMap::new();
+        for attempt in 0..2 {
+            paragraph_glyphs.clear();
+            let mut exhausted = false;
+            for command in commands {
+                let PaintCommand::Text {
+                    node,
+                    content,
+                    opacity,
+                    ..
+                } = command
+                else {
+                    continue;
+                };
+                let Some(prepared) = content
+                    .prepared_content
+                    .and_then(|id| text.prepared.get(&id))
+                else {
+                    continue;
+                };
+                let Some(paragraph) = &prepared.paragraph else {
+                    continue;
+                };
+                match self
+                    .paragraph_rasters
+                    .prepare(paragraph, content, scale, *opacity)
+                {
+                    Ok(glyphs) => {
+                        paragraph_glyphs.insert(*node, glyphs);
+                    }
+                    Err(crate::text::raster::ParagraphRasterError::Capacity) if attempt == 0 => {
+                        exhausted = true;
+                        break;
+                    }
+                    Err(error) => return Err(GpuError(error.to_string())),
+                }
+            }
+            if !exhausted {
+                break;
+            }
+            self.paragraph_rasters.reset();
+            self.text_atlas = TextAtlas::new(
+                &self.device,
+                &self.queue,
+                &self.text_cache,
+                self.config.format,
+            );
+            self.text_renderers.clear();
+        }
         let mut prepared_text_nodes = HashSet::new();
         for draw in &draws {
             let DrawCommand::Text { index, node } = draw else {
@@ -493,12 +591,12 @@ impl GpuRenderer {
                 scale,
                 bounds,
                 default_color: color,
-                custom_glyphs: &[],
+                custom_glyphs: paragraph_glyphs.get(node).map_or(&[], Vec::as_slice),
             });
             self.text_renderers
                 .get_mut(node)
                 .expect("renderer inserted for live text node")
-                .prepare(
+                .prepare_with_custom(
                     &self.device,
                     &self.queue,
                     &mut text.font_system,
@@ -506,6 +604,7 @@ impl GpuRenderer {
                     &self.text_viewport,
                     areas,
                     &mut text.swash_cache,
+                    |request| self.paragraph_rasters.rasterize(request),
                 )
                 .map_err(|error| GpuError(format!("prepare glyph atlas: {error}")))?;
             prepared_text_nodes.insert(*node);

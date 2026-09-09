@@ -31,6 +31,11 @@ define_id!(
     "Identifies one scene node; allocations strictly increase within a scene epoch"
 );
 define_id!(
+    TextSpanId,
+    u64,
+    "Identifies a logical text element without requiring a native scene node"
+);
+define_id!(
     ElementTypeId,
     u32,
     "Identifies an element schema negotiated when a surface attaches"

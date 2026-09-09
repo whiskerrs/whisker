@@ -21,6 +21,8 @@ use crate::{
 type ScrollListener = Closure<dyn FnMut(web_sys::Event)>;
 
 pub(crate) struct DomFrameSink {
+    pub(crate) prepared_paragraphs:
+        Rc<RefCell<HashMap<whisker_protocol::PreparedContentId, web_sys::Element>>>,
     capabilities: whisker_protocol::RenderCapabilities,
     document: web_sys::Document,
     root: web_sys::Element,
@@ -92,6 +94,7 @@ impl DomFrameSink {
             .append_child(&root)
             .map_err(|error| js_error("attach Whisker Web surface root", error))?;
         Ok(Self {
+            prepared_paragraphs: Default::default(),
             capabilities,
             document,
             root,
@@ -517,7 +520,10 @@ impl DomFrameSink {
                     text
                 };
                 self.sync_text(*node)?;
-                paint::text::apply(&text, content)?;
+                let prepared = content
+                    .prepared_content
+                    .and_then(|id| self.prepared_paragraphs.borrow().get(&id).cloned());
+                paint::text::apply_prepared(&text, content, prepared.as_ref())?;
             }
             Operation::SetTextStyle { node, style } => {
                 let element_type = self.node_types.get(node).copied().ok_or_else(|| {

@@ -14,6 +14,7 @@ import rs.whisker.runtime.WhiskerView
 import rs.whisker.runtime.WhiskerElementBindings
 import rs.whisker.runtime.accepts
 import rs.whisker.runtime.WhiskerTextContent
+import rs.whisker.runtime.WhiskerParagraph
 import rs.whisker.runtime.WhiskerFontStyle
 import rs.whisker.runtime.WhiskerFontFeature
 import rs.whisker.runtime.WhiskerFontOpticalSizing
@@ -73,6 +74,7 @@ internal data class HostSceneOperation(
     val text: String?,
     val names: Array<String>?,
     val value: WhiskerValue?,
+    var paragraph: WhiskerParagraph? = null,
 )
 
 /** Owns the transactional Android projection of one Whisker surface. */
@@ -84,6 +86,7 @@ internal class HostScene(
     private val removeScrollOffset: (Long) -> Unit,
     private val rasterResources: HostRasterResourceStore,
     private val elements: WhiskerElementBindings,
+    private val preparedParagraphs: rs.whisker.runtime.measure.PreparedParagraphs = rs.whisker.runtime.measure.PreparedParagraphs(),
 ) {
     private val nodes = LinkedHashMap<Long, HostNode>()
     private val topology = SceneTopology()
@@ -203,7 +206,7 @@ internal class HostScene(
                     stagedTopology.parentOf(operation.child) != null ||
                     operation.index !in 0..childCount ||
                     stagedTopology.isDescendantOrSelf(operation.parent, operation.child) ||
-                    policy != WhiskerChildPolicy.Elements
+                    policy?.acceptsElements != true
                 ) return false
                 stagedTopology.attach(operation.parent, operation.child)
             }
@@ -265,7 +268,10 @@ internal class HostScene(
                     operation.node !in stagedTopology || operation.text == null ||
                     !validTextPayload(values, names)
                 ) return false
-                if (operation.tag == OP_TEXT && registration.childPolicy != WhiskerChildPolicy.PlainText) return false
+                operation.paragraph = try {
+                    WhiskerParagraph.decode(operation.value, operation.text)
+                } catch (_: Exception) { return false }
+                if (operation.tag == OP_TEXT && !registration.childPolicy.acceptsPlainText) return false
                 if (operation.tag == OP_TEXT_STYLE && !registration.textStyle) return false
             }
             OP_PROPERTY -> {
@@ -385,12 +391,16 @@ internal class HostScene(
                 requireNotNull(operation.text),
                 requireNotNull(operation.numbers),
                 requireNotNull(operation.names),
+                paragraph = operation.paragraph,
+                preparedContent = operation.wide,
             )
             OP_TEXT_STYLE -> applyText(
                 nodes[id] ?: return,
                 requireNotNull(operation.text),
                 requireNotNull(operation.numbers),
                 requireNotNull(operation.names),
+                paragraph = operation.paragraph,
+                preparedContent = operation.wide,
                 styleOnly = true,
             )
             OP_ACCESSIBILITY -> applyAccessibility(nodes[id] ?: return, requireNotNull(operation.value))
@@ -519,7 +529,7 @@ internal class HostScene(
         val parent = nodes[parentId] ?: return
         val child = nodes[childId] ?: return
         val mounted = requireNotNull(parent.mountedElement)
-        require(mounted.registration.childPolicy == WhiskerChildPolicy.Elements) {
+        require(mounted.registration.childPolicy.acceptsElements) {
             "${mounted.registration.name} does not accept element children"
         }
         (child.parent as? ViewGroup)?.removeView(child)
@@ -620,6 +630,8 @@ internal class HostScene(
         values: FloatArray,
         names: Array<String>,
         styleOnly: Boolean = false,
+        paragraph: WhiskerParagraph? = null,
+        preparedContent: Long = 0,
     ) {
         require(values.size >= 37)
         require(values[0].isFinite() && values[0] > 0f)
@@ -649,6 +661,8 @@ internal class HostScene(
         val mounted = requireNotNull(node.mountedElement)
         val content = WhiskerTextContent(
                     value = text,
+                    paragraph = paragraph,
+                    preparedContent = preparedContent,
                     fontFamilies = families,
                     fontSize = values[0],
                     fontWeight = values[1].toInt(),
@@ -703,6 +717,9 @@ internal class HostScene(
                 )
         require(if (styleOnly) mounted.setTextStyle(content.styleSnapshot()) else mounted.setText(content)) {
             "text operation sent to element ${mounted.registration.name} without the declared text implementation"
+        }
+        preparedParagraphs.get(content.preparedContent)?.let { layout ->
+            (mounted.view as? rs.whisker.runtime.WhiskerTextView)?.installPreparedParagraph(layout)
         }
     }
 

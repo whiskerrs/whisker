@@ -673,7 +673,11 @@ mod tests {
 
     fn text_content(text: &str) -> TextContent {
         TextContent {
+            paragraph: None,
+            runs: Vec::new(),
             payload: TextMeasurePayload {
+                runs: Vec::new(),
+                attachments: Vec::new(),
                 text: text.into(),
                 style: TextMeasureStyle {
                     font_families: vec![MeasureFontFamily::System],

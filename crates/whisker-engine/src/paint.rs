@@ -403,7 +403,7 @@ fn length(value: &ComputedLengthPercentage) -> PaintLengthPercentage {
     }
 }
 
-fn corner_radius(value: &whisker_style::ComputedCornerRadius) -> PaintCornerRadius {
+pub(crate) fn corner_radius(value: &whisker_style::ComputedCornerRadius) -> PaintCornerRadius {
     PaintCornerRadius {
         horizontal: length(&value.horizontal),
         vertical: length(&value.vertical),

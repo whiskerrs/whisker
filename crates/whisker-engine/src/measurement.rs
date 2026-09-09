@@ -6,12 +6,15 @@ use std::{
     fmt,
 };
 
-use whisker_layout::{IntrinsicMeasurer, LayoutSize, MeasureRequest as LayoutMeasureRequest};
+use whisker_layout::{
+    IntrinsicMeasurer, IntrinsicResult, LayoutSize, MeasureRequest as LayoutMeasureRequest,
+    MeasuredInlineChild, MeasurementState,
+};
 use whisker_protocol::{
     AvailableSpace, ElementTypeId, MeasureConstraints, MeasuredSize, MeasurementKey,
-    MeasurementKind, MeasurementMetrics, MeasurementPayloadError, MeasurementReady,
-    MeasurementRequest, MeasurementRequestId, MeasurementResponse, MeasurementSpec, NodeId,
-    PendingMeasurePolicy, UnsupportedMeasurementReason,
+    MeasurementKind, MeasurementMetrics, MeasurementPayload, MeasurementPayloadError,
+    MeasurementReady, MeasurementRequest, MeasurementRequestId, MeasurementResponse,
+    MeasurementSpec, NodeId, PendingMeasurePolicy, UnsupportedMeasurementReason,
 };
 
 use crate::LayoutUpdate;
@@ -193,6 +196,8 @@ struct CacheKey {
     style_hash: u64,
     environment_epoch: u64,
     constraints: ConstraintsKey,
+    inline_children: Vec<(NodeId, u32, u32, u32)>,
+    paragraph_node: Option<NodeId>,
 }
 
 #[derive(Clone, Debug)]
@@ -200,6 +205,7 @@ struct SpecState {
     element_type: ElementTypeId,
     spec: MeasurementSpec,
     last_ready: Option<MeasurementMetrics>,
+    attachments: Vec<crate::InlineAttachmentInput>,
 }
 
 #[derive(Clone, Debug)]
@@ -215,6 +221,8 @@ enum CachedState {
 
 #[derive(Clone, Debug)]
 struct CacheEntry {
+    key: MeasurementKey,
+    payload: MeasurementPayload,
     state: CachedState,
     consumers: BTreeSet<NodeId>,
 }
@@ -252,6 +260,7 @@ pub(crate) struct MeasurementCoordinator {
     pending: BTreeMap<MeasurementRequestId, PendingRequest>,
     environment_epoch: Option<u64>,
     next_key: u64,
+    retention_revision: u64,
     pass: PassState,
 }
 
@@ -266,6 +275,7 @@ impl Default for MeasurementCoordinator {
             pending: BTreeMap::new(),
             environment_epoch: None,
             next_key: 1,
+            retention_revision: 0,
             pass: PassState::default(),
         }
     }
@@ -280,12 +290,35 @@ impl MeasurementCoordinator {
         if !changed {
             return Vec::new();
         }
+        self.retention_revision = self.retention_revision.wrapping_add(1);
         self.cache.clear();
         self.consumer_keys.clear();
         self.outstanding.clear();
         self.outstanding_by_cache.clear();
         self.pending.clear();
         self.specs.keys().copied().collect()
+    }
+
+    pub(crate) fn retained_content(
+        &self,
+    ) -> (
+        u64,
+        impl Iterator<Item = whisker_protocol::PreparedContentId> + '_,
+    ) {
+        let cached = self.cache.values().filter_map(|entry| match &entry.state {
+            CachedState::Ready(metrics) => metrics.prepared_content,
+            CachedState::Pending { provisional, .. } => provisional
+                .as_ref()
+                .and_then(|metrics| metrics.prepared_content),
+            CachedState::Unsupported(_) => None,
+        });
+        let provisional = self.specs.values().filter_map(|state| {
+            state
+                .last_ready
+                .as_ref()
+                .and_then(|metrics| metrics.prepared_content)
+        });
+        (self.retention_revision, cached.chain(provisional))
     }
 
     pub(crate) fn environment_epoch(&self) -> Option<u64> {
@@ -327,6 +360,7 @@ impl MeasurementCoordinator {
             return Ok(false);
         }
 
+        self.retention_revision = self.retention_revision.wrapping_add(1);
         self.remove_consumer(node);
         let previous = self.specs.remove(&node).and_then(|state| state.last_ready);
         if let Some(spec) = spec {
@@ -336,6 +370,7 @@ impl MeasurementCoordinator {
                     element_type,
                     spec,
                     last_ready: previous,
+                    attachments: Vec::new(),
                 },
             );
         }
@@ -343,6 +378,7 @@ impl MeasurementCoordinator {
     }
 
     pub(crate) fn remove_node(&mut self, node: NodeId) {
+        self.retention_revision = self.retention_revision.wrapping_add(1);
         self.remove_consumer(node);
         self.specs.remove(&node);
     }
@@ -351,11 +387,25 @@ impl MeasurementCoordinator {
         self.specs.get(&node)?.last_ready.as_ref()
     }
 
-    pub(crate) fn ready_nodes(&self) -> Vec<NodeId> {
+    pub(crate) fn inline_attachments_match(
+        &self,
+        node: NodeId,
+        attachments: &[crate::InlineAttachmentInput],
+    ) -> bool {
         self.specs
-            .iter()
-            .filter_map(|(node, state)| state.last_ready.as_ref().map(|_| *node))
-            .collect()
+            .get(&node)
+            .is_some_and(|state| state.attachments == attachments)
+    }
+
+    pub(crate) fn set_inline_attachments(
+        &mut self,
+        node: NodeId,
+        attachments: &[crate::InlineAttachmentInput],
+    ) {
+        self.specs
+            .get_mut(&node)
+            .expect("paragraph measurement spec")
+            .attachments = attachments.to_vec();
     }
 
     pub(crate) fn outstanding_requests(&self) -> Vec<MeasurementRequest> {
@@ -447,6 +497,9 @@ impl MeasurementCoordinator {
             validated.push(response);
         }
 
+        if !validated.is_empty() {
+            self.retention_revision = self.retention_revision.wrapping_add(1);
+        }
         let mut invalidated = BTreeSet::new();
         for response in validated {
             self.commit_response(response, &mut invalidated);
@@ -460,6 +513,7 @@ impl MeasurementCoordinator {
         &mut self,
         ready: &MeasurementReady,
     ) -> Result<DeferredMeasurementApply, MeasurementError> {
+        self.retention_revision = self.retention_revision.wrapping_add(1);
         let Some(pending) = self.pending.get(&ready.request_id).cloned() else {
             return Ok(DeferredMeasurementApply::IgnoredStale);
         };
@@ -469,7 +523,11 @@ impl MeasurementCoordinator {
         {
             return Ok(DeferredMeasurementApply::IgnoredStale);
         }
-        if !ready.metrics.is_valid() {
+        if self
+            .cache
+            .get(&pending.cache_key)
+            .is_some_and(|entry| !ready.metrics.matches_payload(&entry.payload))
+        {
             return Err(MeasurementError::InvalidMetrics { key: ready.key });
         }
         let Some(entry) = self.cache.get_mut(&pending.cache_key) else {
@@ -536,6 +594,8 @@ impl MeasurementCoordinator {
         self.cache.insert(
             outstanding.cache_key,
             CacheEntry {
+                key,
+                payload: outstanding.request.payload,
                 state,
                 consumers: outstanding.consumers,
             },
@@ -547,7 +607,11 @@ impl MeasurementCoordinator {
         key: MeasurementKey,
         metrics: &MeasurementMetrics,
     ) -> Result<(), MeasurementError> {
-        if metrics.is_valid() {
+        if self
+            .outstanding
+            .get(&key)
+            .is_some_and(|request| metrics.matches_payload(&request.request.payload))
+        {
             Ok(())
         } else {
             Err(MeasurementError::InvalidMetrics { key })
@@ -609,6 +673,8 @@ impl MeasurementCoordinator {
             style_hash: state.spec.style_hash,
             environment_epoch: epoch,
             constraints: constraints.into(),
+            inline_children: Vec::new(),
+            paragraph_node: None,
         }
     }
 
@@ -650,14 +716,58 @@ impl MeasurementCoordinator {
     }
 }
 
-impl IntrinsicMeasurer for MeasurementCoordinator {
-    fn measure(&mut self, node: NodeId, constraints: LayoutMeasureRequest) -> LayoutSize {
-        let Some(state) = self.specs.get(&node).cloned() else {
+impl MeasurementCoordinator {
+    fn resolve_intrinsic(
+        &mut self,
+        node: NodeId,
+        constraints: LayoutMeasureRequest,
+        children: &[MeasuredInlineChild],
+    ) -> IntrinsicResult {
+        let Some(mut state) = self.specs.get(&node).cloned() else {
             self.pass
                 .error
                 .get_or_insert(MeasurementError::MissingSpec { node });
-            return LayoutSize::default();
+            return IntrinsicResult {
+                state: MeasurementState::Blocked,
+                ..IntrinsicResult::default()
+            };
         };
+        if let MeasurementPayload::Text(payload) = &mut state.spec.payload {
+            if !state.attachments.is_empty() {
+                if state.attachments.len() != children.len()
+                    || state.attachments.iter().any(|attachment| {
+                        !children.iter().any(|child| child.node == attachment.node)
+                    })
+                {
+                    self.pass
+                        .error
+                        .get_or_insert(MeasurementError::MissingSpec { node });
+                    return IntrinsicResult {
+                        state: MeasurementState::Blocked,
+                        ..IntrinsicResult::default()
+                    };
+                }
+                payload.attachments = state
+                    .attachments
+                    .iter()
+                    .map(|attachment| {
+                        let child = children
+                            .iter()
+                            .find(|child| child.node == attachment.node)
+                            .expect("validated inline subtree");
+                        whisker_protocol::InlineAttachment {
+                            truncation: attachment.truncation,
+                            label: attachment.label.clone(),
+                            node: attachment.node,
+                            range: attachment.range,
+                            alignment: attachment.alignment,
+                            size: MeasuredSize::new(child.size.width, child.size.height),
+                            baseline: child.baseline,
+                        }
+                    })
+                    .collect();
+            }
+        }
         let constraints = if state.spec.payload.kind() == MeasurementKind::Text {
             MeasureConstraints {
                 available_space: [constraints.available_space[0], AvailableSpace::MaxContent],
@@ -667,11 +777,27 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
             constraints
         };
         let epoch = self.environment_epoch.unwrap_or(0);
-        let cache_key = Self::cache_key(&state, constraints, epoch);
+        let mut cache_key = Self::cache_key(&state, constraints, epoch);
+        if matches!(&state.spec.payload, MeasurementPayload::Text(text) if !text.runs.is_empty() || !text.attachments.is_empty())
+        {
+            cache_key.paragraph_node = Some(node);
+        }
+        cache_key.inline_children = children
+            .iter()
+            .map(|child| {
+                (
+                    child.node,
+                    child.size.width.to_bits(),
+                    child.size.height.to_bits(),
+                    child.baseline.to_bits(),
+                )
+            })
+            .collect();
 
         if let Some(entry) = self.cache.get_mut(&cache_key) {
             let added = entry.consumers.insert(node);
             let cached = entry.state.clone();
+            let selection = entry.key;
             if added {
                 self.remember_consumer(node, cache_key);
             }
@@ -681,7 +807,13 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
                         .get_mut(&node)
                         .expect("measurement node retains its registered spec")
                         .last_ready = Some(metrics.clone());
-                    to_layout_size(metrics.size)
+                    IntrinsicResult {
+                        size: to_layout_size(metrics.size),
+                        first_baseline: metrics.first_baseline,
+                        state: MeasurementState::Ready,
+                        selection: Some(selection),
+                        inline_placements: metrics.inline_placements,
+                    }
                 }
                 CachedState::Pending {
                     request_id,
@@ -689,7 +821,7 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
                     ..
                 } => {
                     self.pass.pending.insert(request_id);
-                    self.use_fallback(
+                    self.fallback_result(
                         state.spec.pending_policy,
                         state.last_ready.as_ref(),
                         provisional.as_ref(),
@@ -699,7 +831,10 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
                     self.pass
                         .error
                         .get_or_insert(MeasurementError::Unsupported { node, reason });
-                    LayoutSize::default()
+                    IntrinsicResult {
+                        state: MeasurementState::Blocked,
+                        ..IntrinsicResult::default()
+                    }
                 }
             };
         }
@@ -714,14 +849,21 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
             if added {
                 self.remember_consumer(node, cache_key);
             }
-            return self.use_fallback(state.spec.pending_policy, state.last_ready.as_ref(), None);
+            return self.fallback_result(
+                state.spec.pending_policy,
+                state.last_ready.as_ref(),
+                None,
+            );
         }
 
         let key = match self.allocate_key() {
             Ok(key) => key,
             Err(error) => {
                 self.pass.error.get_or_insert(error);
-                return LayoutSize::default();
+                return IntrinsicResult {
+                    state: MeasurementState::Blocked,
+                    ..IntrinsicResult::default()
+                };
             }
         };
         let request = MeasurementRequest {
@@ -743,7 +885,74 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
         );
         self.remember_consumer(node, cache_key);
         self.pass.requests.insert(key, request);
-        self.use_fallback(state.spec.pending_policy, state.last_ready.as_ref(), None)
+        self.fallback_result(state.spec.pending_policy, state.last_ready.as_ref(), None)
+    }
+}
+
+impl IntrinsicMeasurer for MeasurementCoordinator {
+    fn measure(&mut self, node: NodeId, request: LayoutMeasureRequest) -> LayoutSize {
+        self.resolve_intrinsic(node, request, &[]).size
+    }
+
+    fn measure_detailed(&mut self, node: NodeId, request: LayoutMeasureRequest) -> IntrinsicResult {
+        self.resolve_intrinsic(node, request, &[])
+    }
+
+    fn measure_paragraph(
+        &mut self,
+        node: NodeId,
+        request: LayoutMeasureRequest,
+        children: &[MeasuredInlineChild],
+    ) -> IntrinsicResult {
+        self.resolve_intrinsic(node, request, children)
+    }
+}
+
+impl MeasurementCoordinator {
+    pub(crate) fn selected(
+        &self,
+        node: NodeId,
+        selection: MeasurementKey,
+    ) -> Option<(&MeasurementPayload, &MeasurementMetrics)> {
+        self.consumer_keys.get(&node)?.iter().find_map(|key| {
+            let entry = self.cache.get(key).expect("retained measurement consumer");
+            if entry.key != selection {
+                return None;
+            }
+            match &entry.state {
+                CachedState::Ready(metrics) => Some((&entry.payload, metrics)),
+                _ => None,
+            }
+        })
+    }
+
+    fn fallback_result(
+        &mut self,
+        policy: PendingMeasurePolicy,
+        previous: Option<&MeasurementMetrics>,
+        provisional: Option<&MeasurementMetrics>,
+    ) -> IntrinsicResult {
+        let size = self.use_fallback(policy, previous, provisional);
+        let metrics = provisional.or_else(|| {
+            (policy == PendingMeasurePolicy::RetainPrevious)
+                .then_some(previous)
+                .flatten()
+        });
+        let ready_fallback = provisional.is_some()
+            || matches!(policy, PendingMeasurePolicy::Placeholder(_))
+            || (policy == PendingMeasurePolicy::RetainPrevious && previous.is_some());
+        IntrinsicResult {
+            size,
+            first_baseline: metrics.and_then(|metrics| metrics.first_baseline),
+            state: if ready_fallback {
+                MeasurementState::Provisional
+            } else {
+                MeasurementState::Blocked
+            },
+            selection: None,
+            inline_placements: metrics
+                .map_or_else(Vec::new, |metrics| metrics.inline_placements.clone()),
+        }
     }
 }
 
@@ -797,6 +1006,8 @@ mod tests {
     fn payload(kind: MeasurementKind) -> MeasurementPayload {
         match kind {
             MeasurementKind::Text => MeasurementPayload::Text(TextMeasurePayload {
+                runs: Vec::new(),
+                attachments: Vec::new(),
                 text: "payload".into(),
                 style: TextMeasureStyle {
                     font_families: vec![MeasureFontFamily::System],
@@ -843,6 +1054,8 @@ mod tests {
 
     fn metrics(width: f32, height: f32) -> MeasurementMetrics {
         MeasurementMetrics {
+            paragraph: None,
+            inline_placements: Vec::new(),
             size: MeasuredSize::new(width, height),
             first_baseline: Some(6.0),
             last_baseline: Some(7.0),
@@ -953,6 +1166,53 @@ mod tests {
                 },
             );
             assert_eq!(size, LayoutSize::new(100.0, 20.0));
+            assert!(coordinator.finish_pass().unwrap().requests.is_empty());
+        }
+    }
+
+    #[test]
+    fn rich_preparations_are_isolated_per_node_and_reused_for_each_consumer() {
+        for rich in [false, true] {
+            let mut coordinator = MeasurementCoordinator::default();
+            coordinator.set_environment(1);
+            let mut value = spec(MeasurementKind::Text, PendingMeasurePolicy::Block);
+            if rich && let MeasurementPayload::Text(text) = &mut value.payload {
+                text.runs.push(whisker_protocol::TextMeasureRun {
+                    range: whisker_protocol::TextByteRange {
+                        start: 0,
+                        end: text.text.len() as u32,
+                    },
+                    style: text.style.clone(),
+                    alignment: whisker_protocol::InlineAlignment::Baseline,
+                });
+            }
+            for id in [1, 2] {
+                coordinator
+                    .set_spec(node(id), element(), Some(value.clone()))
+                    .unwrap();
+            }
+            coordinator.begin_pass();
+            for id in [1, 2] {
+                coordinator.measure(node(id), constraints(100.0));
+            }
+            let pass = coordinator.finish_pass().unwrap();
+            assert_eq!(pass.requests.len(), if rich { 2 } else { 1 });
+            for request in pass.requests {
+                coordinator
+                    .apply_batch(&[MeasurementResponse::Ready {
+                        key: request.key,
+                        environment_epoch: 1,
+                        metrics: metrics(20.0, 10.0),
+                    }])
+                    .unwrap();
+            }
+            coordinator.begin_pass();
+            for id in [1, 2] {
+                assert_eq!(
+                    coordinator.measure(node(id), constraints(100.0)),
+                    LayoutSize::new(20.0, 10.0)
+                );
+            }
             assert!(coordinator.finish_pass().unwrap().requests.is_empty());
         }
     }
@@ -1562,5 +1822,97 @@ mod tests {
                 .unwrap(),
             DeferredMeasurementApply::IgnoredStale
         );
+    }
+
+    #[test]
+    fn prepared_objects_follow_ready_pending_and_unsupported_cache_entries() {
+        for response_kind in 0..4 {
+            let mut coordinator = MeasurementCoordinator::default();
+            coordinator.set_environment(1);
+            coordinator
+                .set_spec(
+                    node(1),
+                    element(),
+                    Some(spec(MeasurementKind::Text, PendingMeasurePolicy::Block)),
+                )
+                .unwrap();
+            coordinator.begin_pass();
+            coordinator.measure(node(1), constraints(100.0));
+            let request = coordinator.finish_pass().unwrap().requests.remove(0);
+            let response = match response_kind {
+                0 => MeasurementResponse::Ready {
+                    key: request.key,
+                    environment_epoch: 1,
+                    metrics: metrics(20.0, 10.0),
+                },
+                1 | 2 => MeasurementResponse::Pending {
+                    key: request.key,
+                    environment_epoch: 1,
+                    request_id: MeasurementRequestId::new(1).unwrap(),
+                    provisional: (response_kind == 1).then(|| metrics(20.0, 10.0)),
+                },
+                _ => MeasurementResponse::Unsupported {
+                    key: request.key,
+                    environment_epoch: 1,
+                    reason: UnsupportedMeasurementReason::Element,
+                },
+            };
+            coordinator.apply_batch(&[response]).unwrap();
+            assert!(coordinator.selected(node(999), request.key).is_none());
+            let (revision, retained) = coordinator.retained_content();
+            let retained = retained.collect::<Vec<_>>();
+            assert_eq!(!retained.is_empty(), response_kind < 2);
+            assert!(
+                retained
+                    .iter()
+                    .all(|id| *id == PreparedContentId::new(3).unwrap())
+            );
+            assert_eq!(
+                coordinator.selected(node(1), request.key).is_some(),
+                response_kind == 0
+            );
+            coordinator.remove_node(node(1));
+            let (removed_revision, retained) = coordinator.retained_content();
+            assert!(removed_revision > revision);
+            assert_eq!(retained.count(), 0);
+        }
+    }
+
+    #[test]
+    fn paragraph_measurement_rejects_missing_and_mismatched_inline_subtrees() {
+        let mut coordinator = MeasurementCoordinator::default();
+        let attachment = crate::InlineAttachmentInput {
+            truncation: false,
+            label: None,
+            node: node(2),
+            range: whisker_protocol::TextByteRange { start: 0, end: 3 },
+            alignment: whisker_protocol::InlineAlignment::Baseline,
+        };
+        coordinator
+            .set_spec(
+                node(1),
+                element(),
+                Some(spec(MeasurementKind::Text, PendingMeasurePolicy::Block)),
+            )
+            .unwrap();
+        coordinator.set_inline_attachments(node(1), &[attachment]);
+        let other = MeasuredInlineChild {
+            node: node(3),
+            size: LayoutSize::new(10.0, 10.0),
+            baseline: 8.0,
+        };
+        for children in [vec![], vec![other]] {
+            coordinator.begin_pass();
+            assert_eq!(
+                coordinator
+                    .measure_paragraph(node(1), constraints(100.0), &children)
+                    .state,
+                MeasurementState::Blocked
+            );
+            assert_eq!(
+                coordinator.finish_pass(),
+                Err(MeasurementError::MissingSpec { node: node(1) })
+            );
+        }
     }
 }

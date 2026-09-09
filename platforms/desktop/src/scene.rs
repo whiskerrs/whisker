@@ -316,6 +316,7 @@ pub(crate) enum PaintCommand<'a> {
         node: NodeId,
         rect: LayoutRect,
         content: &'a TextContent,
+        selection: Option<whisker_protocol::TextRange>,
         clip: LogicalClip,
         shape_clips: ShapeClipStack,
         transform: Transform,
@@ -338,6 +339,8 @@ pub(crate) struct DesktopScene {
     elements: DesktopElementRegistry,
     nodes: HashMap<NodeId, RenderNode>,
     smooth_scrolls: HashMap<NodeId, SmoothScroll>,
+    pending_text_queries: HashSet<NodeId>,
+    selected_paragraph: Option<NodeId>,
     dirty_scroll_offsets: HashSet<NodeId>,
     presentation_pool: HashMap<ElementTypeId, Vec<DesktopElementContent>>,
     pending_events: Arc<Mutex<Vec<DesktopProviderEvent>>>,
@@ -386,3 +389,5 @@ mod paint_support;
 
 pub(crate) use paint_support::is_transparent;
 use paint_support::*;
+
+mod text_interaction;

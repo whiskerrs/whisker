@@ -77,6 +77,7 @@ class WhiskerView(context: Context) :
         { node -> dirtyScrollOffsets.remove(node) },
         rasterResources,
         elements,
+        measurements.preparedParagraphs,
     )
     private val resourceService = HostResourceService(
         rasterResources,
@@ -676,6 +677,7 @@ class WhiskerView(context: Context) :
         fontFamilies: Array<Array<String>>,
         fontSettings: Array<Array<String>>,
         payloads: Array<ByteArray>,
+        paragraphs: Array<WhiskerValue?> = arrayOfNulls(payloads.size),
     ): HostMeasureBatchResponse = HostMeasureBatchAbi.measure(
         measurements,
         requestLongs,
@@ -685,6 +687,7 @@ class WhiskerView(context: Context) :
         fontFamilies,
         fontSettings,
         payloads,
+        paragraphs,
     )
 
     private external fun nativeCreate(

@@ -157,6 +157,8 @@ impl MeasureTextIndent {
 /// Whether text may create additional lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MeasureTextWrap {
+    /// Preserve whitespace while applying platform line breaking.
+    PreserveWhitespace,
     /// Apply platform line breaking within the available width.
     Wrap,
     /// Keep content on one logical line.
@@ -235,6 +237,10 @@ impl TextMeasureStyle {
 /// Complete built-in Text input required by a Host shaper.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextMeasurePayload {
+    /// Ordered non-overlapping metric overrides; empty for plain text.
+    pub runs: Vec<crate::TextMeasureRun>,
+    /// Measured inline boxes in logical string order.
+    pub attachments: Vec<crate::InlineAttachment>,
     /// UTF-8 text after application-level text transforms.
     pub text: String,
     /// Resolved metric-affecting style.
@@ -367,42 +373,48 @@ impl MeasurementPayload {
     }
 }
 
-impl TextMeasurePayload {
+impl TextMeasureStyle {
     pub(crate) fn validate(&self) -> Result<(), MeasurementPayloadError> {
-        if self.style.font_families.is_empty()
+        if self.font_families.is_empty()
             || self
-                .style
                 .font_families
                 .iter()
                 .any(|family| matches!(family, MeasureFontFamily::Named(name) if name.is_empty()))
         {
             return Err(MeasurementPayloadError::InvalidFontFamily);
         }
-        if !self.style.font_size.is_finite() || self.style.font_size < 0.0 {
+        if !self.font_size.is_finite() || self.font_size < 0.0 {
             return Err(MeasurementPayloadError::InvalidFontSize);
         }
-        if !(1..=1000).contains(&self.style.font_weight) {
+        if !(1..=1000).contains(&self.font_weight) {
             return Err(MeasurementPayloadError::InvalidFontWeight);
         }
-        if matches!(self.style.line_height, MeasureLineHeight::LogicalPixels(value) if !value.is_finite() || value < 0.0)
+        if matches!(self.line_height, MeasureLineHeight::LogicalPixels(value) if !value.is_finite() || value < 0.0)
         {
             return Err(MeasurementPayloadError::InvalidLineHeight);
         }
-        if !self.style.letter_spacing.is_finite() {
+        if !self.letter_spacing.is_finite() {
             return Err(MeasurementPayloadError::InvalidLetterSpacing);
         }
-        if !strictly_sorted_tags(self.style.features.iter().map(|feature| feature.tag)) {
+        if !strictly_sorted_tags(self.features.iter().map(|feature| feature.tag)) {
             return Err(MeasurementPayloadError::InvalidFontFeatures);
         }
-        if !strictly_sorted_tags(self.style.variations.iter().map(|variation| variation.tag))
+        if !strictly_sorted_tags(self.variations.iter().map(|variation| variation.tag))
             || self
-                .style
                 .variations
                 .iter()
                 .any(|variation| !variation.value.is_finite())
         {
             return Err(MeasurementPayloadError::InvalidFontVariations);
         }
+        Ok(())
+    }
+}
+
+impl TextMeasurePayload {
+    pub(crate) fn validate(&self) -> Result<(), MeasurementPayloadError> {
+        self.style.validate()?;
+        self.validate_ranges()?;
         if self.locale.as_ref().is_some_and(|locale| locale.is_empty()) {
             return Err(MeasurementPayloadError::InvalidLocale);
         }
@@ -419,6 +431,8 @@ impl TextMeasurePayload {
 /// Malformed typed measurement input rejected before calling a Host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MeasurementPayloadError {
+    /// Text ranges overlap, split UTF-8 characters, or have invalid box metrics.
+    InvalidTextRange,
     /// Text has no usable font fallback.
     InvalidFontFamily,
     /// Font size is negative or non-finite.
@@ -595,6 +609,10 @@ impl From<&MeasurementRequest> for ModuleMeasureRequest {
 /// Final or provisional intrinsic content metrics.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeasurementMetrics {
+    /// Accepted line and fragment geometry for rich text.
+    pub paragraph: Option<crate::ParagraphMetrics>,
+    /// Placement of every inline child requested by a paragraph.
+    pub inline_placements: Vec<crate::InlinePlacement>,
     /// Measured content size.
     pub size: MeasuredSize,
     /// First line or provider-defined alignment baseline from the content top.
@@ -611,6 +629,8 @@ impl MeasurementMetrics {
     /// Creates metrics containing only a size.
     pub const fn from_size(size: MeasuredSize) -> Self {
         Self {
+            paragraph: None,
+            inline_placements: Vec::new(),
             size,
             first_baseline: None,
             last_baseline: None,
@@ -621,7 +641,11 @@ impl MeasurementMetrics {
 
     /// Returns whether all geometric values are finite and sizes non-negative.
     pub fn is_valid(&self) -> bool {
-        self.size.is_valid()
+        self.inline_placements.iter().all(|placement| {
+            placement
+                .origin
+                .is_none_or(|origin| origin.into_iter().all(f32::is_finite))
+        }) && self.size.is_valid()
             && [self.first_baseline, self.last_baseline]
                 .into_iter()
                 .flatten()
@@ -811,6 +835,8 @@ mod tests {
 
     fn text_payload() -> TextMeasurePayload {
         TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: "Hello".into(),
             style: TextMeasureStyle {
                 font_families: vec![
@@ -847,6 +873,65 @@ mod tests {
             },
             payload: MeasurementPayload::Text(text_payload()),
         }
+    }
+
+    #[test]
+    fn text_runs_require_ordered_character_boundaries_and_valid_metrics() {
+        let mut payload = text_payload();
+        payload.text = "a🦀b".into();
+        payload.runs.push(crate::TextMeasureRun {
+            alignment: Default::default(),
+            range: crate::TextByteRange { start: 1, end: 5 },
+            style: TextMeasureStyle::default(),
+        });
+        assert_eq!(payload.validate(), Ok(()));
+        payload.runs[0].range.start = 2;
+        assert_eq!(
+            payload.validate(),
+            Err(MeasurementPayloadError::InvalidTextRange)
+        );
+        payload.runs[0].range.start = 1;
+        payload.runs[0].style.font_size = f32::NAN;
+        assert_eq!(
+            payload.validate(),
+            Err(MeasurementPayloadError::InvalidFontSize)
+        );
+        payload.runs[0].style.font_size = 16.0;
+        payload.runs.push(payload.runs[0].clone());
+        assert_eq!(
+            payload.validate(),
+            Err(MeasurementPayloadError::InvalidTextRange)
+        );
+    }
+
+    #[test]
+    fn inline_boxes_require_unique_nodes_and_replacement_characters() {
+        let mut payload = text_payload();
+        payload.text = "a\u{fffc}\u{fffc}".into();
+        payload.attachments.push(crate::InlineAttachment {
+            truncation: false,
+            label: None,
+            node: NodeId::new(1).unwrap(),
+            range: crate::TextByteRange { start: 1, end: 4 },
+            size: MeasuredSize::new(24.0, 18.0),
+            baseline: 13.0,
+            alignment: crate::InlineAlignment::Baseline,
+        });
+        assert_eq!(payload.validate(), Ok(()));
+        let mut second = payload.attachments[0].clone();
+        second.range = crate::TextByteRange { start: 4, end: 7 };
+        payload.attachments.push(second);
+        assert_eq!(
+            payload.validate(),
+            Err(MeasurementPayloadError::InvalidTextRange)
+        );
+        payload.attachments[1].node = NodeId::new(2).unwrap();
+        assert_eq!(payload.validate(), Ok(()));
+        payload.attachments[1].baseline = f32::INFINITY;
+        assert_eq!(
+            payload.validate(),
+            Err(MeasurementPayloadError::InvalidTextRange)
+        );
     }
 
     fn ready(request: &MeasurementRequest) -> MeasurementResponse {

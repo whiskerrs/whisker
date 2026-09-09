@@ -20,12 +20,14 @@ public final class WhiskerView: UIView {
     private var touchIdentities = HostTouchIdentityMap()
     private var dirtyScrollOffsets: [UInt64: CGPoint] = [:]
     private let modules = HostModuleDispatcher()
+    let preparedParagraphs = PreparedParagraphs()
     private let resources = HostResourceStore()
     private lazy var resourceService = HostResourceService(store: resources)
     private var rasterResourceObserver: ((WhiskerRasterResourceEvent) -> Void)?
     private lazy var scene = HostScene(
         root: self,
         resources: resources,
+        preparedParagraphs: preparedParagraphs,
         logicalBounds: { [unowned self] in self.logicalBounds },
         emitElementEvent: { [weak self] node, name, detail in
             self?.dispatchElementEvent(node: node, name: name, detail: detail)

@@ -32,6 +32,8 @@ pub mod runtime_wake;
 mod standard_ui;
 mod surface_runtime;
 pub mod tasks;
+#[doc(hidden)]
+pub mod text_query;
 mod transform_interpolation;
 pub mod value;
 pub mod view;

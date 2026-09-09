@@ -1,6 +1,10 @@
 use super::*;
 
-fn inverse_map_around(transform: Transform, point: [f32; 2], origin: [f32; 2]) -> Option<[f32; 2]> {
+pub(super) fn inverse_map_around(
+    transform: Transform,
+    point: [f32; 2],
+    origin: [f32; 2],
+) -> Option<[f32; 2]> {
     if transform == Transform::IDENTITY {
         return Some(point);
     }
@@ -42,6 +46,8 @@ impl DesktopScene {
             elements,
             nodes: HashMap::new(),
             smooth_scrolls: HashMap::new(),
+            pending_text_queries: HashSet::new(),
+            selected_paragraph: None,
             dirty_scroll_offsets: HashSet::new(),
             presentation_pool: HashMap::new(),
             pending_events: Arc::new(Mutex::new(Vec::new())),
@@ -177,6 +183,17 @@ impl DesktopScene {
     }
 
     pub(crate) fn dispatch_text_input(&mut self, event: &DesktopTextInputEvent) -> bool {
+        if let Some(text) = self
+            .selected_paragraph
+            .and_then(|id| self.nodes.get_mut(&id))
+            .and_then(|n| n.content.text_state_mut())
+            .filter(|t| t.focused)
+        {
+            if matches!(event, DesktopTextInputEvent::SelectAll) {
+                text.select_all();
+            }
+            return true;
+        }
         let Some(node) = self
             .nodes
             .iter()
@@ -193,6 +210,14 @@ impl DesktopScene {
     }
 
     pub(crate) fn selected_text(&self) -> Option<String> {
+        if let Some(text) = self
+            .selected_paragraph
+            .and_then(|id| self.nodes.get(&id))
+            .and_then(|n| n.content.text_state())
+            .filter(|t| t.focused)
+        {
+            return Some(text.selected_text());
+        }
         self.nodes.values().find_map(|state| {
             state
                 .content
@@ -818,6 +843,7 @@ impl DesktopScene {
                 node: id,
                 rect: content_rect,
                 content,
+                selection: node.content.text_state().and_then(|text| text.selection()),
                 clip: descendant_clip.intersect(content_rect, true, true),
                 shape_clips: descendant_shape_clips.clone(),
                 transform,
@@ -1013,6 +1039,8 @@ impl DesktopScene {
                 self.prepared_content_revision = self.prepared_content_revision.wrapping_add(1);
             }
             self.pending_events.lock().unwrap().clear();
+            self.pending_text_queries.clear();
+            self.selected_paragraph = None;
             self.dirty_scroll_offsets.clear();
             self.smooth_scrolls.clear();
         }
@@ -1030,15 +1058,16 @@ impl DesktopScene {
                         });
                         event_wake.wake();
                     });
-                    let content = self
+                    let mut content = self
                         .presentation_pool
                         .get_mut(element_type)
                         .and_then(Vec::pop)
                         .unwrap_or_else(|| {
                             self.elements
-                                .create(*element_type, events)
+                                .create(*element_type, events.clone())
                                 .expect("element operations were validated before commit")
                         });
+                    content.rebind_events(events);
                     self.nodes.insert(
                         *node,
                         RenderNode {
@@ -1242,6 +1271,9 @@ impl DesktopScene {
                             }
                         }
                         let state = self.nodes.get_mut(node).expect("validated node");
+                        if command.get() == 3 && state.content.text_state().is_some() {
+                            self.pending_text_queries.insert(*node);
+                        }
                         state
                             .content
                             .invoke_command(*node, *command, arguments)

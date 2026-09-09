@@ -144,7 +144,9 @@ impl DesktopElementFactory {
     fn create(&self, events: DesktopEventEmitter) -> DesktopElementContent {
         match &self.kind {
             DesktopElementFactoryKind::Presentation => DesktopElementContent::Empty,
-            DesktopElementFactoryKind::Text => DesktopElementContent::Text(None),
+            DesktopElementFactoryKind::Text => {
+                DesktopElementContent::Text(crate::text::interaction::TextState::new(events))
+            }
             DesktopElementFactoryKind::ScrollContainer => DesktopElementContent::ScrollContainer,
             DesktopElementFactoryKind::Native(create) => {
                 let isolates_failures = !matches!(
@@ -534,7 +536,7 @@ impl WhiskerModule for BuiltInElementModule {
         DesktopModuleDefinition::new()
             .name("whisker.ui")
             .view(DesktopViewDefinition::new("whisker.ui/View", |_| ()))
-            .view(DesktopViewDefinition::new("whisker.ui/Text", |_| ()).plain_text())
+            .view(DesktopElementFactory::text("whisker.ui/Text"))
             .view(
                 DesktopViewDefinition::new("whisker.ui/ScrollView", |_| {
                     DesktopScrollViewState::default()
@@ -605,7 +607,7 @@ pub(crate) fn built_in_element_factories() -> Vec<DesktopElementFactory> {
 #[derive(Debug)]
 pub(crate) enum DesktopElementContent {
     Empty,
-    Text(Option<TextContent>),
+    Text(crate::text::interaction::TextState),
     ScrollContainer,
     Failed,
     Native {
@@ -617,13 +619,35 @@ pub(crate) enum DesktopElementContent {
 }
 
 impl DesktopElementContent {
+    pub(crate) fn rebind_events(&mut self, events: DesktopEventEmitter) {
+        if let Self::Text(text) = self {
+            text.events = events;
+        }
+    }
+
+    pub(crate) fn text_state(&self) -> Option<&crate::text::interaction::TextState> {
+        if let Self::Text(text) = self {
+            Some(text)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn text_state_mut(&mut self) -> Option<&mut crate::text::interaction::TextState> {
+        if let Self::Text(text) = self {
+            Some(text)
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn is_reusable_presentation(&self) -> bool {
         matches!(self, Self::Empty | Self::Text(_))
     }
 
     pub(crate) fn reset_for_presentation_reuse(&mut self) {
         match self {
-            Self::Text(text) => *text = None,
+            Self::Text(text) => text.reset(),
             Self::Native { text, .. } => *text = None,
             Self::Empty | Self::ScrollContainer | Self::Failed => {}
         }
@@ -668,7 +692,7 @@ impl DesktopElementContent {
 
     pub(crate) fn text(&self) -> Option<&TextContent> {
         match self {
-            Self::Text(content) => content.as_ref(),
+            Self::Text(content) => content.content.as_ref(),
             Self::Native { text, .. } => text.as_ref(),
             Self::Empty | Self::ScrollContainer | Self::Failed => None,
         }
@@ -731,7 +755,7 @@ impl DesktopElementContent {
     ) -> Result<(), DesktopElementError> {
         match self {
             Self::Text(current) => {
-                *current = Some(content);
+                current.set_content(content);
                 Ok(())
             }
             Self::Native {
@@ -787,6 +811,10 @@ impl DesktopElementContent {
         value: &WhiskerValue,
     ) -> Result<(), DesktopElementError> {
         match self {
+            Self::Text(text) if property.get() == 1 => {
+                text.set_selectable(matches!(value, WhiskerValue::Bool(true)));
+                Ok(())
+            }
             Self::Native {
                 implementation,
                 isolates_failures,
@@ -821,6 +849,10 @@ impl DesktopElementContent {
         property: PropertyId,
     ) -> Result<(), DesktopElementError> {
         match self {
+            Self::Text(text) if property.get() == 1 => {
+                text.set_selectable(false);
+                Ok(())
+            }
             Self::Native {
                 implementation,
                 isolates_failures,
@@ -854,6 +886,10 @@ impl DesktopElementContent {
         arguments: &WhiskerValue,
     ) -> Result<(), DesktopElementError> {
         match self {
+            Self::Text(text) if (1..=3).contains(&command.get()) => {
+                text.command(command.get(), arguments);
+                Ok(())
+            }
             Self::Native {
                 implementation,
                 isolates_failures,

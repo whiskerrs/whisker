@@ -70,6 +70,7 @@ pub use crate::value::{
     ClipPoint, FlexBasis, GridArea, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
     GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, ImageRef, InsetPath, LineHeight,
     MotionPathCommand, MotionPathPoint, OffsetDistance, OffsetPath, OffsetRotate, Repeated, Size,
+    VerticalAlignment,
 };
 pub use crate::variable::{ValueOrVariable, custom_var, custom_var_with_fallback};
 pub use whisker_style::{

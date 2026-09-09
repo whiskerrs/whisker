@@ -30,6 +30,14 @@ pub trait MeasurementProvider {
         requests: &[MeasurementRequest],
         responses: &mut Vec<MeasurementResponse>,
     ) -> Result<(), Self::Error>;
+    /// Retains measurement-cache objects independently of the currently displayed frame.
+    fn retain_prepared_content(
+        &mut self,
+        _surface: SurfaceId,
+        _revision: u64,
+        _retained: &mut dyn Iterator<Item = whisker_protocol::PreparedContentId>,
+    ) {
+    }
 }
 
 /// Limit for synchronous Host batches attempted by one layout drive.
@@ -107,6 +115,7 @@ impl SurfaceEngine {
             let progress =
                 self.compute_layout_with_measurements(root, viewport, environment_epoch)?;
             if progress.requests().is_empty() {
+                self.synchronize_prepared_content(provider);
                 return Ok(progress);
             }
             if batches >= options.max_immediate_batches {
@@ -206,6 +215,8 @@ mod tests {
                         key: request.key,
                         environment_epoch: request.environment_epoch,
                         metrics: MeasurementMetrics {
+                            paragraph: None,
+                            inline_placements: Vec::new(),
                             size: MeasuredSize::new(width, 21.0),
                             first_baseline: Some(15.0),
                             last_baseline: Some(15.0),
@@ -249,6 +260,8 @@ mod tests {
             content_hash: 1,
             style_hash: 2,
             payload: MeasurementPayload::Text(TextMeasurePayload {
+                runs: Vec::new(),
+                attachments: Vec::new(),
                 text: "measure me".into(),
                 style: TextMeasureStyle {
                     font_families: vec![MeasureFontFamily::Named("Inter".into())],

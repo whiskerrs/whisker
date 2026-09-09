@@ -59,6 +59,7 @@ private func decodeChildPolicy(_ raw: UInt8) -> WhiskerChildPolicy? {
     case 0: return WhiskerChildPolicy.none
     case 1: return .elements
     case 2: return .plainText
+    case 3: return .richText
     default: return nil
     }
 }

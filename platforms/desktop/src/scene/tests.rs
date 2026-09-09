@@ -15,7 +15,7 @@ use whisker_protocol::{
     TextPaint,
 };
 
-fn element_type(name: &str) -> ElementTypeId {
+pub(super) fn element_type(name: &str) -> ElementTypeId {
     standard_element_registrations()
         .into_iter()
         .find(|registration| registration.name == name)
@@ -23,7 +23,7 @@ fn element_type(name: &str) -> ElementTypeId {
         .element_type
 }
 
-fn scene(surface: SurfaceId) -> DesktopScene {
+pub(super) fn scene(surface: SurfaceId) -> DesktopScene {
     DesktopScene::new(
         surface,
         DesktopElementRegistry::bind(
@@ -34,11 +34,11 @@ fn scene(surface: SurfaceId) -> DesktopScene {
     )
 }
 
-fn id(value: u64) -> NodeId {
+pub(super) fn id(value: u64) -> NodeId {
     NodeId::new(value).unwrap()
 }
 
-fn geometry(x: f32, y: f32, width: f32, height: f32) -> LayoutGeometry {
+pub(super) fn geometry(x: f32, y: f32, width: f32, height: f32) -> LayoutGeometry {
     LayoutGeometry {
         border_box: LayoutRect {
             x,
@@ -86,9 +86,13 @@ fn paint(color: PaintColor) -> BoxPaint {
     }
 }
 
-fn text() -> TextContent {
+pub(super) fn text() -> TextContent {
     TextContent {
+        paragraph: None,
+        runs: Vec::new(),
         payload: TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: "native".into(),
             style: TextMeasureStyle {
                 font_families: vec![MeasureFontFamily::System],
@@ -115,12 +119,18 @@ fn text() -> TextContent {
 
 fn prepared_text(id: u64) -> TextContent {
     TextContent {
+        paragraph: None,
         prepared_content: PreparedContentId::new(id),
         ..text()
     }
 }
 
-fn packet(mode: FrameMode, base: u64, target: u64, operations: Vec<Operation>) -> FramePacket {
+pub(super) fn packet(
+    mode: FrameMode,
+    base: u64,
+    target: u64,
+    operations: Vec<Operation>,
+) -> FramePacket {
     FramePacket {
         header: FrameHeader {
             version: ProtocolVersion::CURRENT,
@@ -1690,7 +1700,16 @@ fn validation_does_not_instantiate_module_elements() {
 fn leaf_element_rejects_scene_children_without_partial_commit() {
     let parent = id(1);
     let child = id(2);
-    let mut scene = scene(SurfaceId::new(1).unwrap());
+    let mut registrations = standard_element_registrations();
+    registrations
+        .iter_mut()
+        .find(|r| r.name == whisker::TEXT_ELEMENT_NAME)
+        .unwrap()
+        .child_policy = whisker_protocol::ChildPolicy::PlainText;
+    let mut scene = DesktopScene::new(
+        SurfaceId::new(1).unwrap(),
+        DesktopElementRegistry::bind(&registrations, &built_in_element_factories()).unwrap(),
+    );
 
     assert_eq!(
         scene.present(&packet(

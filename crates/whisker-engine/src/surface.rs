@@ -212,10 +212,19 @@ pub struct SurfaceEngine {
     layout_provisional: bool,
     transforms: Rc<HashMap<NodeId, ComputedTransformStyle>>,
     radial_backgrounds: Rc<HashMap<NodeId, Vec<RadialBackgroundSource>>>,
+    paragraph_visibility: Rc<crate::paragraph_visibility::ParagraphVisibility>,
     measurements: Rc<MeasurementCoordinator>,
 }
 
 impl SurfaceEngine {
+    pub(crate) fn synchronize_prepared_content<P: crate::MeasurementProvider>(
+        &self,
+        provider: &mut P,
+    ) {
+        let (revision, mut retained) = self.measurements.retained_content();
+        provider.retain_prepared_content(self.surface(), revision, &mut retained);
+    }
+
     /// Creates an empty surface pipeline.
     pub fn new(surface: SurfaceId) -> Self {
         Self::with_protocol(surface, whisker_protocol::ProtocolVersion::CURRENT)
@@ -232,6 +241,7 @@ impl SurfaceEngine {
             layout_provisional: false,
             transforms: Rc::new(HashMap::new()),
             radial_backgrounds: Rc::new(HashMap::new()),
+            paragraph_visibility: Rc::default(),
             measurements: Rc::new(MeasurementCoordinator::default()),
         }
     }
@@ -314,6 +324,11 @@ impl SurfaceEngine {
         node: NodeId,
         accessibility: Accessibility,
     ) -> Result<(), SurfaceError> {
+        let accessibility = if self.paragraph_visibility.contains(node) {
+            Rc::make_mut(&mut self.paragraph_visibility).accessibility(node, accessibility)
+        } else {
+            accessibility
+        };
         self.scene
             .set_accessibility(node, accessibility)
             .map_err(SurfaceError::Scene)
@@ -464,6 +479,9 @@ impl SurfaceEngine {
             Rc::make_mut(&mut self.transforms).remove(&removed);
             Rc::make_mut(&mut self.radial_backgrounds).remove(&removed);
             Rc::make_mut(&mut self.measurements).remove_node(removed);
+            if self.paragraph_visibility.contains(removed) {
+                Rc::make_mut(&mut self.paragraph_visibility).remove(removed);
+            }
         }
         self.layout_dirty = true;
         Ok(())
@@ -587,8 +605,13 @@ impl SurfaceEngine {
         self.scene
             .set_opacity(node, lowered.opacity)
             .expect("computed opacity is valid and the scene node exists");
+        let visibility = if self.paragraph_visibility.contains(node) {
+            Rc::make_mut(&mut self.paragraph_visibility).visibility(node, lowered.visibility)
+        } else {
+            lowered.visibility
+        };
         self.scene
-            .set_visibility(node, lowered.visibility)
+            .set_visibility(node, visibility)
             .expect("the retained scene node was validated above");
         self.scene
             .set_z_order(node, lowered.z_order)
@@ -707,6 +730,40 @@ impl SurfaceEngine {
         input: &PlainTextInput,
         style: &ComputedStyle,
     ) -> Result<bool, SurfaceError> {
+        self.set_lowered_text(node, lower_plain_text(input, style))
+    }
+
+    /// Replaces a paragraph's inline content and intrinsic measurement inputs.
+    pub fn set_rich_text(
+        &mut self,
+        node: NodeId,
+        input: &PlainTextInput,
+        style: &ComputedStyle,
+        runs: &[crate::ResolvedTextRun],
+        attachments: &[crate::InlineAttachmentInput],
+    ) -> Result<bool, SurfaceError> {
+        let paragraph = !runs.is_empty() || !attachments.is_empty();
+        if self.layout.is_paragraph(node) != paragraph {
+            Rc::make_mut(&mut self.layout).set_paragraph(node, paragraph)?;
+        }
+        let changed = self.set_lowered_text(
+            node,
+            crate::lower_rich_text(input, style, runs, attachments),
+        )?;
+        if !self
+            .measurements
+            .inline_attachments_match(node, attachments)
+        {
+            Rc::make_mut(&mut self.measurements).set_inline_attachments(node, attachments);
+        }
+        Ok(changed)
+    }
+
+    fn set_lowered_text(
+        &mut self,
+        node: NodeId,
+        lowered: crate::LoweredPlainText,
+    ) -> Result<bool, SurfaceError> {
         self.ensure_mutable()?;
         let previous = self
             .scene
@@ -714,12 +771,14 @@ impl SurfaceEngine {
             .ok_or(SceneError::UnknownNode { node })?
             .text()
             .cloned();
-        let (mut content, measurement) = lower_plain_text(input, style).into_parts();
-        if previous.as_ref().map(|value| &value.payload) == Some(&content.payload) {
-            content.prepared_content = previous.as_ref().and_then(|value| value.prepared_content);
+        let (mut content, measurement) = lowered.into_parts();
+        let measurement_changed = self.set_measurement(node, Some(measurement))?;
+        if !measurement_changed && let Some(previous) = &previous {
+            content.prepared_content = previous.prepared_content;
+            content.paragraph = previous.paragraph.clone();
+            content.payload = previous.payload.clone();
         }
         let content_changed = previous.as_ref() != Some(&content);
-        let measurement_changed = self.set_measurement(node, Some(measurement))?;
         self.scene
             .set_text(node, content)
             .expect("validated synchronized text node remains mutable");
@@ -822,8 +881,6 @@ impl SurfaceEngine {
             Rc::<MeasurementCoordinator>::make_mut(&mut self.measurements),
         )?;
         let pass = Rc::make_mut(&mut self.measurements).finish_pass()?;
-        let ready_nodes = self.measurements.ready_nodes();
-        self.sync_text_presentations(&ready_nodes);
         if pass.blocking {
             self.layout_dirty = true;
             return Ok(LayoutProgress::Blocked {
@@ -832,6 +889,7 @@ impl SurfaceEngine {
             });
         }
 
+        self.sync_text_presentations(&snapshot);
         let update = self.project_layout(snapshot, inputs)?;
         if pass.provisional || !pass.requests.is_empty() || pass.pending != 0 {
             self.layout_provisional = true;
@@ -856,7 +914,6 @@ impl SurfaceEngine {
     ) -> Result<MeasurementApply, SurfaceError> {
         self.ensure_mutable()?;
         let apply = Rc::make_mut(&mut self.measurements).apply_batch(responses)?;
-        self.sync_text_presentations(apply.invalidated_nodes());
         for node in apply.invalidated_nodes() {
             Rc::make_mut(&mut self.layout)
                 .invalidate_measurement(*node)
@@ -873,7 +930,6 @@ impl SurfaceEngine {
     ) -> Result<DeferredMeasurementApply, SurfaceError> {
         self.ensure_mutable()?;
         let apply = Rc::make_mut(&mut self.measurements).apply_ready(ready)?;
-        self.sync_text_presentations(apply.invalidated_nodes());
         for node in apply.invalidated_nodes() {
             Rc::make_mut(&mut self.layout)
                 .invalidate_measurement(*node)
@@ -1034,6 +1090,9 @@ impl SurfaceEngine {
                 .set_background_layers(node, layers)
                 .expect("canonical radial backgrounds preserve protocol validity");
         }
+        if snapshot.has_paragraph_suppression() || !self.paragraph_visibility.is_empty() {
+            Rc::make_mut(&mut self.paragraph_visibility).project(&mut self.scene, &snapshot);
+        }
         self.last_layout = Some(Rc::new(snapshot));
         self.last_inputs = Some(inputs);
         self.layout_dirty = false;
@@ -1066,22 +1125,23 @@ impl SurfaceEngine {
         Ok(Some(transform))
     }
 
-    fn sync_text_presentations(&mut self, nodes: &[NodeId]) {
-        for node in nodes {
-            let Some(metrics) = self.measurements.last_ready(*node) else {
+    fn sync_text_presentations(&mut self, snapshot: &whisker_layout::LayoutSnapshot) {
+        for (node, selection) in snapshot.selections() {
+            let Some((whisker_protocol::MeasurementPayload::Text(payload), metrics)) =
+                self.measurements.selected(node, selection)
+            else {
                 continue;
             };
-            let Some(current) = self.scene.node(*node).and_then(SceneNode::text) else {
+            let Some(current) = self.scene.node(node).and_then(SceneNode::text) else {
                 continue;
             };
-            let content = TextContent {
-                payload: current.payload.clone(),
-                paint: current.paint.clone(),
-                prepared_content: metrics.prepared_content,
-            };
+            let mut content = current.clone();
+            content.payload = payload.clone();
+            content.prepared_content = metrics.prepared_content;
+            content.paragraph = metrics.paragraph.clone();
             self.scene
-                .set_text(*node, content)
-                .expect("measured text remains valid and the scene is mutable");
+                .set_text(node, content)
+                .expect("selected text remains valid");
         }
     }
 }
@@ -1474,6 +1534,8 @@ mod tests {
     fn measurement_payload(kind: MeasurementKind) -> MeasurementPayload {
         match kind {
             MeasurementKind::Text => MeasurementPayload::Text(TextMeasurePayload {
+                runs: Vec::new(),
+                attachments: Vec::new(),
                 text: "Hello, Whisker".into(),
                 style: TextMeasureStyle {
                     font_families: vec![MeasureFontFamily::System],
@@ -2996,3 +3058,7 @@ mod tests {
         assert!(sink.source().is_some());
     }
 }
+
+#[cfg(test)]
+#[path = "surface_paragraph_tests.rs"]
+mod paragraph_tests;

@@ -64,11 +64,37 @@ pub fn view_element_binding() -> ElementSchema {
 
 /// Returns the Host-independent binding for the standard text element.
 pub fn text_element_binding() -> ElementSchema {
-    element_schema(
+    let mut schema = element_schema(
         TEXT_ELEMENT_NAME,
-        ChildPolicy::PlainText,
+        ChildPolicy::RichText,
         ElementMeasurement::Text,
-    )
+    );
+    schema.properties.push(ElementPropertySchema {
+        property: PropertyId::new(1).unwrap(),
+        name: "selectable".into(),
+        value: ElementValueKind::Bool,
+    });
+    schema.events.extend(
+        ["selectionchange", "textqueryresult", "textactivate"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| ElementEventSchema {
+                event: EventId::new(index as u32 + 1).unwrap(),
+                name: name.into(),
+                detail: Some(ElementValueKind::Map),
+            }),
+    );
+    schema.commands.extend(
+        ["setSelection", "clearSelection", "textQuery"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| ElementCommandSchema {
+                command: CommandId::new(index as u32 + 1).unwrap(),
+                name: name.into(),
+                arguments: ElementValueKind::Map,
+            }),
+    );
+    schema
 }
 
 /// Returns the Host-independent binding for the standard scroll container.
@@ -170,7 +196,7 @@ mod tests {
         );
         assert_eq!(
             definition.elements[1].schema.child_policy,
-            ChildPolicy::PlainText
+            ChildPolicy::RichText
         );
         assert_eq!(
             definition.elements[2].schema.child_policy,
@@ -187,9 +213,9 @@ mod tests {
         assert!(definition.elements[0].schema.properties.is_empty());
         assert!(definition.elements[0].schema.events.is_empty());
         assert!(definition.elements[0].schema.commands.is_empty());
-        assert!(definition.elements[1].schema.properties.is_empty());
-        assert!(definition.elements[1].schema.events.is_empty());
-        assert!(definition.elements[1].schema.commands.is_empty());
+        assert_eq!(definition.elements[1].schema.properties.len(), 1);
+        assert_eq!(definition.elements[1].schema.events.len(), 3);
+        assert_eq!(definition.elements[1].schema.commands.len(), 3);
         assert_eq!(
             definition.elements[2].schema.properties[0].name,
             "scroll-orientation"

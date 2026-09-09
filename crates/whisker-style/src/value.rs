@@ -268,6 +268,8 @@ pub enum TextAlignValue {
 /// Lynx-supported `white-space` behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum WhiteSpaceValue {
+    /// Preserve spaces and explicit line breaks while allowing wrapping.
+    PreWrap,
     /// Collapse whitespace and allow line wrapping.
     #[default]
     Normal,
@@ -285,6 +287,24 @@ pub enum WordBreakValue {
     BreakAll,
     /// Suppress ordinary break opportunities inside CJK text.
     KeepAll,
+}
+
+/// Keyword alignment of an inline text span or atomic inline box.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum VerticalAlignValue {
+    /// Align baselines.
+    #[default]
+    Baseline,
+    /// Align with the line top.
+    Top,
+    /// Center on the surrounding font's x-height center.
+    Middle,
+    /// Align with the line bottom.
+    Bottom,
+    /// Raise by one third of the computed font size.
+    Super,
+    /// Lower by one fifth of the computed font size.
+    Sub,
 }
 
 /// Lynx-supported treatment of text that exceeds its line limit.
@@ -1027,6 +1047,8 @@ pub enum StyleValue {
     WhiteSpace(WhiteSpaceValue),
     /// Word-breaking policy.
     WordBreak(WordBreakValue),
+    /// Inline vertical alignment.
+    VerticalAlign(VerticalAlignValue),
     /// Text overflow treatment.
     TextOverflow(TextOverflowValue),
     /// Single inherited text shadow.

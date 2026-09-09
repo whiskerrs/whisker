@@ -2086,3 +2086,67 @@ fn custom_property_fallback_graph_covers_missing_nested_and_shared_references() 
         crate::ComputedSizeValue::Auto
     );
 }
+
+#[test]
+fn inline_alignment_resolves_local_font_relative_offsets_without_inheriting() {
+    use crate::{ComputedVerticalAlign as Computed, VerticalAlignValue as Value};
+    let environment = StyleEnvironment::default();
+    for (value, expected) in [
+        (Value::Baseline, Computed::Baseline),
+        (Value::Top, Computed::Top),
+        (Value::Middle, Computed::Middle),
+        (Value::Bottom, Computed::Bottom),
+        (Value::Super, Computed::Offset(number(10.0))),
+        (Value::Sub, Computed::Offset(number(-6.0))),
+    ] {
+        let specified = declaration(
+            StyleProperty::FontSize,
+            StyleValue::LengthPercentage(length(30.0, LengthUnit::Px)),
+        )
+        .push(
+            StyleProperty::VerticalAlign,
+            StyleValue::VerticalAlign(value),
+        );
+        let resolved = resolve_style(&specified, None, environment).unwrap();
+        assert_eq!(resolved.computed().vertical_align(), expected);
+        let child = resolve_style(
+            &SpecifiedStyle::new(),
+            Some(resolved.inherited_for_children()),
+            environment,
+        )
+        .unwrap();
+        assert_eq!(child.computed().vertical_align(), Computed::Baseline);
+    }
+    let resolved = resolve_style(
+        &declaration(StyleProperty::VerticalAlign, StyleValue::Length(px(8.0))),
+        None,
+        environment,
+    )
+    .unwrap();
+    assert_eq!(
+        resolved.computed().vertical_align(),
+        Computed::Offset(number(8.0))
+    );
+    assert!(
+        resolve_style(
+            &declaration(
+                StyleProperty::VerticalAlign,
+                StyleValue::Length(px(f32::NAN))
+            ),
+            None,
+            environment
+        )
+        .is_err()
+    );
+    assert!(
+        resolve_style(
+            &declaration(
+                StyleProperty::VerticalAlign,
+                StyleValue::Number(number(2.0))
+            ),
+            None,
+            environment
+        )
+        .is_err()
+    );
+}

@@ -21,6 +21,7 @@ mod frame;
 mod id;
 mod input;
 mod measurement;
+mod paragraph;
 mod resource;
 mod validation;
 mod visual;
@@ -46,7 +47,7 @@ pub use frame::{
 };
 pub use id::{
     CommandId, ElementTypeId, EventId, MeasurementKey, MeasurementRequestId, NodeId, PointerId,
-    PreparedContentId, PropertyId, ResourceId, SurfaceId,
+    PreparedContentId, PropertyId, ResourceId, SurfaceId, TextSpanId,
 };
 pub use input::{
     HostPresentationUpdate, InputEvent, InputEventError, InputEventKind, InputPoint, PointerInput,
@@ -63,6 +64,10 @@ pub use measurement::{
     ReplacedContentMeasurePayload, TextMeasurePayload, TextMeasureStyle,
     UnsupportedMeasurementReason, validate_measurement_batch,
 };
+pub use paragraph::{
+    InlineAlignment, InlineAttachment, InlinePlacement, ParagraphLine, ParagraphMetrics,
+    TextByteRange, TextFragment, TextMeasureRun, TextPaintRun, TextRange,
+};
 pub use resource::{
     ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode, ResourceKind,
     ResourceMessageError, ResourceRequest, ResourceSource,
@@ -77,3 +82,6 @@ pub use visual::{
     TextDecorationStyle, TextDecorationThickness, TextShadow, TransformStyle, VisualEffects,
 };
 pub use whisker_value::WhiskerValue;
+
+#[cfg(test)]
+mod paragraph_contract_tests;

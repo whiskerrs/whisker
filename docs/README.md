@@ -19,6 +19,8 @@ Whisker itself**.
 - [`reactivity-design.md`](reactivity-design.md) — the design and
   rationale of the fine-grained reactive runtime (signals, effects,
   the owner/scope tree, batching).
+- [`text-design.md`](text-design.md) — paragraph compilation, atomic inline views,
+  Host text layout, selection, and prepared-content lifetime.
 - [`list-design.md`](list-design.md) — how Rust virtualizes keyed items
   over a ScrollView and reconciles their sizes and scroll position.
 - [`hot-reload-internals.md`](hot-reload-internals.md) — how Hot Reload

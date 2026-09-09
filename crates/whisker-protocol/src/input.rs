@@ -115,6 +115,8 @@ impl HostPresentationUpdate {
 /// One input or provider event entering a retained surface.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputEvent {
+    /// Accepted presentation when the Host captured this input, if known.
+    pub presentation_revision: Option<u64>,
     /// Destination surface.
     pub surface: SurfaceId,
     /// Monotonic Host timestamp in milliseconds.
@@ -188,6 +190,7 @@ mod tests {
     #[test]
     fn validates_every_timestamp_and_pointer_geometry_path() {
         let mut event = InputEvent {
+            presentation_revision: None,
             surface: SurfaceId::new(1).unwrap(),
             timestamp_ms: 1.0,
             kind: InputEventKind::Click,
