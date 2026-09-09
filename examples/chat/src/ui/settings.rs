@@ -26,7 +26,7 @@ pub fn settings_screen() -> Element {
                     style: theme::style(settings_shell::description),
                 )
             }
-            View(style: theme::style(move |palette| setting_row(palette))) {
+            View(style: theme::style(setting_row)) {
                 View(
                     style: theme::column()
                         .flex_grow(1.0)
@@ -43,7 +43,7 @@ pub fn settings_screen() -> Element {
             }
             View(style: theme::column().gap(px(16))) {
                 Text(value: "Connection", style: theme::style(settings_shell::label))
-                View(style: theme::style(move |palette| setting_row(palette))) {
+                View(style: theme::style(setting_row)) {
                     View(
                         style: theme::column()
                             .flex_grow(1.0)
