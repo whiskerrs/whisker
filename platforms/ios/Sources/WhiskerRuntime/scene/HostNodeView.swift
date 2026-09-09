@@ -334,6 +334,7 @@ final class WhiskerNodeView: UIView {
     func setWhiskerVisibility(_ visible: Bool) {
         guard whiskerVisible != visible else { return }
         whiskerVisible = visible
+        if !visible { endEditing(true) }
         paintView.isHidden = !visible
         boxShadowLayers.forEach { $0.isHidden = !visible }
         backdropBlurView?.isHidden = !visible

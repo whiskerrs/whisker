@@ -242,6 +242,30 @@ pub trait DynRenderer {
         EventDispatchPlan::default()
     }
 
+    #[doc(hidden)]
+    fn enable_text_geometry(&self, _handle: Element) {}
+
+    #[doc(hidden)]
+    fn mark_inline_truncation(&self, _handle: Element) {}
+
+    #[doc(hidden)]
+    fn request_text_query(
+        &self,
+        _handle: Element,
+        _query: crate::text_query::TextQuery,
+    ) -> crate::text_query::TextQueryFuture {
+        crate::text_query::TextQueryFuture::failed(crate::text_query::TextQueryError::NotBound)
+    }
+
+    #[doc(hidden)]
+    fn set_text_selection(
+        &self,
+        _handle: Element,
+        _range: Option<whisker_protocol::TextRange>,
+    ) -> Result<(), crate::text_query::TextQueryError> {
+        Err(crate::text_query::TextQueryError::NotBound)
+    }
+
     /// Handles an element command through the retained semantic frame path.
     /// Renderers without command support leave the default `None`.
     fn invoke_element_command(
@@ -981,6 +1005,33 @@ pub(crate) fn request_list_layout() {
     with_renderer(|renderer| renderer.request_list_layout(), ())
 }
 
+#[doc(hidden)]
+pub fn enable_text_geometry(handle: Element) {
+    with_renderer(|renderer| renderer.enable_text_geometry(handle), ())
+}
+
+#[doc(hidden)]
+pub fn request_text_query(
+    handle: Element,
+    query: crate::text_query::TextQuery,
+) -> crate::text_query::TextQueryFuture {
+    with_renderer(
+        |renderer| renderer.request_text_query(handle, query),
+        crate::text_query::TextQueryFuture::failed(crate::text_query::TextQueryError::NotBound),
+    )
+}
+
+#[doc(hidden)]
+pub fn set_text_selection(
+    handle: Element,
+    range: Option<whisker_protocol::TextRange>,
+) -> Result<(), crate::text_query::TextQueryError> {
+    with_renderer(
+        |renderer| renderer.set_text_selection(handle, range),
+        Err(crate::text_query::TextQueryError::NotBound),
+    )
+}
+
 /// Gives the installed renderer the first opportunity to handle an element
 /// command. `None` asks the driver to use its legacy bridge path.
 #[doc(hidden)]
@@ -1023,4 +1074,9 @@ pub fn set_root(root: Element) {
 
 pub fn flush() {
     with_renderer(|r| r.flush(), ())
+}
+
+#[doc(hidden)]
+pub fn mark_inline_truncation(handle: Element) {
+    with_renderer(|renderer| renderer.mark_inline_truncation(handle), ());
 }

@@ -282,6 +282,8 @@ fn definite_text_constraint_caps_instead_of_forcing_intrinsic_width() {
             available_space: [AvailableSpace::Definite(200.0), AvailableSpace::MaxContent],
         },
         payload: MeasurementPayload::Text(TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: "Hi".into(),
             style: TextMeasureStyle {
                 font_size: 16.0,
@@ -329,6 +331,8 @@ fn text_measurement_batch_preserves_response_order_and_cleans_up_probes() {
             available_space: [AvailableSpace::Definite(200.0), AvailableSpace::MaxContent],
         },
         payload: MeasurementPayload::Text(TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: value.into(),
             style: TextMeasureStyle {
                 font_size: 16.0,
@@ -1836,6 +1840,8 @@ impl Driver {
                 ],
             },
             payload: MeasurementPayload::Text(TextMeasurePayload {
+                runs: Vec::new(),
+                attachments: Vec::new(),
                 text: text.to_owned(),
                 style: TextMeasureStyle {
                     font_families: font_families
@@ -3792,7 +3798,11 @@ fn fixture_font_optical_sizing(
 fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextContent {
     use whisker_host_conformance::{TextOverflowFixture, WhiteSpaceFixture, WordBreakFixture};
     TextContent {
+        paragraph: None,
+        runs: Vec::new(),
         payload: TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: text.value.clone(),
             style: TextMeasureStyle {
                 font_families: text

@@ -27,6 +27,7 @@ internal object AndroidHostCapabilities {
             MobileAbi.CAPABILITY_VISUAL_EFFECTS or
             MobileAbi.CAPABILITY_TEXT_EFFECTS or
             MobileAbi.CAPABILITY_TEXT_TYPOGRAPHY or
+            MobileAbi.CAPABILITY_RICH_TEXT or
             MobileAbi.CAPABILITY_CURSOR or
             MobileAbi.CAPABILITY_RESOURCE_LIFECYCLE or
             MobileAbi.CAPABILITY_LINEAR_GRADIENTS or

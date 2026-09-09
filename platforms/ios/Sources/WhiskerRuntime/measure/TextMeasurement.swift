@@ -3,7 +3,7 @@ import UIKit
 import WhiskerModule
 
 let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses in
-    guard data != nil, let requests, let responses else { return false }
+    guard let data, let requests, let responses else { return false }
     var textFontFamilies = [[String]?](repeating: nil, count: count)
     for index in 0..<count {
         let request = requests.advanced(by: index).pointee
@@ -37,6 +37,7 @@ let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses i
         case UInt32(WHISKER_MEASURE_TEXT):
             measureText(
                 request,
+                preparedParagraphs: Unmanaged<WhiskerView>.fromOpaque(data).takeUnretainedValue().preparedParagraphs,
                 fontFamilies: textFontFamilies[index] ?? ["system"],
                 response: &response
             )
@@ -57,6 +58,7 @@ let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses i
 
 private func measureText(
     _ request: WhiskerMobileMeasureRequest,
+    preparedParagraphs: PreparedParagraphs,
     fontFamilies: [String],
     response: inout WhiskerMobileMeasureResponse
 ) {
@@ -97,6 +99,39 @@ private func measureText(
         }
     }
     let source = hostString(request.text)
+    if let pointer = request.paragraph {
+        do {
+            let rich = try WhiskerParagraph(value: .from(raw: pointer.pointee), text: source)
+            let (layout, measuredParagraph) = rich.prepare(attributes: attributes,
+                width: request.known_mask & 1 != 0 ? CGFloat(request.known_width) : width,
+                maxLines: request.wrap == 0 ? 1 : Int(request.max_lines), overflow: request.overflow == 1 ? .ellipsis : .clip)
+            response.status = UInt32(WHISKER_MEASURE_READY)
+            response.width = request.known_mask & 1 != 0 ? request.known_width : Float(ceil(layout.size.width))
+            response.height = request.known_mask & 2 != 0 ? request.known_height : Float(ceil(layout.size.height))
+            response.first_baseline = Float(layout.baselines.first)
+            response.last_baseline = Float(layout.baselines.last)
+            response.metrics_mask = 7
+            response.prepared_content = request.key
+            let prepared = preparedParagraphs.insert(layout, id: request.key)
+            response.prepared_layout = Unmanaged.passRetained(prepared).toOpaque()
+            response.release_prepared_layout = { pointer in
+                if let pointer { Unmanaged<PreparedParagraph>.fromOpaque(pointer).release() }
+            }
+            let geometry = UnsafeMutablePointer<WhiskerValueRaw>.allocate(capacity: 1)
+            geometry.initialize(to: layout.measurementGeometry(measuredParagraph).toRaw())
+            response.paragraph = geometry
+            response.release_paragraph = { pointer in
+                guard let pointer else { return }
+                WhiskerValue.releaseRaw(&pointer.pointee)
+                pointer.deinitialize(count: 1)
+                pointer.deallocate()
+            }
+        } catch {
+            response.status = UInt32(WHISKER_MEASURE_UNSUPPORTED)
+            response.reason = 2
+        }
+        return
+    }
     let measuredText = request.word_break == 2 ? protectCJKBreaks(source) : source
     var measured = (measuredText as NSString).boundingRect(
         with: CGSize(width: width, height: .greatestFiniteMagnitude),
@@ -119,7 +154,8 @@ private func measureText(
         response.first_baseline,
         response.height - Float(abs(baseFont.descender))
     )
-    response.metrics_mask = 3
+    response.metrics_mask = 7
+    response.prepared_content = request.key
 }
 
 func whiskerTextParagraphStyle(

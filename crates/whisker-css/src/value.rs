@@ -15,6 +15,34 @@ use crate::data_type::{
 };
 use crate::to_css::{ToCss, write_number};
 
+/// A keyword or signed distance for `vertical-align`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VerticalAlignment {
+    /// Inline alignment keyword.
+    Keyword(crate::VerticalAlign),
+    /// Signed baseline shift; positive values raise the content.
+    Offset(Length),
+}
+
+impl From<crate::VerticalAlign> for VerticalAlignment {
+    fn from(value: crate::VerticalAlign) -> Self {
+        Self::Keyword(value)
+    }
+}
+impl From<Length> for VerticalAlignment {
+    fn from(value: Length) -> Self {
+        Self::Offset(value)
+    }
+}
+impl ToCss for VerticalAlignment {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Keyword(value) => value.to_css(dest),
+            Self::Offset(value) => value.to_css(dest),
+        }
+    }
+}
+
 // ---------- BackdropFilter ----------
 
 /// Supported value of `backdrop-filter`.

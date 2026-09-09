@@ -31,6 +31,7 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 subsecond = { workspace = true, optional = true }
 subsecond-types = { workspace = true, optional = true }
+unicode-segmentation = "1.12"
 js-sys = "0.3"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
@@ -44,6 +45,12 @@ web-sys = { version = "0.3", features = [
     "Document",
     "DocumentFragment",
     "DomRect",
+    "DomRectList",
+    "Range",
+    "Selection",
+    "ClipboardEvent",
+    "DataTransfer",
+    "NodeList",
     "Element",
     "Event",
     "EventTarget",
@@ -56,6 +63,9 @@ web-sys = { version = "0.3", features = [
     "Node",
     "Performance",
     "PointerEvent",
+    "MouseEvent",
+    "MouseEventInit",
+    "KeyboardEvent",
     "ScrollBehavior",
     "ScrollToOptions",
     "ShadowRoot",

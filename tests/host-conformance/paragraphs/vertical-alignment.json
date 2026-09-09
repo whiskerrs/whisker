@@ -1,0 +1,29 @@
+{
+  "text": "A ￼ B ￼ C",
+  "paragraph": {
+    "version": 1,
+    "runs": [],
+    "attachments": [
+      {
+        "node": 22,
+        "start": 2,
+        "end": 3,
+        "width": 20,
+        "height": 80,
+        "baseline": 50,
+        "alignment": 1,
+        "shift": 0
+      },
+      {
+        "node": 23,
+        "start": 6,
+        "end": 7,
+        "width": 20,
+        "height": 50,
+        "baseline": 30,
+        "alignment": 3,
+        "shift": 0
+      }
+    ]
+  }
+}

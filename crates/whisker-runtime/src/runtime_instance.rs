@@ -98,6 +98,7 @@ mod tests {
         surface.reset_surface_snapshot_count();
         runtime
             .dispatch_input(&InputEvent {
+                presentation_revision: None,
                 surface: surface.surface(),
                 timestamp_ms: 1.0,
                 kind: InputEventKind::Named("scroll".to_owned()),
@@ -174,6 +175,7 @@ mod tests {
 
         runtime
             .dispatch_input(&InputEvent {
+                presentation_revision: None,
                 surface: surface.surface(),
                 timestamp_ms: 1.0,
                 kind: InputEventKind::Named("dismiss".to_owned()),
@@ -315,6 +317,7 @@ mod tests {
         });
 
         let queued_input = InputEvent {
+            presentation_revision: None,
             surface: surface.surface(),
             timestamp_ms: 1.0,
             kind: InputEventKind::Named("queued-input".to_owned()),
@@ -361,6 +364,8 @@ mod tests {
             request_id: MeasurementRequestId::new(1).unwrap(),
             environment_epoch: 1,
             metrics: MeasurementMetrics {
+                paragraph: None,
+                inline_placements: Vec::new(),
                 size: MeasuredSize::new(10.0, 10.0),
                 first_baseline: None,
                 last_baseline: None,
@@ -401,6 +406,7 @@ mod tests {
 
         let dispatch = runtime
             .dispatch_input(&InputEvent {
+                presentation_revision: None,
                 surface: surface.surface(),
                 timestamp_ms: 1.0,
                 kind: InputEventKind::Click,
@@ -561,6 +567,7 @@ enum PendingHostEvent {
 const HOST_EVENT_QUEUE_CAP: usize = 4096;
 #[derive(Clone, Copy, Debug)]
 struct ActivationCandidate {
+    presentation_revision: Option<u64>,
     target: NodeId,
     origin: InputPoint,
     started_at_ms: f64,
@@ -615,6 +622,20 @@ impl ActivationRecognizer {
         hit_target: Option<NodeId>,
         accepts_longpress: bool,
     ) -> Option<RecognizedActivation> {
+        if matches!(&event.kind, InputEventKind::Named(name) if name == "selectionchange") {
+            if let WhiskerValue::Map(fields) = &event.detail {
+                if matches!((fields.get("start"), fields.get("end")), (Some(WhiskerValue::Int(start)), Some(WhiskerValue::Int(end))) if *start >= 0 && end > start)
+                {
+                    for candidate in self
+                        .pointers
+                        .values_mut()
+                        .filter(|candidate| Some(candidate.target) == hit_target)
+                    {
+                        candidate.cancelled = true;
+                    }
+                }
+            }
+        }
         let pointer = event.pointer?;
         match event.kind {
             InputEventKind::PointerDown => {
@@ -631,6 +652,7 @@ impl ActivationRecognizer {
                             target,
                             origin: pointer.position,
                             started_at_ms: event.timestamp_ms,
+                            presentation_revision: event.presentation_revision,
                             pointer_kind: pointer.kind,
                             pointer,
                             longpress_pending: accepts_longpress
@@ -671,6 +693,7 @@ impl ActivationRecognizer {
                 }
                 Some(RecognizedActivation {
                     tap: InputEvent {
+                        presentation_revision: candidate.presentation_revision,
                         surface: event.surface,
                         timestamp_ms: event.timestamp_ms,
                         kind: InputEventKind::Tap,
@@ -708,6 +731,7 @@ impl ActivationRecognizer {
                 }
                 candidate.longpress_fired = true;
                 Some(InputEvent {
+                    presentation_revision: candidate.presentation_revision,
                     surface,
                     timestamp_ms,
                     kind: InputEventKind::Named("longpress".into()),
@@ -948,6 +972,16 @@ impl RuntimeInstance {
     ) -> Result<InputDispatch, RuntimeEventError> {
         self.require(RuntimeLifecycle::Running, "dispatch input")
             .map_err(RuntimeEventError::Lifecycle)?;
+        let stamped;
+        let event = if event.pointer.is_some() && event.presentation_revision.is_none() {
+            stamped = InputEvent {
+                presentation_revision: Some(self.surface.accepted_revision()),
+                ..event.clone()
+            };
+            &stamped
+        } else {
+            event
+        };
         if self.context.is_entered() {
             if event.surface != self.surface.surface() {
                 return Err(RuntimeEventError::Input(
@@ -1160,6 +1194,7 @@ impl RuntimeInstance {
                     .step_motion(timestamp_ms)
                     .map_err(RuntimeDriveError::Motion)?;
 
+                let pending_text_queries = surface.step_text_queries(timestamp_ms);
                 let frame = surface
                     .render_frame(
                         LayoutSize::new(
@@ -1180,6 +1215,7 @@ impl RuntimeInstance {
                 Ok(RuntimeDrive {
                     frame,
                     needs_frame: recovery
+                        || pending_text_queries
                         || self.activations.borrow().has_pending_longpress()
                         || drained_events > 0
                         || reactive::has_pending_work()
@@ -1217,9 +1253,10 @@ impl RuntimeInstance {
                 .surface
                 .dispatch_input_with_presentation(routed_event, presentation)?;
             let accepts_longpress = matches!(event.kind, InputEventKind::PointerDown)
-                && dispatch
-                    .target
-                    .is_some_and(|target| self.surface.has_input_listener(target, "longpress"));
+                && dispatch.target.is_some_and(|target| {
+                    !self.surface.is_selectable_paragraph(target)
+                        && self.surface.has_input_listener(target, "longpress")
+                });
             let activation =
                 self.activations
                     .borrow_mut()
@@ -1383,3 +1420,7 @@ impl RuntimeInstance {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_instance/activation_tests.rs"]
+mod activation_tests;

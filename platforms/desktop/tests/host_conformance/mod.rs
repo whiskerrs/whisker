@@ -116,7 +116,11 @@ fn fixture_alignment(
 fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextContent {
     use whisker_host_conformance::{TextOverflowFixture, WhiteSpaceFixture, WordBreakFixture};
     TextContent {
+        paragraph: None,
+        runs: Vec::new(),
         payload: TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: text.value.clone(),
             style: TextMeasureStyle {
                 font_families: text
@@ -1498,6 +1502,8 @@ impl Driver {
                 ],
             },
             payload: MeasurementPayload::Text(TextMeasurePayload {
+                runs: Vec::new(),
+                attachments: Vec::new(),
                 text: value.clone(),
                 style: TextMeasureStyle {
                     font_families: font_families
@@ -2112,26 +2118,28 @@ fn render_taffy_protocol_and_desktop_box_paint_compose() {
     let _root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(100))
-                    .height(px(100))
-                    .background_color(Color::rgb(0, 255, 255))
-                    .border_top_width(px(10))
-                    .border_right_width(px(10))
-                    .border_bottom_width(px(10))
-                    .border_left_width(px(10))
-                    .border_top_color(Color::rgb(0, 0, 0))
-                    .border_right_color(Color::rgb(0, 0, 0))
-                    .border_bottom_color(Color::rgb(0, 0, 0))
-                    .border_left_color(Color::rgb(0, 0, 0))
-                    .border_top_style(BorderStyle::Solid)
-                    .border_right_style(BorderStyle::Solid)
-                    .border_bottom_style(BorderStyle::Solid)
-                    .border_left_style(BorderStyle::Solid)
-                    .border_top_left_radius(px(60))
-                    .border_top_right_radius(px(150))
-                    .border_bottom_right_radius(px(30))
-                    .border_bottom_left_radius(px(30)))
+                View(
+                    style: Css::new()
+                        .width(px(100))
+                        .height(px(100))
+                        .background_color(Color::rgb(0, 255, 255))
+                        .border_top_width(px(10))
+                        .border_right_width(px(10))
+                        .border_bottom_width(px(10))
+                        .border_left_width(px(10))
+                        .border_top_color(Color::rgb(0, 0, 0))
+                        .border_right_color(Color::rgb(0, 0, 0))
+                        .border_bottom_color(Color::rgb(0, 0, 0))
+                        .border_left_color(Color::rgb(0, 0, 0))
+                        .border_top_style(BorderStyle::Solid)
+                        .border_right_style(BorderStyle::Solid)
+                        .border_bottom_style(BorderStyle::Solid)
+                        .border_left_style(BorderStyle::Solid)
+                        .border_top_left_radius(px(60))
+                        .border_top_right_radius(px(150))
+                        .border_bottom_right_radius(px(30))
+                        .border_bottom_left_radius(px(30)),
+                )
             }
         });
         set_root(root);

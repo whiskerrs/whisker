@@ -1,10 +1,14 @@
 package rs.whisker.runtime.measure
 
+import rs.whisker.runtime.WhiskerValue
+
 /** Result storage returned across the Android Host measurement JNI seam. */
 class HostMeasureBatchResponse(
     @JvmField val longs: LongArray,
     @JvmField val ints: IntArray,
     @JvmField val floats: FloatArray,
+    @JvmField val paragraphs: Array<WhiskerValue?>,
+    @JvmField val layouts: Array<android.text.StaticLayout?> = arrayOfNulls(paragraphs.size),
 )
 
 /** Flat-array layout shared with the Android C bridge. */
@@ -64,6 +68,7 @@ internal object HostMeasureBatchAbi {
         fontFamilies: Array<Array<String>>,
         fontSettings: Array<Array<String>>,
         payloads: Array<ByteArray>,
+        paragraphs: Array<WhiskerValue?> = arrayOfNulls(payloads.size),
     ): HostMeasureBatchResponse {
         require(requestLongs.size % REQUEST_LONG_STRIDE == 0)
         val count = requestLongs.size / REQUEST_LONG_STRIDE
@@ -73,10 +78,13 @@ internal object HostMeasureBatchAbi {
         require(fontFamilies.size == count)
         require(fontSettings.size == count)
         require(payloads.size == count)
+        require(paragraphs.size == count)
 
         val responseLongs = LongArray(count * RESPONSE_LONG_STRIDE)
         val responseInts = IntArray(count * RESPONSE_INT_STRIDE)
         val responseFloats = FloatArray(count * RESPONSE_FLOAT_STRIDE)
+        val responseParagraphs = arrayOfNulls<WhiskerValue>(count)
+        val responseLayouts = arrayOfNulls<android.text.StaticLayout>(count)
         repeat(count) { index ->
             val longBase = index * REQUEST_LONG_STRIDE
             val intBase = index * REQUEST_INT_STRIDE
@@ -118,27 +126,30 @@ internal object HostMeasureBatchAbi {
                 requestInts[intBase + INTRINSIC_MASK],
                 requestInts[intBase + DIRECTION],
                 requestInts[intBase + ALIGNMENT],
+                paragraphs[index],
             )
-            require(measured.size >= 7)
+            responseParagraphs[index] = measured.paragraph
+            responseLayouts[index] = measured.layout
+            measured.layout?.let { provider.preparedParagraphs.put(requestLongs[longBase + KEY], it) }
 
             val responseLongBase = index * RESPONSE_LONG_STRIDE
             responseLongs[responseLongBase] = requestLongs[longBase + KEY]
             responseLongs[responseLongBase + 1] = requestLongs[longBase + ENVIRONMENT_EPOCH]
-            // Android measurement does not currently produce prepared-content handles.
             responseLongs[responseLongBase + 2] = 0
-            responseLongs[responseLongBase + 3] = 0
+            val prepared = requestInts[intBase + KIND] == rs.whisker.runtime.bridge.MobileAbi.MEASURE_TEXT && measured.status == rs.whisker.runtime.bridge.MobileAbi.MEASURE_READY
+            responseLongs[responseLongBase + 3] = if (prepared) requestLongs[longBase + KEY] else 0
 
             val responseIntBase = index * RESPONSE_INT_STRIDE
-            responseInts[responseIntBase] = measured[0].toInt()
-            responseInts[responseIntBase + 1] = measured[1].toInt()
-            responseInts[responseIntBase + 2] = measured[6].toInt()
+            responseInts[responseIntBase] = measured.status
+            responseInts[responseIntBase + 1] = measured.reason
+            responseInts[responseIntBase + 2] = measured.mask or (if (prepared) 4 else 0)
 
             val responseFloatBase = index * RESPONSE_FLOAT_STRIDE
-            responseFloats[responseFloatBase] = measured[2]
-            responseFloats[responseFloatBase + 1] = measured[3]
-            responseFloats[responseFloatBase + 2] = measured[4]
-            responseFloats[responseFloatBase + 3] = measured[5]
+            responseFloats[responseFloatBase] = measured.width
+            responseFloats[responseFloatBase + 1] = measured.height
+            responseFloats[responseFloatBase + 2] = measured.firstBaseline
+            responseFloats[responseFloatBase + 3] = measured.lastBaseline
         }
-        return HostMeasureBatchResponse(responseLongs, responseInts, responseFloats)
+        return HostMeasureBatchResponse(responseLongs, responseInts, responseFloats, responseParagraphs, responseLayouts)
     }
 }

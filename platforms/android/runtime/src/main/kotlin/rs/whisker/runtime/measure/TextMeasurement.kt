@@ -20,6 +20,10 @@ import rs.whisker.runtime.WhiskerAvailableSpace
 import rs.whisker.runtime.WhiskerElementBindings
 import rs.whisker.runtime.WhiskerMeasureRequest
 import rs.whisker.runtime.WhiskerValue
+import rs.whisker.runtime.WhiskerParagraph
+import rs.whisker.runtime.measurementGeometry
+import rs.whisker.runtime.truncateToFit
+import rs.whisker.runtime.resolveVerticalAlignment
 import rs.whisker.runtime.resolveWhiskerTypeface
 import rs.whisker.runtime.internal.CenteredLineHeightSpan
 
@@ -27,6 +31,7 @@ import rs.whisker.runtime.internal.CenteredLineHeightSpan
 internal class HostMeasurementProvider(
     private val context: Context,
     private val elements: WhiskerElementBindings,
+    internal val preparedParagraphs: PreparedParagraphs = PreparedParagraphs(),
 ) {
     @Suppress("LongParameterList")
     fun measure(
@@ -41,7 +46,8 @@ internal class HostMeasurementProvider(
         fontOpticalSizing: Int, payloadVersion: Int, payload: ByteArray,
         intrinsicWidth: Float, intrinsicHeight: Float, intrinsicMask: Int,
         direction: Int, alignment: Int,
-    ): FloatArray {
+        paragraph: WhiskerValue? = null,
+    ): HostMeasurementResult {
         if (kind == MEASURE_TEXT) {
             return measureText(
                 knownWidth, knownHeight, knownMask,
@@ -49,6 +55,7 @@ internal class HostMeasurementProvider(
                 text, locale, fontFamilies, fontSize, fontWeight, fontStyle, wrap, wordBreak, overflow,
                 letterSpacing, lineHeight, indentLogicalPixels, indentPercentage, maxLines,
                 fontSettings, fontFeatureCount, fontOpticalSizing, direction, alignment,
+                WhiskerParagraph.decode(paragraph, text),
             )
         }
         if ((kind == MEASURE_REPLACED_CONTENT || kind == MEASURE_EMBEDDED_SURFACE) &&
@@ -71,7 +78,7 @@ internal class HostMeasurementProvider(
                 payloadVersion,
                 WhiskerValue.Bytes(payload),
             ),
-        ) ?: return floatArrayOf(UNSUPPORTED, UNSUPPORTED_FEATURE, 0f, 0f, 0f, 0f, 0f)
+        ) ?: return HostMeasurementResult(status = UNSUPPORTED, reason = UNSUPPORTED_FEATURE)
         return ready(
             if (knownMask and WIDTH != 0) knownWidth else custom.width,
             if (knownMask and HEIGHT != 0) knownHeight else custom.height,
@@ -87,7 +94,8 @@ internal class HostMeasurementProvider(
         lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float, maxLines: Int,
         fontSettings: Array<String>, fontFeatureCount: Int, fontOpticalSizing: Int,
         direction: Int, alignment: Int,
-    ): FloatArray {
+        rich: WhiskerParagraph?,
+    ): HostMeasurementResult {
         val density = context.resources.displayMetrics.density
         val paint = TextPaint().apply {
             textSize = fontSize * density
@@ -123,7 +131,7 @@ internal class HostMeasurementProvider(
             availableWidthKind == DEFINITE -> availableWidth
             else -> 0f
         }
-        val displayText = if (wordBreak == WORD_BREAK_KEEP_ALL) protectCjkBreaks(text) else text
+        val displayText = if (rich == null && wordBreak == WORD_BREAK_KEEP_ALL) protectCjkBreaks(text) else text
         val localeRtl = context.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
         val semantics = resolveTextLayoutSemantics(
             displayText,
@@ -135,53 +143,48 @@ internal class HostMeasurementProvider(
             indentLogicalPixels,
             indentPercentage,
         )
-        val layoutText: CharSequence = if (
-            displayText.isEmpty() || (semantics.indentPixels == 0f && lineHeight <= 0f)
-        ) {
-            displayText
-        } else {
-            SpannableString(displayText).apply {
-                if (semantics.indentPixels != 0f) {
-                    setSpan(
-                        LeadingMarginSpan.Standard(semantics.indentPixels.toInt(), 0),
-                        0,
-                        length,
-                        Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
-                    )
-                }
-                if (lineHeight > 0f) {
-                    setSpan(
-                        CenteredLineHeightSpan(lineHeight * density),
-                        0,
-                        length,
-                        Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
-                    )
-                }
+        fun styledText(value: String, paragraph: WhiskerParagraph?, width: Float = Float.POSITIVE_INFINITY): CharSequence {
+            if (value.isEmpty() || (paragraph == null && semantics.indentPixels == 0f && lineHeight <= 0f)) return value
+            return SpannableString(value).apply {
+                paragraph?.apply(this, density, width)
+                if (semantics.indentPixels != 0f) setSpan(LeadingMarginSpan.Standard(semantics.indentPixels.toInt(), 0), 0, length, Spanned.SPAN_INCLUSIVE_EXCLUSIVE)
+                if (lineHeight > 0f) setSpan(CenteredLineHeightSpan(lineHeight * density), 0, length, Spanned.SPAN_INCLUSIVE_EXCLUSIVE)
             }
         }
+        val layoutText = styledText(displayText, rich)
         val maxWidthPx = when {
+            knownMask and WIDTH != 0 -> ceil(knownWidth * density).toInt().coerceAtLeast(1)
             availableWidthKind == DEFINITE && wrap != 0 ->
                 ceil(availableWidth * density).toInt().coerceAtLeast(1)
             availableWidthKind == MIN_CONTENT && wrap != 0 -> 1
-            else -> ceil(paint.measureText(text) + semantics.indentPixels).toInt().coerceAtLeast(1)
+            else -> ceil(Layout.getDesiredWidth(layoutText, paint) + semantics.indentPixels).toInt().coerceAtLeast(1)
         }
-        val builder = configureFallbackLineSpacing(StaticLayout.Builder.obtain(
-            layoutText, 0, layoutText.length, paint, maxWidthPx,
-        ))
-            .setAlignment(semantics.alignment)
-            .setTextDirection(semantics.directionHeuristic)
-            // Before API 28 there is no fallback-line-spacing switch, so
-            // retain font padding to keep fallback glyphs inside the measured box.
-            .setIncludePad(Build.VERSION.SDK_INT < Build.VERSION_CODES.P)
-            .setMaxLines(if (maxLines == 0) Int.MAX_VALUE else maxLines)
-            .setBreakStrategy(
-                if (wordBreak == WORD_BREAK_BREAK_ALL) Layout.BREAK_STRATEGY_SIMPLE
-                else Layout.BREAK_STRATEGY_HIGH_QUALITY,
-            )
-        if (overflow == TEXT_OVERFLOW_ELLIPSIS) {
-            builder.setEllipsize(TextUtils.TruncateAt.END).setEllipsizedWidth(maxWidthPx)
+        val lineLimit = if (wrap == 0) 1 else if (maxLines == 0) Int.MAX_VALUE else maxLines
+        fun buildLayout(value: CharSequence, limit: Int = lineLimit, ellipsis: Boolean = overflow == TEXT_OVERFLOW_ELLIPSIS): StaticLayout {
+            fun shape(): StaticLayout = configureFallbackLineSpacing(StaticLayout.Builder.obtain(value, 0, value.length, paint, maxWidthPx))
+                .setAlignment(semantics.alignment)
+                .setTextDirection(semantics.directionHeuristic)
+                .setIncludePad(Build.VERSION.SDK_INT < Build.VERSION_CODES.P)
+                .setMaxLines(limit)
+                .setBreakStrategy(if (wordBreak == WORD_BREAK_BREAK_ALL) Layout.BREAK_STRATEGY_SIMPLE else Layout.BREAK_STRATEGY_HIGH_QUALITY)
+                .apply { if (ellipsis) setEllipsize(TextUtils.TruncateAt.END).setEllipsizedWidth(maxWidthPx) }
+                .build()
+            val initial = shape()
+            return if (rich?.resolveVerticalAlignment(initial, density) == true) shape() else initial
         }
-        val layout = builder.build()
+        var measuredParagraph = rich
+        val layout = if (rich?.attachments?.any { it.truncation } == true) {
+            fun fits(layout: StaticLayout): Boolean = layout.lineCount <= lineLimit && (0 until layout.lineCount).all { layout.getLineWidth(it) <= maxWidthPx }
+            val full = buildLayout(layoutText, Int.MAX_VALUE, false)
+            if (fits(full)) full else {
+                val (truncated, paragraph) = rich.truncateToFit(
+                    fits = ::fits,
+                    layout = { paragraph -> buildLayout(styledText(paragraph.displayText(), paragraph, maxWidthPx / density), Int.MAX_VALUE, false) },
+                )
+                measuredParagraph = paragraph
+                truncated
+            }
+        } else buildLayout(layoutText)
         val usedLineWidthPixels = (0 until layout.lineCount)
             .maxOfOrNull(layout::getLineWidth) ?: 0f
         val width = measuredTextWidth(
@@ -200,11 +203,11 @@ internal class HostMeasurementProvider(
         } else {
             first
         }
-        return floatArrayOf(READY, 0f, width, height, first, last, BASELINES)
+        return HostMeasurementResult(width = width, height = height, firstBaseline = first, lastBaseline = last, mask = BASELINES, paragraph = measuredParagraph?.measurementGeometry(layout, density), layout = layout.takeIf { rich != null })
     }
 
-    private fun ready(width: Float, height: Float): FloatArray =
-        floatArrayOf(READY, 0f, width, height, 0f, 0f, 0f)
+    private fun ready(width: Float, height: Float): HostMeasurementResult =
+        HostMeasurementResult(width = width, height = height)
 }
 
 internal fun configureFallbackLineSpacing(
@@ -334,7 +337,7 @@ private const val MEASURE_TEXT = 1
 private const val MEASURE_REPLACED_CONTENT = 2
 private const val MEASURE_EMBEDDED_SURFACE = 4
 private const val FONT_STYLE_NORMAL = 0
-private const val READY = 1f
+private const val READY = 1
 private const val WORD_BREAK_BREAK_ALL = 1
 private const val WORD_BREAK_KEEP_ALL = 2
 private const val TEXT_OVERFLOW_ELLIPSIS = 1
@@ -346,6 +349,18 @@ private const val TEXT_ALIGNMENT_END = 1
 private const val TEXT_ALIGNMENT_LEFT = 2
 private const val TEXT_ALIGNMENT_RIGHT = 3
 private const val TEXT_ALIGNMENT_CENTER = 4
-private const val UNSUPPORTED = 3f
-private const val UNSUPPORTED_FEATURE = 1f
-private const val BASELINES = 3f
+private const val UNSUPPORTED = 3
+private const val UNSUPPORTED_FEATURE = 1
+private const val BASELINES = 3
+
+internal data class HostMeasurementResult(
+    val status: Int = READY,
+    val reason: Int = 0,
+    val width: Float = 0f,
+    val height: Float = 0f,
+    val firstBaseline: Float = 0f,
+    val lastBaseline: Float = 0f,
+    val mask: Int = 0,
+    val paragraph: WhiskerValue? = null,
+    val layout: StaticLayout? = null,
+)

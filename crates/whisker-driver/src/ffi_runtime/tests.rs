@@ -76,7 +76,11 @@ fn linear_background(name: &str) -> BackgroundLayer {
 
 fn text_with_shadow(shadows: Vec<TextShadow>) -> TextContent {
     TextContent {
+        paragraph: None,
+        runs: Vec::new(),
         payload: TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: "shadow".into(),
             style: TextMeasureStyle::default(),
             locale: None,
@@ -144,6 +148,7 @@ fn mobile_capability_constants_match_the_semantic_protocol() {
         (RenderCapability::VisualEffects, CAPABILITY_VISUAL_EFFECTS),
         (RenderCapability::TextEffects, CAPABILITY_TEXT_EFFECTS),
         (RenderCapability::TextTypography, CAPABILITY_TEXT_TYPOGRAPHY),
+        (RenderCapability::RichText, CAPABILITY_RICH_TEXT),
         (RenderCapability::Cursor, CAPABILITY_CURSOR),
         (
             RenderCapability::ResourceLifecycle,
@@ -974,4 +979,81 @@ fn mobile_frame_preserves_every_intrinsic_background_size_kind() {
     assert_eq!(layers[3].size_width.length, 60.0);
     assert_eq!(layers[4].size_kind, BACKGROUND_SIZE_HEIGHT);
     assert_eq!(layers[4].size_height.length, 30.0);
+}
+
+#[test]
+fn paragraph_geometry_is_released_on_rejected_and_malformed_measurement_batches() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use whisker_engine::MeasurementProvider;
+
+    struct HostState {
+        released: Rc<Cell<usize>>,
+        accept: bool,
+    }
+    #[repr(C)]
+    struct Geometry {
+        raw: WhiskerValueRaw,
+        released: Rc<Cell<usize>>,
+    }
+
+    extern "C" fn release(pointer: *mut WhiskerValueRaw) {
+        // SAFETY: the callback receives the first repr(C) field of its unique Geometry allocation.
+        let geometry = unsafe { Box::from_raw(pointer.cast::<Geometry>()) };
+        geometry.released.set(geometry.released.get() + 1);
+    }
+    extern "C" fn measure(
+        data: *mut c_void,
+        requests: *const MobileMeasureRequest,
+        count: usize,
+        responses: *mut MobileMeasureResponse,
+    ) -> bool {
+        // SAFETY: the test retains HostState and both batch buffers for this synchronous call.
+        let state = unsafe { &*(data.cast::<HostState>()) };
+        for index in 0..count {
+            // SAFETY: both buffers contain count entries supplied by MobileMeasurementHost.
+            let (request, response) =
+                unsafe { (&*requests.add(index), &mut *responses.add(index)) };
+            response.key = request.key;
+            response.environment_epoch = request.environment_epoch;
+            response.status = MEASURE_READY;
+            let geometry = Box::new(Geometry {
+                raw: RawValueArena::default().encode(&WhiskerValue::Null),
+                released: state.released.clone(),
+            });
+            response.paragraph = Box::into_raw(geometry).cast();
+            response.release_paragraph = Some(release);
+        }
+        state.accept
+    }
+    let request = MeasurementRequest {
+        key: whisker_engine::whisker_protocol::MeasurementKey::new(1).unwrap(),
+        node: NodeId::new(1).unwrap(),
+        element_type: whisker_engine::whisker_protocol::ElementTypeId::new(2).unwrap(),
+        environment_epoch: 3,
+        constraints: whisker_engine::whisker_protocol::MeasureConstraints {
+            known_dimensions: [None, None],
+            available_space: [AvailableSpace::Definite(240.0), AvailableSpace::MaxContent],
+        },
+        payload: MeasurementPayload::Text(text_with_shadow(Vec::new()).payload),
+    };
+    for accept in [false, true] {
+        let released = Rc::new(Cell::new(0));
+        let mut state = HostState {
+            released: released.clone(),
+            accept,
+        };
+        let mut host = super::measurement::MobileMeasurementHost {
+            prepared: std::collections::HashMap::new(),
+            callback: measure,
+            data: (&mut state as *mut HostState).cast(),
+        };
+        let result = host.measure_batch(
+            SurfaceId::new(1).unwrap(),
+            &[request.clone(), request.clone()],
+            &mut Vec::new(),
+        );
+        assert!(result.is_err());
+        assert_eq!(released.get(), 2);
+    }
 }

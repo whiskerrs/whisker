@@ -1,6 +1,11 @@
 //! Taffy's layout algorithms with retained, bounded intrinsic-size reuse.
 
-use std::{collections::HashMap, rc::Rc};
+use crate::{IntrinsicResult, LayoutSize, MeasuredInlineChild, MeasurementState};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
+use whisker_protocol::MeasurementKey;
 
 use taffy::{
     BlockContext, CacheTree, Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
@@ -10,13 +15,16 @@ use taffy::{
     compute_root_layout,
 };
 
+mod paragraph;
+
 const SIZE_CACHE_CAPACITY: usize = 32;
 
 #[derive(Clone, Debug, Default)]
 struct NodeState {
     layout: Layout,
-    sizes: Rc<Vec<(LayoutInput, Size<f32>)>>,
+    sizes: Rc<Vec<(LayoutInput, LayoutOutput)>>,
     next_slot: usize,
+    selection: Option<MeasurementKey>,
 }
 
 impl NodeState {
@@ -29,7 +37,7 @@ impl NodeState {
         self.next_slot = 0;
     }
 
-    fn store_size(&mut self, input: LayoutInput, size: Size<f32>) {
+    fn store_size(&mut self, input: LayoutInput, size: LayoutOutput) {
         let sizes = Rc::make_mut(&mut self.sizes);
         if sizes.len() < SIZE_CACHE_CAPACITY {
             sizes.push((input, size));
@@ -43,26 +51,58 @@ impl NodeState {
 #[derive(Clone, Debug, Default)]
 pub(super) struct LayoutState {
     nodes: HashMap<NodeId, NodeState>,
+    paragraphs: HashSet<NodeId>,
+    model_nodes: HashMap<NodeId, whisker_protocol::NodeId>,
+    transient: HashSet<NodeId>,
+    suppressed: HashSet<NodeId>,
+    blocked: u64,
+    provisional: u64,
 }
 
 impl LayoutState {
     pub(super) fn remove(&mut self, node: NodeId) {
         self.nodes.remove(&node);
+        self.paragraphs.remove(&node);
+        self.model_nodes.remove(&node);
+        self.transient.remove(&node);
+        self.suppressed.remove(&node);
+    }
+
+    pub(super) fn register(&mut self, node: NodeId, model: whisker_protocol::NodeId) {
+        self.model_nodes.insert(node, model);
+        self.nodes.entry(node).or_default();
+    }
+    pub(super) fn set_paragraph(&mut self, node: NodeId, paragraph: bool) {
+        if paragraph {
+            self.paragraphs.insert(node);
+        } else {
+            self.paragraphs.remove(&node);
+        }
+    }
+    pub(super) fn suppressed(&self, node: NodeId) -> bool {
+        self.suppressed.contains(&node)
+    }
+    pub(super) fn selection(&self, node: NodeId) -> Option<MeasurementKey> {
+        self.nodes.get(&node)?.selection
     }
 
     pub(super) fn layout(&self, node: NodeId) -> &Layout {
         &self.nodes[&node].layout
     }
 
-    pub(super) fn compute<Context, Measure>(
+    pub(super) fn compute_detailed<Context: Clone, Measure>(
         &mut self,
         tree: &mut TaffyTree<Context>,
         root: NodeId,
         available: Size<taffy::AvailableSpace>,
         measure: Measure,
     ) where
-        Measure:
-            FnMut(Size<Option<f32>>, Size<taffy::AvailableSpace>, Option<&Context>) -> Size<f32>,
+        Measure: FnMut(
+            Size<Option<f32>>,
+            Size<taffy::AvailableSpace>,
+            Option<&Context>,
+            &[MeasuredInlineChild],
+        ) -> IntrinsicResult,
     {
         // Taffy propagates style, tree and measurement invalidation to ancestors.
         // Consume that state before layout repopulates its built-in caches.
@@ -80,6 +120,30 @@ impl LayoutState {
             root,
             available,
         );
+        for node in self.transient.drain() {
+            tree.mark_dirty(node).expect("retained transient node");
+            self.nodes
+                .get_mut(&node)
+                .expect("retained transient node")
+                .clear_sizes();
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn compute<Context: Clone, Measure>(
+        &mut self,
+        tree: &mut TaffyTree<Context>,
+        root: NodeId,
+        available: Size<taffy::AvailableSpace>,
+        mut measure: Measure,
+    ) where
+        Measure:
+            FnMut(Size<Option<f32>>, Size<taffy::AvailableSpace>, Option<&Context>) -> Size<f32>,
+    {
+        self.compute_detailed(tree, root, available, |known, available, context, _| {
+            let size = measure(known, available, context);
+            LayoutSize::new(size.width, size.height).into()
+        });
     }
 }
 
@@ -89,9 +153,14 @@ struct LayoutPass<'a, Context, Measure> {
     measure: Measure,
 }
 
-impl<Context, Measure> LayoutPass<'_, Context, Measure>
+impl<Context: Clone, Measure> LayoutPass<'_, Context, Measure>
 where
-    Measure: FnMut(Size<Option<f32>>, Size<taffy::AvailableSpace>, Option<&Context>) -> Size<f32>,
+    Measure: FnMut(
+        Size<Option<f32>>,
+        Size<taffy::AvailableSpace>,
+        Option<&Context>,
+        &[MeasuredInlineChild],
+    ) -> IntrinsicResult,
 {
     fn compute(
         &mut self,
@@ -102,30 +171,30 @@ where
         if input.run_mode == RunMode::PerformHiddenLayout {
             return compute_hidden_layout(self, node);
         }
-        compute_cached_layout(self, node, input, |tree, node, input| {
+        let before = (self.state.blocked, self.state.provisional);
+        let output = compute_cached_layout(self, node, input, |tree, node, input| {
             let display = tree.tree.style(node).expect("retained style").display;
+            if display != Display::None && tree.state.paragraphs.contains(&node) {
+                return tree.compute_paragraph(node, input);
+            }
             match (display, tree.child_count(node) != 0) {
                 (Display::None, _) => compute_hidden_layout(tree, node),
                 (Display::Block, true) => compute_block_layout(tree, node, input, block),
                 (Display::FlowRoot, true) => compute_block_layout(tree, node, input, None),
                 (Display::Flex, true) => compute_flexbox_layout(tree, node, input),
                 (Display::Grid, true) => compute_grid_layout(tree, node, input),
-                (_, false) => {
-                    let context = tree.tree.get_node_context(node);
-                    let style = tree.tree.style(node).expect("retained leaf style");
-                    compute_leaf_layout(
-                        input,
-                        style,
-                        |_, _| 0.0,
-                        |known, available| (tree.measure)(known, available, context),
-                    )
-                }
+                (_, false) => tree.compute_measured_leaf(node, input),
             }
-        })
+        });
+        if before != (self.state.blocked, self.state.provisional) {
+            self.cache_clear(node);
+            self.state.transient.insert(node);
+        }
+        output
     }
 }
 
-impl<Context, Measure> TraversePartialTree for LayoutPass<'_, Context, Measure> {
+impl<Context: Clone, Measure> TraversePartialTree for LayoutPass<'_, Context, Measure> {
     type ChildIter<'a>
         = <TaffyTree<Context> as TraversePartialTree>::ChildIter<'a>
     where
@@ -141,7 +210,7 @@ impl<Context, Measure> TraversePartialTree for LayoutPass<'_, Context, Measure> 
     }
 }
 
-impl<Context, Measure> CacheTree for LayoutPass<'_, Context, Measure> {
+impl<Context: Clone, Measure> CacheTree for LayoutPass<'_, Context, Measure> {
     fn cache_get(&self, node: NodeId, input: &LayoutInput) -> Option<LayoutOutput> {
         if input.run_mode == RunMode::ComputeSize
             && let Some(size) = self.state.nodes.get(&node).and_then(|state| {
@@ -152,7 +221,7 @@ impl<Context, Measure> CacheTree for LayoutPass<'_, Context, Measure> {
                     .map(|(_, size)| *size)
             })
         {
-            return Some(LayoutOutput::from_outer_size(size));
+            return Some(size);
         }
         self.tree.cache_get(node, input)
     }
@@ -164,7 +233,7 @@ impl<Context, Measure> CacheTree for LayoutPass<'_, Context, Measure> {
                 .nodes
                 .entry(node)
                 .or_default()
-                .store_size(*input, output.size);
+                .store_size(*input, output);
         }
     }
 
@@ -176,9 +245,14 @@ impl<Context, Measure> CacheTree for LayoutPass<'_, Context, Measure> {
     }
 }
 
-impl<Context, Measure> LayoutPartialTree for LayoutPass<'_, Context, Measure>
+impl<Context: Clone, Measure> LayoutPartialTree for LayoutPass<'_, Context, Measure>
 where
-    Measure: FnMut(Size<Option<f32>>, Size<taffy::AvailableSpace>, Option<&Context>) -> Size<f32>,
+    Measure: FnMut(
+        Size<Option<f32>>,
+        Size<taffy::AvailableSpace>,
+        Option<&Context>,
+        &[MeasuredInlineChild],
+    ) -> IntrinsicResult,
 {
     type CoreContainerStyle<'a>
         = &'a Style
@@ -196,9 +270,14 @@ where
     }
 }
 
-impl<Context, Measure> LayoutFlexboxContainer for LayoutPass<'_, Context, Measure>
+impl<Context: Clone, Measure> LayoutFlexboxContainer for LayoutPass<'_, Context, Measure>
 where
-    Measure: FnMut(Size<Option<f32>>, Size<taffy::AvailableSpace>, Option<&Context>) -> Size<f32>,
+    Measure: FnMut(
+        Size<Option<f32>>,
+        Size<taffy::AvailableSpace>,
+        Option<&Context>,
+        &[MeasuredInlineChild],
+    ) -> IntrinsicResult,
 {
     type FlexboxContainerStyle<'a>
         = &'a Style
@@ -216,9 +295,14 @@ where
     }
 }
 
-impl<Context, Measure> LayoutGridContainer for LayoutPass<'_, Context, Measure>
+impl<Context: Clone, Measure> LayoutGridContainer for LayoutPass<'_, Context, Measure>
 where
-    Measure: FnMut(Size<Option<f32>>, Size<taffy::AvailableSpace>, Option<&Context>) -> Size<f32>,
+    Measure: FnMut(
+        Size<Option<f32>>,
+        Size<taffy::AvailableSpace>,
+        Option<&Context>,
+        &[MeasuredInlineChild],
+    ) -> IntrinsicResult,
 {
     type GridContainerStyle<'a>
         = &'a Style
@@ -236,9 +320,14 @@ where
     }
 }
 
-impl<Context, Measure> LayoutBlockContainer for LayoutPass<'_, Context, Measure>
+impl<Context: Clone, Measure> LayoutBlockContainer for LayoutPass<'_, Context, Measure>
 where
-    Measure: FnMut(Size<Option<f32>>, Size<taffy::AvailableSpace>, Option<&Context>) -> Size<f32>,
+    Measure: FnMut(
+        Size<Option<f32>>,
+        Size<taffy::AvailableSpace>,
+        Option<&Context>,
+        &[MeasuredInlineChild],
+    ) -> IntrinsicResult,
 {
     type BlockContainerStyle<'a>
         = &'a Style
@@ -295,12 +384,9 @@ mod tests {
         let mut pass = LayoutPass {
             tree: &mut tree,
             state: &mut state,
-            measure: |known: Size<Option<f32>>, _, _: Option<&()>| {
+            measure: |known: Size<Option<f32>>, _, _: Option<&()>, _: &[MeasuredInlineChild]| {
                 calls.set(calls.get() + 1);
-                Size {
-                    width: known.width.unwrap_or(40.0),
-                    height: 20.0,
-                }
+                LayoutSize::new(known.width.unwrap_or(40.0), 20.0).into()
             },
         };
         for _ in 0..3 {
@@ -342,10 +428,10 @@ mod tests {
         let mut state = NodeState::default();
         state.store_size(
             input(40.0),
-            Size {
+            LayoutOutput::from_outer_size(Size {
                 width: 40.0,
                 height: 20.0,
-            },
+            }),
         );
         let mut cloned = state.clone();
         assert!(Rc::ptr_eq(&state.sizes, &cloned.sizes));
@@ -355,10 +441,10 @@ mod tests {
         let mut cloned = state.clone();
         cloned.store_size(
             input(50.0),
-            Size {
+            LayoutOutput::from_outer_size(Size {
                 width: 50.0,
                 height: 20.0,
-            },
+            }),
         );
         assert_eq!(cloned.sizes.len(), 2);
         assert_eq!(state.sizes.len(), 1);

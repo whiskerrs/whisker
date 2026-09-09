@@ -13,6 +13,57 @@ impl Scene {
         Ok(self.hit_test_node(root, point, [0.0; 2]))
     }
 
+    /// Resolves a visible inline source span at a surface-space pointer position.
+    pub fn text_span_at(
+        &self,
+        node: NodeId,
+        mut point: InputPoint,
+    ) -> Option<whisker_protocol::TextSpanId> {
+        let content = self.nodes.get(&node)?.text.as_ref()?;
+        let paragraph = content.paragraph.as_ref()?;
+        let chain_geometry = self.nodes.get(&node).expect("retained paragraph").layout?;
+        let mut chain = Vec::new();
+        let mut current = Some(node);
+        while let Some(node) = current {
+            let state = self.nodes.get(&node).expect("retained paragraph ancestor");
+            chain.push(state.as_ref());
+            current = state.parent;
+        }
+        let mut origin = [0.0; 2];
+        for state in chain.into_iter().rev() {
+            let geometry = state.layout?;
+            let border = [
+                origin[0] + geometry.border_box.x,
+                origin[1] + geometry.border_box.y,
+            ];
+            point = inverse_map_around(state.transform, point, border)?;
+            origin = [
+                border[0] - state.host_scroll_offset[0],
+                border[1] - state.host_scroll_offset[1],
+            ];
+        }
+        let geometry = chain_geometry;
+        let local = [
+            point.x - origin[0] - geometry.content_box.x,
+            point.y - origin[1] - geometry.content_box.y,
+        ];
+        let fragment = paragraph.fragments.iter().find(|fragment| {
+            contains_axis(local[0], fragment.bounds.x, fragment.bounds.width)
+                && contains_axis(local[1], fragment.bounds.y, fragment.bounds.height)
+        })?;
+        let bytes = fragment
+            .range
+            .to_utf8(&content.payload.text)
+            .expect("validated paragraph fragment");
+        content
+            .runs
+            .iter()
+            .find(|run| {
+                run.range.start as usize <= bytes.start && bytes.start < run.range.end as usize
+            })
+            .map(|run| run.span)
+    }
+
     fn hit_test_node(
         &self,
         node: NodeId,

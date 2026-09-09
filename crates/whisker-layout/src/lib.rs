@@ -7,6 +7,8 @@
 #![warn(missing_docs)]
 
 mod backend;
+mod intrinsic;
+pub use intrinsic::{IntrinsicResult, MeasuredInlineChild, MeasurementState};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -61,6 +63,21 @@ pub type MeasureRequest = MeasureConstraints;
 pub trait IntrinsicMeasurer {
     /// Measures `node` under the supplied constraints.
     fn measure(&mut self, node: NodeId, request: MeasureRequest) -> LayoutSize;
+
+    /// Measures content while preserving readiness and baseline information.
+    fn measure_detailed(&mut self, node: NodeId, request: MeasureRequest) -> IntrinsicResult {
+        self.measure(node, request).into()
+    }
+
+    /// Shapes a paragraph after its atomic children have been measured.
+    fn measure_paragraph(
+        &mut self,
+        node: NodeId,
+        request: MeasureRequest,
+        _children: &[MeasuredInlineChild],
+    ) -> IntrinsicResult {
+        self.measure_detailed(node, request)
+    }
 }
 
 impl<F> IntrinsicMeasurer for F
@@ -77,6 +94,8 @@ where
 pub struct LayoutSnapshot {
     boxes: BTreeMap<NodeId, (LayoutGeometry, LayoutSize)>,
     suppressed_by_display_none: BTreeSet<NodeId>,
+    suppressed_by_paragraph: BTreeSet<NodeId>,
+    selections: BTreeMap<NodeId, whisker_protocol::MeasurementKey>,
 }
 
 /// Whether a node has a meaningful result in the current layout tree.
@@ -91,9 +110,23 @@ pub enum LayoutParticipation {
     Participating,
     /// The node or one of its ancestors has `display:none`.
     SuppressedByDisplayNone,
+    /// The node or an ancestor is outside its paragraph's visible text.
+    SuppressedByParagraph,
 }
 
 impl LayoutSnapshot {
+    /// Reports whether paragraph truncation suppresses any retained subtree.
+    pub fn has_paragraph_suppression(&self) -> bool {
+        !self.suppressed_by_paragraph.is_empty()
+    }
+
+    /// Intrinsic results selected by final layout, retained across cache hits.
+    pub fn selections(
+        &self,
+    ) -> impl Iterator<Item = (NodeId, whisker_protocol::MeasurementKey)> + '_ {
+        self.selections.iter().map(|(node, key)| (*node, *key))
+    }
+
     /// Returns the border box for a node relative to its parent content origin.
     pub fn get(&self, node: NodeId) -> Option<&LayoutGeometry> {
         self.boxes.get(&node).map(|(geometry, _)| geometry)
@@ -120,6 +153,8 @@ impl LayoutSnapshot {
         self.boxes.get(&node).map(|(geometry, _)| {
             let participation = if self.suppressed_by_display_none.contains(&node) {
                 LayoutParticipation::SuppressedByDisplayNone
+            } else if self.suppressed_by_paragraph.contains(&node) {
+                LayoutParticipation::SuppressedByParagraph
             } else {
                 LayoutParticipation::Participating
             };
@@ -230,6 +265,7 @@ struct RetainedNode {
     parent: Option<NodeId>,
     children: Vec<NodeId>,
     measurable: bool,
+    paragraph: bool,
 }
 
 /// A retained tree that converts Whisker computed styles into layout snapshots.
@@ -314,6 +350,7 @@ impl LayoutTree {
             .backend
             .new_leaf(converted)
             .expect("valid private style");
+        self.layout_state.register(backend, node);
         self.nodes.insert(
             node,
             RetainedNode {
@@ -322,6 +359,7 @@ impl LayoutTree {
                 parent: None,
                 children: Vec::new(),
                 measurable: false,
+                paragraph: false,
             },
         );
         Ok(())
@@ -386,6 +424,28 @@ impl LayoutTree {
             .expect("retained backend node");
         self.nodes.get_mut(&node).expect("checked above").measurable = measurable;
         Ok(true)
+    }
+
+    /// Reports whether the node delegates atomic child placement to a paragraph measurer.
+    pub fn is_paragraph(&self, node: NodeId) -> bool {
+        self.nodes.get(&node).is_some_and(|node| node.paragraph)
+    }
+
+    /// Keeps inline children in the tree while measuring their parent as a paragraph.
+    pub fn set_paragraph(&mut self, node: NodeId, paragraph: bool) -> Result<(), LayoutError> {
+        let retained = self
+            .nodes
+            .get_mut(&node)
+            .ok_or(LayoutError::UnknownNode(node))?;
+        if retained.paragraph != paragraph {
+            retained.paragraph = paragraph;
+            self.layout_state.set_paragraph(retained.backend, paragraph);
+            self.backend
+                .mark_dirty(retained.backend)
+                .expect("retained paragraph");
+            self.sync_backend_children(node);
+        }
+        Ok(())
     }
 
     /// Invalidates cached intrinsic measurement for a node and its ancestors.
@@ -575,36 +635,38 @@ impl LayoutTree {
             self.surface_child = Some(root);
         }
         let mut invalid_measurements = BTreeSet::new();
-        self.layout_state.compute(
+        self.layout_state.compute_detailed(
             &mut self.backend,
             self.surface_root,
             Size {
                 width: TaffyAvailableSpace::Definite(viewport.width),
                 height: TaffyAvailableSpace::Definite(viewport.height),
             },
-            |known, available, context: Option<&NodeId>| {
+            |known, available, context: Option<&NodeId>, children: &[MeasuredInlineChild]| {
                 let Some(node) = context.copied() else {
-                    return Size::ZERO;
+                    return IntrinsicResult::default();
                 };
-                let measured = measurer.measure(
-                    node,
-                    MeasureRequest {
-                        known_dimensions: [known.width, known.height]
-                            .map(|dimension| dimension.map(|value| value.max(0.0))),
-                        available_space: [
-                            from_taffy_available(available.width),
-                            from_taffy_available(available.height),
-                        ],
-                    },
-                );
-                if !measured.is_valid() {
-                    invalid_measurements.insert(node);
-                    Size::ZERO
+                let request = MeasureRequest {
+                    known_dimensions: [known.width, known.height]
+                        .map(|dimension| dimension.map(|value| value.max(0.0))),
+                    available_space: [
+                        from_taffy_available(available.width),
+                        from_taffy_available(available.height),
+                    ],
+                };
+                let measured = if children.is_empty() {
+                    measurer.measure_detailed(node, request)
                 } else {
-                    Size {
-                        width: measured.width,
-                        height: measured.height,
+                    measurer.measure_paragraph(node, request, children)
+                };
+                if !measured.size.is_valid() {
+                    invalid_measurements.insert(node);
+                    IntrinsicResult {
+                        state: MeasurementState::Blocked,
+                        ..IntrinsicResult::default()
                     }
+                } else {
+                    measured
                 }
             },
         );
@@ -639,10 +701,11 @@ impl LayoutTree {
     fn sync_backend_children(&mut self, parent: NodeId) {
         let retained = self.nodes.get(&parent).expect("retained parent");
         let backend_parent = retained.backend;
-        let backend_children = if matches!(
-            retained.style.display,
-            DisplayValue::Flex | DisplayValue::Grid
-        ) {
+        let backend_children = if !retained.paragraph
+            && matches!(
+                retained.style.display,
+                DisplayValue::Flex | DisplayValue::Grid
+            ) {
             let mut children = retained.children.clone();
             children
                 .sort_by_key(|child| self.nodes.get(child).expect("retained child").style.order);
@@ -677,7 +740,17 @@ impl LayoutTree {
     ) {
         let retained = self.nodes.get(&node).expect("retained snapshot node");
         let suppressed = ancestor_suppressed || retained.style.display == DisplayValue::None;
+        let paragraph_suppressed = retained.parent.is_some_and(|parent| {
+            snapshot.suppressed_by_paragraph.contains(&parent)
+                || (self.nodes[&parent].paragraph && self.layout_state.suppressed(retained.backend))
+        });
+        if paragraph_suppressed {
+            snapshot.suppressed_by_paragraph.insert(node);
+        }
         let layout = self.layout_state.layout(retained.backend);
+        if let Some(selection) = self.layout_state.selection(retained.backend) {
+            snapshot.selections.insert(node, selection);
+        }
         snapshot.boxes.insert(
             node,
             (
@@ -1126,6 +1199,9 @@ fn justify(value: JustifyContentValue) -> AlignContent {
         JustifyContentValue::End => AlignContent::END,
     }
 }
+
+#[cfg(test)]
+mod paragraph_tests;
 
 #[cfg(test)]
 mod tests {

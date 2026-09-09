@@ -12,6 +12,8 @@ use crate::{WebError, js_error, paint, px, set_style};
 
 pub(crate) struct DomMeasurementProvider {
     document: web_sys::Document,
+    pub(crate) prepared:
+        std::rc::Rc<std::cell::RefCell<HashMap<PreparedContentId, web_sys::Element>>>,
     element_measurements: HashMap<ElementTypeId, ElementMeasurement>,
     module_measurements: HashMap<ElementTypeId, WebMeasurementHandler>,
 }
@@ -24,13 +26,23 @@ enum PendingMeasurement {
         last_baseline: web_sys::Element,
         key: whisker_protocol::MeasurementKey,
         environment_epoch: u64,
+        payload: whisker_protocol::TextMeasurePayload,
     },
+}
+
+impl Drop for PendingMeasurement {
+    fn drop(&mut self) {
+        if let Self::Text { probe, .. } = self {
+            probe.remove();
+        }
+    }
 }
 
 impl DomMeasurementProvider {
     pub(crate) fn new(document: web_sys::Document) -> Self {
         Self {
             document,
+            prepared: Default::default(),
             element_measurements: HashMap::new(),
             module_measurements: HashMap::new(),
         }
@@ -141,7 +153,7 @@ impl MeasurementProvider for DomMeasurementProvider {
             if let Some(height) = request.constraints.known_dimensions[1] {
                 set_style(&probe, "height", &px(height))?;
             }
-            probe.set_text_content(Some(&text.text));
+            paint::text::apply_content(&probe, text, &[])?;
             let first_baseline = baseline_marker(&self.document)?;
             let last_baseline = baseline_marker(&self.document)?;
             probe
@@ -156,6 +168,7 @@ impl MeasurementProvider for DomMeasurementProvider {
                 last_baseline,
                 key: request.key,
                 environment_epoch: request.environment_epoch,
+                payload: text.clone(),
             });
         }
         for measurement in &pending {
@@ -180,16 +193,50 @@ impl MeasurementProvider for DomMeasurementProvider {
                     last_baseline,
                     key,
                     environment_epoch,
+                    payload,
                 } => {
+                    let paragraph_dom = if payload.runs.is_empty() && payload.attachments.is_empty()
+                    {
+                        None
+                    } else {
+                        Some(super::paragraph::ParagraphDom::read(probe, payload)?)
+                    };
+                    let visible_end = paragraph_dom
+                        .as_ref()
+                        .map(|dom| dom.prepare())
+                        .transpose()?;
                     let rect = probe.get_bounding_client_rect();
                     let first_baseline =
                         (first_baseline.get_bounding_client_rect().top() - rect.top()) as f32;
                     let last_baseline =
                         (last_baseline.get_bounding_client_rect().top() - rect.top()) as f32;
+                    let paragraph = paragraph_dom
+                        .as_ref()
+                        .zip(visible_end)
+                        .map(|(dom, end)| dom.metrics(end, first_baseline))
+                        .transpose()?;
+                    let inline_placements = paragraph_dom
+                        .as_ref()
+                        .zip(visible_end)
+                        .map(|(dom, end)| dom.placements(end))
+                        .transpose()?
+                        .unwrap_or_default();
+                    if paragraph.is_some() {
+                        let reference = probe
+                            .query_selector("[data-whisker-paragraph]")
+                            .map_err(|error| js_error("retain prepared paragraph", error))?
+                            .ok_or_else(|| WebError("prepared paragraph is missing".into()))?;
+                        self.prepared.borrow_mut().insert(
+                            PreparedContentId::new(key.get()).expect("nonzero measurement key"),
+                            reference,
+                        );
+                    }
                     responses.push(MeasurementResponse::Ready {
                         key: *key,
                         environment_epoch: *environment_epoch,
                         metrics: MeasurementMetrics {
+                            paragraph,
+                            inline_placements,
                             size: MeasuredSize::new(rect.width() as f32, rect.height() as f32),
                             first_baseline: Some(first_baseline),
                             last_baseline: Some(last_baseline),
@@ -200,12 +247,19 @@ impl MeasurementProvider for DomMeasurementProvider {
                 }
             }
         }
-        for measurement in pending {
-            if let PendingMeasurement::Text { probe, .. } = measurement {
-                probe.remove();
-            }
-        }
         Ok(())
+    }
+
+    fn retain_prepared_content(
+        &mut self,
+        _: SurfaceId,
+        _: u64,
+        ids: &mut dyn Iterator<Item = PreparedContentId>,
+    ) {
+        let retained: std::collections::HashSet<_> = ids.collect();
+        self.prepared
+            .borrow_mut()
+            .retain(|id, _| retained.contains(id));
     }
 }
 

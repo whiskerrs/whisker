@@ -25,8 +25,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install software Vulkan renderer
-        run: sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+      - name: Install Linux text and GPU dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libvulkan1 mesa-vulkan-drivers
       - run: cargo test --workspace --all-targets
         env:
           RUST_TEST_THREADS: 1
@@ -59,6 +59,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Install Linux text dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
       # These two style-only lints create repository-wide churn when Clippy changes its
       # preferred spelling. Correctness and all other warnings remain denied.
       - run: >-
@@ -74,6 +76,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install Linux text dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
       - name: Build workspace library documentation
         run: cargo doc --workspace --no-deps --lib
         env:
@@ -146,6 +150,8 @@ jobs:
       # Cargo.toml's `[workspace.package]`. If you bump one, bump both.
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
+      - name: Install Linux text dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
       # `+version` takes precedence over the repository's stable toolchain file.
       - run: cargo +1.88.0 check --workspace --all-targets
 
@@ -168,8 +174,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install software Vulkan renderer
-        run: sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+      - name: Install Linux text and GPU dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libvulkan1 mesa-vulkan-drivers
       - run: cargo xtask host-conformance desktop
         env:
           WGPU_BACKEND: vulkan
@@ -249,8 +255,8 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Install software Vulkan renderer
-        run: sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+      - name: Install Linux text and GPU dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libvulkan1 mesa-vulkan-drivers
 
       - name: Generate coverage
         # `--doctests` is nightly-only; stable runs doctest-free coverage.

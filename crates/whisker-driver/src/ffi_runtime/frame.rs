@@ -131,6 +131,7 @@ impl FrameSink for MobileFrameSink {
 pub(super) struct MobileFrameOwned {
     pub(super) value: MobileFrame,
     _arena: RawValueArena,
+    _paragraphs: super::paragraph::MobileParagraphs,
     _layouts: Vec<Box<MobileLayoutGeometry>>,
     _paints: Vec<Box<MobileBoxPaint>>,
     _box_shadows: Vec<Box<[MobileBoxShadow]>>,
@@ -216,6 +217,7 @@ const fn mobile_cursor_keyword(keyword: whisker_engine::whisker_protocol::Cursor
 impl MobileFrameOwned {
     pub(super) fn new(packet: &FramePacket) -> Result<Self, MobileFrameError> {
         let mut arena = RawValueArena::default();
+        let mut paragraphs = super::paragraph::MobileParagraphs::default();
         let mut layouts = Vec::<Box<MobileLayoutGeometry>>::new();
         let mut paints = Vec::<Box<MobileBoxPaint>>::new();
         let mut box_shadows = Vec::<Box<[MobileBoxShadow]>>::new();
@@ -661,13 +663,18 @@ impl MobileFrameOwned {
                         &mut font_features,
                         &mut font_variations,
                         &mut texts,
+                        &mut paragraphs,
                     )?;
                 }
                 Operation::SetTextStyle { node, style } => {
                     raw.tag = OP_TEXT_STYLE;
                     raw.node = node.get();
                     let content = TextContent {
+                        paragraph: None,
+                        runs: Vec::new(),
                         payload: TextMeasurePayload {
+                            runs: Vec::new(),
+                            attachments: Vec::new(),
                             text: String::new(),
                             style: style.style.clone(),
                             locale: style.locale.clone(),
@@ -689,6 +696,7 @@ impl MobileFrameOwned {
                         &mut font_features,
                         &mut font_variations,
                         &mut texts,
+                        &mut paragraphs,
                     )?;
                 }
                 Operation::SetAccessibility {
@@ -786,6 +794,7 @@ impl MobileFrameOwned {
         Ok(Self {
             value,
             _arena: arena,
+            _paragraphs: paragraphs,
             _layouts: layouts,
             _paints: paints,
             _box_shadows: box_shadows,
@@ -950,6 +959,7 @@ fn push_mobile_text(
     font_features: &mut Vec<Box<[MobileFontFeature]>>,
     font_variations: &mut Vec<Box<[MobileFontVariation]>>,
     texts: &mut Vec<Box<MobileText>>,
+    paragraphs: &mut super::paragraph::MobileParagraphs,
 ) -> Result<*const c_void, MobileFrameError> {
     if content.paint.decoration.lines.overline
         || (content.paint.decoration.lines.underline && content.paint.decoration.lines.line_through)
@@ -986,6 +996,7 @@ fn push_mobile_text(
     );
     let families = text_font_families.last().expect("pushed font families");
     texts.push(Box::new(MobileText {
+        paragraph: paragraphs.push(&content.payload, &content.runs, content.paragraph.as_ref()),
         text: push_string(strings, &content.payload.text),
         font_families: nonempty_ptr(families),
         font_family_count: families.len(),
@@ -996,7 +1007,7 @@ fn push_mobile_text(
             MeasureFontStyle::Italic => 1,
             MeasureFontStyle::Oblique => 2,
         },
-        wrap: u8::from(matches!(content.payload.wrap, MeasureTextWrap::Wrap)),
+        wrap: u8::from(content.payload.wrap != MeasureTextWrap::NoWrap),
         word_break: match content.payload.word_break {
             MeasureTextWordBreak::Normal => 0,
             MeasureTextWordBreak::BreakAll => 1,

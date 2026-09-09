@@ -71,7 +71,7 @@ pub use whisker_animation::{AnimConfig, Animatable, AnimationController, Curve, 
 pub use whisker_engine::whisker_protocol::{
     Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, ChildPolicy,
     CommandId, ElementCommandSchema, ElementEventSchema, ElementMeasurement, ElementPropertySchema,
-    ElementSchema, ElementValueKind, EventId, PropertyId,
+    ElementSchema, ElementValueKind, EventId, PropertyId, TextRange,
 };
 pub use whisker_runtime::element::ElementTag;
 
@@ -102,6 +102,8 @@ mod element_ref;
 pub mod focus;
 
 pub use element_ref::{ElementHandle, ElementRef, RefError, ScrollViewHandle, TextHandle};
+pub use whisker_engine::whisker_protocol::LayoutRect as TextRect;
+pub use whisker_runtime::text_query::TextQueryError;
 
 pub use whisker_runtime::module::PlatformModule;
 
@@ -220,7 +222,7 @@ pub mod __element_builder {
 #[path = "builtins/mod.rs"]
 pub mod __tags;
 
-pub use __tags::{ElementBuilder, Fragment, List, ScrollView, Text, View};
+pub use __tags::{ElementBuilder, Fragment, InlineTruncation, List, ScrollView, Text, View};
 
 /// Whisker platform module invocation entry point.
 ///
@@ -467,7 +469,10 @@ pub mod prelude {
     // macro unconditionally emits `.name(())` for every partial
     // kwarg, so RA's macro-expansion completion path sees the
     // method-call shape regardless of what the builder path resolves to.
-    pub use crate::{ElementBuilder, Fragment, List, ScrollView, Text, View};
+    pub use crate::{
+        ElementBuilder, Fragment, InlineTruncation, List, ScrollView, Text, TextQueryError,
+        TextRange, TextRect, View,
+    };
     // A separate list-item builder is intentionally absent — the `List` render-props
     // builder auto-wraps every item internally.
 }

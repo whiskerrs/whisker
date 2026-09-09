@@ -300,7 +300,7 @@ impl WebApplication {
         let wake = RuntimeWakeHandle::new(request_frame);
         let resource_store = WebResourceStore::new();
         let resources = WebResourceService::new(resource_store.clone());
-        Ok(Self {
+        let mut application = Self {
             root: root.clone(),
             runtime: RuntimeInstance::new(surface, wake),
             measurements: DomMeasurementProvider::with_elements(
@@ -322,7 +322,9 @@ impl WebApplication {
             viewport,
             viewport_epoch: 1,
             environment_epoch: 1,
-        })
+        };
+        application.frames.prepared_paragraphs = application.measurements.prepared.clone();
+        Ok(application)
     }
 
     fn drive_frame(&mut self, timestamp_ms: f64) -> Result<(), WebError> {
@@ -334,6 +336,7 @@ impl WebApplication {
             self.modules
                 .with_host(|| {
                     self.runtime.dispatch_input(&InputEvent {
+                        presentation_revision: None,
                         surface: self.runtime.surface().surface(),
                         timestamp_ms,
                         kind: InputEventKind::Named(event.name),

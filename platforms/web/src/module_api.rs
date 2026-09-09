@@ -514,7 +514,7 @@ impl WhiskerModule for BuiltInElementModule {
         WebModuleDefinition::new()
             .name("whisker.ui")
             .view(WebViewDefinition::new("whisker.ui/View", div, Clone::clone))
-            .view(WebViewDefinition::new("whisker.ui/Text", div, Clone::clone).plain_text())
+            .view(crate::text_element::definition())
             .view(
                 WebViewDefinition::new("whisker.ui/ScrollView", div, Clone::clone)
                     .scroll_container()

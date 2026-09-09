@@ -141,12 +141,12 @@ private fun bootstrapBuiltIns(view: WhiskerView) {
     view.registerElementFromNative(
         2,
         WhiskerBuiltInElements.TEXT,
-        WhiskerChildPolicy.PlainText.ordinal,
+        WhiskerChildPolicy.RichText.ordinal,
         WhiskerMeasurement.Text.ordinal,
         0,
-        intArrayOf(), intArrayOf(), emptyArray(),
-        intArrayOf(), intArrayOf(), emptyArray(),
-        intArrayOf(), intArrayOf(), emptyArray(),
+        intArrayOf(1), intArrayOf(WhiskerValueKind.Bool.ordinal), arrayOf("selectable"),
+        intArrayOf(1, 2, 3), intArrayOf(WhiskerValueKind.Map.ordinal, WhiskerValueKind.Map.ordinal, WhiskerValueKind.Map.ordinal), arrayOf("selectionchange", "textqueryresult", "textactivate"),
+        intArrayOf(1, 2, 3), IntArray(3) { WhiskerValueKind.Map.ordinal }, arrayOf("setSelection", "clearSelection", "textQuery"),
     )
     check(view.finishBootstrapFromNative())
 }
@@ -194,8 +194,11 @@ class HostConformanceTest {
                 val registration = WhiskerElementRegistration(
                     elementType = 1,
                     name = WhiskerBuiltInElements.TEXT,
-                    childPolicy = WhiskerChildPolicy.PlainText,
+                    childPolicy = WhiskerChildPolicy.RichText,
                     measurement = WhiskerMeasurement.Text,
+                    properties = listOf(WhiskerPropertyBinding(1, "selectable", WhiskerValueKind.Bool)),
+                    events = listOf(WhiskerEventBinding(1, "selectionchange", WhiskerValueKind.Map), WhiskerEventBinding(2, "textqueryresult", WhiskerValueKind.Map), WhiskerEventBinding(3, "textactivate", WhiskerValueKind.Map)),
+                    commands = listOf(WhiskerCommandBinding(1, "setSelection", WhiskerValueKind.Map), WhiskerCommandBinding(2, "clearSelection", WhiskerValueKind.Map), WhiskerCommandBinding(3, "textQuery", WhiskerValueKind.Map)),
                 )
                 val elements = WhiskerElementRegistry.newBindings()
                 assertTrue(WhiskerElementRegistry.bind(elements, listOf(registration)))
@@ -1438,9 +1441,6 @@ private class Driver(
             "$id measured height $height is below $minHeight"
         }
         check(height <= maxHeight) { "$id measured height $height exceeds $maxHeight" }
-        // MobileMeasureResponse has a prepared-content ID, but the current Android
-        // TextView measurer does not create reusable prepared content. The shared
-        // fixture therefore leaves that optional optimization unconstrained.
     }
 
     fun commitTransform(transform: FloatArray): Boolean {

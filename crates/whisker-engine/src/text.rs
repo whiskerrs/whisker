@@ -33,6 +33,9 @@ pub struct PlainTextInput {
     pub pending_policy: PendingMeasurePolicy,
 }
 
+mod paragraph;
+pub use paragraph::{InlineAttachmentInput, ResolvedTextRun, lower_rich_text};
+
 impl PlainTextInput {
     /// Creates ordinary wrapping text that blocks presentation until measured.
     pub fn new(text: impl Into<String>) -> Self {
@@ -72,6 +75,8 @@ impl LoweredPlainText {
 pub fn lower_plain_text(input: &PlainTextInput, style: &ComputedStyle) -> LoweredPlainText {
     let inherited = style.inherited_text();
     let payload = TextMeasurePayload {
+        runs: Vec::new(),
+        attachments: Vec::new(),
         text: input.text.clone(),
         style: TextMeasureStyle {
             font_families: vec![match inherited.font_family() {
@@ -143,6 +148,7 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &ComputedStyle) -> Lowere
             },
         },
         wrap: match style.white_space() {
+            WhiteSpaceValue::PreWrap => MeasureTextWrap::PreserveWhitespace,
             WhiteSpaceValue::Normal => MeasureTextWrap::Wrap,
             WhiteSpaceValue::NoWrap => MeasureTextWrap::NoWrap,
         },
@@ -165,6 +171,8 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &ComputedStyle) -> Lowere
     };
     LoweredPlainText {
         content: TextContent {
+            paragraph: None,
+            runs: Vec::new(),
             payload,
             paint: TextPaint {
                 foreground: lower_color(inherited.color()),
@@ -232,15 +240,8 @@ fn content_hash(text: &str) -> u64 {
 fn metric_style_hash(input: &PlainTextInput, style: &ComputedStyle) -> u64 {
     let mut hasher = DefaultHasher::new();
     let inherited = style.inherited_text();
-    inherited.font_family().hash(&mut hasher);
-    inherited.font_features().hash(&mut hasher);
-    inherited.font_variations().hash(&mut hasher);
-    inherited.font_optical_sizing().hash(&mut hasher);
-    inherited.font_size().to_bits().hash(&mut hasher);
-    inherited.font_weight().hash(&mut hasher);
-    inherited.font_style().hash(&mut hasher);
+    hash_font_metrics(inherited, &mut hasher);
     inherited.line_height().hash(&mut hasher);
-    inherited.letter_spacing().to_bits().hash(&mut hasher);
     inherited.text_align().hash(&mut hasher);
     style.text_indent().hash(&mut hasher);
     input.locale.hash(&mut hasher);
@@ -250,6 +251,17 @@ fn metric_style_hash(input: &PlainTextInput, style: &ComputedStyle) -> u64 {
     input.max_lines.hash(&mut hasher);
     style.text_overflow().hash(&mut hasher);
     hasher.finish()
+}
+
+fn hash_font_metrics(inherited: &whisker_style::InheritedStyle, hasher: &mut impl Hasher) {
+    inherited.font_family().hash(hasher);
+    inherited.font_features().hash(hasher);
+    inherited.font_variations().hash(hasher);
+    inherited.font_optical_sizing().hash(hasher);
+    inherited.font_size().to_bits().hash(hasher);
+    inherited.font_weight().hash(hasher);
+    inherited.font_style().hash(hasher);
+    inherited.letter_spacing().to_bits().hash(hasher);
 }
 
 #[cfg(test)]

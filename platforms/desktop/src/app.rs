@@ -432,6 +432,9 @@ impl DesktopApplication {
             .host
             .as_mut()
             .expect("mounted Desktop runtime has a Host");
+        if let Err(error) = host.modules.dispatch_pending_events(runtime) {
+            eprintln!("dispatch Desktop module event failed: {error}");
+        }
         let presentation = host.take_presentation_updates();
         let dispatch = match host
             .with_modules(|| runtime.dispatch_input_with_presentation(&event, &presentation))
@@ -444,7 +447,8 @@ impl DesktopApplication {
                 InputDispatch::default()
             }
         };
-        if input_dispatch_needs_frame(dispatch) {
+        let text_changed = host.text_pointer(&event, dispatch.target);
+        if input_dispatch_needs_frame(dispatch) || text_changed {
             self.request_frame();
         }
         dispatch
@@ -572,12 +576,27 @@ impl DesktopApplication {
                 let action = self.accessibility_bridge.handle_action(&request);
                 if let DesktopAccessibilityAction::Click(target) = action {
                     self.dispatch_input(InputEvent {
+                        presentation_revision: None,
                         surface: SurfaceId::new(1).expect("standalone surface id"),
                         timestamp_ms: self.started_at.elapsed().as_secs_f64() * 1000.0,
                         kind: InputEventKind::Click,
                         pointer: None,
                         target: Some(target),
                         detail: WhiskerValue::Null,
+                    });
+                }
+                if let DesktopAccessibilityAction::TextAction(target, span, revision) = action {
+                    self.dispatch_input(InputEvent {
+                        presentation_revision: None,
+                        surface: SurfaceId::new(1).expect("standalone surface id"),
+                        timestamp_ms: self.started_at.elapsed().as_secs_f64() * 1000.0,
+                        kind: InputEventKind::Named("textactivate".into()),
+                        pointer: None,
+                        target: Some(target),
+                        detail: WhiskerValue::map([
+                            ("span", WhiskerValue::Int(span as i64)),
+                            ("revision", WhiskerValue::Int(revision as i64)),
+                        ]),
                     });
                 }
                 if action != DesktopAccessibilityAction::Ignored {

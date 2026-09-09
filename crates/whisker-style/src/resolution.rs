@@ -402,6 +402,22 @@ impl InheritedStyle {
     }
 }
 
+/// Resolved alignment within a shaped paragraph.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ComputedVerticalAlign {
+    /// Align baselines.
+    #[default]
+    Baseline,
+    /// Align with the line top.
+    Top,
+    /// Center on the surrounding font's x-height center.
+    Middle,
+    /// Align with the line bottom.
+    Bottom,
+    /// Raise by signed logical pixels.
+    Offset(StyleNumber),
+}
+
 /// The currently implemented computed-style slice.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ComputedStyle {
@@ -410,6 +426,7 @@ pub struct ComputedStyle {
     white_space: WhiteSpaceValue,
     word_break: WordBreakValue,
     text_overflow: TextOverflowValue,
+    vertical_align: ComputedVerticalAlign,
     layout: ComputedLayoutStyle,
     paint: ComputedPaintStyle,
     motion: ComputedMotionStyle,
@@ -444,6 +461,11 @@ impl ComputedStyle {
     /// Returns this node's non-inherited word-breaking policy.
     pub const fn word_break(&self) -> WordBreakValue {
         self.word_break
+    }
+
+    /// Returns alignment of this node within its containing paragraph.
+    pub const fn vertical_align(&self) -> ComputedVerticalAlign {
+        self.vertical_align
     }
 
     /// Returns this node's non-inherited text overflow treatment.
@@ -939,6 +961,30 @@ fn resolve_style_once(
         Some(_) => return Err(wrong_type(StyleProperty::WordBreak)),
         None => WordBreakValue::default(),
     };
+    let vertical_align = match local_text_value(StyleProperty::VerticalAlign) {
+        Some(StyleValue::VerticalAlign(value)) => match value {
+            crate::VerticalAlignValue::Baseline => ComputedVerticalAlign::Baseline,
+            crate::VerticalAlignValue::Top => ComputedVerticalAlign::Top,
+            crate::VerticalAlignValue::Middle => ComputedVerticalAlign::Middle,
+            crate::VerticalAlignValue::Bottom => ComputedVerticalAlign::Bottom,
+            crate::VerticalAlignValue::Super => {
+                ComputedVerticalAlign::Offset(StyleNumber::new(font_size.get() / 3.0))
+            }
+            crate::VerticalAlignValue::Sub => {
+                ComputedVerticalAlign::Offset(StyleNumber::new(-font_size.get() / 5.0))
+            }
+        },
+        Some(StyleValue::Length(length)) => {
+            ComputedVerticalAlign::Offset(StyleNumber::new(resolve_length(
+                *length,
+                font_size.get(),
+                environment,
+                StyleProperty::VerticalAlign,
+            )?))
+        }
+        Some(_) => return Err(wrong_type(StyleProperty::VerticalAlign)),
+        None => ComputedVerticalAlign::Baseline,
+    };
     let text_overflow = match local_text_value(StyleProperty::TextOverflow) {
         Some(StyleValue::TextOverflow(value)) => *value,
         Some(_) => return Err(wrong_type(StyleProperty::TextOverflow)),
@@ -1009,6 +1055,7 @@ fn resolve_style_once(
             white_space,
             word_break,
             text_overflow,
+            vertical_align,
             layout,
             paint,
             motion,

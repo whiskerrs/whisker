@@ -181,6 +181,7 @@ impl Error for GpuError {}
 mod renderer;
 
 mod geometry;
+mod paragraph;
 mod shaders;
 
 use geometry::*;

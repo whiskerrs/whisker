@@ -4,7 +4,10 @@ package rs.whisker.runtime
 public enum class WhiskerMeasurement { None, Text, ReplacedContent, Custom }
 
 /** Rust-owned child semantics. Native mount targets remain Host-local. */
-public enum class WhiskerChildPolicy { None, Elements, PlainText }
+public enum class WhiskerChildPolicy { None, Elements, PlainText, RichText;
+    public val acceptsPlainText: Boolean get() = this == PlainText || this == RichText
+    public val acceptsElements: Boolean get() = this == Elements || this == RichText
+}
 
 /** Top-level shape of a value carried by [WhiskerValue]. */
 public enum class WhiskerValueKind { Null, Bool, Int, Float, String, Bytes, Array, Map }

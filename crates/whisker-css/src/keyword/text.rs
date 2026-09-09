@@ -187,6 +187,8 @@ pub enum WhiteSpace {
     Normal,
     /// `nowrap` — collapse whitespace, no wrapping.
     Nowrap,
+    /// `pre-wrap` — preserve whitespace and explicit line breaks while wrapping.
+    PreWrap,
 }
 
 impl ToCss for WhiteSpace {
@@ -194,6 +196,7 @@ impl ToCss for WhiteSpace {
         dest.write_str(match self {
             WhiteSpace::Normal => "normal",
             WhiteSpace::Nowrap => "nowrap",
+            WhiteSpace::PreWrap => "pre-wrap",
         })
     }
 }

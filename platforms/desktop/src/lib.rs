@@ -295,6 +295,14 @@ impl DesktopRuntime {
         self.surface.dispatch_text_input(event)
     }
 
+    pub(crate) fn text_pointer(
+        &mut self,
+        event: &whisker_protocol::InputEvent,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> bool {
+        self.surface.text_pointer(&self.measurements, event, target)
+    }
+
     /// Returns the focused element's selected text for clipboard integration.
     pub fn selected_text(&self) -> Option<String> {
         self.surface.selected_text()
@@ -368,6 +376,7 @@ impl DesktopRuntime {
             self.modules
                 .with_host(|| {
                     runtime.dispatch_input(&InputEvent {
+                        presentation_revision: None,
                         surface: runtime.surface().surface(),
                         timestamp_ms: context.timestamp_ms,
                         kind: InputEventKind::Named(event.name),

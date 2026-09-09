@@ -183,7 +183,14 @@ fn render_gradient(surface_id: u64, gradient: Gradient) -> PaintImage {
     let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
     runtime
         .mount(move || {
-            render! { View(style: Css::new().width(px(100)).height(px(100)).background_image(gradient.clone())) }
+            render! {
+                View(
+                    style: Css::new()
+                        .width(px(100))
+                        .height(px(100))
+                        .background_image(gradient.clone()),
+                )
+            }
         })
         .unwrap();
     assert!(surface.take_resource_commands().is_empty());
@@ -216,6 +223,7 @@ fn render_gradient(surface_id: u64, gradient: Gradient) -> PaintImage {
 fn dispatch_control_tap(runtime: &RuntimeInstance, surface: &SurfaceRuntime, timestamp_ms: f64) {
     let dispatch = runtime
         .dispatch_input(&InputEvent {
+            presentation_revision: None,
             surface: surface.surface(),
             timestamp_ms,
             kind: InputEventKind::Tap,
@@ -325,11 +333,13 @@ fn runtime_drive_requests_frames_until_an_opacity_transition_finishes() {
     let root = runtime
         .mount(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(40))
-                    .height(px(20))
-                    .opacity(0.2)
-                    .transition(transition()))
+                View(
+                    style: Css::new()
+                        .width(px(40))
+                        .height(px(20))
+                        .opacity(0.2)
+                        .transition(transition()),
+                )
             }
         })
         .unwrap();
@@ -461,12 +471,14 @@ fn background_url_loads_out_of_frame_and_is_emitted_only_after_ready() {
     runtime
         .mount(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(100))
-                    .height(px(100))
-                    .background_image(ImageRef::Url(CssString::new(
-                        "https://example.com/background.png",
-                    ))))
+                View(
+                    style: Css::new()
+                        .width(px(100))
+                        .height(px(100))
+                        .background_image(ImageRef::Url(CssString::new(
+                            "https://example.com/background.png",
+                        ))),
+                )
             }
         })
         .unwrap();
@@ -1586,6 +1598,7 @@ fn pointer_hit_test_routes_capture_target_and_bubble_in_rust() {
         .unwrap();
 
     let event = InputEvent {
+        presentation_revision: None,
         surface: surface.surface(),
         timestamp_ms: 2.0,
         kind: InputEventKind::Tap,
@@ -1642,6 +1655,7 @@ fn raw_touch_stream_synthesizes_tap_but_drag_does_not() {
         .unwrap();
 
     let pointer = |timestamp_ms, kind, x, y, buttons| InputEvent {
+        presentation_revision: None,
         surface: surface.surface(),
         timestamp_ms,
         kind,
@@ -1733,6 +1747,7 @@ fn touch_stream_stays_routed_to_its_pointer_down_target() {
         .unwrap();
 
     let pointer = |timestamp_ms, kind, x, buttons| InputEvent {
+        presentation_revision: None,
         surface: surface.surface(),
         timestamp_ms,
         kind,
@@ -1811,6 +1826,7 @@ fn raw_mouse_stream_synthesizes_cross_host_tap_and_mouse_click() {
         .unwrap();
 
     let pointer = |timestamp_ms, kind, buttons| InputEvent {
+        presentation_revision: None,
         surface: surface.surface(),
         timestamp_ms,
         kind,
@@ -1931,6 +1947,7 @@ fn reentrant_host_input_is_queued_until_the_event_boundary() {
                     on_tap: move |_| {
                         tap_log.borrow_mut().push("tap");
                         let nested = InputEvent {
+                            presentation_revision: None,
                             surface: nested_surface,
                             timestamp_ms: 3.0,
                             kind: InputEventKind::Click,
@@ -1972,6 +1989,7 @@ fn reentrant_host_input_is_queued_until_the_event_boundary() {
         )
         .unwrap();
     let tap = InputEvent {
+        presentation_revision: None,
         surface: surface.surface(),
         timestamp_ms: 2.0,
         kind: InputEventKind::Tap,
@@ -2028,6 +2046,8 @@ fn deferred_measurement_event_wakes_and_completes_the_next_frame() {
                 request_id: *request_id,
                 environment_epoch: request.environment_epoch,
                 metrics: MeasurementMetrics {
+                    paragraph: None,
+                    inline_placements: Vec::new(),
                     size: MeasuredSize::new(64.0, 20.0),
                     first_baseline: Some(15.0),
                     last_baseline: Some(15.0),
@@ -2087,9 +2107,7 @@ mod longpress {
                     let builder = View::builder()
                         .style(css!(width: px(100), height: px(100)))
                         .on_tap(move |_| tapped.set(tapped.get() + 1))
-                        .child(render! {
-                            View(style: css!(width: px(100), height: px(100)))
-                        });
+                        .child(render! { View(style: css!(width: px(100), height: px(100))) });
                     let builder = if listen {
                         builder.on_longpress(move |event| held.borrow_mut().push(event.detail.x))
                     } else {
@@ -2137,6 +2155,7 @@ mod longpress {
         ) {
             self.runtime
                 .dispatch_input(&InputEvent {
+                    presentation_revision: None,
                     surface: self.surface.surface(),
                     timestamp_ms: time,
                     pointer: Some(PointerInput {

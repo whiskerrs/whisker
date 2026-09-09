@@ -49,6 +49,12 @@ impl DynRenderer for SurfaceRuntime {
     fn release_element(&self, handle: Element) {
         let mut state = self.state.borrow_mut();
         let result = (|| {
+            state.text_layout_observed.remove(&handle);
+            #[cfg(debug_assertions)]
+            state
+                .text_style_diagnostics
+                .borrow_mut()
+                .retain(|(element, _)| *element != handle);
             let Some(entry) = state.elements.remove(&handle) else {
                 return Ok(());
             };
@@ -58,6 +64,7 @@ impl DynRenderer for SurfaceRuntime {
                 parent_entry.children.retain(|child| *child != handle);
             }
             if let Some(node) = entry.node {
+                state.text_queries.borrow_mut().cancel_node(node);
                 state.node_elements.remove(&node);
                 if state.surface.node(node).is_some() {
                     let removed_nodes = state.surface_subtree(node);
@@ -67,6 +74,15 @@ impl DynRenderer for SurfaceRuntime {
                     state.background_resources = background_resources;
                     state.enqueue_automatic_commands(resource_commands);
                 }
+            }
+            if let Some(parent) = entry.parent
+                && state
+                    .elements
+                    .get(&parent)
+                    .is_some_and(|entry| entry.kind.accepts_plain_text())
+            {
+                state.sync_paragraph_children(parent)?;
+                state.refresh_text(parent)?;
             }
             Ok(())
         })();
@@ -96,12 +112,15 @@ impl DynRenderer for SurfaceRuntime {
     fn set_accessibility(&self, handle: Element, accessibility: Accessibility) {
         let mut state = self.state.borrow_mut();
         let result = (|| {
-            let node = state
-                .element(handle)?
-                .node
-                .ok_or(RuntimeBindingError::InvalidRoot { element: handle })?;
+            let node = state.element(handle)?.node;
             state.element_mut(handle)?.accessibility = accessibility.clone();
-            state.surface.set_accessibility(node, accessibility)?;
+            if let Some(node) = node {
+                state.surface.set_accessibility(node, accessibility)?;
+            }
+            let root = state.paragraph_root(handle);
+            if state.element(root)?.kind.is_rich_text() {
+                state.apply_subtree(root)?;
+            }
             Ok(())
         })();
         state.record(result);
@@ -132,6 +151,19 @@ impl DynRenderer for SurfaceRuntime {
 
     fn set_attribute_bool(&self, handle: Element, key: &str, value: bool) {
         let mut state = self.state.borrow_mut();
+        if key == "selectable"
+            && state
+                .elements
+                .get(&handle)
+                .is_some_and(|entry| entry.kind.is_rich_text())
+        {
+            if let Some(entry) = state.elements.get_mut(&handle) {
+                entry.text_selectable = Some(value);
+            }
+            let result = state.apply_subtree(handle);
+            state.record(result);
+            return;
+        }
         let result = state.set_property_value(handle, key, WhiskerValue::Bool(value));
         state.record(result);
     }
@@ -266,10 +298,11 @@ impl DynRenderer for SurfaceRuntime {
     ) {
         let mut state = self.state.borrow_mut();
         let result = (|| {
-            let node = state
-                .element(handle)?
-                .node
-                .ok_or(RuntimeBindingError::InvalidRoot { element: handle })?;
+            let node = state.element(handle)?.node;
+            if event_name == "textlayout" {
+                state.text_layout_observed.insert(handle);
+                state.element_mut(handle)?.last_text_layout = None;
+            }
             state
                 .element_mut(handle)?
                 .listeners
@@ -284,8 +317,11 @@ impl DynRenderer for SurfaceRuntime {
                 .listeners
                 .keys()
                 .fold(0, |mask, name| mask | event_mask(&entry.kind, name));
-            state.surface.set_event_mask(node, mask)?;
-            state.surface.set_hit_test(node, HitTestBehavior::Auto)?;
+            if let Some(node) = node {
+                state.surface.set_event_mask(node, mask)?;
+                state.surface.set_hit_test(node, HitTestBehavior::Auto)?;
+            }
+            state.apply_subtree(handle)?;
             Ok(())
         })();
         state.record(result);
@@ -318,6 +354,40 @@ impl DynRenderer for SurfaceRuntime {
         self.state.borrow_mut().list_layout_requested = true;
     }
 
+    fn mark_inline_truncation(&self, handle: Element) {
+        let mut state = self.state.borrow_mut();
+        let result = state
+            .element_mut(handle)
+            .map(|entry| entry.inline_truncation = true);
+        state.record(result);
+    }
+
+    fn enable_text_geometry(&self, handle: Element) {
+        let mut state = self.state.borrow_mut();
+        let result = state
+            .element_mut(handle)
+            .map(|entry| entry.text_geometry = true)
+            .and_then(|()| state.apply_subtree(handle));
+        state.record(result);
+    }
+
+    fn request_text_query(
+        &self,
+        handle: Element,
+        query: crate::text_query::TextQuery,
+    ) -> crate::text_query::TextQueryFuture {
+        self.enqueue_text_query(handle, query)
+            .unwrap_or_else(crate::text_query::TextQueryFuture::failed)
+    }
+
+    fn set_text_selection(
+        &self,
+        handle: Element,
+        range: Option<whisker_protocol::TextRange>,
+    ) -> Result<(), crate::text_query::TextQueryError> {
+        self.enqueue_text_selection(handle, range)
+    }
+
     fn invoke_element_command(
         &self,
         handle: Element,
@@ -340,16 +410,30 @@ impl DynRenderer for SurfaceRuntime {
 
     fn set_root(&self, root: Element) {
         let mut state = self.state.borrow_mut();
-        let result = match state.element(root) {
-            Ok(entry) => match entry.node {
-                Some(node) => {
-                    state.root = Some(node);
-                    Ok(())
-                }
-                None => Err(RuntimeBindingError::InvalidRoot { element: root }),
-            },
-            Err(error) => Err(error),
-        };
+        if state
+            .elements
+            .get(&root)
+            .is_some_and(|entry| entry.inline_truncation)
+        {
+            state.record(Err(RuntimeBindingError::InvalidParagraph {
+                element: root,
+                message: "InlineTruncation cannot be a surface root",
+            }));
+            return;
+        }
+        let result = state
+            .materialize_text(root)
+            .and_then(|()| state.apply_subtree(root))
+            .and_then(|()| match state.element(root) {
+                Ok(entry) => match entry.node {
+                    Some(node) => {
+                        state.root = Some(node);
+                        Ok(())
+                    }
+                    None => Err(RuntimeBindingError::InvalidRoot { element: root }),
+                },
+                Err(error) => Err(error),
+            });
         state.record(result);
     }
 

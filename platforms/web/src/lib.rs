@@ -48,3 +48,5 @@ pub use scene::resource_store::WebResourceStore;
 #[cfg(all(test, target_arch = "wasm32"))]
 #[path = "tests/host_conformance.rs"]
 mod host_conformance_tests;
+
+mod text_element;

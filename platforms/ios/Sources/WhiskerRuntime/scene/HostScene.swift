@@ -4,6 +4,7 @@ import WhiskerModule
 /// Owns the transactional UIKit projection of one Whisker surface.
 final class HostScene {
     private unowned let root: UIView
+    private let preparedParagraphs: PreparedParagraphs
     private let resources: HostResourceStore
     private let logicalBounds: () -> CGRect
     private let emitElementEvent: (UInt64, String, WhiskerValue) -> Void
@@ -23,6 +24,7 @@ final class HostScene {
     init(
         root: UIView,
         resources: HostResourceStore,
+        preparedParagraphs: PreparedParagraphs = PreparedParagraphs(),
         logicalBounds: @escaping () -> CGRect,
         emitElementEvent: @escaping (UInt64, String, WhiskerValue) -> Void,
         updateScrollOffset: @escaping (UInt64, CGPoint) -> Void,
@@ -30,6 +32,7 @@ final class HostScene {
     ) {
         self.root = root
         self.resources = resources
+        self.preparedParagraphs = preparedParagraphs
         self.logicalBounds = logicalBounds
         self.emitElementEvent = emitElementEvent
         self.updateScrollOffset = updateScrollOffset
@@ -63,7 +66,8 @@ final class HostScene {
             start: frame.operations,
             count: frame.operation_count
         ))
-        guard validate(values, snapshot: frame.mode == UInt8(WHISKER_FRAME_SNAPSHOT)) else {
+        var paragraphs = [Int: WhiskerParagraph]()
+        guard validate(values, snapshot: frame.mode == UInt8(WHISKER_FRAME_SNAPSHOT), paragraphs: &paragraphs) else {
             response.status = UInt8(WHISKER_APPLY_REJECTED)
             response.revision = revision
             return true
@@ -75,9 +79,9 @@ final class HostScene {
         let snapshot = frame.mode == UInt8(WHISKER_FRAME_SNAPSHOT)
         if snapshot { clear() }
         var zOrderParents = Set<UInt64>()
-        for operation in values {
+        for (index, operation) in values.enumerated() {
             recordZOrderImpact(operation, into: &zOrderParents)
-            if !apply(operation) {
+            if !apply(operation, paragraph: paragraphs[index]) {
                 response.status = UInt8(WHISKER_APPLY_REJECTED)
                 response.revision = revision
                 return true
@@ -106,7 +110,7 @@ final class HostScene {
         zOrders.removeAll()
     }
 
-    private func validate(_ operations: [WhiskerMobileOperation], snapshot: Bool) -> Bool {
+    private func validate(_ operations: [WhiskerMobileOperation], snapshot: Bool, paragraphs: inout [Int: WhiskerParagraph]) -> Bool {
         var existing = snapshot ? Set<UInt64>() : Set(nodes.keys)
         var stagedParents = snapshot ? [:] : parents
         var stagedChildCounts: [UInt64: Int] = [:]
@@ -120,7 +124,7 @@ final class HostScene {
                 node.mountedElement.map { (id, $0.registration.elementType) }
             }
         )
-        for operation in operations {
+        for (index, operation) in operations.enumerated() {
             switch operation.tag {
             case UInt32(WHISKER_OP_CREATE):
                 guard operation.node != 0, !existing.contains(operation.node),
@@ -236,6 +240,11 @@ final class HostScene {
                         + text.font_variation_count <= 4_096,
                       text.indent_logical_pixels.isFinite,
                       text.indent_percentage.isFinite else { return false }
+                if let pointer = text.paragraph {
+                    do {
+                        paragraphs[index] = try WhiskerParagraph(value: .from(raw: pointer.pointee), text: hostString(text.text))
+                    } catch { return false }
+                }
                 if operation.tag == UInt32(WHISKER_OP_TEXT),
                    !registration.childPolicy.acceptsPlainText { return false }
                 if operation.tag == UInt32(WHISKER_OP_TEXT_STYLE),
@@ -351,7 +360,7 @@ final class HostScene {
             && rect.width >= 0 && rect.height >= 0
     }
 
-    private func apply(_ operation: WhiskerMobileOperation) -> Bool {
+    private func apply(_ operation: WhiskerMobileOperation, paragraph: WhiskerParagraph?) -> Bool {
         let id = operation.node
         switch operation.tag {
         case UInt32(WHISKER_OP_CREATE):
@@ -527,12 +536,12 @@ final class HostScene {
             guard let payload = operation.payload?
                 .assumingMemoryBound(to: WhiskerMobileText.self).pointee
             else { return false }
-            applyText(nodes[id], payload)
+            guard applyText(nodes[id], payload, paragraph: paragraph) else { return false }
         case UInt32(WHISKER_OP_TEXT_STYLE):
             guard let payload = operation.payload?
                 .assumingMemoryBound(to: WhiskerMobileText.self).pointee
             else { return false }
-            applyText(nodes[id], payload, styleOnly: true)
+            guard applyText(nodes[id], payload, paragraph: paragraph, styleOnly: true) else { return false }
         case UInt32(WHISKER_OP_ACCESSIBILITY):
             guard let payload = operation.payload?
                 .assumingMemoryBound(to: WhiskerValueRaw.self).pointee,
@@ -751,11 +760,14 @@ final class HostScene {
     private func applyText(
         _ node: WhiskerNodeView?,
         _ content: WhiskerMobileText,
+        paragraph: WhiskerParagraph?,
         styleOnly: Bool = false
-    ) {
-        guard let node, let mounted = node.mountedElement else { return }
+    ) -> Bool {
+        guard let node, let mounted = node.mountedElement else { return false }
         let decoded = WhiskerTextContent(
             value: hostString(content.text),
+            paragraph: paragraph,
+            preparedContent: content.prepared_content,
             fontFamilies: hostFontFamilies(content),
             fontSize: CGFloat(content.font_size),
             fontWeight: Int(content.font_weight),
@@ -832,11 +844,16 @@ final class HostScene {
         let accepted = styleOnly
             ? mounted.setTextStyle(WhiskerTextStyle(content: decoded))
             : mounted.setText(decoded)
+        if accepted, let label = mounted.view as? WhiskerTextLabel,
+           let layout = preparedParagraphs.layout(content.prepared_content) {
+            label.installPreparedParagraph(layout)
+        }
         guard accepted else {
             preconditionFailure(
                 "text operation sent to element \(mounted.registration.name) without the declared text implementation"
             )
         }
+        return true
     }
 
     private func applyPaint(_ node: WhiskerNodeView?, _ raw: WhiskerMobileBoxPaint) {

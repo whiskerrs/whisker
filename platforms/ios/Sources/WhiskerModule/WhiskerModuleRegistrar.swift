@@ -50,6 +50,8 @@ public struct WhiskerMeasuredSize {
 }
 
 public struct WhiskerTextContent {
+    public let preparedContent: UInt64
+    public let paragraph: WhiskerParagraph?
     public let value: String
     public let fontFamilies: [String]
     public let fontSize: CGFloat
@@ -73,6 +75,8 @@ public struct WhiskerTextContent {
 
     public init(
         value: String,
+        paragraph: WhiskerParagraph? = nil,
+        preparedContent: UInt64 = 0,
         fontFamilies: [String] = ["system"],
         fontSize: CGFloat,
         fontWeight: Int,
@@ -94,6 +98,8 @@ public struct WhiskerTextContent {
         shadow: WhiskerTextShadow? = nil
     ) {
         self.value = value
+        self.paragraph = paragraph
+        self.preparedContent = preparedContent
         self.fontFamilies = fontFamilies
         self.fontSize = fontSize
         self.fontWeight = fontWeight

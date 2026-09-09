@@ -8,9 +8,9 @@ use std::ffi::c_void;
 use crate::{WhiskerBytesRef, WhiskerStringRef, WhiskerValueRaw};
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 30;
+pub const MOBILE_ABI_MINOR: u16 = 31;
 pub const FRAME_PROTOCOL_MAJOR: u16 = 1;
-pub const FRAME_PROTOCOL_MINOR: u16 = 4;
+pub const FRAME_PROTOCOL_MINOR: u16 = 5;
 
 pub const CAPABILITY_ELLIPTICAL_BORDER_RADIUS: u64 = 0x0001;
 pub const CAPABILITY_BACKGROUND_LAYERS: u64 = 0x0002;
@@ -26,6 +26,7 @@ pub const CAPABILITY_BACKGROUND_GEOMETRY: u64 = 0x0800;
 pub const CAPABILITY_BACKGROUND_LAYER_STACKING: u64 = 0x1000;
 pub const CAPABILITY_BACKGROUND_IMAGE_RESOURCES: u64 = 0x2000;
 pub const CAPABILITY_BACKDROP_BLUR: u64 = 0x4000;
+pub const CAPABILITY_RICH_TEXT: u64 = 0x8000;
 
 pub const POINTER_DOWN: u32 = 0;
 pub const POINTER_MOVE: u32 = 1;
@@ -348,6 +349,7 @@ pub struct MobileFontVariation {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MobileText {
+    pub paragraph: *const WhiskerValueRaw,
     pub text: WhiskerStringRef,
     pub font_families: *const WhiskerStringRef,
     pub font_family_count: usize,
@@ -467,6 +469,7 @@ pub struct MobileBootstrap {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MobileMeasureRequest {
+    pub paragraph: *const WhiskerValueRaw,
     pub key: u64,
     pub node: u64,
     pub element_type: u32,
@@ -524,6 +527,13 @@ pub struct MobileMeasureResponse {
     pub metrics_mask: u32,
     pub request_id: u64,
     pub prepared_content: u64,
+    /// Host-owned geometry tree, retained until `release_paragraph` is called.
+    pub paragraph: *mut WhiskerValueRaw,
+    /// Releases the geometry exactly once, including rejected and partially filled batches.
+    pub release_paragraph: Option<extern "C" fn(*mut WhiskerValueRaw)>,
+    /// Opaque Host layout retained while its prepared content ID is cached.
+    pub prepared_layout: *mut c_void,
+    pub release_prepared_layout: Option<extern "C" fn(*mut c_void)>,
 }
 
 /// One borrowed Rust-to-Host resource command. String and byte pointers are
@@ -667,9 +677,9 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileMemberRegistration>(), 24);
             assert_eq!(std::mem::size_of::<MobileElementRegistration>(), 72);
             assert_eq!(std::mem::size_of::<MobileBootstrap>(), 24);
-            assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 224);
-            assert_eq!(std::mem::size_of::<MobileMeasureResponse>(), 64);
-            assert_eq!(std::mem::size_of::<MobileText>(), 248);
+            assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 232);
+            assert_eq!(std::mem::size_of::<MobileMeasureResponse>(), 96);
+            assert_eq!(std::mem::size_of::<MobileText>(), 256);
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);
             assert_eq!(std::mem::size_of::<MobileBoxShadow>(), 56);
             assert_eq!(std::mem::size_of::<MobileClipInset>(), 96);

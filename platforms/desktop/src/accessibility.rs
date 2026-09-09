@@ -21,6 +21,8 @@ pub(crate) struct DesktopAccessibilityNode {
     pub(crate) semantics: Accessibility,
     pub(crate) text: Option<String>,
     pub(crate) hidden: bool,
+    pub(crate) text_actions: Vec<(whisker_protocol::TextSpanId, String)>,
+    pub(crate) text_revision: u64,
 }
 
 /// Complete semantic snapshot of one Desktop surface.
@@ -34,6 +36,7 @@ pub(crate) struct DesktopAccessibilitySnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DesktopAccessibilityAction {
     Click(WhiskerNodeId),
+    TextAction(WhiskerNodeId, u64, u64),
     FocusChanged,
     Ignored,
 }
@@ -42,6 +45,8 @@ pub(crate) enum DesktopAccessibilityAction {
 pub(crate) struct DesktopAccessibilityBridge {
     previous: HashMap<AccessNodeId, Node>,
     focus: AccessNodeId,
+    text_actions: HashMap<(AccessNodeId, i32), (u64, u64)>,
+    next_action_id: i32,
 }
 
 impl Default for DesktopAccessibilityBridge {
@@ -49,6 +54,8 @@ impl Default for DesktopAccessibilityBridge {
         Self {
             previous: HashMap::new(),
             focus: ROOT_ID,
+            text_actions: HashMap::new(),
+            next_action_id: 0,
         }
     }
 }
@@ -56,6 +63,7 @@ impl Default for DesktopAccessibilityBridge {
 impl DesktopAccessibilityBridge {
     pub(crate) fn reset(&mut self) {
         self.previous.clear();
+        self.text_actions.clear();
         self.focus = ROOT_ID;
     }
 
@@ -86,9 +94,41 @@ impl DesktopAccessibilityBridge {
         );
         next.insert(ROOT_ID, root);
 
+        let mut next_actions = HashMap::new();
         for semantic in snapshot.nodes {
-            next.insert(access_node_id(semantic.id), access_node(semantic));
+            let node_id = access_node_id(semantic.id);
+            let mut actions = Vec::new();
+            if !semantic.hidden && !semantic.semantics.hidden {
+                for (span, description) in &semantic.text_actions {
+                    let identity = (span.get(), semantic.text_revision);
+                    let id = self
+                        .text_actions
+                        .iter()
+                        .find_map(|((node, id), value)| {
+                            (*node == node_id && *value == identity).then_some(*id)
+                        })
+                        .unwrap_or_else(|| {
+                            self.next_action_id = self
+                                .next_action_id
+                                .checked_add(1)
+                                .expect("accessibility action IDs exhausted");
+                            self.next_action_id
+                        });
+                    next_actions.insert((node_id, id), identity);
+                    actions.push(accesskit::CustomAction {
+                        id,
+                        description: description.clone(),
+                    });
+                }
+            }
+            let mut node = access_node(semantic);
+            if !actions.is_empty() {
+                node.add_action(Action::CustomAction);
+                node.set_custom_actions(actions);
+            }
+            next.insert(node_id, node);
         }
+        self.text_actions = next_actions;
         if !next.contains_key(&self.focus) {
             self.focus = ROOT_ID;
         }
@@ -131,6 +171,19 @@ impl DesktopAccessibilityBridge {
             Action::Blur if self.focus == request.target_node => {
                 self.focus = ROOT_ID;
                 DesktopAccessibilityAction::FocusChanged
+            }
+            Action::CustomAction => {
+                let Some(accesskit::ActionData::CustomAction(id)) = request.data else {
+                    return DesktopAccessibilityAction::Ignored;
+                };
+                let Some((span, revision)) = self.text_actions.get(&(request.target_node, id))
+                else {
+                    return DesktopAccessibilityAction::Ignored;
+                };
+                let Some(node) = WhiskerNodeId::new(request.target_node.0) else {
+                    return DesktopAccessibilityAction::Ignored;
+                };
+                DesktopAccessibilityAction::TextAction(node, *span, *revision)
             }
             Action::Click => {
                 let Some(node) = WhiskerNodeId::new(request.target_node.0) else {
@@ -266,6 +319,8 @@ mod tests {
                 semantics: accessibility,
                 text: None,
                 hidden: false,
+                text_actions: vec![],
+                text_revision: 0,
             }],
         }
     }
@@ -352,6 +407,60 @@ mod tests {
             false,
         );
         assert_eq!(update.focus, AccessNodeId(1));
+    }
+
+    #[test]
+    fn inline_actions_keep_ids_for_paint_and_invalidate_ids_on_content_change() {
+        let mut bridge = DesktopAccessibilityBridge::default();
+        let mut semantic = snapshot(Accessibility::new());
+        semantic.nodes[0].text_actions = vec![(
+            whisker_protocol::TextSpanId::new(42).unwrap(),
+            "Open".into(),
+        )];
+        semantic.nodes[0].text_revision = 7;
+        let update = bridge.update(semantic.clone(), "Text", [100.0, 80.0], 1.0, true);
+        let action_id = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == AccessNodeId(1))
+            .unwrap()
+            .1
+            .custom_actions()[0]
+            .id;
+        let request = ActionRequest {
+            action: Action::CustomAction,
+            target_tree: TreeId::ROOT,
+            target_node: AccessNodeId(1),
+            data: Some(accesskit::ActionData::CustomAction(action_id)),
+        };
+        assert_eq!(
+            bridge.handle_action(&request),
+            DesktopAccessibilityAction::TextAction(id(1), 42, 7)
+        );
+        assert!(
+            bridge
+                .update(semantic.clone(), "Text", [100.0, 80.0], 1.0, false)
+                .nodes
+                .is_empty()
+        );
+        semantic.nodes[0].text_revision = 8;
+        bridge.update(semantic.clone(), "Text", [100.0, 80.0], 1.0, false);
+        assert_eq!(
+            bridge.handle_action(&request),
+            DesktopAccessibilityAction::Ignored
+        );
+        semantic.nodes[0].hidden = true;
+        let update = bridge.update(semantic, "Text", [100.0, 80.0], 1.0, false);
+        assert!(
+            update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == AccessNodeId(1))
+                .unwrap()
+                .1
+                .custom_actions()
+                .is_empty()
+        );
     }
 
     #[test]

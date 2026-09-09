@@ -52,9 +52,9 @@ pub use property::{
 };
 pub use resolution::{
     ComputedLineHeight, ComputedStyle, ComputedTextDecoration, ComputedTextIndent,
-    ComputedTextShadow, InheritedPropertySet, InheritedStyle, InheritedStyleChange,
-    PropertyImpactSet, ResolvedNodeStyle, StyleEnvironment, StyleResolutionError, resolve_style,
-    resolve_text_style,
+    ComputedTextShadow, ComputedVerticalAlign, InheritedPropertySet, InheritedStyle,
+    InheritedStyleChange, PropertyImpactSet, ResolvedNodeStyle, StyleEnvironment,
+    StyleResolutionError, resolve_style, resolve_text_style,
 };
 pub use value::{
     BackdropFilterValue, BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue,
@@ -69,5 +69,8 @@ pub use value::{
     OffsetRotateValue, OpenTypeTagValue, PointerEventsValue, RadialGradientValue, StyleNumber,
     StyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
     TextDecorationValue, TextOverflowValue, TextShadowValue, TransformFunctionValue,
-    TransformOriginValue, TransformValue, WhiteSpaceValue, WordBreakValue,
+    TransformOriginValue, TransformValue, VerticalAlignValue, WhiteSpaceValue, WordBreakValue,
 };
+
+mod text_support;
+pub use text_support::TextStyleScope;

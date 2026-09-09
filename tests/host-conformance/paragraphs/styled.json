@@ -1,0 +1,203 @@
+{
+  "text": "Small 🦀 BIG 日本語 wraps across several lines.",
+  "paragraph": {
+    "version": 1,
+    "runs": [
+      {
+        "start": 0,
+        "end": 9,
+        "span": 1,
+        "families": [
+          "system"
+        ],
+        "size": 16,
+        "weight": 400,
+        "italic": false,
+        "spacing": 0,
+        "features": {},
+        "variations": {},
+        "optical": false,
+        "paint": {
+          "color": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "background": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "underline": false,
+          "strike": false,
+          "decorationColor": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "decorationStyle": 0,
+          "shadows": [],
+          "radii": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "start": 9,
+        "end": 12,
+        "span": 2,
+        "families": [
+          "system"
+        ],
+        "size": 36,
+        "weight": 700,
+        "italic": false,
+        "spacing": 0,
+        "features": {},
+        "variations": {},
+        "optical": false,
+        "paint": {
+          "color": [
+            255,
+            0,
+            0,
+            1
+          ],
+          "background": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "underline": false,
+          "strike": false,
+          "decorationColor": [
+            255,
+            0,
+            0,
+            1
+          ],
+          "decorationStyle": 0,
+          "shadows": [],
+          "radii": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "start": 12,
+        "end": 44,
+        "span": 3,
+        "families": [
+          "system"
+        ],
+        "size": 16,
+        "weight": 400,
+        "italic": false,
+        "spacing": 0,
+        "features": {},
+        "variations": {},
+        "optical": false,
+        "paint": {
+          "color": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "background": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "underline": false,
+          "strike": false,
+          "decorationColor": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "decorationStyle": 0,
+          "shadows": [],
+          "radii": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      }
+    ]
+  }
+}

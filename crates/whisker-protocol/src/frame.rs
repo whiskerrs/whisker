@@ -80,6 +80,12 @@ pub struct TextPaint {
 }
 
 impl TextPaint {
+    /// Validates the colors and geometry of glyph paint.
+    pub fn validate(&self) -> bool {
+        self.foreground.is_valid()
+            && self.decoration.validate()
+            && self.shadows.iter().all(crate::TextShadow::validate)
+    }
     /// Returns whether painting requires protocol-minor-1 decoration or shadow
     /// support beyond the original foreground-color path.
     pub fn uses_extended_features(&self) -> bool {
@@ -302,7 +308,7 @@ pub enum TextContentError {
 pub const PROTOCOL_MAJOR: u16 = 1;
 
 /// Protocol minor version implemented by this semantic model.
-pub const PROTOCOL_MINOR: u16 = 4;
+pub const PROTOCOL_MINOR: u16 = 5;
 
 /// A negotiated frame protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -451,6 +457,10 @@ pub enum HitTestBehavior {
 /// measurement provider retained one for painting.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextContent {
+    /// Accepted geometry used for logical text interactions.
+    pub paragraph: Option<crate::ParagraphMetrics>,
+    /// Ordered non-overlapping paint overrides and logical event targets.
+    pub runs: Vec<crate::TextPaintRun>,
     /// UTF-8 content and resolved metric-affecting text inputs.
     pub payload: TextMeasurePayload,
     /// Resolved values that affect painting but not intrinsic measurement.
@@ -465,11 +475,20 @@ impl TextContent {
         self.payload
             .validate()
             .map_err(TextContentError::InvalidMeasurement)?;
-        if !self.paint.foreground.is_valid()
-            || !self.paint.decoration.validate()
-            || !self.paint.shadows.iter().all(crate::TextShadow::validate)
+        if !self.paint.validate()
+            || self
+                .paragraph
+                .as_ref()
+                .is_some_and(|paragraph| !paragraph.validate(&self.payload.text))
         {
             return Err(TextContentError::InvalidPaint);
+        }
+        let mut previous = 0;
+        for run in &self.runs {
+            if run.range.start < previous || !run.validate(&self.payload.text) {
+                return Err(TextContentError::InvalidPaint);
+            }
+            previous = run.range.end;
         }
         Ok(())
     }
@@ -498,7 +517,11 @@ impl TextStyleSnapshot {
     /// text content.
     pub fn validate(&self) -> Result<(), TextContentError> {
         TextContent {
+            paragraph: None,
+            runs: Vec::new(),
             payload: TextMeasurePayload {
+                runs: Vec::new(),
+                attachments: Vec::new(),
                 text: String::new(),
                 style: self.style.clone(),
                 locale: self.locale.clone(),
@@ -844,7 +867,11 @@ mod tests {
         }
 
         let mut content = TextContent {
+            paragraph: None,
+            runs: Vec::new(),
             payload: crate::TextMeasurePayload {
+                runs: Vec::new(),
+                attachments: Vec::new(),
                 text: "paint".into(),
                 style: crate::TextMeasureStyle {
                     font_families: vec![crate::MeasureFontFamily::System],
@@ -1034,7 +1061,11 @@ mod tests {
             Operation::SetText {
                 node: target,
                 content: TextContent {
+                    paragraph: None,
+                    runs: Vec::new(),
                     payload: crate::TextMeasurePayload {
+                        runs: Vec::new(),
+                        attachments: Vec::new(),
                         text: "hello".into(),
                         style: crate::TextMeasureStyle {
                             font_families: vec![crate::MeasureFontFamily::System],

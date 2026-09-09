@@ -211,6 +211,7 @@ impl MobileBootstrapOwned {
                     ChildPolicy::None => 0,
                     ChildPolicy::Elements => 1,
                     ChildPolicy::PlainText => 2,
+                    ChildPolicy::RichText => 3,
                 },
                 measurement: match registration.measurement {
                     ElementMeasurement::None => 0,

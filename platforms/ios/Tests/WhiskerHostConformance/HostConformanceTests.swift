@@ -1273,8 +1273,11 @@ private final class Driver {
         let textRegistration = WhiskerElementRegistration(
             elementType: 2,
             name: WhiskerBuiltInElements.textName,
-            childPolicy: .plainText,
-            measurement: .text
+            childPolicy: .richText,
+            measurement: .text,
+            properties: [WhiskerPropertyBinding(id: 1, name: "selectable", value: .bool)],
+            events: [WhiskerEventBinding(id: 1, name: "selectionchange", detail: .map), WhiskerEventBinding(id: 2, name: "textqueryresult", detail: .map), WhiskerEventBinding(id: 3, name: "textactivate", detail: .map)],
+            commands: [WhiskerCommandBinding(id: 1, name: "setSelection", arguments: .map), WhiskerCommandBinding(id: 2, name: "clearSelection", arguments: .map), WhiskerCommandBinding(id: 3, name: "textQuery", arguments: .map)]
         )
         guard WhiskerElementRegistry.bind([registration, textRegistration]) else {
             throw Failure("bind built-in UIKit View")
