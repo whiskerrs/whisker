@@ -19,7 +19,6 @@ pub mod size {
     pub const TOUCH: f32 = 44.0;
     pub const SIDEBAR: f32 = 272.0;
     pub const READING: f32 = 760.0;
-    pub const FORM: f32 = 520.0;
     pub const CAPTION: f32 = 12.0;
     pub const LABEL: f32 = 14.0;
     pub const BODY: f32 = 16.0;

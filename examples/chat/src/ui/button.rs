@@ -8,6 +8,8 @@ pub fn button(
     label: Signal<String>,
     on_press: Callback,
     #[prop(default = Signal::from(false))] primary: Signal<bool>,
+    #[prop(default = false)] compact: bool,
+    #[prop(default = false)] plain: bool,
     #[prop(default = "")] icon: &'static str,
     #[prop(default = Signal::from(false))] disabled: Signal<bool>,
     #[prop(default = "")] accessible_label: &'static str,
@@ -32,11 +34,15 @@ pub fn button(
             },
             style: theme::style(move |palette| {
                 theme::row()
-                    .justify_content(JustifyContent::Center)
+                    .justify_content(if compact {
+                        JustifyContent::FlexStart
+                    } else {
+                        JustifyContent::Center
+                    })
                     .gap(px(space::SM))
-                    .padding_left(px(space::LG))
-                    .padding_right(px(space::LG))
-                    .min_height(px(size::TOUCH))
+                    .padding_left(px(if compact { space::MD } else { space::LG }))
+                    .padding_right(px(if compact { space::MD } else { space::LG }))
+                    .min_height(px(if compact { 32.0 } else { size::TOUCH }))
                     .flex_shrink(0.0)
                     .border_radius(px(radius::CONTROL))
                     .cursor(if disabled.get() {
@@ -45,11 +51,13 @@ pub fn button(
                         Cursor::Pointer
                     })
                     .opacity(if disabled.get() { 0.45 } else { 1.0 })
-                    .background_color(Color::hex(if primary.get() {
-                        palette.accent
+                    .background_color(if primary.get() {
+                        Color::hex(palette.accent)
+                    } else if plain {
+                        Color::Transparent
                     } else {
-                        palette.tint
-                    }))
+                        Color::hex(palette.tint)
+                    })
             }),
         ) {
             Show(when: move || !icon.is_empty()) {
@@ -67,7 +75,7 @@ pub fn button(
                                 }
                             )
                         }),
-                        size: "18",
+                        size: if compact { "16" } else { "18" },
                     )
                 }
             }
@@ -76,7 +84,7 @@ pub fn button(
                     value: label,
                     style: theme::style(move |palette| {
                         palette
-                            .text(size::LABEL)
+                            .text(if compact { 13.0 } else { size::LABEL })
                             .pointer_events(PointerEvents::None)
                             .font_weight(FontWeight::Numeric(500))
                             .color(Color::hex(if primary.get() {

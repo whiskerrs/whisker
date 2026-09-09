@@ -40,7 +40,8 @@ Browser connections require the provider to permit cross-origin requests.
 On Desktop, **Chats** toggles the sidebar; **Hide sidebar** gives the conversation
 more room. **Settings → Color theme** switches appearance without resetting the
 conversation or draft. Dark is the initial default; the selected appearance is
-restored on launch.
+restored on launch. Settings uses a section sidebar on wide screens and stacks
+the navigation above the form on narrow screens.
 The browser starts with the sidebar closed. On iOS and Android,
 **Chats** opens a separate history screen through `whisker-router`.
 

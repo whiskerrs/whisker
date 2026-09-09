@@ -25,6 +25,7 @@ fn appearance_option(value: theme::Appearance, label: &'static str, icon: &'stat
                     label.into()
                 }
             }),
+            compact: true,
             primary: computed(move || appearance.get() == value),
             icon: icon,
             on_press: move |()| {

@@ -9,6 +9,7 @@ mod markdown;
 mod messages;
 pub(crate) mod navigation;
 mod settings;
+mod settings_shell;
 mod startup;
 mod theme;
 mod welcome;
