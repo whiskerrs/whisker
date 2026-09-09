@@ -14,7 +14,6 @@
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::Command;
 
 use crate::{AndroidParams, IosParams, MacosParams, Target};
@@ -56,7 +55,6 @@ pub struct Installer {
     /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
     dev_token: Option<String>,
     macos_child: tokio::sync::Mutex<Option<tokio::process::Child>>,
-    web_opened: AtomicBool,
 }
 
 impl Installer {
@@ -85,7 +83,6 @@ impl Installer {
             dev_port,
             dev_token,
             macos_child: tokio::sync::Mutex::new(None),
-            web_opened: AtomicBool::new(false),
         }
     }
 
@@ -149,11 +146,8 @@ impl Installer {
                 Ok(())
             }
             Target::Web => {
-                if self.web_opened.swap(true, Ordering::AcqRel) {
-                    Ok(())
-                } else {
-                    open_browser(self.dev_port).await
-                }
+                whisker_build::ui::info(format!("Local: http://127.0.0.1:{}/", self.dev_port));
+                Ok(())
             }
         }
     }
@@ -175,34 +169,9 @@ impl Installer {
                 ios_launch(params, self.dev_port, self.dev_token.as_deref()).await
             }
             Target::Macos => self.install_and_launch().await,
-            Target::Web => open_browser(self.dev_port).await,
+            Target::Web => Ok(()),
         }
     }
-}
-
-async fn open_browser(port: u16) -> Result<()> {
-    let url = format!("http://127.0.0.1:{port}/");
-    let open_step = whisker_build::ui::step(whisker_build::ui::OperationKind::Open, url.clone());
-    let mut command = if cfg!(target_os = "macos") {
-        let mut command = Command::new("open");
-        command.arg(&url);
-        command
-    } else if cfg!(target_os = "windows") {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", &url]);
-        command
-    } else {
-        let mut command = Command::new("xdg-open");
-        command.arg(&url);
-        command
-    };
-    let status = command.status().await.context("open Web Host in browser")?;
-    if !status.success() {
-        open_step.fail(status.to_string());
-        anyhow::bail!("browser launcher exited with {status}");
-    }
-    open_step.done("");
-    Ok(())
 }
 
 /// Run a `tokio::process::Command` to completion, capture its stderr,
