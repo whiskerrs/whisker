@@ -7,7 +7,7 @@ pub use whisker_protocol::{
 use whisker_protocol::{ElementRegistration, PropertyId, TextStyleSnapshot, WhiskerValue};
 
 /// Current inputs available when a module builds its Host measurement payload.
-/// The Runtime calls the builder before layout, after reactive property updates.
+/// The Runtime calls the declared payload function before layout, after reactive property updates.
 pub struct ModuleMeasureContext<'a> {
     pub(crate) registration: &'a ElementRegistration,
     pub(crate) properties: &'a BTreeMap<PropertyId, WhiskerValue>,

@@ -53,14 +53,6 @@ pub trait ElementBuilder: Sized {
         self
     }
 
-    /// Builds Host measurement inputs from the current props and resolved text style.
-    /// Requires a leaf `module_element` with `measurement = Custom`. The builder
-    /// must be pure; returning `None` disables intrinsic measurement.
-    fn measure_with(self, builder: crate::MeasurementPayloadBuilder) -> Self {
-        crate::runtime::view::renderer::set_measurement_builder(self.__element(), builder);
-        self
-    }
-
     // ---- Common semantics (shared by all elements) ------------------
 
     /// Stable identifier surfaced through event target metadata.

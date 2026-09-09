@@ -391,7 +391,7 @@ impl Default for InputRef {
 #[doc(hidden)]
 #[whisker::module_element(
     name = "whisker-input:Input",
-    measurement = Custom,
+    measurement = Custom(measurement::payload),
     text_style = true,
     commands = [
         ("focus", Null),
@@ -629,9 +629,6 @@ pub fn input(
         .on_blur(on_blur_cb)
         .on_submit(on_submit_cb);
 
-    if auto_size {
-        builder = builder.measure_with(measurement::payload);
-    }
     if let Some(callback) = on_size_change {
         let previous = std::cell::Cell::new(None);
         whisker::runtime::view::observe_layout(

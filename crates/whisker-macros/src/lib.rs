@@ -541,6 +541,12 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `ElementRef::command(name, parameters)`. Commands must be declared
 /// in the macro's `commands = [("name", ValueKind)]` schema.
 ///
+/// Leaf elements can declare `measurement = Custom(path::to_payload)`;
+/// the function accepts `ModuleMeasureContext<'_>` and returns
+/// `Option<CustomMeasurePayload>`, with `None` disabling intrinsic measurement.
+/// The macro registers it automatically, and Runtime refreshes its payload
+/// from current props and resolved text style before layout.
+///
 /// Call-site shape mirrors built-in tags + user components:
 ///
 /// ```ignore

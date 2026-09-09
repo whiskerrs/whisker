@@ -1707,9 +1707,20 @@ mod tests {
         scene
             .set_property(root, property, WhiskerValue::Bool(true))
             .expect("set property");
+        assert_eq!(
+            scene.node(root).unwrap().properties().get(&property),
+            Some(&WhiskerValue::Bool(true))
+        );
         scene
             .clear_property(root, property)
             .expect("clear property");
+        assert!(
+            !scene
+                .node(root)
+                .unwrap()
+                .properties()
+                .contains_key(&property)
+        );
         scene
             .set_pointer_capture(root, pointer)
             .expect("capture pointer");

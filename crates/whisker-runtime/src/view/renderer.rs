@@ -1088,7 +1088,8 @@ pub fn mark_inline_truncation(handle: Element) {
     with_renderer(|renderer| renderer.mark_inline_truncation(handle), ());
 }
 
-/// Registers a stateless measurement payload builder for a module element.
+/// Registers the payload function declared by `module_element`.
+#[doc(hidden)]
 pub fn set_measurement_builder(
     handle: Element,
     builder: crate::module_measurement::MeasurementPayloadBuilder,

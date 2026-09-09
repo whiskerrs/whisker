@@ -11,7 +11,7 @@ use whisker_engine::whisker_protocol::{
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{LayoutOptions, MeasurementProvider, RecordingRenderer};
 
-#[whisker::module_element(name = "whisker.test/MeasuredControl", measurement = Custom, text_style = true)]
+#[whisker::module_element(name = "whisker.test/MeasuredControl", measurement = Custom(payload), text_style = true)]
 fn measured_control(value: Signal<String>, enabled: Signal<bool>, decoration: Signal<bool>) {}
 
 fn payload(context: ModuleMeasureContext<'_>) -> Option<CustomMeasurePayload> {
@@ -91,7 +91,6 @@ fn custom_payload_tracks_props_and_inherited_style_without_host_views() {
                             value: value,
                             enabled: enabled,
                             decoration: decoration,
-                            measure_with: payload,
                             style: Css::new().width(px(150)).max_height(px(60)),
                         )
                     }
@@ -184,19 +183,4 @@ fn custom_payload_tracks_props_and_inherited_style_without_host_views() {
         calls,
         "disposing the reactive owner does not leave borrowed state in the payload builder"
     );
-}
-
-#[test]
-fn payload_builders_reject_elements_without_custom_leaf_measurement() {
-    whisker::runtime::reactive::__reset_for_tests();
-    let surface = SurfaceRuntime::new(
-        SurfaceId::new(1).unwrap(),
-        StyleEnvironment::new(300.0, 600.0, 1.0, 14.0),
-    );
-    with_installed_renderer(surface.renderer(), || {
-        let root = View::builder().measure_with(payload).build();
-        assert!(
-            matches!(surface.binding_error(), Some(whisker::RuntimeBindingError::InvalidMeasurementBinding { element }) if element == root)
-        );
-    });
 }
