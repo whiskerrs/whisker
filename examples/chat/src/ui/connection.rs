@@ -86,6 +86,7 @@ pub fn connection_screen() -> Element {
                                     on_press: move |()| form.model.set(id.get_untracked()),
                                 )
                             },
+                            content_style: theme::column().row_gap(px(space::SM)),
                             style: theme::column().height(px(132)).flex_shrink(0.0),
                         )
                     }

@@ -30,11 +30,23 @@ pub fn settings_shell(section: SettingsSection, children: Children) -> Element {
                     .align_items(AlignItems::FlexStart)
                     .flex_wrap(FlexWrap::Wrap)
                     .padding(px(24))
-                    .gap(px(40))
+                    .column_gap(px(40))
+                    .row_gap(px(24))
                     .flex_shrink(0.0),
             ) {
-                View(style: theme::column().width(px(192)).flex_shrink(0.0).gap(px(24))) {
-                    View(style: theme::column().gap(px(12))) {
+                View(
+                    style: theme::column()
+                        .flex_basis(px(192))
+                        .flex_grow(1.0)
+                        .min_width(px(0))
+                        .max_width(percent(100))
+                        .gap(px(12)),
+                ) {
+                    View(style: theme::row().flex_wrap(FlexWrap::Wrap).gap(px(8))) {
+                        Text(
+                            value: "Settings",
+                            style: theme::style(move |palette| palette.text(18.0).font_weight(FontWeight::Numeric(600))),
+                        )
                         Button(
                             label: "Back to chat",
                             icon: lucide::ArrowLeft,
@@ -47,45 +59,40 @@ pub fn settings_shell(section: SettingsSection, children: Children) -> Element {
                                 navigation::return_to_chat(&nav, notice);
                             },
                         )
-                        Text(
-                            value: "Settings",
-                            style: theme::style(move |palette| {
-                                palette
-                                    .text(20.0)
-                                    .font_weight(FontWeight::Numeric(600))
-                                    .padding_left(px(12))
-                            }),
-                        )
                     }
-                    View(style: theme::column().gap(px(4))) {
-                        Button(
-                            label: "Appearance",
-                            icon: lucide::SlidersHorizontal,
-                            compact: true,
-                            plain: section != SettingsSection::Appearance,
-                            on_press: move |()| {
-                                if section != SettingsSection::Appearance {
-                                    navigation::return_to_settings(&appearance_nav, notice);
-                                }
-                            },
-                        )
-                        Button(
-                            label: "API connection",
-                            icon: lucide::KeyRound,
-                            compact: true,
-                            plain: section != SettingsSection::Connection,
-                            on_press: move |()| {
-                                if section != SettingsSection::Connection {
-                                    navigation::open_connection(&connection_nav, notice);
-                                }
-                            },
-                        )
+                    View(style: theme::row().flex_wrap(FlexWrap::Wrap).gap(px(4))) {
+                        View(style: theme::column().flex_basis(px(150)).flex_grow(1.0)) {
+                            Button(
+                                label: "Appearance",
+                                icon: lucide::SlidersHorizontal,
+                                compact: true,
+                                plain: section != SettingsSection::Appearance,
+                                on_press: move |()| {
+                                    if section != SettingsSection::Appearance {
+                                        navigation::return_to_settings(&appearance_nav, notice);
+                                    }
+                                },
+                            )
+                        }
+                        View(style: theme::column().flex_basis(px(150)).flex_grow(1.0)) {
+                            Button(
+                                label: "API connection",
+                                icon: lucide::KeyRound,
+                                compact: true,
+                                plain: section != SettingsSection::Connection,
+                                on_press: move |()| {
+                                    if section != SettingsSection::Connection {
+                                        navigation::open_connection(&connection_nav, notice);
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
                 View(
                     style: theme::column()
                         .flex_basis(px(560))
-                        .flex_grow(1.0)
+                        .flex_grow(4.0)
                         .min_width(px(0))
                         .max_width(percent(100))
                         .gap(px(28))

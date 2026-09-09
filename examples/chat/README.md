@@ -41,7 +41,7 @@ On Desktop, **Chats** toggles the sidebar; **Hide sidebar** gives the conversati
 more room. **Settings → Color theme** switches appearance without resetting the
 conversation or draft. Dark is the initial default; the selected appearance is
 restored on launch. Settings uses a section sidebar on wide screens and stacks
-the navigation above the form on narrow screens.
+the navigation as horizontal section controls above the form on narrow screens.
 The browser starts with the sidebar closed. On iOS and Android,
 **Chats** opens a separate history screen through `whisker-router`.
 
@@ -98,8 +98,8 @@ cargo test -p whisker-chat --test simulator_api -- --ignored --nocapture
 ```
 
 It serves `http://127.0.0.1:8787/v1`, accepts the non-secret key `test-key`, and
-lists `test-model`. `disconnect` simulates an unfinished stream; `rate-limit`
-returns HTTP 429. Other prompts produce a streamed English response. The fixture
+lists `test-model` plus two alternative model IDs for checking list layouts.
+`disconnect` simulates an unfinished stream; `rate-limit` returns HTTP 429. Other prompts produce a streamed English response. The fixture
 permits browser CORS and never contacts an external API. For Android Emulator,
 run `adb reverse tcp:8787 tcp:8787` before connecting to this loopback endpoint.
 

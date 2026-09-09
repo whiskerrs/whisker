@@ -57,7 +57,7 @@ async fn respond(mut socket: tokio::net::TcpStream) -> std::io::Result<()> {
             )
             .await?;
     } else if request.starts_with("GET /v1/models ") {
-        let body = r#"{"data":[{"id":"test-model"}]}"#;
+        let body = r#"{"data":[{"id":"test-model"},{"id":"test-model-fast"},{"id":"test-model-reasoning"}]}"#;
         socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await?;
     } else {
         let json: serde_json::Value =
