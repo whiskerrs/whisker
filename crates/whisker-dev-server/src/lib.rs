@@ -675,7 +675,12 @@ impl DevServer {
                 Input::Command(DevCommand::Relaunch) => {
                     emit(&self.on_event, Event::HostLaunching);
                     match installer.relaunch().await {
-                        Ok(()) => emit(&self.on_event, Event::HostLaunched),
+                        Ok(()) => {
+                            if self.config.target == Target::Web {
+                                sender.reload_browser();
+                            }
+                            emit(&self.on_event, Event::HostLaunched);
+                        }
                         Err(error) => {
                             let message = format!("{error:#}");
                             whisker_build::ui::error(format!("relaunch failed: {message}"));
