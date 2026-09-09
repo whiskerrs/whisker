@@ -16,20 +16,28 @@ pub fn history_sidebar(state: SidebarState) -> Element {
             }),
         ) {
             Show(when: move || state.visible.get()) {
-                View(
-                    style: computed(move || {
-                        theme::column()
-                            .width(px(theme::size::SIDEBAR))
-                            .height(percent(100))
-                            .flex_shrink(0.0)
-                            .transform(Transform::new().push(TransformFn::TranslateX(
-                                px(-theme::size::SIDEBAR * (1.0 - state.progress.get())).into(),
-                            )))
-                    }),
-                ) {
-                    HistoryPanel(sidebar: true, closed: move |()| state.open.set(false))
-                }
+                SidebarPanel(state: state)
             }
+        }
+    }
+}
+
+#[component]
+fn sidebar_panel(state: SidebarState) -> Element {
+    state.mount_panel();
+    render! {
+        View(
+            style: computed(move || {
+                theme::column()
+                    .width(px(theme::size::SIDEBAR))
+                    .height(percent(100))
+                    .flex_shrink(0.0)
+                    .transform(Transform::new().push(TransformFn::TranslateX(
+                        px(-theme::size::SIDEBAR * (1.0 - state.progress.get())).into(),
+                    )))
+            }),
+        ) {
+            HistoryPanel(sidebar: true, closed: move |()| state.open.set(false))
         }
     }
 }
