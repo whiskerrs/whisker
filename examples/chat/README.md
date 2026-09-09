@@ -7,7 +7,7 @@ is no application server, build-time credential, or bundled API key.
 ## Features
 
 - Provider presets, secure key entry, model discovery, and manual model IDs.
-- Multiple local conversations, search, rename, Trash, and restore.
+- Compact conversation history with search, a per-conversation action dialog, and Undo after moving a conversation to Trash.
 - Streamed answers, stop, regenerate below the latest answer, and previous-answer navigation.
 - Command + Enter (Web/macOS) or Ctrl + Enter (Web/Windows/Linux) to send; Enter inserts a newline.
 - Markdown headings, lists, quotes, inline styles, links, tables, and highlighted code blocks.
@@ -38,18 +38,20 @@ Settings; **Back to chat** returns to the conversation. Model discovery calls
 `GET /models`; generation uses streamed Chat Completions. Availability and usage charges are controlled by your provider.
 Browser connections require the provider to permit cross-origin requests.
 
-On Desktop, **Chats** toggles the sidebar; **Hide sidebar** gives the conversation
-more room. **Settings → Color theme** switches appearance without resetting the
+On Web and Desktop, **Chats** opens an animated sidebar; **Hide sidebar**
+gives the conversation more room. The header hides **Chats** while the sidebar
+is visible. Use a conversation’s **…** menu to rename it or move it to Trash. **Settings → Color theme** switches appearance without resetting the
 conversation or draft. Dark is the initial default; the selected appearance is
 restored on launch. Settings uses a section sidebar on wide screens and stacks
 the navigation as horizontal section controls above the form on narrow screens.
 The browser starts with the sidebar closed. On iOS and Android,
-**Chats** opens a separate history screen through `whisker-router`.
+**Chats** opens a separate history screen that slides in from the left through
+`whisker-router`.
 
 ## Data and credentials
 
-Conversation data is local JSON and is not encrypted. Trash is reversible and
-retains the conversation on the device. Native keys use endpoint-scoped
+Conversation data is local JSON and is not encrypted. Moving a conversation to Trash retains it on the device. **Undo** restores the
+last trashed conversation while the history panel remains open. Native keys use endpoint-scoped
 Keychain/Keystore storage when **Remember key securely** is selected. Web and
 Desktop retain keys in memory only. Changing the endpoint clears the key field;
 a retained key is never reused for another endpoint. Keys are excluded from

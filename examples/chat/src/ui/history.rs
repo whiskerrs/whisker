@@ -1,10 +1,8 @@
 use super::{
-    button::Button,
-    navigation,
-    theme::{self, size, space},
+    button::Button, history_dialog::HistoryDialog, history_row::HistoryRow, navigation, theme,
 };
 use crate::state::{AppState, Session};
-use whisker::css::{Cursor, FontWeight, PointerEvents};
+use whisker::css::{FontWeight, PositionKind};
 use whisker::prelude::*;
 use whisker_icons::lucide;
 use whisker_input::Input;
@@ -32,22 +30,42 @@ pub fn history_panel(
             navigation::return_to_chat(&nav, notice);
         }
     });
+    let dismiss = Callback::new(move |()| {
+        if sidebar {
+            closed.call();
+        } else {
+            back.call();
+        }
+    });
     let query = signal(String::new());
-    let trash = signal(false);
+    let editing = signal(None::<Session>);
+    let last_trashed = signal(None::<Session>);
     let sessions = app.sessions();
     let new_app = app.clone();
+    let trash_app = app.clone();
+    let trash = Callback::new(move |session| {
+        editing.set(None);
+        trash_app.trash(session);
+        last_trashed.set(Some(session));
+    });
+    let undo = Callback::new(move |()| {
+        if let Some(session) = last_trashed.get_untracked() {
+            app.restore_conversation(session);
+        }
+        last_trashed.set(None);
+    });
     let filtered = computed(move || {
         let q = query.get().to_lowercase();
         sessions.with(|sessions| {
             sessions
                 .iter()
                 .filter(|session| {
-                    session.trashed.get() == trash.get()
+                    !session.trashed.get()
                         && (session.title.get().to_lowercase().contains(&q)
                             || session.turns.with(|turns| {
-                                turns
-                                    .iter()
-                                    .any(|t| t.with(|t| t.question.to_lowercase().contains(&q)))
+                                turns.iter().any(|turn| {
+                                    turn.with(|turn| turn.question.to_lowercase().contains(&q))
+                                })
                             }))
                 })
                 .copied()
@@ -57,35 +75,36 @@ pub fn history_panel(
     render! {
         View(
             style: theme::style(move |palette| {
-                if sidebar {
-                    theme::column()
-                        .width(px(size::SIDEBAR))
-                        .height(percent(100))
-                        .flex_shrink(0.0)
-                        .background_color(Color::hex(palette.tint))
-                        .padding(px(space::LG))
-                        .gap(px(space::LG))
-                } else {
-                    theme::fill().padding(px(space::XL)).gap(px(space::LG))
-                }
+                theme::fill()
+                    .position(PositionKind::Relative)
+                    .height(percent(100))
+                    .background_color(Color::hex(if sidebar {
+                        palette.paper
+                    } else {
+                        palette.canvas
+                    }))
+                    .padding(px(12))
+                    .gap(px(12))
             }),
         ) {
             View(style: theme::row().justify_content(JustifyContent::SpaceBetween)) {
-                Text(value: "WHISKER CHAT", style: theme::style(move |palette| palette.muted()))
-                Show(when: move || sidebar) {
-                    Button(
-                        label: "",
-                        icon: lucide::PanelLeftClose,
-                        accessible_label: "Hide sidebar",
-                        on_press: closed,
-                    )
-                }
+                Text(
+                    value: "Whisker Chat",
+                    style: theme::style(move |palette| palette.text(14.0).font_weight(FontWeight::Numeric(600))),
+                )
+                Button(
+                    label: "",
+                    icon: lucide::PanelLeftClose,
+                    compact: true,
+                    plain: true,
+                    accessible_label: if sidebar { "Hide sidebar" } else { "Back to chat" },
+                    on_press: dismiss,
+                )
             }
-            Text(value: "Your conversations", style: theme::style(move |palette| palette.title()))
             Button(
                 label: "New conversation",
                 icon: lucide::Plus,
-                primary: true,
+                compact: true,
                 on_press: move |()| {
                     new_app.new_conversation();
                     back.call();
@@ -94,27 +113,17 @@ pub fn history_panel(
             Input(
                 text: query,
                 placeholder: "Search conversations",
-                style: theme::style(move |palette| palette.field()),
-            )
-            Button(
-                label: computed(move || {
-                    if trash.get() {
-                        "← All conversations".into()
-                    } else {
-                        "Trash".into()
-                    }
+                style: theme::style(move |palette| {
+                    palette
+                        .field()
+                        .height(px(36))
+                        .font_size(px(13))
+                        .padding(px(8))
                 }),
-                on_press: move |()| trash.update(|value| *value = !*value),
             )
             Show(when: move || filtered.with(Vec::is_empty)) {
                 Text(
-                    value: computed(move || {
-                        if trash.get() {
-                            "No conversations in Trash.".into()
-                        } else {
-                            "No conversations found.".into()
-                        }
-                    }),
+                    value: "No conversations found.",
                     style: theme::style(move |palette| palette.muted()),
                 )
             }
@@ -122,105 +131,45 @@ pub fn history_panel(
                 each: move || filtered.get(),
                 key: |session: &Session| session.id,
                 children: move |session: ReadSignal<Session>| render! {
-                    HistoryRow(session: session.get_untracked(), opened: back)
+                    HistoryRow(
+                        session: session.get_untracked(),
+                        opened: back,
+                        edit: move |session| editing.set(Some(session)),
+                    )
                 },
+                content_style: theme::column().row_gap(px(4)),
                 style: theme::fill(),
             )
-            Show(when: move || !sidebar) {
-                Button(label: "Back to chat", on_press: back)
+            Show(when: move || last_trashed.get().is_some()) {
+                View(style: theme::row().gap(px(8))) {
+                    Text(
+                        value: "Moved to Trash",
+                        style: theme::style(move |palette| {
+                            palette
+                                .text(12.0)
+                                .color(Color::hex(palette.muted))
+                                .flex_grow(1.0)
+                        }),
+                    )
+                    Button(
+                        label: "Undo",
+                        compact: true,
+                        plain: true,
+                        on_press: undo,
+                    )
+                }
             }
-            Text(value: "Only on this device.", style: theme::style(move |palette| palette.muted()))
-        }
-    }
-}
-
-#[component]
-fn history_row(session: Session, opened: Callback) -> Element {
-    let app = use_context::<AppState>().expect("AppState context");
-    let active = app.active_id();
-    let edit = signal(false);
-    let title = signal(session.title.get_untracked());
-    let open_app = app.clone();
-    let rename_app = app.clone();
-    let trash_app = app.clone();
-    render! {
-        View(
-            style: theme::style(move |palette| {
-                theme::column()
-                    .padding(px(space::MD))
-                    .margin_bottom(px(space::SM))
-                    .gap(px(space::SM))
-                    .border_radius(px(12))
-                    .background_color(Color::hex(if active.get() == session.id {
-                        palette.paper
-                    } else {
-                        palette.canvas
-                    }))
-            }),
-        ) {
-            View(
-                on_tap: move |_| {
-                    if !session.trashed.get_untracked() {
-                        open_app.select(session.id);
-                        opened.call();
-                    }
+            ForEach(
+                each: move || editing.get().into_iter().collect::<Vec<_>>(),
+                key: |session: &Session| session.id,
+                children: move |session: Session| render! {
+                    HistoryDialog(
+                        session: session,
+                        closed: move |()| editing.set(None),
+                        trashed: trash,
+                    )
                 },
-                style: theme::column()
-                    .cursor(Cursor::Pointer)
-                    .min_height(px(size::TOUCH))
-                    .gap(px(space::XS)),
-            ) {
-                Text(
-                    value: session.title,
-                    max_lines: 2u32,
-                    style: theme::style(move |palette| {
-                        palette
-                            .text(size::BODY)
-                            .pointer_events(PointerEvents::None)
-                            .font_weight(FontWeight::Numeric(600))
-                    }),
-                )
-                Text(
-                    value: computed(move || format!("{} messages", session.turns.with(Vec::len) * 2)),
-                    style: theme::style(move |palette| palette.muted().pointer_events(PointerEvents::None)),
-                )
-            }
-            Show(when: move || edit.get()) {
-                Input(text: title, style: theme::style(move |palette| palette.field()))
-            }
-            View(style: theme::row().gap(px(space::SM))) {
-                Button(
-                    label: computed(move || {
-                        if edit.get() {
-                            "Save".into()
-                        } else {
-                            "Rename".into()
-                        }
-                    }),
-                    on_press: move |()| {
-                        if edit.get_untracked() {
-                            rename_app.rename(session, &title.get_untracked());
-                        }
-                        edit.update(|value| *value = !*value);
-                    },
-                )
-                Button(
-                    label: computed(move || {
-                        if session.trashed.get() {
-                            "Restore".into()
-                        } else {
-                            "Trash".into()
-                        }
-                    }),
-                    on_press: move |()| {
-                        if session.trashed.get_untracked() {
-                            trash_app.restore_conversation(session);
-                        } else {
-                            trash_app.trash(session);
-                        }
-                    },
-                )
-            }
+            )
         }
     }
 }

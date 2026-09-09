@@ -15,7 +15,11 @@ pub fn routes() -> RouteSet {
             Route(path: "", component: ChatScreen)
             Route(path: "settings", component: SettingsScreen)
             Route(path: "settings/connection", component: ConnectionScreen)
-            Route(path: "history", component: HistoryScreen)
+            Route(
+                path: "history",
+                component: HistoryScreen,
+                transition: super::history_transition::drawer_transition(),
+            )
         }
     }
 }

@@ -1,9 +1,9 @@
 use super::{
-    button::Button, chat_layout, composer::Composer, history::HistoryPanel, messages::TurnRow,
-    theme, welcome::Welcome,
+    button::Button, chat_layout, composer::Composer, history_sidebar::HistorySidebar,
+    messages::TurnRow, theme, welcome::Welcome,
 };
 use crate::{
-    hooks::use_chat,
+    hooks::{SidebarState, use_chat, use_sidebar},
     state::{AppState, Session, Turn},
 };
 use whisker::css::{FontWeight, PositionKind};
@@ -15,7 +15,7 @@ use whisker_router::use_navigator;
 pub fn chat_screen() -> Element {
     let app = use_context::<AppState>().expect("AppState context");
     let selected = app.clone();
-    let sidebar = signal(cfg!(not(any(
+    let sidebar = use_sidebar(cfg!(not(any(
         target_os = "ios",
         target_os = "android",
         target_arch = "wasm32"
@@ -24,9 +24,7 @@ pub fn chat_screen() -> Element {
         View(
             style: theme::style(move |palette| palette.screen().flex_direction(FlexDirection::Row)),
         ) {
-            Show(when: move || sidebar.get()) {
-                HistoryPanel(sidebar: true, closed: move |()| sidebar.set(false))
-            }
+            HistorySidebar(state: sidebar)
             ForEach(
                 each: move || selected.active().into_iter().collect::<Vec<_>>(),
                 key: |session: &Session| session.id,
@@ -39,7 +37,7 @@ pub fn chat_screen() -> Element {
 }
 
 #[component]
-fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
+fn conversation_view(session: Session, sidebar: SidebarState) -> Element {
     let app = use_context::<AppState>().expect("AppState context");
     let actions = use_chat(session);
     let nav = use_navigator();
@@ -48,6 +46,15 @@ fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
     let scroll = actions.scroll;
     let list_ref = actions.list.r();
     let retry = actions.retry;
+    let open_history = Callback::new(move |()| {
+        if cfg!(any(target_os = "ios", target_os = "android")) {
+            if nav.navigate("/history").is_err() {
+                notice.set("Could not open conversations.".into());
+            }
+        } else {
+            sidebar.open.update(|open| *open = !*open);
+        }
+    });
     render! {
         View(style: theme::fill().position(PositionKind::Relative)) {
             Show(when: move || session.turns.with(Vec::is_empty)) {
@@ -80,19 +87,13 @@ fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
                         )
                 }),
             ) {
-                Button(
-                    label: "Chats",
-                    icon: lucide::PanelLeft,
-                    on_press: move |()| {
-                        if cfg!(any(target_os = "ios", target_os = "android")) {
-                            if nav.navigate("/history").is_err() {
-                                notice.set("Could not open conversations.".into());
-                            }
-                        } else {
-                            sidebar.update(|open| *open = !*open);
-                        }
-                    },
-                )
+                Show(when: move || !sidebar.visible.get()) {
+                    Button(
+                        label: "Chats",
+                        icon: lucide::PanelLeft,
+                        on_press: open_history,
+                    )
+                }
                 View(style: theme::fill()) {
                     Text(
                         value: session.title,

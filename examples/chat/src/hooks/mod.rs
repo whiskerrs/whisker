@@ -4,3 +4,6 @@ mod connection;
 pub use connection::use_connection_form;
 mod chat;
 pub use chat::{ChatActions, use_chat};
+
+mod sidebar;
+pub use sidebar::{SidebarState, use_sidebar};
