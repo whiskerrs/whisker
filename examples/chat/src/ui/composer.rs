@@ -7,7 +7,7 @@ use crate::{
     hooks::ChatActions,
     state::{AppState, Session},
 };
-use whisker::css::{AlignSelf, TextAlign};
+use whisker::css::AlignSelf;
 use whisker::prelude::*;
 use whisker_input::{AutoCapitalize, Input};
 
@@ -44,6 +44,11 @@ pub fn composer(session: Session, actions: ChatActions) -> Element {
                     auto_capitalize: AutoCapitalize::Sentences,
                     placeholder: "Message Whisker Chat…",
                     on_blur: actions.save,
+                    on_submit: move |_: String| {
+                        if !busy.get_untracked() {
+                            actions.send.call();
+                        }
+                    },
                     style: theme::style(move |palette| {
                         palette
                             .text(size::BODY)
@@ -57,9 +62,6 @@ pub fn composer(session: Session, actions: ChatActions) -> Element {
                         .justify_content(JustifyContent::SpaceBetween)
                         .gap(px(space::SM)),
                 ) {
-                    Show(when: move || !session.turns.with(Vec::is_empty) && !busy.get()) {
-                        Button(label: "Regenerate", on_press: actions.retry)
-                    }
                     View(style: theme::fill())
                     Button(
                         label: computed(move || {
@@ -75,19 +77,6 @@ pub fn composer(session: Session, actions: ChatActions) -> Element {
                     )
                 }
             }
-            Text(
-                value: "AI can make mistakes. Verify important details.",
-                style: theme::style(move |palette| {
-                    palette
-                        .text(size::CAPTION)
-                        .color(Color::hex(palette.muted))
-                        .background_color(Color::hex(palette.canvas))
-                        .border_radius(px(4))
-                        .padding(px(space::XS))
-                        .align_self(AlignSelf::Center)
-                        .text_align(TextAlign::Center)
-                }),
-            )
         }
     }
 }

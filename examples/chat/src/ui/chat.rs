@@ -47,6 +47,7 @@ fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
     let connection = app.connection();
     let scroll = actions.scroll;
     let list_ref = actions.list.r();
+    let retry = actions.retry;
     render! {
         View(style: theme::fill().position(PositionKind::Relative)) {
             Show(when: move || session.turns.with(Vec::is_empty)) {
@@ -56,8 +57,8 @@ fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
                 List(
                     each: move || session.turns.get(),
                     key: |turn: &RwSignal<Turn>| turn.with_untracked(|t| t.id),
-                    children: |turn: ReadSignal<RwSignal<Turn>>| render! {
-                        TurnRow(turn: turn.get_untracked())
+                    children: move |turn: ReadSignal<RwSignal<Turn>>| render! {
+                        TurnRow(turn: turn.get_untracked(), session: session, retry: retry)
                     },
                     list_ref: list_ref.clone(),
                     header: || chat_layout::spacer(chat_layout::CONTENT_TOP),

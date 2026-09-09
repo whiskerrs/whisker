@@ -257,6 +257,11 @@ impl InputDesktopView {
             DesktopTextInputEvent::Commit(text) => self.commit(text),
             DesktopTextInputEvent::Preedit { text, cursor } => self.preedit(text, *cursor),
             DesktopTextInputEvent::Key { key, shift } => self.handle_key(*key, *shift),
+            DesktopTextInputEvent::Submit => {
+                if self.composition.is_none() {
+                    self.emit_value("submit");
+                }
+            }
             DesktopTextInputEvent::SelectAll => {
                 self.selection = (0, self.value.len());
                 self.invalidate();
@@ -905,6 +910,21 @@ mod tests {
         assert_eq!(input.value, "é日");
         assert_eq!(input.selection, (0, 0));
         assert_eq!(input.composition, Some((0, "é日".len())));
+    }
+
+    #[test]
+    fn explicit_submit_preserves_multiline_text_and_marked_text() {
+        let mut input = InputDesktopView::new(DesktopEventEmitter::default());
+        input.multiline = true;
+        input.set_value("draft");
+        input.handle_input(&DesktopTextInputEvent::Submit);
+        assert_eq!(input.value, "draft");
+        input.preedit("に", None);
+        let value = input.value.clone();
+        let composition = input.composition;
+        input.handle_input(&DesktopTextInputEvent::Submit);
+        assert_eq!(input.value, value);
+        assert_eq!(input.composition, composition);
     }
 
     #[test]

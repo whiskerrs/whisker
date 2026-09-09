@@ -104,7 +104,7 @@
 //! | `autocorrect`      | `bool`                                | `true`        | Automatic typo replacement (`false` for identifiers). |
 //! | `spell_check`      | `bool`                                | `true`        | Spell-check underline / suggestion strip (`false` for identifiers). |
 //! | `caret_color`      | `Signal<String>`                      | `""`          | Cursor color (CSS color string). |
-//! | `placeholder_color`| `Signal<String>`                      | `""`          | Placeholder text color. |
+//! | `placeholder_color`| `Signal<String>`                      | `"#999999"`   | Placeholder text color. |
 //! | `selection_color`  | `Signal<String>`                      | `""`          | Selection-highlight color. |
 //! | `style`            | `Style`                              | empty          | Structured Whisker CSS declarations. |
 //! | `input_ref`        | [`InputRef`]                          | —             | Imperative handle (see [Methods](#methods)). |
@@ -445,6 +445,7 @@ pub fn input(
     /// Field lost focus.
     on_blur: Option<Callback<()>>,
     /// Return / done key pressed; carries the current text.
+    /// Web and Desktop also submit multiline inputs with Command/Ctrl + Enter.
     on_submit: Option<Callback<String>>,
     /// Placeholder text shown when the field is empty.
     placeholder: Option<Signal<String>>,
@@ -495,7 +496,7 @@ pub fn input(
     spell_check: bool,
     /// Cursor color (CSS color string).
     caret_color: Option<Signal<String>>,
-    /// Placeholder text color (CSS color string).
+    /// Placeholder text color (CSS color string). Defaults to `#999999` on every Host.
     placeholder_color: Option<Signal<String>>,
     /// Selection-highlight color (CSS color string).
     selection_color: Option<Signal<String>>,
@@ -575,7 +576,8 @@ pub fn input(
 
     let placeholder_prop: Signal<String> = placeholder.unwrap_or_default();
     let caret_color_prop: Signal<String> = caret_color.unwrap_or_default();
-    let placeholder_color_prop: Signal<String> = placeholder_color.unwrap_or_default();
+    let placeholder_color_prop: Signal<String> =
+        placeholder_color.unwrap_or_else(|| Signal::from("#999999".to_owned()));
     let selection_color_prop: Signal<String> = selection_color.unwrap_or_default();
     let style_prop: Style = style.clone().unwrap_or_default();
 

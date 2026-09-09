@@ -488,6 +488,13 @@ impl DesktopApplication {
             self.modifiers.state().control_key()
         };
         if command {
+            if event.logical_key == Key::Named(NamedKey::Enter)
+                && !event.repeat
+                && !shift
+                && !self.modifiers.state().alt_key()
+            {
+                self.dispatch_text_input(DesktopTextInputEvent::Submit);
+            }
             if let Key::Character(character) = &event.logical_key {
                 match character.to_lowercase().as_str() {
                     "a" => self.dispatch_text_input(DesktopTextInputEvent::SelectAll),

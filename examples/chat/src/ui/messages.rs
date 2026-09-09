@@ -3,12 +3,19 @@ use super::{
     markdown::Markdown,
     theme::{self, radius, size, space},
 };
-use crate::state::{AnswerStatus, Turn};
+use crate::state::{AnswerStatus, AppState, Session, Turn};
 use whisker::css::{AlignSelf, FontWeight};
 use whisker::prelude::*;
 
 #[component]
-pub fn turn_row(turn: RwSignal<Turn>) -> Element {
+pub fn turn_row(turn: RwSignal<Turn>, session: Session, retry: Callback) -> Element {
+    let busy = use_context::<AppState>().expect("AppState context").busy();
+    let can_retry = computed(move || {
+        !busy.get()
+            && session
+                .turns
+                .with(|turns| turns.last().copied() == Some(turn))
+    });
     let alternative = signal(None::<usize>);
     let answer = computed(move || {
         turn.with(|turn| {
@@ -92,6 +99,20 @@ pub fn turn_row(turn: RwSignal<Turn>) -> Element {
                         value: computed(move || status.get().label(answer.get().is_empty())),
                         style: theme::style(move |palette| palette.muted()),
                     )
+                }
+                Show(when: move || can_retry.get()) {
+                    View(style: theme::row()) {
+                        Button(
+                            label: "Regenerate",
+                            icon: whisker_icons::lucide::RotateCcw,
+                            compact: true,
+                            plain: true,
+                            on_press: move |()| {
+                                alternative.set(None);
+                                retry.call();
+                            },
+                        )
+                    }
                 }
                 Show(when: move || turn.with(|t| !t.alternatives.is_empty())) {
                     View(style: theme::row().gap(px(space::SM))) {

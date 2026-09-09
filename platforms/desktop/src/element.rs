@@ -389,6 +389,8 @@ pub enum DesktopTextInputEvent {
         /// Whether movement extends the current selection.
         shift: bool,
     },
+    /// Submit the focused input, including a multiline input, without inserting a newline.
+    Submit,
     /// Select the complete value.
     SelectAll,
     /// Delete the selection after the Host copied it to the clipboard.

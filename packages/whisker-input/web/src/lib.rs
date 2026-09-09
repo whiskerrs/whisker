@@ -180,18 +180,11 @@ fn input_definition() -> WebViewDefinition<InputWebView> {
             let textarea = document
                 .create_element("textarea")?
                 .dyn_into::<web_sys::HtmlTextAreaElement>()?;
-            input.set_class_name("whisker-input-control");
-            textarea.set_class_name("whisker-input-control");
             configure_control(&input.clone().unchecked_into())?;
             configure_control(&textarea.clone().unchecked_into())?;
             textarea.style().set_property("resize", "none")?;
             textarea.style().set_property("display", "none")?;
-            let style = document.create_element("style")?;
-            style.set_text_content(Some(
-                ".whisker-input-control::placeholder{color:var(--whisker-placeholder-color)}\
-                 .whisker-input-control::selection{background:var(--whisker-selection-color)}",
-            ));
-            root.append_child(&style)?;
+            configure_root(document, &root)?;
             root.append_child(&input)?;
             root.append_child(&textarea)?;
 
@@ -378,7 +371,21 @@ fn input_definition() -> WebViewDefinition<InputWebView> {
     .text_style(|view, style| view.apply_text_style(style))
 }
 
+fn configure_root(
+    document: &web_sys::Document,
+    root: &web_sys::HtmlElement,
+) -> Result<(), wasm_bindgen::JsValue> {
+    let style = document.create_element("style")?;
+    style.set_text_content(Some(
+        ".whisker-input-control::placeholder{color:var(--whisker-placeholder-color,#999999);opacity:1}\
+         .whisker-input-control::selection{background:var(--whisker-selection-color)}",
+    ));
+    root.append_child(&style)?;
+    Ok(())
+}
+
 fn configure_control(element: &web_sys::HtmlElement) -> Result<(), wasm_bindgen::JsValue> {
+    element.set_class_name("whisker-input-control");
     let style = element.style();
     for (name, value) in [
         ("position", "absolute"),
@@ -389,7 +396,7 @@ fn configure_control(element: &web_sys::HtmlElement) -> Result<(), wasm_bindgen:
         ("border", "0"),
         ("outline", "0"),
         ("margin", "0"),
-        ("padding", "0"),
+        ("padding", "inherit"),
         ("background", "transparent"),
     ] {
         style.set_property(name, value)?;
@@ -420,19 +427,28 @@ fn install_control_listeners(
             });
         })?);
     }
-    if !multiline {
+    {
         let emitter = emitter.clone();
         let value = Rc::clone(&value);
         listeners.push(Listener::new(target, "keydown", move |event| {
             let Some(event) = event.dyn_ref::<web_sys::KeyboardEvent>() else {
                 return;
             };
-            if event.key() == "Enter" && !event.is_composing() {
+            if is_submit_key(event, multiline) {
+                event.prevent_default();
                 emit_value(&emitter, "submit", &value());
             }
         })?);
     }
     Ok(())
+}
+
+fn is_submit_key(event: &web_sys::KeyboardEvent, multiline: bool) -> bool {
+    event.key() == "Enter"
+        && !event.is_composing()
+        && !event.repeat()
+        && (!multiline
+            || ((event.meta_key() || event.ctrl_key()) && !event.shift_key() && !event.alt_key()))
 }
 
 fn emit_value(emitter: &WebEventEmitter, event: &str, value: &str) {
@@ -532,9 +548,12 @@ fn color_prop(
     name: &'static str,
 ) -> impl Fn(&mut InputWebView, &WhiskerValue) -> Result<(), wasm_bindgen::JsValue> {
     move |view, value| {
-        view.root
-            .style()
-            .set_property(name, expect_string(value, name)?)
+        let value = expect_string(value, name)?;
+        if value.is_empty() {
+            view.root.style().remove_property(name).map(|_| ())
+        } else {
+            view.root.style().set_property(name, value)
+        }
     }
 }
 
@@ -644,29 +663,4 @@ mod tests {
 }
 
 #[cfg(all(test, target_arch = "wasm32"))]
-mod browser_tests {
-    use super::*;
-    use wasm_bindgen_test::wasm_bindgen_test;
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-    #[wasm_bindgen_test]
-    fn unlimited_length_can_be_applied_and_restored_without_a_dom_exception() {
-        let document = web_sys::window().unwrap().document().unwrap();
-        let input: web_sys::HtmlInputElement =
-            document.create_element("input").unwrap().unchecked_into();
-        let textarea: web_sys::HtmlTextAreaElement = document
-            .create_element("textarea")
-            .unwrap()
-            .unchecked_into();
-        for limit in [0, 12, 0, -1, 24, 0] {
-            set_max_length(&input, &textarea, limit).unwrap();
-            if limit > 0 {
-                assert_eq!(input.max_length(), limit as i32);
-                assert_eq!(textarea.max_length(), limit as i32);
-            } else {
-                assert!(!input.has_attribute("maxlength"));
-                assert!(!textarea.has_attribute("maxlength"));
-            }
-        }
-    }
-}
+mod browser_tests;

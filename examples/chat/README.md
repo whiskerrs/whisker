@@ -8,7 +8,8 @@ is no application server, build-time credential, or bundled API key.
 
 - Provider presets, secure key entry, model discovery, and manual model IDs.
 - Multiple local conversations, search, rename, Trash, and restore.
-- Streamed answers, stop, regenerate, and previous-answer navigation.
+- Streamed answers, stop, regenerate below the latest answer, and previous-answer navigation.
+- Command + Enter (Web/macOS) or Ctrl + Enter (Web/Windows/Linux) to send; Enter inserts a newline.
 - Markdown headings, lists, quotes, inline styles, links, tables, and highlighted code blocks.
 - Saved drafts and partial-answer recovery after an interrupted session.
 - An edge-to-edge conversation list with a floating header, composer, and Latest control.
@@ -18,7 +19,7 @@ is no application server, build-time credential, or bundled API key.
 Markdown uses the public rich Text API for inline formatting, links, and text
 selection. Tables use ordinary View composition with horizontal scrolling.
 Embedded HTML is never executed. Attachments, agent tools, cloud sync, explicit
-copy buttons, and desktop keyboard shortcuts are not included.
+copy buttons, and conversation-navigation keyboard shortcuts are not included.
 
 ## Run
 

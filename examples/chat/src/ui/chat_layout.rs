@@ -3,7 +3,7 @@ use whisker::css::{AlignSelf, PositionKind};
 use whisker::prelude::*;
 
 pub const HEADER_HEIGHT: f32 = 64.0;
-pub const COMPOSER_HEIGHT: f32 = 192.0;
+pub const COMPOSER_HEIGHT: f32 = 160.0;
 pub const CONTENT_TOP: f32 = HEADER_HEIGHT + space::XL;
 pub const CONTENT_BOTTOM: f32 = COMPOSER_HEIGHT + space::LG;
 
