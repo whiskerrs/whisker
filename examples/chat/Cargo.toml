@@ -9,8 +9,10 @@ crate-type = ["rlib"]
 
 [dependencies]
 whisker = { workspace = true, features = ["tokio"] }
+whisker-web-browser = { path = "../../packages/whisker-web-browser" }
 whisker-icons = { path = "../../packages/whisker-icons" }
 pulldown-cmark = { version = "0.13", default-features = false }
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 whisker-router = { path = "../../packages/whisker-router" }
 whisker-input = { path = "../../packages/whisker-input" }
 whisker-keyboard = { path = "../../packages/whisker-keyboard" }

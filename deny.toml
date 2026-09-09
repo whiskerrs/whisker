@@ -42,6 +42,8 @@ yanked = "deny"
 #     ratatui uses resize/get_or_insert. Upgrading glyphon currently requires
 #     wgpu 28 and Rust 1.92; revisit with the existing glyphon/wgpu upgrade.
 ignore = [
+    # Syntect decodes bundled syntax/theme data; external bincode input is never accepted.
+    "RUSTSEC-2025-0141",
     "RUSTSEC-2024-0436",
     "RUSTSEC-2025-0119",
     "RUSTSEC-2026-0173",

@@ -9,14 +9,15 @@ is no application server, build-time credential, or bundled API key.
 - Provider presets, secure key entry, model discovery, and manual model IDs.
 - Multiple local conversations, search, rename, Trash, and restore.
 - Streamed answers, stop, regenerate, and previous-answer navigation.
-- Markdown headings, paragraphs, lists, quotes, and code blocks.
+- Markdown headings, lists, quotes, inline styles, links, tables, and highlighted code blocks.
 - Saved drafts and partial-answer recovery after an interrupted session.
 - A fixed composer, virtualized conversation list, and optional tail following.
 - Mobile stack navigation and a collapsible desktop/browser conversation sidebar.
 
-Markdown inline formatting is currently flattened to text, and link destinations
-are displayed as text. Embedded HTML is never executed. Attachments, agent tools,
-cloud sync, clipboard actions, and desktop keyboard shortcuts are not included.
+Markdown uses the public rich Text API for inline formatting, links, and text
+selection. Tables use ordinary View composition with horizontal scrolling.
+Embedded HTML is never executed. Attachments, agent tools, cloud sync, explicit
+copy buttons, and desktop keyboard shortcuts are not included.
 
 ## Run
 
