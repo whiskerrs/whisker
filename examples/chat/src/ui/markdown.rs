@@ -1,5 +1,5 @@
-use super::theme::{self, color, size, space};
-use whisker::css::{FontStyle, FontWeight, TextDecorationLine, TextDecorationStyle};
+use super::theme::{self, size, space};
+use whisker::css::{Cursor, FontStyle, FontWeight, TextDecorationLine, TextDecorationStyle};
 use whisker::prelude::*;
 
 mod highlight;
@@ -29,22 +29,24 @@ fn paragraph(mut block: Block) -> Element {
     }
     Text::builder()
         .selectable(true)
-        .style(match block.kind {
-            Kind::Body => theme::text(size::BODY),
-            Kind::Heading => theme::title().margin_top(px(space::SM)),
-            Kind::Code => theme::text(14.0)
+        .style(theme::style(move |palette| match block.kind {
+            Kind::Body => palette.text(size::BODY),
+            Kind::Heading => palette.title().margin_top(px(space::SM)),
+            Kind::Code => palette
+                .text(14.0)
                 .white_space(whisker::css::WhiteSpace::PreWrap)
                 .font_family("monospace")
-                .background_color(Color::hex(color::CODE))
-                .color(Color::hex(color::ON_CODE))
+                .background_color(Color::hex(palette.code))
+                .color(Color::hex(palette.on_code))
                 .padding(px(space::LG))
                 .border_radius(px(12)),
-            Kind::Quote => theme::text(size::BODY)
-                .color(Color::hex(color::MUTED))
+            Kind::Quote => palette
+                .text(size::BODY)
+                .color(Color::hex(palette.muted))
                 .border_left_width(px(3))
-                .border_left_color(Color::hex(color::ACCENT))
+                .border_left_color(Color::hex(palette.accent))
                 .padding_left(px(space::LG)),
-        })
+        }))
         .body(|body| {
             for span in block.spans {
                 body.push(inline(span));
@@ -54,37 +56,46 @@ fn paragraph(mut block: Block) -> Element {
 }
 
 fn inline(span: Span) -> Element {
-    let mut style = Css::new();
-    if span.style.bold {
-        style = style.font_weight(FontWeight::Bold);
-    }
-    if span.style.italic {
-        style = style.font_style(FontStyle::Italic);
-    }
-    if span.style.code {
-        style = style
-            .font_family("monospace")
-            .background_color(Color::hex(color::TINT))
-            .color(Color::hex(color::INK))
-            .border_radius(px(3));
-    }
-    if span.style.strike {
-        style = style.text_decoration(
-            TextDecorationLine::LineThrough,
-            TextDecorationStyle::Solid,
-            Color::hex(color::MUTED),
-        );
-    }
-    if let Some(color) = span.style.foreground {
-        style = style.color(Color::hex(color));
-    }
+    let is_link = span.style.link.is_some();
+    let style = theme::style(move |palette| {
+        let mut style = Css::new();
+        if span.style.bold {
+            style = style.font_weight(FontWeight::Bold);
+        }
+        if span.style.italic {
+            style = style.font_style(FontStyle::Italic);
+        }
+        if span.style.code {
+            style = style
+                .font_family("monospace")
+                .background_color(Color::hex(palette.tint))
+                .color(Color::hex(palette.ink))
+                .border_radius(px(3));
+        }
+        if span.style.strike {
+            style = style.text_decoration(
+                TextDecorationLine::LineThrough,
+                TextDecorationStyle::Solid,
+                Color::hex(palette.muted),
+            );
+        }
+        if let Some(color) = span.style.foreground {
+            style = style.color(Color::hex(color));
+        }
+        if is_link {
+            style = style
+                .cursor(Cursor::Pointer)
+                .color(Color::hex(palette.accent))
+                .text_decoration(
+                    TextDecorationLine::Underline,
+                    TextDecorationStyle::Solid,
+                    Color::hex(palette.accent),
+                );
+        }
+        style
+    });
     let mut text = Text::builder().value(span.text);
     if let Some(url) = span.style.link {
-        style = style.color(Color::hex(color::ACCENT)).text_decoration(
-            TextDecorationLine::Underline,
-            TextDecorationStyle::Solid,
-            Color::hex(color::ACCENT),
-        );
         text = text.on_tap(move |_| {
             let url = url.clone();
             spawn_local(async move {

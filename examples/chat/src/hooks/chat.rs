@@ -1,10 +1,11 @@
+use super::chat_scroll::{ChatScroll, use_chat_scroll};
 use crate::state::{AppState, SendError, Session};
 use whisker::prelude::*;
 use whisker_router::use_navigator;
 
 #[derive(Clone)]
 pub struct ChatActions {
-    pub following: RwSignal<bool>,
+    pub scroll: ChatScroll,
     pub list: ListHandle<u64>,
     pub send: Callback,
     pub retry: Callback,
@@ -35,7 +36,8 @@ pub fn use_chat(session: Session) -> ChatActions {
             crate::ui::navigation::open_settings(&nav, app.notice());
         }
     });
-    let following = signal(session.turns.with_untracked(Vec::is_empty));
+    let scroll = use_chat_scroll(session.turns.with_untracked(Vec::is_empty));
+    let following = scroll.following;
     let list = ListHandle::<u64>::new();
     let revision = app.revision();
     effect({
@@ -78,7 +80,7 @@ pub fn use_chat(session: Session) -> ChatActions {
         }
     });
     ChatActions {
-        following,
+        scroll,
         list,
         send,
         retry,

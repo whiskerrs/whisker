@@ -1,18 +1,4 @@
-//! Semantic tokens for Whisker Chat's warm, editorial interface.
-
-pub mod color {
-    pub const CANVAS: u32 = 0xf7f5f0;
-    pub const PAPER: u32 = 0xffffff;
-    pub const INK: u32 = 0x272722;
-    pub const MUTED: u32 = 0x75746b;
-    pub const BORDER: u32 = 0xe4e1d8;
-    pub const TINT: u32 = 0xeeece5;
-    pub const ACCENT: u32 = 0xb5442c;
-    pub const ACCENT_SOFT: u32 = 0xf8e8df;
-    pub const ON_ACCENT: u32 = 0xffffff;
-    pub const CODE: u32 = 0x292c2b;
-    pub const ON_CODE: u32 = 0xeaece6;
-}
+//! Spacing, typography, and geometry shared across both appearances.
 
 pub mod space {
     pub const XS: f32 = 4.0;
@@ -25,8 +11,8 @@ pub mod space {
 }
 
 pub mod radius {
-    pub const CONTROL: f32 = 12.0;
-    pub const CARD: f32 = 20.0;
+    pub const CONTROL: f32 = 8.0;
+    pub const CARD: f32 = 12.0;
 }
 
 pub mod size {
@@ -38,5 +24,5 @@ pub mod size {
     pub const LABEL: f32 = 14.0;
     pub const BODY: f32 = 16.0;
     pub const TITLE: f32 = 24.0;
-    pub const DISPLAY: f32 = 40.0;
+    pub const DISPLAY: f32 = 32.0;
 }

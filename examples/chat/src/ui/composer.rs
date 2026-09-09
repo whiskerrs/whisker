@@ -1,6 +1,7 @@
 use super::{
     button::Button,
-    theme::{self, color, radius, size, space},
+    chat_layout,
+    theme::{self, radius, size, space},
 };
 use crate::{
     hooks::ChatActions,
@@ -20,30 +21,36 @@ pub fn composer(session: Session, actions: ChatActions) -> Element {
                 .width(percent(100))
                 .max_width(px(size::READING))
                 .align_self(AlignSelf::Center)
-                .padding(px(space::LG))
+                .padding_left(px(space::LG))
+                .padding_right(px(space::LG))
+                .padding_bottom(px(space::LG))
+                .height(px(chat_layout::COMPOSER_HEIGHT))
                 .gap(px(space::SM))
                 .flex_shrink(0.0),
         ) {
             View(
-                style: theme::card()
-                    .padding(px(space::MD))
-                    .gap(px(space::SM))
-                    .border_radius(px(radius::CARD)),
+                style: theme::style(move |palette| {
+                    palette
+                        .card()
+                        .padding(px(space::MD))
+                        .gap(px(space::SM))
+                        .border_radius(px(radius::CARD))
+                }),
             ) {
-                Text(
-                    value: "MESSAGE",
-                    style: theme::text(size::CAPTION).color(Color::hex(color::MUTED)),
-                )
                 Input(
                     text: session.draft,
                     multiline: true,
                     lines: 3u32,
                     auto_capitalize: AutoCapitalize::Sentences,
-                    placeholder: "Ask something, or explore an idea…",
+                    placeholder: "Message Whisker Chat…",
                     on_blur: actions.save,
-                    style: theme::text(size::BODY)
-                        .height(px(68))
-                        .background_color(Color::hex(color::PAPER)),
+                    style: theme::style(move |palette| {
+                        palette
+                            .text(size::BODY)
+                            .height(px(64))
+                            .flex_shrink(0.0)
+                            .background_color(Color::hex(palette.paper))
+                    }),
                 )
                 View(
                     style: theme::row()
@@ -69,10 +76,17 @@ pub fn composer(session: Session, actions: ChatActions) -> Element {
                 }
             }
             Text(
-                value: "A little curiosity goes a long way. Verify important answers.",
-                style: theme::text(size::CAPTION)
-                    .color(Color::hex(color::MUTED))
-                    .text_align(TextAlign::Center),
+                value: "AI can make mistakes. Verify important details.",
+                style: theme::style(move |palette| {
+                    palette
+                        .text(size::CAPTION)
+                        .color(Color::hex(palette.muted))
+                        .background_color(Color::hex(palette.canvas))
+                        .border_radius(px(4))
+                        .padding(px(space::XS))
+                        .align_self(AlignSelf::Center)
+                        .text_align(TextAlign::Center)
+                }),
             )
         }
     }

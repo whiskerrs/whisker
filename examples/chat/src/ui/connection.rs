@@ -1,7 +1,8 @@
 use super::{
+    appearance::AppearanceToggle,
     button::Button,
     navigation,
-    theme::{self, color, size, space},
+    theme::{self, size, space},
 };
 use crate::{hooks::use_connection_form, state::AppState, storage};
 use whisker::css::AlignSelf;
@@ -20,7 +21,7 @@ pub fn connection_screen() -> Element {
     }));
     let can_back = app.connection().get_untracked().is_some();
     render! {
-        ScrollView(style: theme::screen()) {
+        ScrollView(style: theme::style(move |palette| palette.screen())) {
             View(
                 style: theme::column()
                     .width(percent(100))
@@ -30,37 +31,46 @@ pub fn connection_screen() -> Element {
                     .gap(px(space::XL))
                     .flex_shrink(0.0),
             ) {
-                Text(value: "WHISKER CHAT / CONNECTION", style: theme::muted())
-                Text(value: "Your models.\nYour space.", style: theme::display())
+                View(style: theme::row().justify_content(JustifyContent::SpaceBetween)) {
+                    Text(
+                        value: "WHISKER CHAT / SETTINGS",
+                        style: theme::style(move |palette| palette.muted()),
+                    )
+                    AppearanceToggle()
+                }
+                Text(
+                    value: "Connect your model",
+                    style: theme::style(move |palette| palette.display()),
+                )
                 Text(
                     value: "Connect a provider to start a conversation.\nYour key stays on this device.",
-                    style: theme::muted(),
+                    style: theme::style(move |palette| palette.muted()),
                 )
                 View(style: theme::row().gap(px(space::SM))) {
                     Button(label: "OpenAI", on_press: move |()| form.preset(false))
                     Button(label: "DeepSeek", on_press: move |()| form.preset(true))
                 }
-                View(style: theme::card()) {
-                    Text(value: "Connection", style: theme::title())
-                    Text(value: "Name", style: theme::muted())
-                    Input(text: form.name, style: theme::field())
-                    Text(value: "API base URL", style: theme::muted())
+                View(style: theme::style(move |palette| palette.card())) {
+                    Text(value: "Connection", style: theme::style(move |palette| palette.title()))
+                    Text(value: "Name", style: theme::style(move |palette| palette.muted()))
+                    Input(text: form.name, style: theme::style(move |palette| palette.field()))
+                    Text(value: "API base URL", style: theme::style(move |palette| palette.muted()))
                     Input(
                         text: form.base_url,
                         keyboard_type: KeyboardType::Url,
                         auto_capitalize: AutoCapitalize::None,
                         autocorrect: false,
-                        style: theme::field(),
+                        style: theme::style(move |palette| palette.field()),
                         on_input: move |_: String| form.endpoint_changed(),
                     )
-                    Text(value: "API key", style: theme::muted())
+                    Text(value: "API key", style: theme::style(move |palette| palette.muted()))
                     Input(
                         text: form.key,
                         secure: true,
                         auto_capitalize: AutoCapitalize::None,
                         autocorrect: false,
                         placeholder: "Enter a key, or keep your saved key",
-                        style: theme::field(),
+                        style: theme::style(move |palette| palette.field()),
                     )
                     Button(
                         label: computed(move || {
@@ -73,13 +83,13 @@ pub fn connection_screen() -> Element {
                         disabled: form.checking,
                         on_press: form.discover,
                     )
-                    Text(value: "Model", style: theme::muted())
+                    Text(value: "Model", style: theme::style(move |palette| palette.muted()))
                     Input(
                         text: form.model,
                         placeholder: "Model ID",
                         auto_capitalize: AutoCapitalize::None,
                         autocorrect: false,
-                        style: theme::field(),
+                        style: theme::style(move |palette| palette.field()),
                     )
                     Show(when: move || !form.models.with(Vec::is_empty)) {
                         List(
@@ -109,13 +119,13 @@ pub fn connection_screen() -> Element {
                     Show(when: || !storage::persistent_keys_available()) {
                         Text(
                             value: "Session-only key. Re-enter it after restarting.",
-                            style: theme::muted(),
+                            style: theme::style(move |palette| palette.muted()),
                         )
                     }
                     Show(when: move || !form.notice.with(String::is_empty)) {
                         Text(
                             value: form.notice,
-                            style: theme::text(size::LABEL).color(Color::hex(color::ACCENT)),
+                            style: theme::style(move |palette| palette.text(size::LABEL).color(Color::hex(palette.accent))),
                         )
                     }
                     Button(
@@ -135,7 +145,7 @@ pub fn connection_screen() -> Element {
                 }
                 Text(
                     value: "Usage is billed by your provider. Conversations are saved locally on this device.",
-                    style: theme::muted(),
+                    style: theme::style(move |palette| palette.muted()),
                 )
             }
         }

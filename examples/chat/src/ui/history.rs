@@ -1,10 +1,10 @@
 use super::{
     button::Button,
     navigation,
-    theme::{self, color, size, space},
+    theme::{self, size, space},
 };
 use crate::state::{AppState, Session};
-use whisker::css::FontWeight;
+use whisker::css::{Cursor, FontWeight, PointerEvents};
 use whisker::prelude::*;
 use whisker_icons::lucide;
 use whisker_input::Input;
@@ -13,7 +13,7 @@ use whisker_router::use_navigator;
 #[component]
 pub fn history_screen() -> Element {
     render! {
-        View(style: theme::screen()) {
+        View(style: theme::style(move |palette| palette.screen())) {
             HistoryPanel()
         }
     }
@@ -56,20 +56,22 @@ pub fn history_panel(
     });
     render! {
         View(
-            style: if sidebar {
-                theme::column()
-                    .width(px(size::SIDEBAR))
-                    .height(percent(100))
-                    .flex_shrink(0.0)
-                    .background_color(Color::hex(color::TINT))
-                    .padding(px(space::LG))
-                    .gap(px(space::LG))
-            } else {
-                theme::fill().padding(px(space::XL)).gap(px(space::LG))
-            },
+            style: theme::style(move |palette| {
+                if sidebar {
+                    theme::column()
+                        .width(px(size::SIDEBAR))
+                        .height(percent(100))
+                        .flex_shrink(0.0)
+                        .background_color(Color::hex(palette.tint))
+                        .padding(px(space::LG))
+                        .gap(px(space::LG))
+                } else {
+                    theme::fill().padding(px(space::XL)).gap(px(space::LG))
+                }
+            }),
         ) {
             View(style: theme::row().justify_content(JustifyContent::SpaceBetween)) {
-                Text(value: "WHISKER CHAT", style: theme::muted())
+                Text(value: "WHISKER CHAT", style: theme::style(move |palette| palette.muted()))
                 Show(when: move || sidebar) {
                     Button(
                         label: "",
@@ -79,7 +81,7 @@ pub fn history_panel(
                     )
                 }
             }
-            Text(value: "Your conversations", style: theme::title())
+            Text(value: "Your conversations", style: theme::style(move |palette| palette.title()))
             Button(
                 label: "New conversation",
                 icon: lucide::Plus,
@@ -89,7 +91,11 @@ pub fn history_panel(
                     back.call();
                 },
             )
-            Input(text: query, placeholder: "Search conversations", style: theme::field())
+            Input(
+                text: query,
+                placeholder: "Search conversations",
+                style: theme::style(move |palette| palette.field()),
+            )
             Button(
                 label: computed(move || {
                     if trash.get() {
@@ -109,7 +115,7 @@ pub fn history_panel(
                             "No conversations found.".into()
                         }
                     }),
-                    style: theme::muted(),
+                    style: theme::style(move |palette| palette.muted()),
                 )
             }
             List(
@@ -123,7 +129,7 @@ pub fn history_panel(
             Show(when: move || !sidebar) {
                 Button(label: "Back to chat", on_press: back)
             }
-            Text(value: "Only on this device.", style: theme::muted())
+            Text(value: "Only on this device.", style: theme::style(move |palette| palette.muted()))
         }
     }
 }
@@ -139,16 +145,16 @@ fn history_row(session: Session, opened: Callback) -> Element {
     let trash_app = app.clone();
     render! {
         View(
-            style: computed(move || {
+            style: theme::style(move |palette| {
                 theme::column()
                     .padding(px(space::MD))
                     .margin_bottom(px(space::SM))
                     .gap(px(space::SM))
                     .border_radius(px(12))
                     .background_color(Color::hex(if active.get() == session.id {
-                        color::PAPER
+                        palette.paper
                     } else {
-                        color::CANVAS
+                        palette.canvas
                     }))
             }),
         ) {
@@ -160,21 +166,27 @@ fn history_row(session: Session, opened: Callback) -> Element {
                     }
                 },
                 style: theme::column()
+                    .cursor(Cursor::Pointer)
                     .min_height(px(size::TOUCH))
                     .gap(px(space::XS)),
             ) {
                 Text(
                     value: session.title,
                     max_lines: 2u32,
-                    style: theme::text(size::BODY).font_weight(FontWeight::Numeric(600)),
+                    style: theme::style(move |palette| {
+                        palette
+                            .text(size::BODY)
+                            .pointer_events(PointerEvents::None)
+                            .font_weight(FontWeight::Numeric(600))
+                    }),
                 )
                 Text(
                     value: computed(move || format!("{} messages", session.turns.with(Vec::len) * 2)),
-                    style: theme::muted(),
+                    style: theme::style(move |palette| palette.muted().pointer_events(PointerEvents::None)),
                 )
             }
             Show(when: move || edit.get()) {
-                Input(text: title, style: theme::field())
+                Input(text: title, style: theme::style(move |palette| palette.field()))
             }
             View(style: theme::row().gap(px(space::SM))) {
                 Button(

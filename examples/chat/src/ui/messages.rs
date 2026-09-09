@@ -1,7 +1,7 @@
 use super::{
     button::Button,
     markdown::Markdown,
-    theme::{self, color, radius, size, space},
+    theme::{self, radius, size, space},
 };
 use crate::state::{AnswerStatus, Turn};
 use whisker::css::{AlignSelf, FontWeight};
@@ -48,33 +48,41 @@ pub fn turn_row(turn: RwSignal<Turn>) -> Element {
                 .gap(px(space::XL)),
         ) {
             View(
-                style: theme::column()
-                    .align_self(AlignSelf::FlexEnd)
-                    .max_width(percent(88))
-                    .background_color(Color::hex(color::ACCENT_SOFT))
-                    .border_radius(px(radius::CARD))
-                    .padding(px(space::LG)),
+                style: theme::style(move |palette| {
+                    theme::column()
+                        .align_self(AlignSelf::FlexEnd)
+                        .max_width(percent(88))
+                        .background_color(Color::hex(palette.accent_soft))
+                        .border_radius(px(radius::CARD))
+                        .padding(px(space::LG))
+                }),
             ) {
                 Text(
                     value: computed(move || turn.with(|t| t.question.clone())),
-                    style: theme::text(size::BODY),
+                    style: theme::style(move |palette| palette.text(size::BODY)),
                 )
             }
             View(style: theme::column().gap(px(space::LG))) {
                 View(style: theme::row().gap(px(space::SM))) {
                     Text(
                         value: "w.",
-                        style: theme::text(19.0)
-                            .font_weight(FontWeight::Bold)
-                            .color(Color::hex(color::ACCENT)),
+                        style: theme::style(move |palette| {
+                            palette
+                                .text(19.0)
+                                .font_weight(FontWeight::Bold)
+                                .color(Color::hex(palette.accent))
+                        }),
                     )
                     Text(
                         value: model,
-                        style: theme::muted(),
+                        style: theme::style(move |palette| palette.muted()),
                     )
                 }
                 Show(when: move || running.get()) {
-                    Text(value: answer, style: theme::text(size::BODY))
+                    Text(
+                        value: answer,
+                        style: theme::style(move |palette| palette.text(size::BODY)),
+                    )
                 }
                 Show(when: move || !running.get()) {
                     Markdown(text: answer)
@@ -82,7 +90,7 @@ pub fn turn_row(turn: RwSignal<Turn>) -> Element {
                 Show(when: move || status.get() != AnswerStatus::Complete) {
                     Text(
                         value: computed(move || status.get().label(answer.get().is_empty())),
-                        style: theme::muted(),
+                        style: theme::style(move |palette| palette.muted()),
                     )
                 }
                 Show(when: move || turn.with(|t| !t.alternatives.is_empty())) {
@@ -113,7 +121,7 @@ pub fn turn_row(turn: RwSignal<Turn>) -> Element {
                                     )
                                 })
                             }),
-                            style: theme::muted(),
+                            style: theme::style(move |palette| palette.muted()),
                         )
                         Button(label: "Latest", on_press: move |()| alternative.set(None))
                     }

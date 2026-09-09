@@ -1,16 +1,12 @@
 use super::{
-    button::Button,
-    composer::Composer,
-    history::HistoryPanel,
-    messages::TurnRow,
-    theme::{self, color, space},
-    welcome::Welcome,
+    appearance::AppearanceToggle, button::Button, chat_layout, composer::Composer,
+    history::HistoryPanel, messages::TurnRow, theme, welcome::Welcome,
 };
 use crate::{
     hooks::use_chat,
     state::{AppState, Session, Turn},
 };
-use whisker::css::FontWeight;
+use whisker::css::{FontWeight, PositionKind};
 use whisker::prelude::*;
 use whisker_icons::lucide;
 use whisker_router::use_navigator;
@@ -25,7 +21,9 @@ pub fn chat_screen() -> Element {
         target_arch = "wasm32"
     ))));
     render! {
-        View(style: theme::screen().flex_direction(FlexDirection::Row)) {
+        View(
+            style: theme::style(move |palette| palette.screen().flex_direction(FlexDirection::Row)),
+        ) {
             Show(when: move || sidebar.get()) {
                 HistoryPanel(sidebar: true, closed: move |()| sidebar.set(false))
             }
@@ -47,17 +45,39 @@ fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
     let nav = use_navigator();
     let notice = app.notice();
     let connection = app.connection();
-    let following = actions.following;
+    let scroll = actions.scroll;
     let list_ref = actions.list.r();
     render! {
-        View(style: theme::fill()) {
+        View(style: theme::fill().position(PositionKind::Relative)) {
+            Show(when: move || session.turns.with(Vec::is_empty)) {
+                Welcome(draft: session.draft)
+            }
+            Show(when: move || !session.turns.with(Vec::is_empty)) {
+                List(
+                    each: move || session.turns.get(),
+                    key: |turn: &RwSignal<Turn>| turn.with_untracked(|t| t.id),
+                    children: |turn: ReadSignal<RwSignal<Turn>>| render! {
+                        TurnRow(turn: turn.get_untracked())
+                    },
+                    list_ref: list_ref.clone(),
+                    header: || chat_layout::spacer(chat_layout::CONTENT_TOP),
+                    footer: || chat_layout::spacer(chat_layout::CONTENT_BOTTOM),
+                    on_scroll: move |event| scroll.changed.run(event),
+                    style: theme::fill(),
+                )
+            }
             View(
-                style: theme::row()
-                    .padding(px(space::LG))
-                    .gap(px(space::SM))
-                    .flex_shrink(0.0)
-                    .border_bottom_width(px(1))
-                    .border_bottom_color(Color::hex(color::BORDER)),
+                style: theme::style(move |palette| {
+                    chat_layout::header()
+                        .background_color(Color::hex(palette.paper))
+                        .border_radius(px(theme::radius::CARD))
+                        .border(
+                            whisker::css::Border::new()
+                                .width(px(1))
+                                .color(Color::hex(palette.border))
+                                .style(whisker::css::BorderStyle::Solid),
+                        )
+                }),
             ) {
                 Button(
                     label: "Chats",
@@ -76,7 +96,7 @@ fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
                     Text(
                         value: session.title,
                         max_lines: 1u32,
-                        style: theme::text(15.0).font_weight(FontWeight::Bold),
+                        style: theme::style(move |palette| palette.text(15.0).font_weight(FontWeight::Bold)),
                     )
                     Text(
                         value: computed(move || {
@@ -86,9 +106,10 @@ fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
                                 .unwrap_or_else(|| "Connect a model".into())
                         }),
                         max_lines: 1u32,
-                        style: theme::muted(),
+                        style: theme::style(move |palette| palette.muted()),
                     )
                 }
+                AppearanceToggle()
                 Button(
                     label: "",
                     icon: lucide::Settings2,
@@ -96,36 +117,16 @@ fn conversation_view(session: Session, sidebar: RwSignal<bool>) -> Element {
                     on_press: actions.settings,
                 )
             }
-            Show(when: move || session.turns.with(Vec::is_empty)) {
-                Welcome(draft: session.draft)
-            }
-            Show(when: move || !session.turns.with(Vec::is_empty)) {
-                List(
-                    each: move || session.turns.get(),
-                    key: |turn: &RwSignal<Turn>| turn.with_untracked(|t| t.id),
-                    children: |turn: ReadSignal<RwSignal<Turn>>| render! {
-                        TurnRow(turn: turn.get_untracked())
-                    },
-                    list_ref: list_ref.clone(),
-                    on_scroll: move |event| {
-                        let d = event.detail;
-                        if d.is_dragging || d.delta_y < 0.0 {
-                            following.set(d.scroll_height - d.viewport_height - d.scroll_top < 48.0);
-                        }
-                    },
-                    style: theme::fill(),
-                )
-            }
-            Show(when: move || !following.get()) {
+            Show(when: move || !scroll.at_end.get() && !session.turns.with(Vec::is_empty)) {
                 View(
-                    style: theme::row()
-                        .justify_content(JustifyContent::Center)
-                        .padding(px(space::XS)),
+                    style: chat_layout::latest(),
                 ) {
                     Button(label: "Latest", icon: lucide::ArrowDown, on_press: actions.latest)
                 }
             }
-            Composer(session: session, actions: actions)
+            View(style: chat_layout::composer()) {
+                Composer(session: session, actions: actions)
+            }
         }
     }
 }

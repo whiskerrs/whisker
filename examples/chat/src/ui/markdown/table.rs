@@ -2,7 +2,7 @@ use whisker::css::{FontWeight, TextAlign};
 use whisker::prelude::*;
 
 use super::{
-    color, inline,
+    inline,
     model::{CellAlignment, Table},
     size, space, theme,
 };
@@ -32,18 +32,22 @@ pub(super) fn render(table: Table) -> Element {
                                                 CellAlignment::Center => TextAlign::Center,
                                                 CellAlignment::End => TextAlign::Right,
                                             };
-                                            let mut style = theme::text(size::BODY)
-                                                .width(px(180))
-                                                .flex_shrink(0.0)
-                                                .padding(px(space::MD))
-                                                .text_align(alignment)
-                                                .border_bottom_width(px(1))
-                                                .border_bottom_color(Color::hex(color::TINT));
-                                            if index == 0 {
-                                                style = style
-                                                    .font_weight(FontWeight::Bold)
-                                                    .background_color(Color::hex(color::TINT));
-                                            }
+                                            let style = theme::style(move |palette| {
+                                                let mut style = palette
+                                                    .text(size::BODY)
+                                                    .width(px(180))
+                                                    .flex_shrink(0.0)
+                                                    .padding(px(space::MD))
+                                                    .text_align(alignment)
+                                                    .border_bottom_width(px(1))
+                                                    .border_bottom_color(Color::hex(palette.tint));
+                                                if index == 0 {
+                                                    style = style
+                                                        .font_weight(FontWeight::Bold)
+                                                        .background_color(Color::hex(palette.tint));
+                                                }
+                                                style
+                                            });
                                             body.push(
                                                 Text::builder()
                                                     .selectable(true)

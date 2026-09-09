@@ -11,7 +11,8 @@ is no application server, build-time credential, or bundled API key.
 - Streamed answers, stop, regenerate, and previous-answer navigation.
 - Markdown headings, lists, quotes, inline styles, links, tables, and highlighted code blocks.
 - Saved drafts and partial-answer recovery after an interrupted session.
-- A fixed composer, virtualized conversation list, and optional tail following.
+- An edge-to-edge conversation list with a floating header, composer, and Latest control.
+- Light and dark appearances, with a device-local preference and live theme switching.
 - Mobile stack navigation and a collapsible desktop/browser conversation sidebar.
 
 Markdown uses the public rich Text API for inline formatting, links, and text
@@ -36,7 +37,9 @@ Chat Completions. Availability and usage charges are controlled by your provider
 Browser connections require the provider to permit cross-origin requests.
 
 On Desktop, **Chats** toggles the sidebar; **Hide sidebar** gives the conversation
-more room. The browser starts with the sidebar closed. On iOS and Android,
+more room. The sun/moon button switches appearance without resetting the conversation
+or draft. Dark is the initial default; the selected appearance is restored on launch.
+The browser starts with the sidebar closed. On iOS and Android,
 **Chats** opens a separate history screen through `whisker-router`.
 
 ## Data and credentials

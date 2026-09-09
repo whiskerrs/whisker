@@ -100,3 +100,11 @@ pub fn save_key(connection: &Connection, key: &str, remember: bool) -> Result<()
         Ok(())
     }
 }
+
+pub fn load_appearance() -> Result<Option<crate::design::Appearance>, String> {
+    load("chat.appearance.v1")
+}
+
+pub fn save_appearance(appearance: crate::design::Appearance) -> Result<(), String> {
+    save("chat.appearance.v1", &appearance)
+}

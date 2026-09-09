@@ -25,7 +25,10 @@ pub fn startup() -> Element {
     render! {
         View(style: theme::fill()) {
             Show(when: move || restored.with(Option::is_none)) {
-                Text(value: "Whisker Chat — Loading…", style: theme::text(20.0).padding(px(24)))
+                Text(
+                    value: "Whisker Chat — Loading…",
+                    style: theme::style(move |palette| palette.text(20.0).padding(px(24))),
+                )
             }
             Show(when: move || restored.with(|result| matches!(result, Some(Err(_))))) {
                 View(style: theme::column().padding(px(24)).gap(px(16))) {
@@ -36,7 +39,7 @@ pub fn startup() -> Element {
                                 _ => String::new(),
                             })
                         }),
-                        style: theme::muted(),
+                        style: theme::style(move |palette| palette.muted()),
                     )
                     Button(
                         label: "Try loading again",
