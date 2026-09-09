@@ -12,9 +12,9 @@ internal object MobileAbi {
     const val VALUE_MAP: Int = 7
     const val VALUE_ERROR: Int = 8
     const val MOBILE_ABI_MAJOR: Int = 2
-    const val MOBILE_ABI_MINOR: Int = 30
+    const val MOBILE_ABI_MINOR: Int = 31
     const val FRAME_PROTOCOL_MAJOR: Int = 1
-    const val FRAME_PROTOCOL_MINOR: Int = 4
+    const val FRAME_PROTOCOL_MINOR: Int = 5
     const val CAPABILITY_ELLIPTICAL_BORDER_RADIUS: Long = 0x0001
     const val CAPABILITY_BACKGROUND_LAYERS: Long = 0x0002
     const val CAPABILITY_VISUAL_EFFECTS: Long = 0x0004
@@ -29,6 +29,7 @@ internal object MobileAbi {
     const val CAPABILITY_BACKGROUND_LAYER_STACKING: Long = 0x1000
     const val CAPABILITY_BACKGROUND_IMAGE_RESOURCES: Long = 0x2000
     const val CAPABILITY_BACKDROP_BLUR: Long = 0x4000
+    const val CAPABILITY_RICH_TEXT: Long = 0x8000
     const val POINTER_DOWN: Int = 0
     const val POINTER_MOVE: Int = 1
     const val POINTER_UP: Int = 2

@@ -1,5 +1,7 @@
 use crate::ElementTag;
-use whisker_runtime::event::{AnimationEvent, ScrollEvent, TouchEvent, bind_typed};
+use whisker_runtime::event::{
+    AnimationEvent, ScrollEvent, SelectionChangeEvent, TextLayoutEvent, TouchEvent, bind_typed,
+};
 use whisker_runtime::reactive::{Signal, effect};
 use whisker_runtime::view::{
     BindType, Element, append_child, apply_accessibility, apply_attr, apply_attr_bool,
@@ -363,36 +365,48 @@ impl ElementBuilder for View {
     }
 }
 
-/// `<text>` — plain-text leaf. The raw-text node used to lower `value`
-/// is an internal runtime detail.
+/// A paragraph containing styled Text runs and atomic View or Image children.
 ///
-/// `text` is the only element that renders text on screen. Set
-/// the content through the [`value`](Self::value) attribute
-/// (which takes any `Into<Signal<String>>`, so static strings,
-/// `ReadSignal<String>`, and computed signals all work). Font /
-/// color / size live in the `style` attribute as ordinary CSS.
+/// `value` precedes children. Nested Text shares this paragraph's line layout;
+/// a View inside Text starts an independent layout subtree. Set box and paragraph
+/// properties on the outer Text, and font, color, background, and decoration on
+/// inner Text. Selection and range commands address the outer paragraph only.
 ///
-/// ```ignore
-/// let count = signal(0_i32);
+/// ```no_run
+/// # use whisker::prelude::*;
+/// # use whisker::css::FontWeight;
 /// render! {
-///     Text {
-///         style: css!(font_size: px(18), color: Color::hex(0x000000)),
-///         value: computed(move || format!("count: {}", count.get())),
+///     Text(selectable: true) {
+///         Text(value: "Hello ")
+///         Text(value: "world", style: Css::new().font_weight(FontWeight::Bold))
+///         View(style: Css::new().width(px(16)).height(px(16))) {
+///             Text(value: "!")
+///         }
 ///     }
-/// }
+/// };
 /// ```
 pub struct Text {
     handle: Element,
+    value_node: Element,
 }
 impl Text {
     pub fn builder() -> Self {
-        Self {
-            handle: create_element(ElementTag::Text),
-        }
+        let handle = create_element(ElementTag::Text);
+        let value_node = create_element(ElementTag::RawText);
+        append_child(handle, value_node);
+        Self { handle, value_node }
     }
 
     pub fn build(self) -> Element {
         self.handle
+    }
+
+    /// Appends inline content after the optional `value` prefix.
+    pub fn body(self, compose: impl FnOnce(&mut crate::ChildrenBuilder)) -> Self {
+        let mut body = crate::ChildrenBuilder::new();
+        compose(&mut body);
+        body.finish().attach_to(self.handle);
+        self
     }
 }
 impl ElementBuilder for Text {
@@ -406,9 +420,31 @@ impl Text {
     where
         V: ::std::convert::Into<Signal<::std::string::String>>,
     {
-        let raw = create_element(ElementTag::RawText);
-        append_child(self.handle, raw);
-        apply_attr(raw, "text", v);
+        apply_attr(self.value_node, "text", v);
+        self
+    }
+
+    /// Reports visible UTF-16 line ranges after the Host accepts a changed layout.
+    pub fn on_text_layout<F: Fn(TextLayoutEvent) + 'static>(self, callback: F) -> Self {
+        bind_typed(self.handle, "textlayout", BindType::Bind, callback);
+        self
+    }
+
+    /// Binds a handle and retains paragraph geometry for range operations.
+    pub fn element_ref(self, reference: crate::ElementRef) -> Self {
+        whisker_runtime::view::enable_text_geometry(self.handle);
+        ElementBuilder::element_ref(self, reference)
+    }
+
+    /// Enables native text selection on this paragraph.
+    pub fn selectable<V: Into<Signal<bool>>>(self, value: V) -> Self {
+        apply_attr_bool(self.handle, "selectable", value);
+        self
+    }
+
+    /// Reports the paragraph selection in UTF-16 offsets.
+    pub fn on_selection_change<F: Fn(SelectionChangeEvent) + 'static>(self, callback: F) -> Self {
+        bind_typed(self.handle, "selectionchange", BindType::Bind, callback);
         self
     }
 
@@ -593,6 +629,35 @@ impl Fragment {
     }
 }
 impl ElementBuilder for Fragment {
+    fn __element(&self) -> Element {
+        self.handle
+    }
+}
+
+/// Inline content replacing a paragraph's hidden suffix when it overflows.
+pub struct InlineTruncation {
+    handle: Element,
+}
+
+impl InlineTruncation {
+    pub fn builder() -> Self {
+        let handle = create_element(ElementTag::View);
+        whisker_runtime::view::mark_inline_truncation(handle);
+        Self { handle }
+    }
+
+    pub fn build(self) -> Element {
+        self.handle
+    }
+
+    pub fn body(self, compose: impl FnOnce(&mut crate::ChildrenBuilder)) -> Self {
+        let paragraph = Text::builder().body(compose).build();
+        append_child(self.handle, paragraph);
+        self
+    }
+}
+
+impl ElementBuilder for InlineTruncation {
     fn __element(&self) -> Element {
         self.handle
     }

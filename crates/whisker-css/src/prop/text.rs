@@ -10,6 +10,31 @@ use crate::keyword::{
 use crate::to_css::ToCss;
 
 impl Css {
+    /// Aligns inline content using a keyword or signed baseline offset.
+    pub fn vertical_align(self, value: impl Into<crate::VerticalAlignment>) -> Self {
+        use crate::{VerticalAlign, VerticalAlignment};
+        use whisker_style::{StyleValue, VerticalAlignValue};
+        let value = value.into();
+        let semantic = match value {
+            VerticalAlignment::Keyword(keyword) => StyleValue::VerticalAlign(match keyword {
+                VerticalAlign::Baseline => VerticalAlignValue::Baseline,
+                VerticalAlign::Top => VerticalAlignValue::Top,
+                VerticalAlign::Middle => VerticalAlignValue::Middle,
+                VerticalAlign::Bottom => VerticalAlignValue::Bottom,
+                VerticalAlign::Super => VerticalAlignValue::Super,
+                VerticalAlign::Sub => VerticalAlignValue::Sub,
+            }),
+            VerticalAlignment::Offset(offset) => {
+                crate::style_value::ToStyleValue::to_style_value(&offset)
+            }
+        };
+        self.push_semantic(
+            crate::StyleProperty::VerticalAlign,
+            semantic,
+            value.to_css_string(),
+        )
+    }
+
     /// Sets the Lynx-compatible single `text-shadow` layer.
     /// <https://lynxjs.org/api/css/properties/text-shadow>
     pub fn text_shadow(
@@ -149,6 +174,7 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/white-space>
     pub fn white_space(self, v: WhiteSpace) -> Self {
         let value = match v {
+            WhiteSpace::PreWrap => whisker_style::WhiteSpaceValue::PreWrap,
             WhiteSpace::Normal => whisker_style::WhiteSpaceValue::Normal,
             WhiteSpace::Nowrap => whisker_style::WhiteSpaceValue::NoWrap,
         };

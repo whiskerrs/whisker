@@ -59,6 +59,7 @@ impl DesktopSurface {
         logical_size: [f32; 2],
         scale: f32,
     ) -> Result<(), GpuError> {
+        self.scene.resolve_text_queries(text);
         let preparation_generation = text.preparation_generation();
         let prepared_content_revision = self.scene.prepared_content_revision();
         if preparation_generation != self.last_preparation_generation
@@ -70,6 +71,15 @@ impl DesktopSurface {
         }
         self.gpu
             .render(&self.scene.paint_commands(), text, logical_size, scale)
+    }
+
+    pub(crate) fn text_pointer(
+        &mut self,
+        text: &NativeTextHost,
+        event: &whisker_protocol::InputEvent,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> bool {
+        self.scene.text_pointer(text, event, target)
     }
 
     pub(crate) fn take_events(&mut self) -> Vec<DesktopProviderEvent> {

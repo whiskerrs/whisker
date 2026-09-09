@@ -334,6 +334,47 @@ impl TextHandle {
         }
     }
 
+    /// Queues a selection in UTF-16 code units on the paragraph root.
+    pub fn set_selection(&self, range: crate::TextRange) -> Result<(), crate::TextQueryError> {
+        let element = self.r.element().ok_or(crate::TextQueryError::NotBound)?;
+        whisker_runtime::view::set_text_selection(element, Some(range))
+    }
+
+    /// Clears the paragraph's selection.
+    pub fn clear_selection(&self) -> Result<(), crate::TextQueryError> {
+        let element = self.r.element().ok_or(crate::TextQueryError::NotBound)?;
+        whisker_runtime::view::set_text_selection(element, None)
+    }
+
+    /// Reads the selected text from the displayed paragraph without blocking the UI thread.
+    pub async fn selected_text(&self) -> Result<String, crate::TextQueryError> {
+        use whisker_runtime::text_query::{TextQuery, TextQueryOutput};
+        let element = self.r.element().ok_or(crate::TextQueryError::NotBound)?;
+        match whisker_runtime::view::request_text_query(element, TextQuery::SelectedText).await? {
+            TextQueryOutput::Text(text) => Ok(text),
+            _ => Err(crate::TextQueryError::Host(
+                "unexpected text query result".into(),
+            )),
+        }
+    }
+
+    /// Returns visible selection rectangles relative to the paragraph's content origin.
+    pub async fn bounding_rects(
+        &self,
+        range: crate::TextRange,
+    ) -> Result<Vec<crate::TextRect>, crate::TextQueryError> {
+        use whisker_runtime::text_query::{TextQuery, TextQueryOutput};
+        let element = self.r.element().ok_or(crate::TextQueryError::NotBound)?;
+        match whisker_runtime::view::request_text_query(element, TextQuery::BoundingRects(range))
+            .await?
+        {
+            TextQueryOutput::Rects(rects) => Ok(rects),
+            _ => Err(crate::TextQueryError::Host(
+                "unexpected text query result".into(),
+            )),
+        }
+    }
+
     /// The underlying [`ElementRef`] — pass to a `element_ref:` prop to bind it
     /// on mount (`Text(element_ref: handle.r())`).
     pub fn r(&self) -> ElementRef {

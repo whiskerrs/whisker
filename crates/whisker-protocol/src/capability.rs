@@ -42,11 +42,13 @@ pub enum RenderCapability {
     BackgroundImageResources = 13,
     /// Blur applied to pixels already painted behind a node.
     BackdropBlur = 14,
+    /// Styled paragraphs with inline elements and source-range geometry.
+    RichText = 15,
 }
 
 impl RenderCapability {
     /// Every optional capability in stable declaration order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::EllipticalBorderRadius,
         Self::BackgroundLayers,
         Self::VisualEffects,
@@ -61,6 +63,7 @@ impl RenderCapability {
         Self::BackgroundLayerStacking,
         Self::BackgroundImageResources,
         Self::BackdropBlur,
+        Self::RichText,
     ];
 
     /// Stable diagnostic spelling shared by Host errors and checklists.
@@ -80,6 +83,7 @@ impl RenderCapability {
             Self::BackgroundLayerStacking => "background-layer-stacking",
             Self::BackgroundImageResources => "background-image-resources",
             Self::BackdropBlur => "backdrop-blur",
+            Self::RichText => "rich-text",
         }
     }
 
@@ -388,7 +392,13 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6
         {
             Some(RenderCapability::EllipticalBorderRadius)
         }
-        Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
+        Operation::SetText { content, .. }
+            if content.paint.uses_extended_features()
+                || content
+                    .runs
+                    .iter()
+                    .any(|run| run.paint.uses_extended_features()) =>
+        {
             Some(RenderCapability::TextEffects)
         }
         Operation::SetTextStyle { style, .. } if style.paint.uses_extended_features() => {
@@ -398,7 +408,14 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6
         _ => None,
     };
     let second = match operation {
-        Operation::SetText { content, .. } if content.payload.style.uses_extended_typography() => {
+        Operation::SetText { content, .. }
+            if content.payload.style.uses_extended_typography()
+                || content
+                    .payload
+                    .runs
+                    .iter()
+                    .any(|run| run.style.uses_extended_typography()) =>
+        {
             Some(RenderCapability::TextTypography)
         }
         Operation::SetTextStyle { style, .. } if style.style.uses_extended_typography() => {
@@ -406,7 +423,14 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6
         }
         _ => None,
     };
-    [first, second, None, None, None, None]
+    let paragraph = match operation {
+        Operation::SetText { content, .. } => (!content.payload.runs.is_empty()
+            || !content.payload.attachments.is_empty()
+            || content.paragraph.is_some())
+        .then_some(RenderCapability::RichText),
+        _ => None,
+    };
+    [first, second, paragraph, None, None, None]
 }
 
 fn visual_effect_capabilities(effects: &crate::VisualEffects) -> [Option<RenderCapability>; 6] {
@@ -1204,6 +1228,7 @@ mod tests {
                 "background-layer-stacking",
                 "background-image-resources",
                 "backdrop-blur",
+                "rich-text",
             ]
         );
 
@@ -1305,7 +1330,11 @@ mod tests {
             Operation::SetText {
                 node,
                 content: TextContent {
+                    paragraph: None,
+                    runs: Vec::new(),
                     payload: TextMeasurePayload {
+                        runs: Vec::new(),
+                        attachments: Vec::new(),
                         text: "capabilities".into(),
                         style,
                         locale: None,

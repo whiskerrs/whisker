@@ -154,17 +154,19 @@ pub enum ChildPolicy {
     Elements,
     /// Children are plain-text fragments normalized into one text-content op.
     PlainText,
+    /// Children form one paragraph of styled text and inline scene elements.
+    RichText,
 }
 
 impl ChildPolicy {
     /// Returns whether ordinary scene elements may be inserted below the node.
     pub const fn accepts_elements(self) -> bool {
-        matches!(self, Self::Elements)
+        matches!(self, Self::Elements | Self::RichText)
     }
 
     /// Returns whether raw authoring text may be lowered for the node.
     pub const fn accepts_plain_text(self) -> bool {
-        matches!(self, Self::PlainText)
+        matches!(self, Self::PlainText | Self::RichText)
     }
 }
 

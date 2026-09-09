@@ -1,0 +1,74 @@
+{
+  "text": "MMMM",
+  "paragraph": {
+    "version": 1,
+    "runs": [
+      {
+        "start": 0,
+        "end": 4,
+        "span": 1,
+        "families": [
+          "system"
+        ],
+        "size": 36,
+        "weight": 400,
+        "italic": false,
+        "spacing": 0,
+        "features": {},
+        "variations": {},
+        "optical": false,
+        "paint": {
+          "color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "background": [
+            255,
+            0,
+            0,
+            1
+          ],
+          "underline": false,
+          "strike": false,
+          "decorationColor": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "decorationStyle": 0,
+          "shadows": [],
+          "radii": [
+            [
+              0,
+              0.5,
+              0,
+              0.5
+            ],
+            [
+              0,
+              0.5,
+              0,
+              0.5
+            ],
+            [
+              0,
+              0.5,
+              0,
+              0.5
+            ],
+            [
+              0,
+              0.5,
+              0,
+              0.5
+            ]
+          ]
+        }
+      }
+    ],
+    "attachments": []
+  }
+}

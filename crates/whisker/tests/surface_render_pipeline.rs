@@ -84,6 +84,8 @@ impl MeasurementProvider for TextHost {
                 key: request.key,
                 environment_epoch: request.environment_epoch,
                 metrics: MeasurementMetrics {
+                    paragraph: None,
+                    inline_placements: Vec::new(),
                     size: MeasuredSize::new(payload.text.chars().count() as f32 * 10.0, 24.0),
                     first_baseline: Some(18.0),
                     last_baseline: Some(18.0),
@@ -156,6 +158,7 @@ fn common_metadata_reaches_frames_and_event_targets() {
     with_installed_renderer(surface.renderer(), || {
         surface
             .dispatch_input(&InputEvent {
+                presentation_revision: None,
                 surface: surface.surface(),
                 timestamp_ms: 12.0,
                 kind: InputEventKind::Tap,
@@ -275,6 +278,7 @@ fn list_virtualizes_through_scroll_view_and_reacts_to_host_scroll_geometry() {
     with_installed_renderer(surface.renderer(), || {
         surface
             .dispatch_input(&InputEvent {
+                presentation_revision: None,
                 surface: surface.surface(),
                 timestamp_ms: 16.0,
                 kind: InputEventKind::Named("scroll".to_owned()),
@@ -346,11 +350,13 @@ fn horizontal_list_mounted_by_show_lays_out_initial_items() {
                             key: |row: &u32| *row,
                             children: move |_row: ReadSignal<u32>| {
                                 let page = render! {
-                                    View(style: css!(
-                                        width: px(320),
-                                        height: percent(100),
-                                        flex_shrink: 0.0,
-                                    ))
+                                    View(
+                                        style: css!(
+                                            width: px(320),
+                                            height: percent(100),
+                                            flex_shrink: 0.0,
+                                        ),
+                                    )
                                 };
                                 whisker::runtime::view::observe_layout(
                                     page,
@@ -367,10 +373,12 @@ fn horizontal_list_mounted_by_show_lays_out_initial_items() {
                         )
                     }
                     Show(when: move || !visible.get()) {
-                        View(style: css!(
-                            width: px(1),
-                            height: px(1),
-                        ))
+                        View(
+                            style: css!(
+                                width: px(1),
+                                height: px(1),
+                            ),
+                        )
                     }
                 }
             }
@@ -452,11 +460,13 @@ fn horizontal_list_exposes_its_complete_extent_to_the_host_scroll_view() {
                     each: || (0_u32..18).collect::<Vec<_>>(),
                     key: |row: &u32| *row,
                     children: |_row: ReadSignal<u32>| render! {
-                        View(style: css!(
-                            width: px(320),
-                            height: percent(100),
-                            flex_shrink: 0.0,
-                        ))
+                        View(
+                            style: css!(
+                                width: px(320),
+                                height: percent(100),
+                                flex_shrink: 0.0,
+                            ),
+                        )
                     },
                 )
             }
@@ -678,6 +688,7 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
     with_installed_renderer(surface.renderer(), || {
         surface
             .dispatch_input(&InputEvent {
+                presentation_revision: None,
                 surface: surface.surface(),
                 timestamp_ms: 16.0,
                 kind: InputEventKind::Named("scroll".to_owned()),
@@ -708,6 +719,7 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
     with_installed_renderer(surface.renderer(), || {
         surface
             .dispatch_input(&InputEvent {
+                presentation_revision: None,
                 surface: surface.surface(),
                 timestamp_ms: 32.0,
                 kind: InputEventKind::Named("scroll".to_owned()),
@@ -912,7 +924,9 @@ fn typed_list_handle_resolves_keys_from_the_rust_snapshot() {
                     key: |row: &u32| *row,
                     children: |row: ReadSignal<u32>| {
                         let value = computed(move || format!("row-{}", row.get()));
-                        render! { Text(value: value, style: css!(height: px(44), font_size: px(20))) }
+                        render! {
+                            Text(value: value, style: css!(height: px(44), font_size: px(20)))
+                        }
                     },
                 )
             }
@@ -1102,7 +1116,12 @@ fn list_mounts_header_footer_and_empty_content_without_host_list_nodes() {
                     empty: || render! { Text(value: "empty", style: css!(font_size: px(20))) },
                     each: Vec::<u32>::new,
                     key: |row: &u32| *row,
-                    children: |row: ReadSignal<u32>| render! { Text(value: computed(move || row.get().to_string()), style: css!(font_size: px(20))) },
+                    children: |row: ReadSignal<u32>| render! {
+                        Text(
+                            value: computed(move || row.get().to_string()),
+                            style: css!(font_size: px(20)),
+                        )
+                    },
                 )
             }
         });
@@ -1192,6 +1211,7 @@ fn list_preserves_the_first_visible_key_when_items_are_prepended() {
     with_installed_renderer(surface.renderer(), || {
         surface
             .dispatch_input(&InputEvent {
+                presentation_revision: None,
                 surface: surface.surface(),
                 timestamp_ms: 16.0,
                 kind: InputEventKind::Named("scroll".to_owned()),
@@ -1268,7 +1288,12 @@ fn list_learns_variable_item_sizes_from_rust_layout() {
                     each: || vec![(1_u32, 100_i32), (2, 200)],
                     key: |row: &(u32, i32)| row.0,
                     children: |row: ReadSignal<(u32, i32)>| {
-                        let style = computed(move || css!(height: px(row.get().1), flex_shrink: 0.0));
+                        let style = computed(move || {
+                            css!(
+                                height: px(row.get().1),
+                                flex_shrink: 0.0,
+                            )
+                        });
                         render! { View(style: style) }
                     },
                 )
@@ -1377,13 +1402,11 @@ fn list_virtualizes_supported_grid_content_by_complete_rows() {
                     content_style: grid,
                     each: || (0_u32..8).collect::<Vec<_>>(),
                     key: |row: &u32| *row,
-                    children: |row: ReadSignal<u32>| {
-                        render! {
-                            Text(
-                                value: computed(move || format!("grid-{}", row.get())),
-                                style: css!(height: px(40), font_size: px(20)),
-                            )
-                        }
+                    children: |row: ReadSignal<u32>| render! {
+                        Text(
+                            value: computed(move || format!("grid-{}", row.get())),
+                            style: css!(height: px(40), font_size: px(20)),
+                        )
                     },
                 )
             }
@@ -1472,6 +1495,7 @@ fn list_virtualizes_supported_grid_content_by_complete_rows() {
     with_installed_renderer(surface.renderer(), || {
         surface
             .dispatch_input(&InputEvent {
+                presentation_revision: None,
                 surface: surface.surface(),
                 timestamp_ms: 16.0,
                 kind: InputEventKind::Named("scroll".to_owned()),
@@ -1805,7 +1829,9 @@ fn custom_plain_text_children_lower_to_measurement_and_set_text() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                NativeLabel(style: css!(font_size: px(20))) { "custom text" }
+                NativeLabel(style: css!(font_size: px(20))) {
+                    "custom text"
+                }
             }
         });
         set_root(root);
@@ -2115,11 +2141,13 @@ fn opacity_transition_is_sampled_in_rust_and_emitted_as_ordinary_frame_deltas() 
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(40))
-                    .height(px(20))
-                    .opacity(0.2)
-                    .transition(transition()))
+                View(
+                    style: Css::new()
+                        .width(px(40))
+                        .height(px(20))
+                        .opacity(0.2)
+                        .transition(transition()),
+                )
             }
         });
         set_root(root);
@@ -2210,10 +2238,12 @@ fn layout_transition_is_sampled_before_taffy_and_emits_geometry_deltas() {
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(40))
-                    .height(px(20))
-                    .transition(transition()))
+                View(
+                    style: Css::new()
+                        .width(px(40))
+                        .height(px(20))
+                        .transition(transition()),
+                )
             }
         });
         set_root(root);
@@ -2294,9 +2324,7 @@ fn box_color_transitions_are_composited_into_one_set_box_paint_delta() {
     };
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
-            render! {
-                View(style: painted(Color::rgb(0, 0, 0), Color::rgb(255, 0, 0)))
-            }
+            render! { View(style: painted(Color::rgb(0, 0, 0), Color::rgb(255, 0, 0))) }
         });
         set_root(root);
         root
@@ -2601,16 +2629,18 @@ fn builder_keyframes_are_sampled_in_rust_and_emit_frame_deltas() {
     let _root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(40))
-                    .height(px(20))
-                    .opacity(0.25)
-                    .animation(
-                        Animation::new(fade)
-                            .duration(100.ms())
-                            .timing(EasingFunction::Linear)
-                            .fill_mode(AnimationFillMode::Forwards)
-                    ))
+                View(
+                    style: Css::new()
+                        .width(px(40))
+                        .height(px(20))
+                        .opacity(0.25)
+                        .animation(
+                            Animation::new(fade)
+                                .duration(100.ms())
+                                .timing(EasingFunction::Linear)
+                                .fill_mode(AnimationFillMode::Forwards),
+                        ),
+                )
             }
         });
         set_root(root);
@@ -2948,15 +2978,17 @@ fn incompatible_keyframe_transforms_use_matrix_decomposition_after_layout() {
     let _root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(40))
-                    .height(px(20))
-                    .transform_origin(Position::Coords(px(0).into(), px(0).into()))
-                    .animation(
-                        Animation::new(move_across)
-                            .duration(100.ms())
-                            .timing(EasingFunction::Linear)
-                    ))
+                View(
+                    style: Css::new()
+                        .width(px(40))
+                        .height(px(20))
+                        .transform_origin(Position::Coords(px(0).into(), px(0).into()))
+                        .animation(
+                            Animation::new(move_across)
+                                .duration(100.ms())
+                                .timing(EasingFunction::Linear),
+                        ),
+                )
             }
         });
         set_root(root);
@@ -3963,7 +3995,7 @@ fn external_element_properties_events_and_commands_share_the_retained_frame_path
 }
 
 #[test]
-fn text_leaf_contract_is_enforced_before_frame_generation() {
+fn text_accepts_logical_inline_views_before_frame_generation() {
     __reset_for_tests();
     let owner = Owner::new(None);
     let surface = SurfaceRuntime::new(
@@ -3979,10 +4011,7 @@ fn text_leaf_contract_is_enforced_before_frame_generation() {
         });
     });
 
-    assert!(matches!(
-        surface.binding_error(),
-        Some(RuntimeBindingError::ChildrenNotAllowed { .. })
-    ));
+    assert_eq!(surface.binding_error(), None);
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
@@ -4022,10 +4051,12 @@ fn image_rendering_reaches_the_frame_protocol_from_render_macro() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(40))
-                    .height(px(40))
-                    .image_rendering(ImageRendering::Pixelated))
+                View(
+                    style: Css::new()
+                        .width(px(40))
+                        .height(px(40))
+                        .image_rendering(ImageRendering::Pixelated),
+                )
             }
         });
         set_root(root);
@@ -4070,11 +4101,13 @@ fn structured_shadow_and_clip_path_reach_the_frame_protocol() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(40))
-                    .height(px(40))
-                    .box_shadow(px(2), px(3), px(4), px(1), Color::hex(0x112233))
-                    .clip_path(ClipPath::circle(percent(50))))
+                View(
+                    style: Css::new()
+                        .width(px(40))
+                        .height(px(40))
+                        .box_shadow(px(2), px(3), px(4), px(1), Color::hex(0x112233))
+                        .clip_path(ClipPath::circle(percent(50))),
+                )
             }
         });
         set_root(root);
@@ -4128,26 +4161,28 @@ fn wpt_border_radius_sum_of_radii_001_reaches_layout_and_frame_protocol() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(100))
-                    .height(px(100))
-                    .background_color(Color::rgba(0, 0, 0, 0.0))
-                    .border_top_width(px(10))
-                    .border_right_width(px(10))
-                    .border_bottom_width(px(10))
-                    .border_left_width(px(10))
-                    .border_top_color(Color::rgb(0, 0, 0))
-                    .border_right_color(Color::rgb(0, 0, 0))
-                    .border_bottom_color(Color::rgb(0, 0, 0))
-                    .border_left_color(Color::rgb(0, 0, 0))
-                    .border_top_style(BorderStyle::Solid)
-                    .border_right_style(BorderStyle::Solid)
-                    .border_bottom_style(BorderStyle::Solid)
-                    .border_left_style(BorderStyle::Solid)
-                    .border_top_left_radius(px(60))
-                    .border_top_right_radius(px(150))
-                    .border_bottom_right_radius(px(30))
-                    .border_bottom_left_radius(px(30)))
+                View(
+                    style: Css::new()
+                        .width(px(100))
+                        .height(px(100))
+                        .background_color(Color::rgba(0, 0, 0, 0.0))
+                        .border_top_width(px(10))
+                        .border_right_width(px(10))
+                        .border_bottom_width(px(10))
+                        .border_left_width(px(10))
+                        .border_top_color(Color::rgb(0, 0, 0))
+                        .border_right_color(Color::rgb(0, 0, 0))
+                        .border_bottom_color(Color::rgb(0, 0, 0))
+                        .border_left_color(Color::rgb(0, 0, 0))
+                        .border_top_style(BorderStyle::Solid)
+                        .border_right_style(BorderStyle::Solid)
+                        .border_bottom_style(BorderStyle::Solid)
+                        .border_left_style(BorderStyle::Solid)
+                        .border_top_left_radius(px(60))
+                        .border_top_right_radius(px(150))
+                        .border_bottom_right_radius(px(30))
+                        .border_bottom_left_radius(px(30)),
+                )
             }
         });
         set_root(root);
@@ -4202,13 +4237,17 @@ fn inherited_custom_property_reaches_taffy_and_frame_protocol() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(200))
-                    .height(px(100))
-                    .custom_property(card_width.clone(), Size::from(px(72)))) {
-                    View(style: Css::new()
-                        .property_variable(StyleProperty::Width, card_width)
-                        .height(px(20)))
+                View(
+                    style: Css::new()
+                        .width(px(200))
+                        .height(px(100))
+                        .custom_property(card_width.clone(), Size::from(px(72))),
+                ) {
+                    View(
+                        style: Css::new()
+                            .property_variable(StyleProperty::Width, card_width)
+                            .height(px(20)),
+                    )
                 }
             }
         });
@@ -4265,14 +4304,18 @@ fn inherited_custom_property_update_drives_descendant_layout_transition() {
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                View(style: Css::new()
-                    .width(px(200))
-                    .height(px(100))
-                    .custom_property(initial_card_width.clone(), Size::from(px(40)))) {
-                    View(style: Css::new()
-                        .property_variable(StyleProperty::Width, initial_card_width.clone())
-                        .height(px(20))
-                        .transition(transition()))
+                View(
+                    style: Css::new()
+                        .width(px(200))
+                        .height(px(100))
+                        .custom_property(initial_card_width.clone(), Size::from(px(40))),
+                ) {
+                    View(
+                        style: Css::new()
+                            .property_variable(StyleProperty::Width, initial_card_width.clone())
+                            .height(px(20))
+                            .transition(transition()),
+                    )
                 }
             }
         });
@@ -4322,3 +4365,240 @@ fn inherited_custom_property_update_drives_descendant_layout_transition() {
 
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
+
+#[test]
+fn nested_text_is_one_measured_paragraph_and_reacts_without_native_span_nodes() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(71).unwrap(),
+        StyleEnvironment::new(240.0, 200.0, 1.0, 14.0),
+    );
+    let value = owner.with(|| signal("world".to_string()));
+    let color = owner.with(|| signal(Color::hex(0xff0000)));
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                Text(value: "Hello ", style: css!(font_size: px(20))) {
+                    Text(
+                        value: value,
+                        style: computed(move || {
+                            Css::new()
+                                .color(color.get())
+                                .font_weight(whisker::css::FontWeight::Bold)
+                        }),
+                    )
+                    Text(value: "!")
+                }
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(240.0, 200.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let operations = &renderer.frames()[0].packet.operations;
+    assert_eq!(
+        operations
+            .iter()
+            .filter(|op| matches!(op, Operation::CreateNode { .. }))
+            .count(),
+        1
+    );
+    let content = operations
+        .iter()
+        .find_map(|op| match op {
+            Operation::SetText { content, .. } => Some(content),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(content.payload.text, "Hello world!");
+    assert_eq!(content.payload.runs.len(), 3);
+    assert_eq!(content.runs.len(), 3);
+    assert_eq!(
+        content.runs[1].paint.foreground,
+        PaintColor::Srgba {
+            red: 255,
+            green: 0,
+            blue: 0,
+            alpha: 1.0
+        }
+    );
+    assert_eq!(content.payload.runs[1].style.font_weight, 700);
+    assert_eq!(content.payload.runs[1].style.font_size, 20.0);
+    let calls = host.calls.len();
+    with_installed_renderer(surface.renderer(), || {
+        color.set(Color::hex(0x0000ff));
+        whisker::flush();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(240.0, 200.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        host.calls.len(),
+        calls,
+        "paint-only changes must not remeasure the paragraph"
+    );
+    with_installed_renderer(surface.renderer(), || {
+        value.set("🦀".into());
+        whisker::flush();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(240.0, 200.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(host.calls.len() > calls);
+    assert_eq!(surface.binding_error(), None);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+    assert_eq!(surface.binding_error(), None);
+}
+
+#[test]
+fn inline_view_is_measured_before_the_paragraph_and_keeps_its_native_subtree() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(72).unwrap(),
+        StyleEnvironment::new(240.0, 200.0, 1.0, 14.0),
+    );
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                Text(value: "Before ") {
+                    Text(value: "nested ") {
+                        View(
+                            style: Css::new()
+                                .width(px(40))
+                                .height(px(50))
+                                .vertical_align(px(3)),
+                        ) {
+                            Text(value: "badge")
+                        }
+                    }
+                    Text(value: " after")
+                }
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+    struct InlineHost {
+        measured_badge: bool,
+        requests: usize,
+    }
+    impl MeasurementProvider for InlineHost {
+        type Error = Infallible;
+        fn measure_batch(
+            &mut self,
+            _: SurfaceId,
+            requests: &[MeasurementRequest],
+            responses: &mut Vec<MeasurementResponse>,
+        ) -> Result<(), Self::Error> {
+            for request in requests {
+                let MeasurementPayload::Text(text) = &request.payload else {
+                    panic!("unexpected measurement")
+                };
+                self.requests += 1;
+                let mut metrics = MeasurementMetrics::from_size(MeasuredSize::new(180.0, 60.0));
+                if text.text == "badge" {
+                    self.measured_badge = true;
+                    metrics.size = MeasuredSize::new(30.0, 16.0);
+                    metrics.first_baseline = Some(12.0);
+                } else {
+                    assert!(
+                        self.measured_badge,
+                        "attachment content must resolve before paragraph shaping"
+                    );
+                    assert_eq!(text.text, "Before nested \u{fffc} after");
+                    assert_eq!(text.attachments.len(), 1);
+                    let attachment = &text.attachments[0];
+                    assert_eq!(attachment.size, MeasuredSize::new(40.0, 50.0));
+                    assert_eq!(
+                        attachment.alignment,
+                        whisker_engine::whisker_protocol::InlineAlignment::Offset(3.0)
+                    );
+                    metrics.inline_placements.push(
+                        whisker_engine::whisker_protocol::InlinePlacement {
+                            node: attachment.node,
+                            origin: Some([80.0, 5.0]),
+                        },
+                    );
+                }
+                responses.push(MeasurementResponse::Ready {
+                    key: request.key,
+                    environment_epoch: request.environment_epoch,
+                    metrics,
+                });
+            }
+            Ok(())
+        }
+    }
+    let mut host = InlineHost {
+        measured_badge: false,
+        requests: 0,
+    };
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(240.0, 200.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let operations = &renderer.frames()[0].packet.operations;
+    assert_eq!(
+        operations
+            .iter()
+            .filter(|op| matches!(op, Operation::CreateNode { .. }))
+            .count(),
+        3
+    );
+    let content = operations
+        .iter()
+        .find_map(|op| match op {
+            Operation::SetText { content, .. } if !content.payload.attachments.is_empty() => {
+                Some(content)
+            }
+            _ => None,
+        })
+        .unwrap();
+    let attachment = &content.payload.attachments[0];
+    assert!(operations.iter().any(|op| matches!(op, Operation::SetLayout { node, geometry } if *node == attachment.node && geometry.border_box.x == 80.0 && geometry.border_box.y == 5.0)));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+    assert_eq!(surface.binding_error(), None);
+}
+
+#[path = "surface_render_pipeline/paragraph_events.rs"]
+mod paragraph_events;
+
+#[path = "surface_render_pipeline/paragraph_truncation.rs"]
+mod paragraph_truncation;
+
+#[path = "surface_render_pipeline/paragraph_queries.rs"]
+mod paragraph_queries;

@@ -199,6 +199,7 @@ internal class HostNode(
     fun setWhiskerVisibility(visible: Boolean) {
         if (whiskerVisible == visible) return
         whiskerVisible = visible
+        if (!visible) clearFocus()
         mountedElement?.let { mounted ->
             if (mounted.childrenHost() == null) {
                 mounted.view.visibility = if (visible) VISIBLE else INVISIBLE

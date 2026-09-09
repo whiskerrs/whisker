@@ -39,6 +39,7 @@ pub(crate) fn dispatch_pointer(
     let pointer_id = PointerId::new(input.pointer_id)
         .ok_or_else(|| WebError("browser pointer id must be non-zero".into()))?;
     let event = InputEvent {
+        presentation_revision: None,
         surface: runtime.surface().surface(),
         timestamp_ms: input.timestamp_ms,
         kind: match input.phase {

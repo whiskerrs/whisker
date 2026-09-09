@@ -1,0 +1,19 @@
+{
+  "text": "Before ￼ after",
+  "paragraph": {
+    "version": 1,
+    "runs": [],
+    "attachments": [
+      {
+        "node": 22,
+        "start": 7,
+        "end": 8,
+        "width": 40,
+        "height": 50,
+        "baseline": 37,
+        "alignment": 0,
+        "shift": 0
+      }
+    ]
+  }
+}

@@ -23,6 +23,8 @@ public data class WhiskerMeasuredSize(val width: Float, val height: Float)
 /** Decoded `SetText` payload passed to the Host element implementation. */
 public data class WhiskerTextContent(
     public val value: String,
+    public val paragraph: WhiskerParagraph? = null,
+    public val preparedContent: Long = 0,
     public val fontSize: Float,
     public val fontWeight: Int,
     public val fontFamilies: List<String> = listOf("system"),
@@ -424,7 +426,7 @@ public object WhiskerElementRegistry {
         for (registration in registrations) {
             val declaration = declarations[registration.name]
                 ?: return reject("no Host declaration for `${registration.name}`")
-            if ((registration.childPolicy == WhiskerChildPolicy.PlainText) != (declaration.factory.textUpdater != null)) {
+            if (registration.childPolicy.acceptsPlainText != (declaration.factory.textUpdater != null)) {
                 return reject("child policy mismatch for `${registration.name}`: Rust=${registration.childPolicy}, Host text updater=${declaration.factory.textUpdater != null}")
             }
             if (registration.textStyle != (declaration.factory.textStyleUpdater != null)) {

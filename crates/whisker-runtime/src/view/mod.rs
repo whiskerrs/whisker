@@ -66,3 +66,8 @@ pub use renderer::{
     install_renderer, specified_style, try_invoke_element_command, uninstall_renderer,
     with_installed_renderer,
 };
+
+#[doc(hidden)]
+pub use renderer::{
+    enable_text_geometry, mark_inline_truncation, request_text_query, set_text_selection,
+};

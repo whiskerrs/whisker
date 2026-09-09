@@ -229,8 +229,37 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
 }
 
 /** Native text element implementing Whisker's single-line decoration contract. */
-public final class WhiskerTextLabel: UILabel {
+public final class WhiskerTextLabel: UILabel, WhiskerEventSource {
+    private var explicitAccessibilityLabel: String?
+    public override var accessibilityLabel: String? {
+        get { explicitAccessibilityLabel ?? richParagraph?.accessibleText ?? super.accessibilityLabel }
+        set { explicitAccessibilityLabel = newValue; super.accessibilityLabel = newValue }
+    }
+    public override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get {
+            let revision = preparedContent
+            let actions = richParagraph?.accessibleActions.map { span, label in
+                UIAccessibilityCustomAction(name: label) { [weak self] _ in
+                    guard let self, self.preparedContent == revision else { return false }
+                    self.textEventSink?("textactivate", .map(["span": .int(Int64(span)), "revision": .int(Int64(revision))]))
+                    return true
+                }
+            } ?? []
+            return (super.accessibilityCustomActions ?? []) + actions
+        }
+        set { super.accessibilityCustomActions = newValue }
+    }
+    var selectionController: WhiskerTextSelection?
+    var textEventSink: ((String, WhiskerValue) -> Void)?
+    var preparedContent: UInt64 = 0
+    public func installWhiskerEventSink(_ sink: ((String, WhiskerValue) -> Void)?) { textEventSink = sink }
     private var whiskerIndent = WhiskerTextIndent()
+    private var richLayout: WhiskerParagraphLayout?
+    var richParagraph: WhiskerParagraph?
+    public var richContent: NSAttributedString? {
+        didSet { richLayout = nil; setNeedsDisplay() }
+    }
+    public var richOverflow: WhiskerTextOverflow = .clip
     private var appliedIndent: CGFloat?
     public internal(set) var whiskerFontFeatures: [WhiskerFontFeature] = []
     public internal(set) var whiskerFontVariations: [WhiskerFontVariation] = []
@@ -252,6 +281,8 @@ public final class WhiskerTextLabel: UILabel {
     public override func layoutSubviews() {
         super.layoutSubviews()
         applyWhiskerIndent()
+        if let richLayout, richLayout.container.size.width != bounds.width { self.richLayout = nil }
+        selectionController?.synchronize()
     }
 
     private func applyWhiskerIndent() {
@@ -270,13 +301,36 @@ public final class WhiskerTextLabel: UILabel {
         paragraph.firstLineHeadIndent = resolved
         mutable.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: mutable.length))
         self.attributedText = mutable
+        if richContent != nil { richContent = mutable }
     }
 
     public var whiskerDecoration: WhiskerTextDecoration? {
         didSet { setNeedsDisplay() }
     }
 
+    public func installPreparedParagraph(_ layout: WhiskerParagraphLayout) {
+        applyWhiskerIndent()
+        guard let richContent, richContent.string == layout.storage.string else { return }
+        layout.applyPaint(richContent)
+        richLayout = layout
+        selectionController?.synchronize()
+        setNeedsDisplay()
+    }
+
+    func preparedParagraphLayout(width: CGFloat) -> WhiskerParagraphLayout? {
+        guard let richContent else { return nil }
+        if let richLayout, richLayout.container.size.width == width { return richLayout }
+        let layout = WhiskerParagraphLayout(text: richContent, width: width, maxLines: numberOfLines, overflow: richOverflow)
+        richLayout = layout
+        return layout
+    }
+
     public override func drawText(in rect: CGRect) {
+        if selectionController != nil { return }
+        if let layout = preparedParagraphLayout(width: rect.width) {
+            layout.draw(at: rect.origin)
+            return
+        }
         super.drawText(in: rect)
         guard let decoration = whiskerDecoration, decoration.style == .wavy else { return }
         let textRect = self.textRect(forBounds: rect, limitedToNumberOfLines: numberOfLines)
@@ -416,12 +470,17 @@ public enum WhiskerBuiltInElements {
                         attributes[.strikethroughColor] = decoration.color
                     }
                 }
-                label.attributedText = NSAttributedString(
+                label.richOverflow = content.overflow
+                label.richParagraph = content.paragraph
+                label.richContent = content.paragraph?.attributedString(content.value, attributes: attributes)
+                label.attributedText = label.richContent ?? NSAttributedString(
                     string: content.wordBreak == .keepAll
                         ? protectCJKBreaks(content.value) : content.value,
                     attributes: attributes
                 )
+                label.preparedContent = content.preparedContent
                 label.setWhiskerIndent(content.indent)
+                label.selectionController?.synchronize()
             }
         ) {
             let label = WhiskerTextLabel(frame: .zero)
@@ -550,7 +609,15 @@ public final class BuiltInElementModule: Module {
         ModuleDefinition {
             Name("whisker.ui")
             View(WhiskerBuiltInElements.view())
-            View(WhiskerBuiltInElements.text())
+            View(WhiskerBuiltInElements.text()) {
+                Prop("selectable", clear: { (view: WhiskerTextLabel) in view.setSelectable(false) }) { (view: WhiskerTextLabel, value: WhiskerValue) in
+                    view.setSelectable(value.asBool ?? false)
+                }
+                Command("setSelection") { (view: WhiskerTextLabel, value: WhiskerValue) in view.setTextSelection(value) }
+                Command("clearSelection") { (view: WhiskerTextLabel, value: WhiskerValue) in view.clearTextSelection(value) }
+                Command("textQuery") { (view: WhiskerTextLabel, value: WhiskerValue) in view.queryText(value) }
+                Events("selectionchange", "textqueryresult", "textactivate")
+            }
             View(WhiskerBuiltInElements.scrollView()) {
                 Prop(
                     "scroll-orientation",

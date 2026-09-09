@@ -102,6 +102,7 @@ fn input_dispatch_skips_listener_after_capture_unmounts_target() {
         .unwrap();
     runtime
         .dispatch_input(&InputEvent {
+            presentation_revision: None,
             surface: surface.surface(),
             timestamp_ms: 1.0,
             kind: InputEventKind::Click,
@@ -425,6 +426,7 @@ fn explicit_element_release_cancels_already_planned_bubble_callbacks() {
         .unwrap();
     runtime
         .dispatch_input(&InputEvent {
+            presentation_revision: None,
             surface: surface.surface(),
             timestamp_ms: 1.0,
             kind: InputEventKind::Click,

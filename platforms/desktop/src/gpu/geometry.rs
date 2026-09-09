@@ -331,6 +331,8 @@ pub(crate) struct GpuRenderer {
     pub(super) backdrop_gpu: BackdropGpuPipeline,
     pub(super) text_viewport: Viewport,
     pub(super) text_atlas: TextAtlas,
+    pub(super) text_cache: Cache,
+    pub(super) paragraph_rasters: crate::text::raster::ParagraphRasterCache,
     pub(super) text_renderers: HashMap<NodeId, TextRenderer>,
     pub(super) image_resources: HashMap<ResourceId, GpuImageResource>,
     pub(super) native_rasters: HashMap<NodeId, NativeRasterCache>,

@@ -7,10 +7,10 @@ public enum WhiskerMeasurement: Hashable {
 
 /// Rust-owned child semantics. Native mount targets remain Host-local.
 public enum WhiskerChildPolicy: Hashable {
-    case none, elements, plainText
+    case none, elements, plainText, richText
 
-    public var acceptsElements: Bool { self == .elements }
-    public var acceptsPlainText: Bool { self == .plainText }
+    public var acceptsElements: Bool { self == .elements || self == .richText }
+    public var acceptsPlainText: Bool { self == .plainText || self == .richText }
 }
 
 /// Top-level shape of a value carried by `WhiskerValue`.

@@ -36,6 +36,9 @@ base64 = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }
 csscolorparser = "0.7.2"
 glyphon = "0.9.0"
+unicode-segmentation = "1.12"
+parley = { version = "=0.11.0", features = ["complex-scripts"] }
+swash = "0.2.10"
 image = { version = "0.25", default-features = false, features = ["png"] }
 pollster = "0.4.0"
 ureq = "2"

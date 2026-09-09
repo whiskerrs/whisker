@@ -10,7 +10,7 @@ version = "0.0.0-dev"
 val hostConformanceAssets = layout.buildDirectory.dir("generated/hostConformanceAssets")
 val stageHostConformanceAssets by tasks.registering(Sync::class) {
     from(file("../../../tests/host-conformance")) {
-        include("manifest.json", "core/**", "wpt/**")
+        include("manifest.json", "core/**", "wpt/**", "paragraphs/**")
     }
     into(hostConformanceAssets)
 }

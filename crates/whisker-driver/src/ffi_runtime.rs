@@ -29,6 +29,8 @@ use whisker_runtime::{ElementRegistry, RuntimeInstance, RuntimeWakeHandle, Surfa
 
 mod frame;
 mod measurement;
+mod paragraph;
+mod paragraph_response;
 mod resource;
 
 use frame::MobileFrameSink;
@@ -253,6 +255,7 @@ pub unsafe fn create(
         hot_reload: MobileHotReload::new(wake, application, application_hash),
         modules,
         measurement: MobileMeasurementHost {
+            prepared: std::collections::HashMap::new(),
             callback: measure,
             data: measure_data,
         },
@@ -398,6 +401,7 @@ pub unsafe fn dispatch_event(
         return false;
     };
     let event = whisker_engine::whisker_protocol::InputEvent {
+        presentation_revision: None,
         surface: SurfaceId::new(1).unwrap(),
         timestamp_ms,
         kind: whisker_engine::whisker_protocol::InputEventKind::Named(name.to_owned()),
@@ -519,6 +523,7 @@ fn mobile_pointer_event(
     };
     let pointer_id = PointerId::new(pointer_id)?;
     let event = InputEvent {
+        presentation_revision: None,
         surface: SurfaceId::new(1).unwrap(),
         timestamp_ms,
         kind,

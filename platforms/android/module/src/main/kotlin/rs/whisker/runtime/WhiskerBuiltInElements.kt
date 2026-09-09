@@ -100,7 +100,15 @@ public class BuiltInElementModule : Module() {
     override fun definition(): ModuleDefinition = ModuleDefinition {
         Name("whisker.ui")
         View(WhiskerBuiltInElements.view())
-        View(WhiskerBuiltInElements.text())
+        View(WhiskerBuiltInElements.text()) {
+            Prop("selectable", clear = { view: WhiskerTextView -> view.setTextIsSelectable(false) }) { view: WhiskerTextView, value ->
+                view.setTextIsSelectable(value.asBool() ?: false)
+            }
+            Command("setSelection") { view: WhiskerTextView, value -> view.setWhiskerSelection(value) }
+            Command("clearSelection") { view: WhiskerTextView, value -> view.clearWhiskerSelection(value) }
+            Command("textQuery") { view: WhiskerTextView, value -> view.queryWhiskerText(value) }
+            Events("selectionchange", "textqueryresult", "textactivate")
+        }
         View(WhiskerBuiltInElements.scrollView()) {
             Prop(
                 "scroll-orientation",

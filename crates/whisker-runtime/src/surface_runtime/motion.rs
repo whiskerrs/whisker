@@ -255,7 +255,7 @@ impl SurfaceRuntime {
                 firings.extend(planned.into_iter().map(|(current_target, callback)| {
                     (
                         callback,
-                        with_current_target(&body, state.target_value(current_target)),
+                        with_current_target(&body, state.element_target_value(current_target)),
                     )
                 }));
             }
@@ -1080,6 +1080,9 @@ impl BindingState {
         snapshots: Vec<MotionSnapshot>,
     ) -> Result<(), RuntimeBindingError> {
         for snapshot in &snapshots {
+            if self.element(snapshot.element)?.node.is_none() {
+                continue;
+            }
             self.configure_layout_transitions(
                 snapshot.element,
                 &snapshot.layout_targets,

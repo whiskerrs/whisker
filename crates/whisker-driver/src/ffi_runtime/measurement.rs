@@ -3,7 +3,7 @@ use super::*;
 
 #[derive(Debug)]
 
-pub(super) struct MobileMeasureError(&'static str);
+pub(super) struct MobileMeasureError(pub(super) &'static str);
 impl std::fmt::Display for MobileMeasureError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.0)
@@ -14,6 +14,18 @@ impl std::error::Error for MobileMeasureError {}
 pub(super) struct MobileMeasurementHost {
     pub(super) callback: MeasureCallback,
     pub(super) data: *mut c_void,
+    pub(super) prepared: std::collections::HashMap<PreparedContentId, NativePreparedLayout>,
+}
+
+pub(super) struct NativePreparedLayout {
+    data: *mut c_void,
+    release: extern "C" fn(*mut c_void),
+}
+
+impl Drop for NativePreparedLayout {
+    fn drop(&mut self) {
+        (self.release)(self.data);
+    }
 }
 
 impl MeasurementProvider for MobileMeasurementHost {
@@ -34,7 +46,7 @@ impl MeasurementProvider for MobileMeasurementHost {
         ) {
             return Err(MobileMeasureError("mobile Host rejected measurement batch"));
         }
-        for (request, raw) in requests.iter().zip(&batch.responses) {
+        for (request, raw) in requests.iter().zip(&mut batch.responses) {
             if raw.key != request.key.get() {
                 return Err(MobileMeasureError(
                     "mobile Host reordered measurement responses",
@@ -45,7 +57,32 @@ impl MeasurementProvider for MobileMeasurementHost {
                     "mobile Host returned a stale measurement epoch",
                 ));
             }
+            if !raw.paragraph.is_null() && raw.release_paragraph.is_none() {
+                return Err(MobileMeasureError(
+                    "owned paragraph geometry omitted its release callback",
+                ));
+            }
+            if raw.prepared_layout.is_null() != raw.release_prepared_layout.is_none() {
+                return Err(MobileMeasureError("invalid prepared layout ownership"));
+            }
+            let paragraph = super::paragraph_response::decode(raw.paragraph)?;
+            if !raw.prepared_layout.is_null() {
+                let id = PreparedContentId::new(raw.prepared_content)
+                    .filter(|_| raw.metrics_mask & 4 != 0)
+                    .ok_or(MobileMeasureError("prepared layout omitted its content ID"))?;
+                let lease = NativePreparedLayout {
+                    data: std::mem::replace(&mut raw.prepared_layout, std::ptr::null_mut()),
+                    release: raw
+                        .release_prepared_layout
+                        .take()
+                        .expect("validated layout ownership"),
+                };
+                self.prepared.insert(id, lease);
+            }
+
             let make_metrics = || MeasurementMetrics {
+                paragraph: paragraph.metrics.clone(),
+                inline_placements: paragraph.placements.clone(),
                 size: MeasuredSize::new(raw.width, raw.height),
                 first_baseline: (raw.metrics_mask & 1 != 0).then_some(raw.first_baseline),
                 last_baseline: (raw.metrics_mask & 2 != 0).then_some(raw.last_baseline),
@@ -87,9 +124,23 @@ impl MeasurementProvider for MobileMeasurementHost {
         }
         Ok(())
     }
+
+    fn retain_prepared_content(
+        &mut self,
+        _: SurfaceId,
+        _: u64,
+        ids: &mut dyn Iterator<Item = PreparedContentId>,
+    ) {
+        if self.prepared.is_empty() {
+            return;
+        }
+        let retained: std::collections::HashSet<_> = ids.collect();
+        self.prepared.retain(|id, _| retained.contains(id));
+    }
 }
 
 pub(super) struct MobileMeasureBatch {
+    _paragraphs: super::paragraph::MobileParagraphs,
     _strings: Vec<Box<[u8]>>,
     _bytes: Vec<Vec<u8>>,
     _font_families: Vec<Box<[WhiskerStringRef]>>,
@@ -99,9 +150,29 @@ pub(super) struct MobileMeasureBatch {
     responses: Vec<MobileMeasureResponse>,
 }
 
+impl Drop for MobileMeasureBatch {
+    fn drop(&mut self) {
+        for response in &mut self.responses {
+            if let Some(release) = response.release_prepared_layout.take() {
+                release(std::mem::replace(
+                    &mut response.prepared_layout,
+                    std::ptr::null_mut(),
+                ));
+            }
+            if let Some(release) = response.release_paragraph.take() {
+                release(std::mem::replace(
+                    &mut response.paragraph,
+                    std::ptr::null_mut(),
+                ));
+            }
+        }
+    }
+}
+
 impl MobileMeasureBatch {
     pub(super) fn new(source: &[MeasurementRequest]) -> Self {
         let mut strings = Vec::new();
+        let mut paragraphs = super::paragraph::MobileParagraphs::default();
         let mut bytes = Vec::new();
         let mut font_families = Vec::new();
         let mut font_features = Vec::new();
@@ -110,6 +181,7 @@ impl MobileMeasureBatch {
         let mut responses = Vec::with_capacity(source.len());
         for request in source {
             let mut raw = MobileMeasureRequest {
+                paragraph: std::ptr::null(),
                 key: request.key.get(),
                 node: request.node.get(),
                 element_type: request.element_type.get(),
@@ -159,6 +231,7 @@ impl MobileMeasureBatch {
             match &request.payload {
                 MeasurementPayload::Text(value) => {
                     raw.kind = MEASURE_TEXT;
+                    raw.paragraph = paragraphs.push(value, &[], None);
                     raw.text = push_string(&mut strings, &value.text);
                     raw.locale = value
                         .locale
@@ -187,7 +260,7 @@ impl MobileMeasureBatch {
                         MeasureFontStyle::Italic => 1,
                         MeasureFontStyle::Oblique => 2,
                     };
-                    raw.wrap = u8::from(matches!(value.wrap, MeasureTextWrap::Wrap));
+                    raw.wrap = u8::from(value.wrap != MeasureTextWrap::NoWrap);
                     raw.word_break = match value.word_break {
                         MeasureTextWordBreak::Normal => 0,
                         MeasureTextWordBreak::BreakAll => 1,
@@ -264,6 +337,7 @@ impl MobileMeasureBatch {
         }
         Self {
             _strings: strings,
+            _paragraphs: paragraphs,
             _bytes: bytes,
             _font_families: font_families,
             _font_features: font_features,
@@ -382,8 +456,78 @@ mod tests {
     }
 
     #[test]
+    fn prepared_layout_leases_follow_cached_ids_and_release_rejected_batches() {
+        use std::{cell::Cell, rc::Rc};
+        struct Host {
+            released: Rc<Cell<usize>>,
+            accept: bool,
+        }
+        extern "C" fn release(pointer: *mut c_void) {
+            // SAFETY: each callback receives its uniquely owned lease allocation.
+            let counter = unsafe { Box::from_raw(pointer.cast::<Rc<Cell<usize>>>()) };
+            counter.set(counter.get() + 1);
+        }
+        extern "C" fn measure(
+            data: *mut c_void,
+            requests: *const MobileMeasureRequest,
+            count: usize,
+            responses: *mut MobileMeasureResponse,
+        ) -> bool {
+            // SAFETY: the test retains Host and the adapter supplies count request/response entries.
+            let (host, requests, responses) = unsafe {
+                (
+                    &*data.cast::<Host>(),
+                    std::slice::from_raw_parts(requests, count),
+                    std::slice::from_raw_parts_mut(responses, count),
+                )
+            };
+            for (request, response) in requests.iter().zip(responses) {
+                response.key = request.key;
+                response.environment_epoch = request.environment_epoch;
+                response.status = MEASURE_READY;
+                response.width = 12.0;
+                response.height = 16.0;
+                response.metrics_mask = 4;
+                response.prepared_content = request.key;
+                response.prepared_layout = Box::into_raw(Box::new(host.released.clone())).cast();
+                response.release_prepared_layout = Some(release);
+            }
+            host.accept
+        }
+        let released = Rc::new(Cell::new(0));
+        let mut state = Host {
+            released: released.clone(),
+            accept: true,
+        };
+        let mut host = MobileMeasurementHost {
+            callback: measure,
+            data: (&mut state as *mut Host).cast(),
+            prepared: Default::default(),
+        };
+        let surface = SurfaceId::new(1).unwrap();
+        host.measure_batch(surface, &[request(1), request(2)], &mut Vec::new())
+            .unwrap();
+        assert_eq!(released.get(), 0);
+        host.retain_prepared_content(
+            surface,
+            1,
+            &mut [PreparedContentId::new(2).unwrap()].into_iter(),
+        );
+        assert_eq!(released.get(), 1);
+        state.accept = false;
+        assert!(
+            host.measure_batch(surface, &[request(3), request(4)], &mut Vec::new())
+                .is_err()
+        );
+        assert_eq!(released.get(), 3);
+        drop(host);
+        assert_eq!(released.get(), 4);
+    }
+
+    #[test]
     fn host_responses_must_preserve_request_positions() {
         let mut host = MobileMeasurementHost {
+            prepared: std::collections::HashMap::new(),
             callback: reorder_responses,
             data: std::ptr::null_mut(),
         };
@@ -412,6 +556,7 @@ mod tests {
     fn empty_measurement_batch_uses_null_pointers() {
         let mut observed = false;
         let mut host = MobileMeasurementHost {
+            prepared: std::collections::HashMap::new(),
             callback: observe_empty_batch,
             data: std::ptr::from_mut(&mut observed).cast(),
         };

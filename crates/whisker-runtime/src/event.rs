@@ -571,14 +571,13 @@ pub struct TextLayoutDetail {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct TextLineInfo {
-    /// Character index of the line's first glyph.
+    /// UTF-16 offset of the line's first glyph.
     #[serde(default)]
     pub start: i64,
-    /// Character index just past the line's last glyph.
+    /// UTF-16 offset just past the line's last glyph.
     #[serde(default)]
     pub end: i64,
-    /// Number of characters replaced by the truncation ellipsis (0 if
-    /// the line isn't truncated).
+    /// Number of UTF-16 units replaced by the truncation ellipsis.
     #[serde(default)]
     pub ellipsis_count: i64,
 }
@@ -603,10 +602,10 @@ pub struct SelectionChangeEvent {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[non_exhaustive]
 pub struct SelectionDetail {
-    /// Start character index, or -1 when there's no selection.
+    /// Start UTF-16 offset, or -1 when there is no selection.
     #[serde(default)]
     pub start: i64,
-    /// End character index, or -1 when there's no selection.
+    /// End UTF-16 offset, or -1 when there is no selection.
     #[serde(default)]
     pub end: i64,
     /// `"forward"` or `"backward"`.

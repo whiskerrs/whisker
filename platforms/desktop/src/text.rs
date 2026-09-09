@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 
 use glyphon::{
@@ -16,7 +16,12 @@ use whisker_protocol::{
 
 use crate::element::DesktopElementRegistry;
 
+pub(crate) mod interaction;
+pub(crate) mod paragraph;
+pub(crate) mod raster;
+
 pub(crate) struct PreparedText {
+    pub(crate) paragraph: Option<paragraph::PreparedParagraph>,
     pub(crate) buffer: Buffer,
 }
 
@@ -26,6 +31,9 @@ pub(crate) struct NativeTextHost {
     pub(crate) swash_cache: SwashCache,
     pub(crate) prepared: HashMap<PreparedContentId, PreparedText>,
     preparation_generation: u64,
+    retained_measurements: HashSet<PreparedContentId>,
+    retention_revision: Option<u64>,
+    paragraph_shaper: paragraph::ParagraphShaper,
 }
 
 fn cosmic_alignment(value: whisker_protocol::MeasureTextAlignment) -> Option<Align> {
@@ -61,6 +69,9 @@ impl NativeTextHost {
             swash_cache: SwashCache::new(),
             prepared: HashMap::new(),
             preparation_generation: 0,
+            retained_measurements: HashSet::new(),
+            retention_revision: None,
+            paragraph_shaper: paragraph::ParagraphShaper::default(),
         }
     }
 
@@ -72,7 +83,8 @@ impl NativeTextHost {
         &mut self,
         mut referenced: impl FnMut(PreparedContentId) -> bool,
     ) {
-        self.prepared.retain(|id, _| referenced(*id));
+        self.prepared
+            .retain(|id, _| self.retained_measurements.contains(id) || referenced(*id));
     }
 
     fn shape_text(
@@ -93,9 +105,18 @@ impl NativeTextHost {
             &mut self.font_system,
             match (payload.wrap, payload.word_break) {
                 (MeasureTextWrap::NoWrap, _) => Wrap::None,
-                (MeasureTextWrap::Wrap, MeasureTextWordBreak::Normal) => Wrap::Word,
-                (MeasureTextWrap::Wrap, MeasureTextWordBreak::BreakAll) => Wrap::Glyph,
-                (MeasureTextWrap::Wrap, MeasureTextWordBreak::KeepAll) => Wrap::Word,
+                (
+                    MeasureTextWrap::Wrap | MeasureTextWrap::PreserveWhitespace,
+                    MeasureTextWordBreak::Normal,
+                ) => Wrap::Word,
+                (
+                    MeasureTextWrap::Wrap | MeasureTextWrap::PreserveWhitespace,
+                    MeasureTextWordBreak::BreakAll,
+                ) => Wrap::Glyph,
+                (
+                    MeasureTextWrap::Wrap | MeasureTextWrap::PreserveWhitespace,
+                    MeasureTextWordBreak::KeepAll,
+                ) => Wrap::Word,
             },
         );
         buffer.set_size(&mut self.font_system, width, height);
@@ -181,10 +202,48 @@ impl NativeTextHost {
         };
         let available_width = match request.constraints.available_space[0] {
             AvailableSpace::Definite(value) => Some(value.max(0.0)),
-            AvailableSpace::MinContent if payload.wrap == MeasureTextWrap::Wrap => Some(0.0),
+            AvailableSpace::MinContent if payload.wrap != MeasureTextWrap::NoWrap => Some(0.0),
             AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
         };
         let width = request.constraints.known_dimensions[0].or(available_width);
+        if !payload.runs.is_empty() || !payload.attachments.is_empty() {
+            let paragraph = self.paragraph_shaper.shape(payload, width);
+            let metrics = MeasurementMetrics {
+                paragraph: Some(paragraph.geometry.clone()),
+                inline_placements: payload
+                    .attachments
+                    .iter()
+                    .enumerate()
+                    .map(|(index, attachment)| whisker_protocol::InlinePlacement {
+                        node: attachment.node,
+                        origin: paragraph
+                            .attachments
+                            .iter()
+                            .find(|(candidate, _)| *candidate == index)
+                            .map(|(_, rect)| [rect.x, rect.y]),
+                    })
+                    .collect(),
+                size: MeasuredSize::new(
+                    request.constraints.known_dimensions[0].unwrap_or(paragraph.width),
+                    request.constraints.known_dimensions[1].unwrap_or(paragraph.height),
+                ),
+                first_baseline: paragraph.lines.first().map(|line| line.baseline),
+                last_baseline: paragraph.lines.last().map(|line| line.baseline),
+                overflow: None,
+                prepared_content: None,
+            };
+            let buffer = Buffer::new(
+                &mut self.font_system,
+                Metrics::new(payload.style.font_size, line_height),
+            );
+            return (
+                PreparedText {
+                    buffer,
+                    paragraph: Some(paragraph),
+                },
+                metrics,
+            );
+        }
         let line_limit_height = payload.max_lines.map(|lines| lines as f32 * line_height);
         let height = request.constraints.known_dimensions[1]
             .map(|value| line_limit_height.map_or(value, |limit| value.min(limit)))
@@ -249,8 +308,13 @@ impl NativeTextHost {
         }
         let size = MeasuredSize::new(measured_width.max(0.0), measured_height.max(0.0));
         (
-            PreparedText { buffer },
+            PreparedText {
+                buffer,
+                paragraph: None,
+            },
             MeasurementMetrics {
+                paragraph: None,
+                inline_placements: Vec::new(),
                 size,
                 first_baseline,
                 last_baseline,
@@ -294,6 +358,21 @@ fn protect_cjk_breaks(value: &str) -> String {
 
 impl MeasurementProvider for NativeTextHost {
     type Error = Infallible;
+
+    fn retain_prepared_content(
+        &mut self,
+        _surface: SurfaceId,
+        revision: u64,
+        retained: &mut dyn Iterator<Item = PreparedContentId>,
+    ) {
+        if self.retention_revision == Some(revision) {
+            return;
+        }
+        self.retention_revision = Some(revision);
+        self.retained_measurements.clear();
+        self.retained_measurements.extend(retained);
+        self.preparation_generation = self.preparation_generation.wrapping_add(1);
+    }
 
     fn measure_batch(
         &mut self,
@@ -405,6 +484,8 @@ mod tests {
     #[test]
     fn native_text_measurement_returns_the_buffer_used_for_paint() {
         let payload = TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: "Whisker native text".into(),
             style: whisker_protocol::TextMeasureStyle {
                 font_families: vec![MeasureFontFamily::System],
@@ -450,8 +531,72 @@ mod tests {
     }
 
     #[test]
+    fn resizing_back_reuses_live_measurement_content_after_scene_retention() {
+        use whisker_engine::whisker_layout::LayoutSize;
+        use whisker_engine::{LayoutOptions, PlainTextInput, SurfaceEngine};
+        use whisker_style::{SpecifiedStyle, StyleEnvironment, resolve_style};
+        let style =
+            resolve_style(&SpecifiedStyle::new(), None, StyleEnvironment::default()).unwrap();
+        let mut surface = SurfaceEngine::new(SurfaceId::new(1).unwrap());
+        let node = surface
+            .create_node(text_element_type(), style.computed().layout().clone())
+            .unwrap();
+        surface
+            .set_plain_text(
+                node,
+                &PlainTextInput::new("A paragraph whose wrapping changes with width."),
+                style.computed(),
+            )
+            .unwrap();
+        let mut host = NativeTextHost::new(registry());
+        let mut first = None;
+        for width in [240.0, 90.0, 240.0] {
+            surface
+                .drive_layout(
+                    node,
+                    LayoutSize::new(width, 500.0),
+                    1,
+                    &mut host,
+                    LayoutOptions::default(),
+                )
+                .unwrap();
+            let content = surface
+                .scene()
+                .node_snapshot(node)
+                .unwrap()
+                .text()
+                .cloned()
+                .unwrap();
+            let id = content.prepared_content.unwrap();
+            host.retain_prepared(|candidate| candidate == id);
+            assert!(host.prepared.contains_key(&id));
+            if width == 240.0 {
+                if let Some(first) = first {
+                    assert_eq!(id, first);
+                } else {
+                    first = Some(id);
+                }
+            }
+        }
+        surface.set_measurement(node, None).unwrap();
+        surface
+            .drive_layout(
+                node,
+                LayoutSize::new(240.0, 500.0),
+                1,
+                &mut host,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+        host.retain_prepared(|_| false);
+        assert!(host.prepared.is_empty());
+    }
+
+    #[test]
     fn intrinsic_text_height_ignores_available_height_and_honors_explicit_limits() {
         let payload = TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: "First line\nSecond line\nThird line".into(),
             style: whisker_protocol::TextMeasureStyle::default(),
             locale: None,
@@ -491,6 +636,8 @@ mod tests {
     #[test]
     fn prepared_text_cache_discards_content_not_referenced_by_the_scene() {
         let payload = MeasurementPayload::Text(TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: "Whisker".into(),
             style: whisker_protocol::TextMeasureStyle::default(),
             locale: None,
@@ -525,6 +672,8 @@ mod tests {
     #[test]
     fn native_text_measurement_includes_first_line_indent() {
         let payload = TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: "Whisker".into(),
             style: whisker_protocol::TextMeasureStyle {
                 font_size: 16.0,
@@ -565,6 +714,8 @@ mod tests {
         assert_eq!(protect_cjk_breaks("日本 A"), "日\u{2060}本 A");
 
         let payload = TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: "a deliberately overflowing line that cannot fit".into(),
             style: whisker_protocol::TextMeasureStyle {
                 font_size: 16.0,
@@ -614,6 +765,8 @@ mod tests {
     #[test]
     fn empty_text_and_non_text_measurements_are_well_formed() {
         let empty = TextMeasurePayload {
+            runs: Vec::new(),
+            attachments: Vec::new(),
             text: String::new(),
             style: whisker_protocol::TextMeasureStyle {
                 font_families: vec![MeasureFontFamily::Named("Helvetica".into())],
@@ -670,5 +823,53 @@ mod tests {
                 ..
             }
         ));
+    }
+    #[test]
+    #[ignore = "manual shaping profile"]
+    fn profile_plain_and_rich_paragraphs() {
+        use std::time::Instant;
+        use whisker_engine::{PlainTextInput, lower_plain_text};
+        use whisker_style::{SpecifiedStyle, StyleEnvironment, resolve_style};
+        let style =
+            resolve_style(&SpecifiedStyle::new(), None, StyleEnvironment::default()).unwrap();
+        let mut host = NativeTextHost::new(registry());
+        let source = "Readable text, 日本語, and emoji 🦀. ".repeat(16);
+        for count in [0usize, 1, 8, 64] {
+            let mut payload = lower_plain_text(&PlainTextInput::new(&source), style.computed())
+                .content()
+                .payload
+                .clone();
+            let boundaries = source
+                .char_indices()
+                .map(|(byte, _)| byte)
+                .chain(std::iter::once(source.len()))
+                .collect::<Vec<_>>();
+            for run in 0..count {
+                let start = boundaries[run * (boundaries.len() - 1) / count];
+                let end = boundaries[(run + 1) * (boundaries.len() - 1) / count];
+                payload.runs.push(whisker_protocol::TextMeasureRun {
+                    range: whisker_protocol::TextByteRange {
+                        start: start as u32,
+                        end: end as u32,
+                    },
+                    style: payload.style.clone(),
+                    alignment: Default::default(),
+                });
+            }
+            let request = request(7, MeasurementPayload::Text(payload.clone()));
+            let cold = Instant::now();
+            std::hint::black_box(host.prepare_text(&payload, &request));
+            let cold = cold.elapsed();
+            let warm = Instant::now();
+            for _ in 0..200 {
+                std::hint::black_box(host.prepare_text(&payload, &request));
+            }
+            eprintln!(
+                "text profile: bytes={} runs={count} cold_us={} warm_us={:.1}",
+                source.len(),
+                cold.as_micros(),
+                warm.elapsed().as_secs_f64() * 1_000_000.0 / 200.0
+            );
+        }
     }
 }

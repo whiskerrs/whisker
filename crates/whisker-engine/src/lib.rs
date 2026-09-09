@@ -21,6 +21,7 @@ mod color;
 mod layout;
 mod measurement;
 mod paint;
+mod paragraph_visibility;
 mod radial_gradient;
 mod recording;
 mod scene;
@@ -35,7 +36,10 @@ pub use paint::{LoweredPaint, lower_color, lower_paint, lower_transform};
 pub use recording::{FrameSink, RecordedFrame, RecordingRenderer};
 pub use scene::{Scene, SceneError, SceneNode};
 pub use surface::{LayoutUpdate, SurfaceEngine, SurfaceError, SurfacePresentError};
-pub use text::{LoweredPlainText, PlainTextInput, lower_plain_text, lower_text_style};
+pub use text::{
+    InlineAttachmentInput, LoweredPlainText, PlainTextInput, ResolvedTextRun, lower_plain_text,
+    lower_rich_text, lower_text_style,
+};
 pub use whisker_layout;
 pub use whisker_protocol;
 pub use whisker_style;

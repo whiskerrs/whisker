@@ -32,11 +32,11 @@
 
 #define WHISKER_MOBILE_ABI_MAJOR 2
 
-#define WHISKER_MOBILE_ABI_MINOR 30
+#define WHISKER_MOBILE_ABI_MINOR 31
 
 #define WHISKER_FRAME_PROTOCOL_MAJOR 1
 
-#define WHISKER_FRAME_PROTOCOL_MINOR 4
+#define WHISKER_FRAME_PROTOCOL_MINOR 5
 
 #define WHISKER_CAPABILITY_ELLIPTICAL_BORDER_RADIUS 1
 
@@ -65,6 +65,8 @@
 #define WHISKER_CAPABILITY_BACKGROUND_IMAGE_RESOURCES 8192
 
 #define WHISKER_CAPABILITY_BACKDROP_BLUR 16384
+
+#define WHISKER_CAPABILITY_RICH_TEXT 32768
 
 #define WHISKER_POINTER_DOWN 0
 
@@ -330,6 +332,61 @@ typedef struct WhiskerMobileBootstrap {
 
 typedef bool (*WhiskerMobileBootstrapCallback)(void*, const struct WhiskerMobileBootstrap*);
 
+/**
+ * Borrowed byte value.
+ */
+typedef struct WhiskerBytesRef {
+  const uint8_t *ptr;
+  size_t len;
+} WhiskerBytesRef;
+
+/**
+ * Borrowed array value.
+ */
+typedef struct WhiskerValueArray {
+  struct WhiskerValueRaw *items;
+  size_t count;
+} WhiskerValueArray;
+
+
+/**
+ * Borrowed map value.
+ */
+typedef struct WhiskerValueMap {
+  struct WhiskerKeyValueRaw *entries;
+  size_t count;
+} WhiskerValueMap;
+
+/**
+ * Payload union for [`WhiskerValueRaw`].
+ */
+typedef union WhiskerValueUnion {
+  bool b;
+  int64_t i;
+  double f;
+  struct WhiskerStringRef s;
+  struct WhiskerBytesRef bytes;
+  struct WhiskerValueArray array;
+  struct WhiskerValueMap map;
+} WhiskerValueUnion;
+
+/**
+ * Raw FFI form of `WhiskerValue`.
+ */
+typedef struct WhiskerValueRaw {
+  uint8_t type;
+  uint8_t _pad[7];
+  union WhiskerValueUnion v;
+} WhiskerValueRaw;
+
+/**
+ * String-keyed map entry.
+ */
+typedef struct WhiskerKeyValueRaw {
+  struct WhiskerStringRef key;
+  struct WhiskerValueRaw value;
+} WhiskerKeyValueRaw;
+
 typedef struct WhiskerMobileFontFeature {
   uint8_t tag[4];
   uint32_t value;
@@ -340,15 +397,8 @@ typedef struct WhiskerMobileFontVariation {
   float value;
 } WhiskerMobileFontVariation;
 
-/**
- * Borrowed byte value.
- */
-typedef struct WhiskerBytesRef {
-  const uint8_t *ptr;
-  size_t len;
-} WhiskerBytesRef;
-
 typedef struct WhiskerMobileMeasureRequest {
+  const struct WhiskerValueRaw *paragraph;
   uint64_t key;
   uint64_t node;
   uint32_t element_type;
@@ -404,6 +454,19 @@ typedef struct WhiskerMobileMeasureResponse {
   uint32_t metrics_mask;
   uint64_t request_id;
   uint64_t prepared_content;
+  /**
+   * Host-owned geometry tree, retained until `release_paragraph` is called.
+   */
+  struct WhiskerValueRaw *paragraph;
+  /**
+   * Releases the geometry exactly once, including rejected and partially filled batches.
+   */
+  void (*release_paragraph)(struct WhiskerValueRaw*);
+  /**
+   * Opaque Host layout retained while its prepared content ID is cached.
+   */
+  void *prepared_layout;
+  void (*release_prepared_layout)(void*);
 } WhiskerMobileMeasureResponse;
 
 typedef bool (*WhiskerMobileMeasureCallback)(void*,
@@ -473,53 +536,6 @@ typedef struct WhiskerMobileResourceCommand {
 
 typedef bool (*WhiskerMobileResourceCommandCallback)(void*,
                                                      const struct WhiskerMobileResourceCommand*);
-
-/**
- * Borrowed array value.
- */
-typedef struct WhiskerValueArray {
-  struct WhiskerValueRaw *items;
-  size_t count;
-} WhiskerValueArray;
-
-
-/**
- * Borrowed map value.
- */
-typedef struct WhiskerValueMap {
-  struct WhiskerKeyValueRaw *entries;
-  size_t count;
-} WhiskerValueMap;
-
-/**
- * Payload union for [`WhiskerValueRaw`].
- */
-typedef union WhiskerValueUnion {
-  bool b;
-  int64_t i;
-  double f;
-  struct WhiskerStringRef s;
-  struct WhiskerBytesRef bytes;
-  struct WhiskerValueArray array;
-  struct WhiskerValueMap map;
-} WhiskerValueUnion;
-
-/**
- * Raw FFI form of `WhiskerValue`.
- */
-typedef struct WhiskerValueRaw {
-  uint8_t type;
-  uint8_t _pad[7];
-  union WhiskerValueUnion v;
-} WhiskerValueRaw;
-
-/**
- * String-keyed map entry.
- */
-typedef struct WhiskerKeyValueRaw {
-  struct WhiskerStringRef key;
-  struct WhiskerValueRaw value;
-} WhiskerKeyValueRaw;
 
 typedef void (*WhiskerMobileModuleResultCallback)(void*, const struct WhiskerValueRaw*);
 
@@ -717,6 +733,7 @@ typedef struct WhiskerMobileBackgroundLayer {
 } WhiskerMobileBackgroundLayer;
 
 typedef struct WhiskerMobileText {
+  const struct WhiskerValueRaw *paragraph;
   struct WhiskerStringRef text;
   const struct WhiskerStringRef *font_families;
   size_t font_family_count;
@@ -835,9 +852,9 @@ WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerKeyValueRaw) == 40, "WhiskerKeyValueRaw 
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileHostCapabilities) == 24, "WhiskerMobileHostCapabilities ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileOperation) == 72, "WhiskerMobileOperation ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileFrame) == 72, "WhiskerMobileFrame ABI drift");
-WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureRequest) == 224, "WhiskerMobileMeasureRequest ABI drift");
-WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureResponse) == 64, "WhiskerMobileMeasureResponse ABI drift");
-WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileText) == 248, "WhiskerMobileText ABI drift");
+WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureRequest) == 232, "WhiskerMobileMeasureRequest ABI drift");
+WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureResponse) == 96, "WhiskerMobileMeasureResponse ABI drift");
+WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileText) == 256, "WhiskerMobileText ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileBoxPaint) == 272, "WhiskerMobileBoxPaint ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileResourceCommand) == 64, "WhiskerMobileResourceCommand ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileResourceEvent) == 56, "WhiskerMobileResourceEvent ABI drift");

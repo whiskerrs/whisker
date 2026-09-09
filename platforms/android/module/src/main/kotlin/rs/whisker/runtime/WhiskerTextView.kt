@@ -16,7 +16,58 @@ import kotlin.math.max
 import rs.whisker.runtime.internal.CenteredLineHeightSpan
 
 /** Native text element implementing Whisker's single-line decorations. */
-public class WhiskerTextView(context: Context) : TextView(context) {
+public class WhiskerTextView(context: Context) : TextView(context), WhiskerEventSource {
+    internal var textEventSink: ((String, WhiskerValue) -> Unit)? = null
+    internal var preparedContent: Long = 0
+    internal val logicalText: String get() = whiskerTextValue
+    private var selectionUpdating = false
+    private var nextAccessibilityAction = 0x7f000000
+    private val accessibilityActions = mutableMapOf<Int, Long>()
+    private var alignedWidth: Int? = null
+    private var preparedLayout: Layout? = null
+    internal val paragraphLayout: Layout? get() = preparedLayout ?: layout
+    override fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?) { textEventSink = sink }
+    override fun onSelectionChanged(start: Int, end: Int) {
+        super.onSelectionChanged(start, end)
+        if (!selectionUpdating) textEventSink?.invoke("selectionchange", WhiskerValue.Map(mapOf(
+            "revision" to WhiskerValue.Int(preparedContent),
+            "start" to WhiskerValue.Int(logicalOffset(minOf(start, end)).toLong()), "end" to WhiskerValue.Int(logicalOffset(maxOf(start, end)).toLong()),
+            "direction" to WhiskerValue.Str(if (start <= end) "forward" else "backward"),
+        )))
+    }
+
+    override fun onTextContextMenuItem(id: Int): Boolean {
+        if (id == android.R.id.copy && isTextSelectable) {
+            val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("", selectedLogicalText()))
+            return true
+        }
+        return super.onTextContextMenuItem(id)
+    }
+
+    override fun onInitializeAccessibilityNodeInfo(info: android.view.accessibility.AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        paragraph?.let { rich ->
+            info.text = rich.accessibleText
+            rich.accessibleActions.forEach { (span, label) ->
+                val id = accessibilityActions.entries.firstOrNull { it.value == span }?.key ?: run {
+                    check(nextAccessibilityAction < Int.MAX_VALUE)
+                    nextAccessibilityAction++.also { accessibilityActions[it] = span }
+                }
+                info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction(id, label))
+            }
+        }
+    }
+
+    override fun performAccessibilityAction(action: Int, arguments: android.os.Bundle?): Boolean {
+        val span = accessibilityActions[action]
+        if (span != null && paragraph?.accessibleActions?.any { it.first == span } == true) {
+            textEventSink?.invoke("textactivate", WhiskerValue.Map(mapOf("span" to WhiskerValue.Int(span), "revision" to WhiskerValue.Int(preparedContent))))
+            return true
+        }
+        return super.performAccessibilityAction(action, arguments)
+    }
+
     init {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             setFallbackLineSpacing(true)
@@ -24,6 +75,7 @@ public class WhiskerTextView(context: Context) : TextView(context) {
     }
 
     private var whiskerTextValue: String = ""
+    internal var paragraph: WhiskerParagraph? = null
     private var whiskerTextIndent: WhiskerTextIndent = WhiskerTextIndent()
     private var whiskerWordBreak: WhiskerTextWordBreak = WhiskerTextWordBreak.NORMAL
     public var whiskerFontFeatures: List<WhiskerFontFeature> = emptyList()
@@ -44,7 +96,14 @@ public class WhiskerTextView(context: Context) : TextView(context) {
         private set
 
     public fun setWhiskerText(content: WhiskerTextContent) {
+        val sourceChanged = whiskerTextValue != content.value
+        alignedWidth = null
+        preparedLayout = null
+        val preserved = if (whiskerTextValue == content.value && selectionStart >= 0) selectionStart to selectionEnd else null
+        if (preparedContent != content.preparedContent) accessibilityActions.clear()
+        preparedContent = content.preparedContent
         whiskerTextValue = content.value
+        paragraph = content.paragraph
         whiskerTextIndent = content.indent
         whiskerWordBreak = content.wordBreak
         whiskerFontFeatures = content.fontFeatures
@@ -85,12 +144,48 @@ public class WhiskerTextView(context: Context) : TextView(context) {
         } else {
             Layout.BREAK_STRATEGY_HIGH_QUALITY
         }
-        applyWhiskerText()
+        selectionUpdating = true
+        try {
+            applyWhiskerText()
+            if (preserved != null && text is android.text.Spannable && preserved.second <= text.length) {
+                android.text.Selection.setSelection(text as android.text.Spannable, preserved.first, preserved.second)
+            }
+        } finally { selectionUpdating = false }
+        if (sourceChanged && isTextSelectable) onSelectionChanged(selectionStart, selectionEnd)
+    }
+
+    public fun installPreparedParagraph(prepared: Layout) {
+        val rich = paragraph ?: return
+        if (prepared.text.toString() != rich.displayText()) return
+        prepared.paint.color = currentTextColor
+        val styled = prepared.text as? Spanned
+        styled?.getSpans(0, styled.length, ParagraphSpan::class.java)?.forEach { span ->
+            span.paintStyle = rich.runs.firstOrNull { it.start == styled.getSpanStart(span) }?.paint
+        }
+        preparedLayout = prepared
+        invalidate()
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        val current = layout ?: return
+        if (alignedWidth == current.width) return
+        alignedWidth = current.width
+        if (paragraph?.resolveVerticalAlignment(current, resources.displayMetrics.density) == true) {
+            val start = selectionStart
+            val end = selectionEnd
+            selectionUpdating = true
+            try {
+                setText(current.text, BufferType.SPANNABLE)
+                if (start >= 0 && end >= 0) android.text.Selection.setSelection(text as android.text.Spannable, start, end)
+                super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            } finally { selectionUpdating = false }
+        }
     }
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
-        if (width != oldWidth && whiskerTextIndent.percentage != 0f) applyWhiskerText()
+        if (width != oldWidth && (whiskerTextIndent.percentage != 0f || paragraph?.attachments?.any { it.truncation } == true)) applyWhiskerText()
     }
 
     private fun applyWhiskerText() {
@@ -102,12 +197,13 @@ public class WhiskerTextView(context: Context) : TextView(context) {
         val resolvedWidth = if (width > 0) width else layoutParams?.width ?: 0
         val indentPixels = whiskerTextIndent.logicalPixels * density +
             resolvedWidth * whiskerTextIndent.percentage / 100f
-        val displayValue = if (whiskerWordBreak == WhiskerTextWordBreak.KEEP_ALL) {
+        val displayValue = if (paragraph == null && whiskerWordBreak == WhiskerTextWordBreak.KEEP_ALL) {
             protectCjkBreaks(whiskerTextValue)
         } else {
-            whiskerTextValue
+            paragraph?.displayText() ?: whiskerTextValue
         }
-        text = SpannableString(displayValue).apply {
+        val styled = SpannableString(displayValue).apply {
+            paragraph?.apply(this, density, if (resolvedWidth > 0) resolvedWidth / density else Float.POSITIVE_INFINITY)
             setSpan(
                 LeadingMarginSpan.Standard(indentPixels.toInt(), 0),
                 0,
@@ -123,6 +219,8 @@ public class WhiskerTextView(context: Context) : TextView(context) {
                 )
             }
         }
+        alignedWidth = null
+        setText(styled, BufferType.SPANNABLE)
     }
 
     public var whiskerDecoration: WhiskerTextDecoration? = null
@@ -132,9 +230,29 @@ public class WhiskerTextView(context: Context) : TextView(context) {
         }
 
     override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
+        val rich = paragraph
+        val textLayout = paragraphLayout
+        if (rich != null && textLayout != null) {
+            val save = canvas.save()
+            canvas.translate(totalPaddingLeft.toFloat(), extendedPaddingTop.toFloat())
+            rich.drawBackgrounds(canvas, textLayout, resources.displayMetrics.density)
+            canvas.restoreToCount(save)
+        }
+        if (preparedLayout != null && !isTextSelectable) {
+            val save = canvas.save()
+            canvas.translate(totalPaddingLeft.toFloat(), extendedPaddingTop.toFloat())
+            preparedLayout?.draw(canvas)
+            canvas.restoreToCount(save)
+        } else super.onDraw(canvas)
+        if (rich != null && textLayout != null) {
+            val save = canvas.save()
+            canvas.translate(totalPaddingLeft.toFloat(), extendedPaddingTop.toFloat())
+            rich.drawDecorations(canvas, textLayout, paint, resources.displayMetrics.density)
+            canvas.restoreToCount(save)
+            if (rich.runs.isNotEmpty()) return
+        }
         val decoration = whiskerDecoration ?: return
-        val textLayout = layout ?: return
+        if (textLayout == null) return
         val density = resources.displayMetrics.density
         val stroke = max(density, textSize / 16f)
         val decorationPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -151,50 +269,11 @@ public class WhiskerTextView(context: Context) : TextView(context) {
                 WhiskerTextDecorationLine.UNDERLINE -> baseline + stroke * 1.5f
                 WhiskerTextDecorationLine.LINE_THROUGH -> baseline + paint.fontMetrics.ascent * 0.35f
             }
-            drawDecoration(canvas, decorationPaint, decoration.style, left, right, y, stroke)
+            drawWhiskerTextDecoration(canvas, decorationPaint, decoration.style, left, right, y, stroke)
         }
     }
 
-    private fun drawDecoration(
-        canvas: Canvas,
-        paint: Paint,
-        style: WhiskerTextDecorationStyle,
-        left: Float,
-        right: Float,
-        y: Float,
-        stroke: Float,
-    ) {
-        paint.pathEffect = null
-        paint.strokeCap = Paint.Cap.BUTT
-        when (style) {
-            WhiskerTextDecorationStyle.SOLID -> canvas.drawLine(left, y, right, y, paint)
-            WhiskerTextDecorationStyle.DOUBLE -> {
-                canvas.drawLine(left, y - stroke, right, y - stroke, paint)
-                canvas.drawLine(left, y + stroke, right, y + stroke, paint)
-            }
-            WhiskerTextDecorationStyle.DOTTED -> {
-                paint.strokeCap = Paint.Cap.ROUND
-                paint.pathEffect = DashPathEffect(floatArrayOf(stroke, stroke * 2f), 0f)
-                canvas.drawLine(left, y, right, y, paint)
-            }
-            WhiskerTextDecorationStyle.DASHED -> {
-                paint.pathEffect = DashPathEffect(floatArrayOf(stroke * 4f, stroke * 2f), 0f)
-                canvas.drawLine(left, y, right, y, paint)
-            }
-            WhiskerTextDecorationStyle.WAVY -> {
-                val path = Path().apply { moveTo(left, y) }
-                val step = stroke * 2f
-                var x = left
-                var up = true
-                while (x < right) {
-                    x = (x + step).coerceAtMost(right)
-                    path.lineTo(x, y + if (up) -stroke else stroke)
-                    up = !up
-                }
-                canvas.drawPath(path, paint)
-            }
-        }
-    }
+
 }
 
 private fun protectCjkBreaks(value: String): String = buildString {

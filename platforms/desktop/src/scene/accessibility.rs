@@ -53,7 +53,16 @@ impl DesktopScene {
             children: presentation.children.clone(),
             bounds,
             semantics: presentation.accessibility.clone(),
-            text: node.content.text().map(|text| text.payload.text.clone()),
+            text: node.content.text().map(|text| text.accessible_text()),
+            text_actions: node
+                .content
+                .text()
+                .map_or_else(Vec::new, |text| text.accessible_actions()),
+            text_revision: node
+                .content
+                .text()
+                .and_then(|text| text.prepared_content)
+                .map_or(0, |id| id.get()),
             hidden,
         });
 

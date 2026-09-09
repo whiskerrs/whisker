@@ -44,6 +44,13 @@ const MAX_LIST_LAYOUT_PASSES: usize = 4;
 /// A mutation emitted by `render!` that could not enter the retained surface.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeBindingError {
+    /// Logical text content could not be lowered into a valid paragraph.
+    InvalidParagraph {
+        /// Element whose content failed validation.
+        element: Element,
+        /// Reason the paragraph cannot be committed.
+        message: &'static str,
+    },
     /// A module attempted to publish an invalid or conflicting schema.
     ElementRegistry(ElementRegistryError),
     /// The runtime named an element handle unknown to this surface.
@@ -397,6 +404,11 @@ impl SurfaceRuntime {
                 next_element: 0,
                 elements: HashMap::new(),
                 node_elements: HashMap::new(),
+                text_layout_observed: HashSet::new(),
+                #[cfg(debug_assertions)]
+                text_style_diagnostics: RefCell::new(HashSet::new()),
+                presented_paragraphs: HashMap::new(),
+                text_queries: Rc::new(RefCell::new(crate::text_query::Queries::default())),
                 root: None,
                 error: None,
                 resource_commands: VecDeque::new(),
@@ -425,6 +437,11 @@ impl SurfaceRuntime {
     /// Returns the semantic surface identifier.
     pub fn surface(&self) -> SurfaceId {
         self.state.borrow().surface.surface()
+    }
+
+    /// Returns the latest presentation accepted by the Host.
+    pub fn accepted_revision(&self) -> u64 {
+        self.state.borrow().surface.scene().accepted_revision()
     }
 
     /// Returns the element contracts negotiated by this surface runtime.
@@ -487,12 +504,25 @@ impl SurfaceRuntime {
         state.update_environment(environment)
     }
 
+    pub(crate) fn is_selectable_paragraph(&self, node: NodeId) -> bool {
+        let state = self.state.borrow();
+        state
+            .node_elements
+            .get(&node)
+            .and_then(|element| state.elements.get(element))
+            .is_some_and(|entry| entry.kind.is_rich_text() && entry.text_selectable == Some(true))
+    }
+
     pub(crate) fn has_input_listener(&self, target: NodeId, event: &str) -> bool {
         let state = self.state.borrow();
         state.root.is_some_and(|root| {
             state
                 .plan_event(root, target, event)
                 .is_ok_and(|firings| !firings.is_empty())
+                || state
+                    .node_elements
+                    .get(&target)
+                    .is_some_and(|element| state.paragraph_has_listener(*element, event))
         })
     }
 
@@ -568,16 +598,80 @@ impl SurfaceRuntime {
             let Some(target) = target else {
                 return Ok(InputDispatch::default());
             };
-            let event_name = event.kind.name(event.pointer.map(|pointer| pointer.kind));
+            if matches!(&event.kind, whisker_protocol::InputEventKind::Named(name) if name == "textqueryresult")
+            {
+                let consumed = state.text_queries.borrow_mut().complete(
+                    target,
+                    state.surface.node(target),
+                    &event.detail,
+                );
+                return Ok(InputDispatch {
+                    target: Some(target),
+                    consumed,
+                    ..InputDispatch::default()
+                });
+            }
+            if matches!(&event.kind, whisker_protocol::InputEventKind::Named(name) if name == "selectionchange")
+            {
+                if let Some(text) = state
+                    .surface
+                    .node(target)
+                    .and_then(|node| node.text())
+                    .filter(|text| text.paragraph.is_some())
+                {
+                    let revision_matches = match &event.detail {
+                        WhiskerValue::Map(fields) => fields.get("revision").is_none_or(|revision| matches!(revision, WhiskerValue::Int(id) if u64::try_from(*id).ok() == text.prepared_content.map(|id| id.get()))),
+                        _ => false,
+                    };
+                    if !revision_matches || !state.paragraph_input_is_current(target) {
+                        return Ok(InputDispatch::default());
+                    }
+                }
+            }
+            if event.pointer.is_some()
+                && !state.paragraph_input_is_current_at(target, event.presentation_revision)
+            {
+                return Ok(InputDispatch::default());
+            }
+            let activation = matches!(&event.kind, whisker_protocol::InputEventKind::Named(name) if name == "textactivate");
+            let action = if activation {
+                state.paragraph_action(target, &event.detail)
+            } else {
+                None
+            };
+            if activation && action.is_none() {
+                return Ok(InputDispatch::default());
+            }
+            let event_name = if activation {
+                "tap"
+            } else {
+                event.kind.name(event.pointer.map(|pointer| pointer.kind))
+            };
+            let physical = state
+                .node_elements
+                .get(&target)
+                .copied()
+                .ok_or(RuntimeInputError::UnknownTarget { node: target })?;
+            let inline = event
+                .pointer
+                .and_then(|pointer| state.surface.scene().text_span_at(target, pointer.position))
+                .and_then(|span| u32::try_from(span.get() - 1).ok())
+                .map(Element::from_raw);
+            let logical = action.or(inline).unwrap_or(physical);
+            if !state.elements.contains_key(&logical) {
+                return Ok(InputDispatch::default());
+            }
             let firings = state
-                .plan_event(root, target, event_name)?
+                .plan_element_event(root, target, logical, event_name)?
                 .into_iter()
-                .map(|(current_target, callback)| (callback, state.target_value(current_target)))
+                .map(|(current_target, callback)| {
+                    (callback, state.element_target_value(current_target))
+                })
                 .collect::<Vec<_>>();
             (
                 target,
                 firings,
-                input_body(event, state.target_value(target)),
+                input_body(event, state.element_target_value(logical)),
             )
         };
 
@@ -797,17 +891,41 @@ impl SurfaceRuntime {
         state
             .flush_background_projections()
             .map_err(RuntimePresentError::Binding)?;
-        let presentation = state
-            .surface
-            .present(viewport_epoch, sink)
-            .map_err(RuntimePresentError::Present)?;
+        let (presentation, paragraph_changes) = {
+            let BindingState {
+                surface,
+                presented_paragraphs,
+                ..
+            } = &mut *state;
+            let mut capture =
+                paragraph_presentation::ParagraphFrameSink::new(sink, presented_paragraphs);
+            let presentation = surface
+                .present(viewport_epoch, &mut capture)
+                .map_err(RuntimePresentError::Present)?;
+            (presentation, capture.changed)
+        };
         if matches!(
             presentation,
             Some(whisker_engine::whisker_protocol::ApplyResult::Accepted { .. })
         ) {
+            state.commit_paragraph_presentations(&paragraph_changes);
             let commands = state.background_resources.accept_frame();
             state.enqueue_automatic_commands(commands);
         }
+        let notifications = if matches!(
+            presentation,
+            Some(whisker_engine::whisker_protocol::ApplyResult::Accepted { .. })
+        ) {
+            state.text_layout_notifications()
+        } else {
+            Vec::new()
+        };
+        drop(state);
+        with_installed_renderer(self.renderer(), || {
+            for (callback, body) in notifications {
+                callback(body);
+            }
+        });
         Ok(presentation)
     }
 
@@ -865,6 +983,10 @@ struct BoundElement {
     dataset: BTreeMap<String, WhiskerValue>,
     accessibility: Accessibility,
     listeners: HashMap<String, Vec<RuntimeListener>>,
+    last_text_layout: Option<WhiskerValue>,
+    text_selectable: Option<bool>,
+    text_geometry: bool,
+    inline_truncation: bool,
     layout_observers: Option<Box<LayoutObservers>>,
     layout_batch_end_observers: Vec<Rc<dyn Fn() + 'static>>,
     style_initialized: bool,
@@ -900,6 +1022,12 @@ impl BoundElementKind {
             Self::Registered { registration }
                 if registration.child_policy.accepts_plain_text()
         )
+    }
+
+    fn is_rich_text(&self) -> bool {
+        self.registration().is_some_and(|registration| {
+            registration.child_policy == whisker_engine::whisker_protocol::ChildPolicy::RichText
+        })
     }
 
     fn accepts_elements(&self) -> bool {
@@ -956,7 +1084,7 @@ struct RuntimeListener {
     callback: Rc<dyn Fn(WhiskerValue) + 'static>,
 }
 
-type PlannedListener = (NodeId, Rc<dyn Fn(WhiskerValue) + 'static>);
+type PlannedListener = (Element, Rc<dyn Fn(WhiskerValue) + 'static>);
 
 struct BindingState {
     surface: SurfaceEngine,
@@ -965,6 +1093,16 @@ struct BindingState {
     next_element: u32,
     elements: HashMap<Element, BoundElement>,
     node_elements: HashMap<NodeId, Element>,
+    text_queries: Rc<RefCell<crate::text_query::Queries>>,
+    text_layout_observed: HashSet<Element>,
+    #[cfg(debug_assertions)]
+    text_style_diagnostics: RefCell<
+        HashSet<(
+            Element,
+            Option<whisker_engine::whisker_style::StyleProperty>,
+        )>,
+    >,
+    presented_paragraphs: HashMap<NodeId, paragraph_presentation::PresentedParagraph>,
     root: Option<NodeId>,
     error: Option<RuntimeBindingError>,
     resource_commands: VecDeque<ResourceCommand>,
@@ -1002,23 +1140,30 @@ struct PendingStyleChange {
 
 struct EnvironmentStyleUpdate {
     element: Element,
-    node: NodeId,
+    node: Option<NodeId>,
     resolved: ResolvedNodeStyle,
     text: Option<PlainTextInput>,
 }
 
 impl BindingState {
     fn target_value(&self, node: NodeId) -> WhiskerValue {
-        let metadata = self
-            .node_elements
-            .get(&node)
-            .and_then(|element| self.elements.get(element));
+        let element = self.node_elements.get(&node).copied();
+        element.map_or(WhiskerValue::Null, |element| {
+            self.element_target_value(element)
+        })
+    }
+
+    fn element_target_value(&self, element: Element) -> WhiskerValue {
+        let metadata = self.elements.get(&element);
+        let uid = metadata
+            .and_then(|entry| entry.node)
+            .map_or((1_u64 << 63) | u64::from(element.0), NodeId::get);
         WhiskerValue::map([
             (
                 "id",
                 WhiskerValue::String(metadata.map(|entry| entry.id.clone()).unwrap_or_default()),
             ),
-            ("uid", WhiskerValue::Int(node.get() as i64)),
+            ("uid", WhiskerValue::Int(uid as i64)),
             (
                 "dataset",
                 WhiskerValue::Map(
@@ -1254,20 +1399,29 @@ impl BindingState {
         let externally_used = self.externally_used_resource_ids();
         let mut resource_commands = Vec::new();
         for update in &updates {
-            surface.update_computed_style(update.node, update.resolved.computed())?;
+            let Some(node) = update.node else { continue };
+            surface.update_computed_style(node, update.resolved.computed())?;
             if self.element(update.element)?.kind.receives_text_style() {
-                surface.set_text_style(update.node, update.resolved.computed())?;
+                surface.set_text_style(node, update.resolved.computed())?;
             }
             let background = background_resources.reconcile_node(
-                update.node,
+                node,
                 &update.resolved.computed().paint().background_images,
                 &update.resolved.computed().paint().background_layers,
                 &externally_used,
             )?;
-            surface.set_background_layers(update.node, background.layers)?;
+            surface.set_background_layers(node, background.layers)?;
             resource_commands.extend(background.commands);
             if let Some(text) = &update.text {
-                surface.set_plain_text(update.node, text, update.resolved.computed())?;
+                let paragraph =
+                    self.compile_paragraph(update.element, text, &update.resolved, environment)?;
+                surface.set_rich_text(
+                    node,
+                    &paragraph.input,
+                    update.resolved.computed(),
+                    &paragraph.runs,
+                    &paragraph.attachments,
+                )?;
             }
         }
         Self::reapply_active_transitions(&self.elements, &mut surface)?;
@@ -1290,9 +1444,10 @@ impl BindingState {
         updates: &mut Vec<EnvironmentStyleUpdate>,
     ) -> Result<(), RuntimeBindingError> {
         let entry = self.element(element)?;
-        let Some(node) = entry.node else {
+        if entry.kind.is_raw_text() {
             return Ok(());
-        };
+        }
+        let node = entry.node;
         let resolved = resolve_style(&entry.effective_specified(), parent, environment)?;
         let children = entry.children.clone();
         updates.push(EnvironmentStyleUpdate {
@@ -1302,7 +1457,7 @@ impl BindingState {
             text: entry.text.clone(),
         });
         for child in children {
-            if self.element(child)?.node.is_some() {
+            if !self.element(child)?.kind.is_raw_text() {
                 self.resolve_environment_subtree(
                     child,
                     Some(resolved.inherited_for_children()),
@@ -1350,17 +1505,23 @@ impl BindingState {
         {
             let base_specified = self.registry.base_style(&registration).clone();
             let resolved = resolve_style(&base_specified, None, self.environment)?;
-            let node = self.surface.create_node(
-                registration.element_type,
-                resolved.computed().layout().clone(),
-            )?;
+            let node = if registration.child_policy
+                == whisker_engine::whisker_protocol::ChildPolicy::RichText
+            {
+                None
+            } else {
+                Some(self.surface.create_node(
+                    registration.element_type,
+                    resolved.computed().layout().clone(),
+                )?)
+            };
             let text = registration
                 .child_policy
                 .accepts_plain_text()
                 .then(|| PlainTextInput::new(""));
             (
                 BoundElementKind::Registered { registration },
-                Some(node),
+                node,
                 base_specified,
                 Some(resolved),
                 text,
@@ -1390,6 +1551,10 @@ impl BindingState {
                 dataset: BTreeMap::new(),
                 accessibility: Accessibility::default(),
                 listeners: HashMap::new(),
+                last_text_layout: None,
+                text_selectable: None,
+                text_geometry: false,
+                inline_truncation: false,
                 layout_observers: None,
                 layout_batch_end_observers: Vec::new(),
                 style_initialized: false,
@@ -1414,24 +1579,37 @@ impl BindingState {
         target: NodeId,
         event_name: &str,
     ) -> Result<Vec<PlannedListener>, RuntimeInputError> {
+        let element = self
+            .node_elements
+            .get(&target)
+            .copied()
+            .ok_or(RuntimeInputError::UnknownTarget { node: target })?;
+        self.plan_element_event(root, target, element, event_name)
+    }
+
+    fn plan_element_event(
+        &self,
+        root: NodeId,
+        target: NodeId,
+        element: Element,
+        event_name: &str,
+    ) -> Result<Vec<PlannedListener>, RuntimeInputError> {
         let mut chain = Vec::new();
-        let mut current = Some(target);
-        while let Some(node) = current {
-            chain.push(node);
+        let mut current = Some(element);
+        while let Some(element) = current {
+            chain.push(element);
             current = self
-                .surface
-                .node(node)
-                .ok_or(RuntimeInputError::UnknownTarget { node })?
-                .parent();
+                .elements
+                .get(&element)
+                .ok_or(RuntimeInputError::UnknownTarget { node: target })?
+                .parent;
         }
-        if chain.last() != Some(&root) {
+        if chain.last() != self.node_elements.get(&root) {
             return Err(RuntimeInputError::TargetOutsideRoot { target, root });
         }
-
-        let listeners_for = |node: NodeId| {
-            self.node_elements
-                .get(&node)
-                .and_then(|element| self.elements.get(element))
+        let listeners_for = |element: Element| {
+            self.elements
+                .get(&element)
                 .and_then(|element| element.listeners.get(event_name))
                 .map(Vec::as_slice)
                 .unwrap_or(&[])
@@ -1493,6 +1671,7 @@ impl BindingState {
     }
 
     fn apply_subtree(&mut self, element: Element) -> Result<(), RuntimeBindingError> {
+        let element = self.paragraph_root(element);
         if self.mutation_batch.is_some() {
             self.element(element)?;
             self.mark_subtree_dirty(element);
@@ -1571,35 +1750,54 @@ impl BindingState {
         dirty_paths: &HashSet<Element>,
     ) -> Result<(), RuntimeBindingError> {
         let entry = self.element(element)?;
-        let Some(node) = entry.node else {
+        if entry.kind.is_raw_text() {
             return Ok(());
-        };
+        }
         #[cfg(test)]
         self.style_resolution_count
             .set(self.style_resolution_count.get() + 1);
         let resolved = resolve_style(&entry.effective_specified(), parent_style, self.environment)?;
-        surface.update_computed_style(node, resolved.computed())?;
-        if entry.kind.receives_text_style() {
-            surface.set_text_style(node, resolved.computed())?;
-        }
-        let background = background_resources.reconcile_node(
-            node,
-            &resolved.computed().paint().background_images,
-            &resolved.computed().paint().background_layers,
-            externally_used,
-        )?;
-        surface.set_background_layers(node, background.layers)?;
-        resource_commands.extend(background.commands);
-        if let Some(text) = &entry.text {
-            surface.set_plain_text(node, text, resolved.computed())?;
+        if let Some(node) = entry.node {
+            surface.update_computed_style(node, resolved.computed())?;
+            if entry.kind.receives_text_style() {
+                surface.set_text_style(node, resolved.computed())?;
+            }
+            let background = background_resources.reconcile_node(
+                node,
+                &resolved.computed().paint().background_images,
+                &resolved.computed().paint().background_layers,
+                externally_used,
+            )?;
+            surface.set_background_layers(node, background.layers)?;
+            resource_commands.extend(background.commands);
+            if let Some(text) = &entry.text {
+                if let Some(selectable) = entry.text_selectable {
+                    surface.set_property(
+                        node,
+                        whisker_protocol::PropertyId::new(1).unwrap(),
+                        WhiskerValue::Bool(selectable),
+                    )?;
+                }
+                surface.set_event_mask(node, self.paragraph_event_mask(element))?;
+                let paragraph =
+                    self.compile_paragraph(element, text, &resolved, self.environment)?;
+                updates.extend(paragraph.resolved);
+                surface.set_rich_text(
+                    node,
+                    &paragraph.input,
+                    resolved.computed(),
+                    &paragraph.runs,
+                    &paragraph.attachments,
+                )?;
+            }
         }
         let inherited_changed = entry.resolved.as_ref().is_none_or(|previous| {
             previous.inherited_for_children() != resolved.inherited_for_children()
         });
         updates.push((element, resolved.clone()));
         for child in &entry.children {
-            if (inherited_changed || dirty_paths.contains(child))
-                && self.element(*child)?.node.is_some()
+            if (entry.kind.is_rich_text() || inherited_changed || dirty_paths.contains(child))
+                && !self.element(*child)?.kind.is_raw_text()
             {
                 self.prepare_subtree(
                     *child,
@@ -1634,7 +1832,7 @@ impl BindingState {
         let mut pending = vec![root];
         while let Some(element) = pending.pop() {
             let entry = self.element(element)?;
-            if entry.node.is_none() {
+            if entry.kind.is_raw_text() {
                 continue;
             }
             elements.push(element);
@@ -1760,25 +1958,6 @@ impl BindingState {
     }
 
     fn refresh_text(&mut self, text_element: Element) -> Result<(), RuntimeBindingError> {
-        if !self.element(text_element)?.kind.accepts_plain_text() {
-            return Err(RuntimeBindingError::InvalidRawTextParent {
-                element: text_element,
-                parent: text_element,
-            });
-        }
-        let children = self.element(text_element)?.children.clone();
-        let mut value = String::new();
-        for child in children {
-            let child = self.element(child)?;
-            if child.kind.is_raw_text() {
-                value.push_str(&child.raw_text);
-            }
-        }
-        self.element_mut(text_element)?
-            .text
-            .as_mut()
-            .expect("Text elements always retain plain-text input")
-            .text = value;
         self.apply_subtree(text_element)
     }
 
@@ -1790,7 +1969,15 @@ impl BindingState {
     ) -> Result<(), RuntimeBindingError> {
         let parent_entry = self.element(parent)?;
         let child_entry = self.element(child)?;
-        if parent_entry.node.is_none() || child_entry.parent.is_some() {
+        if child_entry.inline_truncation && !parent_entry.kind.is_rich_text() {
+            return Err(RuntimeBindingError::InvalidParagraph {
+                element: child,
+                message: "InlineTruncation requires an outer Text parent",
+            });
+        }
+        if (parent_entry.node.is_none() && !parent_entry.kind.is_rich_text())
+            || child_entry.parent.is_some()
+        {
             return Err(RuntimeBindingError::InvalidRawTextParent {
                 element: child,
                 parent,
@@ -1805,6 +1992,7 @@ impl BindingState {
         if !child_entry.kind.is_raw_text() && !parent_entry.kind.accepts_elements() {
             return Err(RuntimeBindingError::ChildrenNotAllowed { parent, child });
         }
+        let paragraph_parent = parent_entry.kind.is_rich_text();
         let position = match before {
             Some(reference) => self
                 .element(parent)?
@@ -1824,6 +2012,12 @@ impl BindingState {
             .count() as u32;
         self.element_mut(parent)?.children.insert(position, child);
         self.element_mut(child)?.parent = Some(parent);
+        if paragraph_parent {
+            self.dematerialize_inline_text(child)?;
+            self.sync_paragraph_children(parent)?;
+            return self.refresh_text(parent);
+        }
+        self.materialize_text(child)?;
         if let Some(child_node) = self.element(child)?.node {
             let parent_node = self
                 .element(parent)?
@@ -1847,6 +2041,11 @@ impl BindingState {
             .ok_or(RuntimeBindingError::UnknownElement { element: child })?;
         self.element_mut(parent)?.children.remove(position);
         self.element_mut(child)?.parent = None;
+        if self.element(parent)?.kind.is_rich_text() {
+            self.sync_paragraph_children(parent)?;
+            self.refresh_text(parent)?;
+            return Ok(());
+        }
         if let Some(child_node) = self.element(child)?.node {
             let parent_node = self
                 .element(parent)?
@@ -1916,7 +2115,10 @@ impl BindingState {
             (
                 entry
                     .node
-                    .expect("registered elements always own scene nodes"),
+                    .ok_or_else(|| RuntimeBindingError::UnsupportedAttribute {
+                        element,
+                        name: name.to_owned(),
+                    })?,
                 property.property,
                 property.value,
             )
@@ -1955,7 +2157,10 @@ impl BindingState {
             (
                 entry
                     .node
-                    .expect("registered elements always own scene nodes"),
+                    .ok_or_else(|| RuntimeBindingError::UnsupportedElementCommand {
+                        element,
+                        name: name.to_owned(),
+                    })?,
                 command.command,
                 command.arguments,
             )
@@ -2002,6 +2207,7 @@ mod input_tests {
         let dispatch = runtime
             .dispatch_input_with_presentation(
                 &InputEvent {
+                    presentation_revision: None,
                     surface: surface.surface(),
                     timestamp_ms: 1.0,
                     kind: InputEventKind::Click,
@@ -2578,6 +2784,9 @@ mod layout_observer_tests {
 }
 
 mod event;
+mod paragraph;
+mod paragraph_presentation;
+mod paragraph_queries;
 mod renderer;
 
 use event::*;

@@ -194,6 +194,7 @@ impl DesktopPointerAdapter {
     pub fn pointer_event(&self, input: DesktopPointerEvent) -> Option<InputEvent> {
         let pointer_id = PointerId::new(input.pointer_id)?;
         let event = InputEvent {
+            presentation_revision: None,
             surface: self.surface,
             timestamp_ms: input.timestamp_ms,
             kind: input.phase.protocol(),

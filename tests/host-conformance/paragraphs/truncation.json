@@ -1,0 +1,20 @@
+{
+  "text": "Prefix 🧑‍🚀 followed by a long sentence with more text.",
+  "paragraph": {
+    "version": 1,
+    "runs": [],
+    "attachments": [
+      {
+        "node": 22,
+        "start": 56,
+        "end": 56,
+        "width": 42,
+        "height": 20,
+        "baseline": 16,
+        "alignment": 0,
+        "shift": 0,
+        "truncation": true
+      }
+    ]
+  }
+}

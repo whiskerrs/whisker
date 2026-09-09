@@ -10,6 +10,7 @@ pub(crate) fn host_capabilities() -> RenderCapabilities {
             RenderCapability::VisualEffects,
             RenderCapability::TextEffects,
             RenderCapability::TextTypography,
+            RenderCapability::RichText,
             RenderCapability::Cursor,
             RenderCapability::ResourceLifecycle,
             RenderCapability::LinearGradients,

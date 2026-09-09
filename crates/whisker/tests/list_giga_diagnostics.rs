@@ -65,7 +65,11 @@ fn pager_measures_two_pages_before_expanding_its_window() {
                     key: |page: &u32| *page,
                     children: move |page: ReadSignal<u32>| {
                         created.borrow_mut().push(page.get_untracked());
-                        render! { View(style: css!(width: px(390), height: percent(100), flex_shrink: 0.0)) }
+                        render! {
+                            View(
+                                style: css!(width: px(390), height: percent(100), flex_shrink: 0.0),
+                            )
+                        }
                     },
                 )
             }
@@ -114,10 +118,17 @@ fn progressive_rows_fill_the_first_presented_viewport() {
                         children: move |row: ReadSignal<u32>| {
                             let key = row.get_untracked();
                             let measured = measured.clone();
-                            let node = render! { View(style: css!(height: px(height), flex_shrink: 0.0)) };
-                            observe_layout(node, Box::new(move |layout| {
-                                measured.borrow_mut().insert(key, layout.geometry.border_box);
-                            }));
+                            let node = render! {
+                                View(style: css!(height: px(height), flex_shrink: 0.0))
+                            };
+                            observe_layout(
+                                node,
+                                Box::new(move |layout| {
+                                    measured
+                                        .borrow_mut()
+                                        .insert(key, layout.geometry.border_box);
+                                }),
+                            );
                             node
                         },
                     )
@@ -175,7 +186,11 @@ fn pager_bootstrap_measures_the_requested_page_instead_of_unrelated_pages() {
                         key: |page: &u32| *page,
                         children: move |page: ReadSignal<u32>| {
                             created.borrow_mut().push(page.get_untracked());
-                            render! { View(style: css!(width: px(390), height: percent(100), flex_shrink: 0.0)) }
+                            render! {
+                                View(
+                                    style: css!(width: px(390), height: percent(100), flex_shrink: 0.0),
+                                )
+                            }
                         },
                     )
                 }
@@ -215,12 +230,26 @@ fn replacing_a_loading_row_bootstraps_the_new_page_source() {
                     axis: ScrollAxis::Horizontal,
                     style: css!(width: px(390), height: px(600)),
                     content_style: css!(height: percent(100)),
-                    each: move || if loaded.get() { (0_u32..800).collect::<Vec<_>>() } else { vec![999] },
+                    each: move || {
+                        if loaded.get() {
+                            (0_u32..800).collect::<Vec<_>>()
+                        } else {
+                            vec![999]
+                        }
+                    },
                     key: |page: &u32| *page,
                     children: move |page: ReadSignal<u32>| {
                         let page = page.get_untracked();
                         created.borrow_mut().push(page);
-                        render! { View(style: css!(width: px(if page == 999 { 640 } else { 390 }), height: percent(100), flex_shrink: 0.0)) }
+                        render! {
+                            View(
+                                style: css!(
+                                    width: px(if page == 999 { 640 } else { 390 }),
+                                    height: percent(100),
+                                    flex_shrink: 0.0,
+                                ),
+                            )
+                        }
                     },
                 )
             }
@@ -260,11 +289,21 @@ fn list_layout_feedback_yields_after_a_bounded_number_of_passes() {
                     children: move |_: ReadSignal<u32>| {
                         let passes = passes.clone();
                         let row = View::builder().style(css!(height: px(60))).build();
-                        observe_layout(row, Box::new(move |layout| {
-                            passes.set(passes.get() + 1);
-                            let height = if layout.geometry.border_box.height == 60.0 { 61 } else { 60 };
-                            whisker::runtime::view::set_specified_style(row, &css!(height: px(height)).to_specified_style());
-                        }));
+                        observe_layout(
+                            row,
+                            Box::new(move |layout| {
+                                passes.set(passes.get() + 1);
+                                let height = if layout.geometry.border_box.height == 60.0 {
+                                    61
+                                } else {
+                                    60
+                                };
+                                whisker::runtime::view::set_specified_style(
+                                    row,
+                                    &css!(height: px(height)).to_specified_style(),
+                                );
+                            }),
+                        );
                         row
                     },
                 )
@@ -311,17 +350,34 @@ fn giga_row_margin_does_not_move_a_retained_row() {
                             let index = row.get_untracked();
                             let positions = positions.clone();
                             let style = match axis {
-                                ScrollAxis::Vertical => css!(height: px(60), margin_top: px(leading), margin_bottom: px(margin), flex_shrink: 0.0),
-                                ScrollAxis::Horizontal => css!(width: px(60), margin_left: px(leading), margin_right: px(margin), flex_shrink: 0.0),
+                                ScrollAxis::Vertical => {
+                                    css!(
+                                        height: px(60),
+                                        margin_top: px(leading),
+                                        margin_bottom: px(margin),
+                                        flex_shrink: 0.0,
+                                    )
+                                }
+                                ScrollAxis::Horizontal => {
+                                    css!(
+                                        width: px(60),
+                                        margin_left: px(leading),
+                                        margin_right: px(margin),
+                                        flex_shrink: 0.0,
+                                    )
+                                }
                             };
                             let node = render! { View(style: style) };
-                            observe_layout(node, Box::new(move |observation| {
-                                let position = match axis {
-                                    ScrollAxis::Vertical => observation.geometry.border_box.y,
-                                    ScrollAxis::Horizontal => observation.geometry.border_box.x,
-                                };
-                                positions.borrow_mut().insert(index, position);
-                            }));
+                            observe_layout(
+                                node,
+                                Box::new(move |observation| {
+                                    let position = match axis {
+                                        ScrollAxis::Vertical => observation.geometry.border_box.y,
+                                        ScrollAxis::Horizontal => observation.geometry.border_box.x,
+                                    };
+                                    positions.borrow_mut().insert(index, position);
+                                }),
+                            );
                             node
                         },
                     )
@@ -353,6 +409,7 @@ fn giga_row_margin_does_not_move_a_retained_row() {
             with_installed_renderer(surface.renderer(), || {
                 surface
                     .dispatch_input(&InputEvent {
+                        presentation_revision: None,
                         surface: surface.surface(),
                         timestamp_ms: offset,
                         kind: InputEventKind::Named("scroll".into()),
@@ -434,12 +491,28 @@ fn giga_loading_replacement_keeps_header_visible() {
                     header: move || {
                         let heights = header_heights.clone();
                         let header = render! { View(style: css!(height: px(360))) };
-                        observe_layout(header, Box::new(move |o| heights.borrow_mut().push(o.geometry.border_box.height)));
+                        observe_layout(
+                            header,
+                            Box::new(move |o| heights.borrow_mut().push(o.geometry.border_box.height)),
+                        );
                         header
                     },
-                    each: move || if loaded.get() { (0..800).collect::<Vec<_>>() } else { vec![999] },
+                    each: move || {
+                        if loaded.get() {
+                            (0..800).collect::<Vec<_>>()
+                        } else {
+                            vec![999]
+                        }
+                    },
                     key: |row: &u32| *row,
-                    children: |row: ReadSignal<u32>| render! { View(style: css!(height: px(if row.get_untracked() == 999 { 640 } else { 60 }), margin_bottom: px(8))) },
+                    children: |row: ReadSignal<u32>| render! {
+                        View(
+                            style: css!(
+                                height: px(if row.get_untracked() == 999 { 640 } else { 60 }),
+                                margin_bottom: px(8),
+                            ),
+                        )
+                    },
                 )
             }
         });
@@ -557,17 +630,21 @@ fn giga_reader_hold_emits_longpress() {
         surface.clone(),
         whisker::runtime::RuntimeWakeHandle::new(|| {}),
     );
-    runtime.mount(|| {
-        let builder = List::builder()
-            .style(css!(width: px(390), height: px(600)))
-            .axis(ScrollAxis::Horizontal)
-            .each(|| vec![0_u32])
-            .key(|row: &u32| *row)
-            .children(|_: ReadSignal<u32>| render! { View(style: css!(width: px(390), height: px(600))) });
-        builder
-            .on_longpress(move |_| held.set(held.get() + 1))
-            .build()
-    }).unwrap();
+    runtime
+        .mount(|| {
+            let builder = List::builder()
+                .style(css!(width: px(390), height: px(600)))
+                .axis(ScrollAxis::Horizontal)
+                .each(|| vec![0_u32])
+                .key(|row: &u32| *row)
+                .children(|_: ReadSignal<u32>| {
+                    render! { View(style: css!(width: px(390), height: px(600))) }
+                });
+            builder
+                .on_longpress(move |_| held.set(held.get() + 1))
+                .build()
+        })
+        .unwrap();
     let mut renderer = RecordingRenderer::new(surface.surface());
     for epoch in 1..=3 {
         runtime
@@ -583,6 +660,7 @@ fn giga_reader_hold_emits_longpress() {
             .unwrap();
     }
     let pointer = |timestamp_ms, kind, buttons| InputEvent {
+        presentation_revision: None,
         surface: surface.surface(),
         timestamp_ms,
         kind,
@@ -624,6 +702,7 @@ fn giga_reader_hold_emits_longpress() {
     // of held-pointer recognition.
     runtime
         .dispatch_input(&InputEvent {
+            presentation_revision: None,
             surface: surface.surface(),
             timestamp_ms: 1200.0,
             kind: InputEventKind::Named("longpress".into()),

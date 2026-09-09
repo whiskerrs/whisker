@@ -366,6 +366,11 @@ impl Scene {
         self.nodes.get(&node).map(Arc::as_ref)
     }
 
+    /// Retains an immutable node snapshot without copying its content or geometry.
+    pub fn node_snapshot(&self, node: NodeId) -> Option<Arc<SceneNode>> {
+        self.nodes.get(&node).cloned()
+    }
+
     /// Returns the node currently retaining one pointer capture.
     pub fn pointer_capture_target(&self, pointer: PointerId) -> Option<NodeId> {
         self.pointer_captures.get(&pointer).copied()
@@ -1295,7 +1300,11 @@ mod tests {
 
     fn text_content(text: &str) -> TextContent {
         TextContent {
+            paragraph: None,
+            runs: Vec::new(),
             payload: TextMeasurePayload {
+                runs: Vec::new(),
+                attachments: Vec::new(),
                 text: text.into(),
                 style: TextMeasureStyle {
                     font_families: vec![MeasureFontFamily::System],
