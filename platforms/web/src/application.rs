@@ -20,8 +20,12 @@ use crate::scene::frame_sink::DomFrameSink;
 use crate::scene::resource_service::WebResourceService;
 use crate::scene::resource_store::WebResourceStore;
 use crate::{
-    BuiltInElementModule, WebAppConfig, WebError, WebModuleDefinition, js_error, set_style,
+    BuiltInElementModule, WebAppConfig, WebError, WebModuleDefinition, js_error, px, set_style,
 };
+
+#[cfg(all(test, target_arch = "wasm32"))]
+#[path = "application_tests.rs"]
+mod tests;
 
 thread_local! {
     static APPLICATION: RefCell<Option<WebApplication>> = const { RefCell::new(None) };
@@ -99,6 +103,13 @@ pub fn run_with_application_hash(
         .add_event_listener_with_callback("resize", resize.as_ref().unchecked_ref())
         .map_err(|error| js_error("register resize listener", error))?;
     resize.forget();
+    if let Some(viewport) = browser_window()?.visual_viewport() {
+        let resize = Closure::<dyn FnMut()>::new(request_frame);
+        viewport
+            .add_event_listener_with_callback("resize", resize.as_ref().unchecked_ref())
+            .map_err(|error| js_error("register visual viewport resize listener", error))?;
+        resize.forget();
+    }
     request_frame();
     Ok(())
 }
@@ -281,11 +292,10 @@ impl WebApplication {
             .get_element_by_id(&config.root_id)
             .ok_or_else(|| WebError(format!("missing Web Host root #{}", config.root_id)))?;
         set_style(&root, "position", "relative")?;
-        set_style(&root, "width", "100vw")?;
-        set_style(&root, "height", "100vh")?;
         set_style(&root, "overflow", "hidden")?;
 
         let viewport = viewport(&window)?;
+        size_root(&root, viewport)?;
         let surface_id = SurfaceId::new(1).expect("the browser surface id is non-zero");
         let registrations = elements.registrations().to_vec();
         let capabilities = crate::capabilities::detect_host_capabilities()
@@ -349,6 +359,7 @@ impl WebApplication {
         }
         let current = viewport(&browser_window()?)?;
         if current != self.viewport {
+            size_root(&self.root, current)?;
             self.viewport = current;
             self.viewport_epoch = self.viewport_epoch.wrapping_add(1).max(1);
             self.environment_epoch = self.environment_epoch.wrapping_add(1).max(1);
@@ -533,6 +544,18 @@ fn browser_window() -> Result<web_sys::Window, WebError> {
 }
 
 fn viewport(window: &web_sys::Window) -> Result<(f32, f32, f32), WebError> {
+    if let Some(viewport) = window.visual_viewport() {
+        // Undo pinch zoom so magnifying the page does not reflow its contents.
+        let width = viewport.width() * viewport.scale();
+        let height = viewport.height() * viewport.scale();
+        if width.is_finite() && width > 0.0 && height.is_finite() && height > 0.0 {
+            return Ok((
+                width as f32,
+                height as f32,
+                window.device_pixel_ratio() as f32,
+            ));
+        }
+    }
     let width = window
         .inner_width()
         .map_err(|error| js_error("read viewport width", error))?
@@ -544,4 +567,9 @@ fn viewport(window: &web_sys::Window) -> Result<(f32, f32, f32), WebError> {
         .as_f64()
         .ok_or_else(|| WebError("viewport height was not numeric".into()))? as f32;
     Ok((width, height, window.device_pixel_ratio() as f32))
+}
+
+fn size_root(root: &web_sys::Element, viewport: (f32, f32, f32)) -> Result<(), WebError> {
+    set_style(root, "width", &px(viewport.0))?;
+    set_style(root, "height", &px(viewport.1))
 }
