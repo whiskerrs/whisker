@@ -18,6 +18,10 @@ pub struct WebInputs {
     pub app_name: String,
     /// Static document background configured in `whisker.rs` (`#RRGGBB`).
     pub background: String,
+    /// Embedded favicon included in the generated document and its fingerprint.
+    pub favicon_data_url: Option<String>,
+    /// Normalized absolute deployment path, including a trailing slash.
+    pub base_path: String,
     /// Cargo package name of the generated WASM composition root.
     pub generated_package: String,
     /// Cargo package name of the user's application crate.
@@ -44,16 +48,58 @@ pub fn inputs_from(
         .clone()
         .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required for Web"))?;
     let background = crate::background::AppBackground::resolve(app_config)?;
+    let favicon_data_url = favicon_data_url(app_config, &user_crate_path)?;
     Ok(WebInputs {
         app_name,
         background: background.hex().to_string(),
+        favicon_data_url,
+        base_path: normalize_base_path(app_config.web.base_path.as_deref().unwrap_or("/"))?,
         generated_package: format!("{user_package}-whisker-web"),
         user_package,
         user_crate_path,
         whisker_web_dependency,
         element_modules: Vec::new(),
-        template_version: 13,
+        template_version: 14,
     })
+}
+
+fn normalize_base_path(path: &str) -> Result<String> {
+    if !path.starts_with('/')
+        || path.contains("//")
+        || !path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/-._~".contains(&b))
+        || path.split('/').any(|part| matches!(part, "." | ".."))
+    {
+        bail!(
+            "Web base path must be an absolute URL path without query, fragment, or dot segments: {path}"
+        );
+    }
+    Ok(format!("{}/", path.trim_end_matches('/')))
+}
+
+fn favicon_data_url(config: &Config, app_dir: &Path) -> Result<Option<String>> {
+    let Some(path) = &config.web.favicon else {
+        return Ok(None);
+    };
+    let path = app_dir.join(path);
+    let mime = match path.extension().and_then(|value| value.to_str()) {
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("ico") => "image/x-icon",
+        _ => bail!(
+            "Web favicon must be an SVG, PNG, or ICO file: {}",
+            path.display()
+        ),
+    };
+    let bytes =
+        std::fs::read(&path).with_context(|| format!("read Web favicon {}", path.display()))?;
+    let mut url = format!("data:{mime},");
+    for byte in bytes {
+        use std::fmt::Write;
+        write!(url, "%{byte:02X}").expect("write favicon URL");
+    }
+    Ok(Some(url))
 }
 
 /// Generates or reuses the complete `gen/web` project.
@@ -92,6 +138,10 @@ fn validate(inputs: &WebInputs) -> Result<()> {
     if inputs.generated_package.trim().is_empty() || inputs.user_package.trim().is_empty() {
         bail!("Web Cargo package names must not be empty");
     }
+    anyhow::ensure!(
+        normalize_base_path(&inputs.base_path)? == inputs.base_path,
+        "Web base path must have a trailing slash"
+    );
     crate::background::AppBackground::parse(&inputs.background)
         .context("validate Web application background")?;
     Ok(())
@@ -101,6 +151,16 @@ fn template_vars(inputs: &WebInputs) -> std::collections::HashMap<&'static str, 
     let mut vars = std::collections::HashMap::new();
     vars.insert("app_name_html", html_escape(&inputs.app_name));
     vars.insert("background_css", inputs.background.clone());
+    vars.insert("base_path", inputs.base_path.clone());
+    vars.insert(
+        "favicon_html",
+        inputs
+            .favicon_data_url
+            .as_ref()
+            .map_or_else(String::new, |url| {
+                format!("<link rel=\"icon\" href=\"{}\" />", html_escape(url))
+            }),
+    );
     vars.insert("app_title_rust", format!("{:?}", inputs.app_name));
     vars.insert("generated_package", inputs.generated_package.clone());
     vars.insert("user_package_toml", format!("{:?}", inputs.user_package));
@@ -181,12 +241,14 @@ mod tests {
         WebInputs {
             app_name: "Hello Web".into(),
             background: "#FFFFFF".into(),
+            favicon_data_url: None,
+            base_path: "/".into(),
             generated_package: "hello-whisker-web".into(),
             user_package: "hello".into(),
             user_crate_path: PathBuf::from("/tmp/hello"),
             whisker_web_dependency: "{ path = \"/tmp/whisker/platforms/web\" }".into(),
             element_modules: Vec::new(),
-            template_version: 13,
+            template_version: 14,
         }
     }
 
@@ -236,6 +298,70 @@ mod tests {
         sync(&out, &inputs).unwrap();
         let html = std::fs::read_to_string(out.join("index.html")).unwrap();
         assert!(html.contains("background: #101018"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn subpath_build_resolves_modules_and_declares_router_base() {
+        assert_eq!(
+            normalize_base_path("/examples/chat").unwrap(),
+            "/examples/chat/"
+        );
+        assert_eq!(normalize_base_path("/").unwrap(), "/");
+        for invalid in [
+            "chat",
+            "//other.test",
+            "/../chat",
+            "/chat?x",
+            "/chat#x",
+            "/chat\\x",
+            "/chat/./",
+        ] {
+            assert!(normalize_base_path(invalid).is_err(), "{invalid}");
+        }
+        let root = tempdir();
+        let mut config = Config::default();
+        config.name("Chat").web(|web| {
+            web.base_path("/examples/chat");
+        });
+        let inputs = inputs_from(&config, "chat".into(), root.clone(), "\"0.12\"".into()).unwrap();
+        sync(&root, &inputs).unwrap();
+        let html = std::fs::read_to_string(root.join("index.html")).unwrap();
+        assert!(html.contains("from \"/examples/chat/whisker_app.js\""));
+        assert!(html.contains("name=\"whisker-base-path\" content=\"/examples/chat/\""));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn favicon_is_embedded_and_content_changes_invalidate_the_project() {
+        let root = tempdir();
+        let icon = root.join("icon.svg");
+        let first = "<svg xmlns=\"http://www.w3.org/2000/svg\"><path fill=\"#fff\"/></svg>";
+        std::fs::write(&icon, first).unwrap();
+        let mut config = Config::default();
+        config.name("Icon").web(|web| {
+            web.favicon("icon.svg");
+        });
+        let inputs =
+            || inputs_from(&config, "icon".into(), root.clone(), "\"0.12\"".into()).unwrap();
+        let out = root.join("gen/web");
+        let original = inputs();
+        assert!(
+            original
+                .favicon_data_url
+                .as_ref()
+                .unwrap()
+                .starts_with("data:image/svg+xml,%3C")
+        );
+        assert!(sync(&out, &original).unwrap());
+        assert!(!sync(&out, &inputs()).unwrap());
+        let html = std::fs::read_to_string(out.join("index.html")).unwrap();
+        assert!(html.contains("<link rel=\"icon\" href=\"data:image/svg+xml,"));
+        assert!(!html.contains(first));
+        std::fs::write(&icon, first.replace("#fff", "#000")).unwrap();
+        assert!(sync(&out, &inputs()).unwrap());
+        std::fs::remove_file(icon).unwrap();
+        assert!(inputs_from(&config, "icon".into(), root.clone(), "\"0.12\"".into()).is_err());
         std::fs::remove_dir_all(root).ok();
     }
 

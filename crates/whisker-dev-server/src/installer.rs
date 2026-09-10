@@ -145,10 +145,7 @@ impl Installer {
                 );
                 Ok(())
             }
-            Target::Web => {
-                whisker_build::ui::info(format!("Local: http://127.0.0.1:{}/", self.dev_port));
-                Ok(())
-            }
+            Target::Web => Ok(()),
         }
     }
 

@@ -205,6 +205,8 @@ pub struct MacosParams {
 /// Flat parameters for Whisker's generated browser Host.
 #[derive(Debug, Clone)]
 pub struct WebParams {
+    /// Normalized URL prefix used for browser assets and routes.
+    pub base_path: String,
     /// Generated `gen/web` Cargo project.
     pub project_dir: PathBuf,
     /// Dedicated Cargo output directory for the wasm target.
@@ -465,11 +467,21 @@ impl DevServer {
             self.config.bind_addr,
             self.on_event.clone(),
             self.config.dev_token.clone(),
-            self.config.web.as_ref().map(|web| web.dist_dir.clone()),
+            self.config.web.as_ref().map(|web| server::StaticFiles {
+                root: web.dist_dir.clone(),
+                base_path: web.base_path.clone(),
+            }),
         )
         .await?;
         whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));
         whisker_build::ui::debug(format!("ws://{bound}/whisker-dev"));
+        if let Some(web) = &self.config.web {
+            whisker_build::ui::info(format!(
+                "Local: http://127.0.0.1:{}{}",
+                bound.port(),
+                web.base_path
+            ));
+        }
 
         // One notify root per workspace path dep's `src/`; the change
         // loop maps a changed file back to its owning crate through

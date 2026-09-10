@@ -3,6 +3,10 @@ pub fn configure(app: &mut whisker_config::Config) {
         .bundle_id("rs.whisker.chat")
         .version("0.1.0")
         .build_number(1);
+    app.web(|web| {
+        web.base_path("/examples/chat/")
+            .favicon("assets/favicon.svg");
+    });
     app.android(|android| {
         android
             .package("rs.whisker.chat")

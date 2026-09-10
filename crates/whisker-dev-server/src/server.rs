@@ -166,6 +166,11 @@ enum ServerUpdate {
     Reload,
 }
 
+pub struct StaticFiles {
+    pub root: PathBuf,
+    pub base_path: String,
+}
+
 /// Bind on `addr`, spawn the axum server on the current tokio
 /// runtime, and return:
 ///   - a [`PatchSender`] for the rest of the dev loop to push patches
@@ -178,7 +183,7 @@ pub async fn serve(
     addr: SocketAddr,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     expected_token: Option<String>,
-    static_root: Option<PathBuf>,
+    static_files: Option<StaticFiles>,
 ) -> Result<(PatchSender, SocketAddr, tokio::task::JoinHandle<()>)> {
     let (tx, _rx) = broadcast::channel::<ServerUpdate>(16);
     let aslr_reference: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
@@ -192,10 +197,17 @@ pub async fn serve(
     let mut app = Router::new()
         .route("/whisker-dev", get(ws_handler))
         .with_state(state);
-    if let Some(root) = static_root {
-        app = app.fallback_service(
-            ServeDir::new(root.clone()).fallback(ServeFile::new(root.join("index.html"))),
-        );
+    if let Some(StaticFiles { root, base_path }) = static_files {
+        let files = ServeDir::new(root.clone()).fallback(ServeFile::new(root.join("index.html")));
+        let prefix = base_path.trim_end_matches('/');
+        if prefix.is_empty() {
+            app = app.fallback_service(files);
+        } else {
+            app = app.nest_service(prefix, files).route(
+                "/",
+                get(move || std::future::ready(axum::response::Redirect::temporary(&base_path))),
+            );
+        }
     }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -573,9 +585,17 @@ mod tests {
         std::fs::write(root.join("index.html"), b"INDEX").unwrap();
         std::fs::write(root.join("whisker_app.js"), b"JAVASCRIPT").unwrap();
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (_sender, addr, _handle) = serve(any, None, None, Some(root.clone()))
-            .await
-            .expect("serve");
+        let (_sender, addr, _handle) = serve(
+            any,
+            None,
+            None,
+            Some(StaticFiles {
+                root: root.clone(),
+                base_path: "/".into(),
+            }),
+        )
+        .await
+        .expect("serve");
 
         async fn get(addr: SocketAddr, path: &str) -> String {
             let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -594,6 +614,39 @@ mod tests {
         assert!(get(addr, "/").await.ends_with("INDEX"));
         assert!(get(addr, "/detail/42").await.ends_with("INDEX"));
         assert!(get(addr, "/whisker_app.js").await.ends_with("JAVASCRIPT"));
+        let (_sender, nested_addr, nested_handle) = serve(
+            any,
+            None,
+            None,
+            Some(StaticFiles {
+                root: root.clone(),
+                base_path: "/examples/chat/".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(
+            get(nested_addr, "/")
+                .await
+                .contains("location: /examples/chat/")
+        );
+        assert!(get(nested_addr, "/examples/chat/").await.ends_with("INDEX"));
+        assert!(
+            get(nested_addr, "/examples/chat/settings/connection")
+                .await
+                .ends_with("INDEX")
+        );
+        assert!(
+            get(nested_addr, "/examples/chat/whisker_app.js")
+                .await
+                .ends_with("JAVASCRIPT")
+        );
+        assert!(
+            get(nested_addr, "/whisker_app.js")
+                .await
+                .starts_with("HTTP/1.1 404")
+        );
+        nested_handle.abort();
         std::fs::remove_dir_all(root).ok();
     }
 
