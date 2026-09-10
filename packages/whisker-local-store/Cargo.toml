@@ -1,6 +1,6 @@
 [package]
 name = "whisker-local-store"
-version = "0.13.8"
+version = "0.13.9"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -38,4 +38,4 @@ desktop = { manifest = "desktop/Cargo.toml" }
 # The umbrella `whisker` crate — same dep app crates use. The proc
 # macros' emit paths (`::whisker::*`) resolve under the `whisker`
 # name. A published module would write `whisker = "0.1"`.
-whisker = { path = "../../crates/whisker", version = "0.13.8" }
+whisker = { path = "../../crates/whisker", version = "0.13.10" }
