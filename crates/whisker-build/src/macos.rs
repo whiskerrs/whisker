@@ -102,6 +102,21 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
     )
     .with_context(|| format!("copy Info.plist into {}", bundle.display()))?;
     copy_tree_if_present(&inputs.project_dir.join("Resources"), &resources)?;
+    let iconset = inputs.project_dir.join("AppIcon.iconset");
+    if iconset.is_dir() {
+        let output = std::process::Command::new("iconutil")
+            .args(["--convert", "icns", "--output"])
+            .arg(resources.join("AppIcon.icns"))
+            .arg(&iconset)
+            .output()
+            .context("run iconutil to compile the macOS app icon")?;
+        if !output.status.success() {
+            bail!(
+                "compile macOS app icon: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
     Ok(bundle)
 }
 
