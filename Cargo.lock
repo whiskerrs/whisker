@@ -7073,7 +7073,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-router"
-version = "0.13.11"
+version = "0.13.12"
 dependencies = [
  "anyhow",
  "serde",
@@ -7097,7 +7097,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-router-web"
-version = "0.13.11"
+version = "0.13.12"
 dependencies = [
  "wasm-bindgen",
  "web-sys",

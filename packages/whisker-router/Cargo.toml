@@ -1,6 +1,6 @@
 [package]
 name = "whisker-router"
-version = "0.13.11"
+version = "0.13.12"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

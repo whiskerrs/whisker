@@ -1,6 +1,6 @@
 {
   "version": "0.13.10",
-  "source": "5fbd7c963ba395c523d7e661258d4fceeb8de5b8",
+  "source": "ceff48d5bca014b7818923b2a625124b477cc7d9",
   "sdk": null,
   "gradle": null,
   "ios": null,
@@ -47,8 +47,8 @@
     "whisker-paths": "0.13.9",
     "whisker-plugin": "0.13.10",
     "whisker-protocol": "0.13.10",
-    "whisker-router": "0.13.11",
-    "whisker-router-web": "0.13.11",
+    "whisker-router": "0.13.12",
+    "whisker-router-web": "0.13.12",
     "whisker-runtime": "0.13.10",
     "whisker-safe-area": "0.13.10",
     "whisker-secure-store": "0.13.9",
@@ -70,8 +70,8 @@
     "whisker-windows": "0.13.10"
   },
   "selective": {
-    "id": "20260910.2",
-    "baseline": "e027acc1f39d8a76b5c9feac8fea7a54479988f7",
+    "id": "20260910.3",
+    "baseline": "23b0e2702b365f68e1d2958f1cd52874c7465fab",
     "packages": {},
     "publish": [
       "whisker-router",
@@ -123,8 +123,8 @@
       "whisker-paths": "2603a7c5e04cbfbe34f42558f6523b45b9757962f3489e215ce6a1b8730422ad",
       "whisker-plugin": "f04039abeb54b33dd52af69eafc944e538842699a9da2526cac1a5c9add69cb8",
       "whisker-protocol": "a611e9a5a83963897cb04af4fda58fcd869a51ba748377f528acea73d9ef3236",
-      "whisker-router": "9501d7611690fa57a965e00f931fe982580a0499297e92eee34f92d660713f7c",
-      "whisker-router-web": "32423760a43676d57450cc776a50a3f83204d738ab4ca654f554b61c56e87355",
+      "whisker-router": "292392963f43fae362d2d873c5fa706ac7b2689f17a1b094578d08a354c05efb",
+      "whisker-router-web": "b9ab5c40318ac08c8366b058cdf8a50960b74cd64a7ce9fe7549693cda6ee8d1",
       "whisker-runtime": "6d2a76fd2fa87c929ce8633c919fdc72f7f750009bde8f11d9a3b33d4a6cad77",
       "whisker-safe-area": "2ffe089599dc36c3cf6a89f09a485110a51b08db7886ebe6e7d4fcf6a684862b",
       "whisker-secure-store": "a292c0bfcfb6ac9a9d0f0f38c23277b322184bca422a403626ec149d2dd92fb2",
@@ -145,6 +145,6 @@
       "whisker-webview": "548db19591709db91b53bfc32a8156be49f4c6511dbad86e66b8cdb6b52fd9a8",
       "whisker-windows": "7fa4a394d4b59f98013f939f2976b34bbb2b5a58e58b70a610195296e0b6f9a3"
     },
-    "lockfile": "c880f21cac9115fa1c13e7227be5d077ada967f2babae5268e5ad4b2a7a08701"
+    "lockfile": "988b42851fbfc0647d3d975e345d5242140cf45ce0194145faddb7f73340aa3e"
   }
 }
