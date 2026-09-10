@@ -75,6 +75,9 @@ public final class InputModule: Module {
                     view.setSpellCheck(value.asBool ?? true)
                 }
 
+                Prop("auto-size") { (_: WhiskerInputView, _: WhiskerValue) in }
+                Measurement(measureInput)
+
                 TextStyle { (view: WhiskerInputView, style: WhiskerTextStyle) in
                     view.applyTextStyle(style)
                 }

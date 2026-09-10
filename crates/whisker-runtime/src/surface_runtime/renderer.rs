@@ -46,10 +46,21 @@ impl DynRenderer for SurfaceRuntime {
         }
     }
 
+    fn set_measurement_builder(
+        &self,
+        handle: Element,
+        builder: crate::module_measurement::MeasurementPayloadBuilder,
+    ) {
+        let mut state = self.state.borrow_mut();
+        let result = state.bind_measurement(handle, builder);
+        state.record(result);
+    }
+
     fn release_element(&self, handle: Element) {
         let mut state = self.state.borrow_mut();
         let result = (|| {
             state.text_layout_observed.remove(&handle);
+            state.module_measurements.remove(&handle);
             #[cfg(debug_assertions)]
             state
                 .text_style_diagnostics

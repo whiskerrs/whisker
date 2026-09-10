@@ -1,6 +1,5 @@
 use super::{
-    button::Button,
-    chat_layout,
+    composer_action::ComposerAction,
     theme::{self, radius, size, space},
 };
 use crate::{
@@ -12,7 +11,7 @@ use whisker::prelude::*;
 use whisker_input::{AutoCapitalize, Input};
 
 #[component]
-pub fn composer(session: Session, actions: ChatActions) -> Element {
+pub fn composer(session: Session, actions: ChatActions, input_height: RwSignal<f32>) -> Element {
     let app = use_context::<AppState>().expect("AppState context");
     let busy = app.busy();
     render! {
@@ -24,15 +23,16 @@ pub fn composer(session: Session, actions: ChatActions) -> Element {
                 .padding_left(px(space::LG))
                 .padding_right(px(space::LG))
                 .padding_bottom(px(space::LG))
-                .height(px(chat_layout::COMPOSER_HEIGHT))
-                .gap(px(space::SM))
                 .flex_shrink(0.0),
         ) {
             View(
                 style: theme::style(move |palette| {
                     palette
                         .card()
-                        .padding(px(space::MD))
+                        .flex_direction(FlexDirection::Row)
+                        .align_items(AlignItems::FlexEnd)
+                        .padding(px(space::SM))
+                        .padding_left(px(space::LG))
                         .gap(px(space::SM))
                         .border_radius(px(radius::CARD))
                 }),
@@ -40,42 +40,35 @@ pub fn composer(session: Session, actions: ChatActions) -> Element {
                 Input(
                     text: session.draft,
                     multiline: true,
-                    lines: 3u32,
+                    auto_size: true,
                     auto_capitalize: AutoCapitalize::Sentences,
                     placeholder: "Message Whisker Chat…",
+                    on_size_change: move |rect: whisker_input::InputSize| {
+                        if (input_height.get_untracked() - rect.height).abs() > 0.5 {
+                            input_height.set(rect.height);
+                        }
+                    },
+                    style: theme::style(move |palette| {
+                        palette
+                            .text(size::BODY)
+                            .line_height(px(24))
+                            .min_height(px(size::TOUCH))
+                            .max_height(px(size::COMPOSER_INPUT_MAX))
+                            .padding_top(px(10))
+                            .padding_bottom(px(10))
+                            .flex_grow(1.0)
+                            .flex_basis(px(0))
+                            .min_width(px(0))
+                            .background_color(Color::hex(palette.paper))
+                    }),
                     on_blur: actions.save,
                     on_submit: move |_: String| {
                         if !busy.get_untracked() {
                             actions.send.call();
                         }
                     },
-                    style: theme::style(move |palette| {
-                        palette
-                            .text(size::BODY)
-                            .height(px(64))
-                            .flex_shrink(0.0)
-                            .background_color(Color::hex(palette.paper))
-                    }),
                 )
-                View(
-                    style: theme::row()
-                        .justify_content(JustifyContent::SpaceBetween)
-                        .gap(px(space::SM)),
-                ) {
-                    View(style: theme::fill())
-                    Button(
-                        label: computed(move || {
-                            if busy.get() {
-                                "Stop generation".into()
-                            } else {
-                                "Send ↑".into()
-                            }
-                        }),
-                        primary: true,
-                        disabled: computed(move || !busy.get() && session.draft.with(|s| s.trim().is_empty())),
-                        on_press: actions.send,
-                    )
-                }
+                ComposerAction(busy: busy.read_only(), draft: session.draft, on_press: actions.send)
             }
         }
     }

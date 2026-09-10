@@ -142,7 +142,10 @@ impl MeasurementProvider for MobileMeasurementHost {
 pub(super) struct MobileMeasureBatch {
     _paragraphs: super::paragraph::MobileParagraphs,
     _strings: Vec<Box<[u8]>>,
-    _bytes: Vec<Vec<u8>>,
+    _payload_arena: RawValueArena,
+    // FFI pointers must survive subsequent pushes.
+    #[allow(clippy::vec_box)]
+    _payloads: Vec<Box<WhiskerValueRaw>>,
     _font_families: Vec<Box<[WhiskerStringRef]>>,
     _font_features: Vec<Box<[MobileFontFeature]>>,
     _font_variations: Vec<Box<[MobileFontVariation]>>,
@@ -173,7 +176,8 @@ impl MobileMeasureBatch {
     pub(super) fn new(source: &[MeasurementRequest]) -> Self {
         let mut strings = Vec::new();
         let mut paragraphs = super::paragraph::MobileParagraphs::default();
-        let mut bytes = Vec::new();
+        let mut payload_arena = RawValueArena::default();
+        let mut payloads = Vec::new();
         let mut font_families = Vec::new();
         let mut font_features = Vec::new();
         let mut font_variations = Vec::new();
@@ -217,10 +221,7 @@ impl MobileMeasureBatch {
                 indent_logical_pixels: 0.0,
                 indent_percentage: 0.0,
                 max_lines: 0,
-                payload: WhiskerBytesRef {
-                    ptr: std::ptr::null(),
-                    len: 0,
-                },
+                payload: std::ptr::null(),
                 intrinsic_width: 0.0,
                 intrinsic_height: 0.0,
                 intrinsic_mask: 0,
@@ -312,7 +313,11 @@ impl MobileMeasureBatch {
                 MeasurementPayload::NativeControl(value) => {
                     raw.kind = MEASURE_NATIVE_CONTROL;
                     raw.payload_version = value.version;
-                    raw.payload = push_bytes(&mut bytes, &value.state);
+                    raw.payload = push_value(
+                        &mut payload_arena,
+                        &mut payloads,
+                        &WhiskerValue::Bytes(value.state.clone()),
+                    );
                 }
                 MeasurementPayload::EmbeddedSurface(value) => {
                     raw.kind = MEASURE_EMBEDDED_SURFACE;
@@ -325,7 +330,7 @@ impl MobileMeasureBatch {
                 MeasurementPayload::Custom(value) => {
                     raw.kind = MEASURE_CUSTOM;
                     raw.payload_version = value.version;
-                    raw.payload = push_bytes(&mut bytes, &value.data);
+                    raw.payload = push_value(&mut payload_arena, &mut payloads, &value.data);
                 }
             }
             responses.push(MobileMeasureResponse {
@@ -338,7 +343,8 @@ impl MobileMeasureBatch {
         Self {
             _strings: strings,
             _paragraphs: paragraphs,
-            _bytes: bytes,
+            _payload_arena: payload_arena,
+            _payloads: payloads,
             _font_families: font_families,
             _font_features: font_features,
             _font_variations: font_variations,
@@ -348,14 +354,17 @@ impl MobileMeasureBatch {
     }
 }
 
-fn push_bytes(storage: &mut Vec<Vec<u8>>, value: &[u8]) -> WhiskerBytesRef {
-    let value = value.to_vec();
-    let result = WhiskerBytesRef {
-        ptr: value.as_ptr(),
-        len: value.len(),
-    };
-    storage.push(value);
-    result
+#[allow(clippy::vec_box)]
+fn push_value(
+    arena: &mut RawValueArena,
+    storage: &mut Vec<Box<WhiskerValueRaw>>,
+    value: &WhiskerValue,
+) -> *const WhiskerValueRaw {
+    storage.push(Box::new(arena.encode(value)));
+    storage
+        .last()
+        .expect("retained measurement payload")
+        .as_ref()
 }
 
 pub(super) fn mobile_font_features(

@@ -8,19 +8,21 @@ use whisker::prelude::*;
 use whisker_icons::lucide;
 
 #[component]
-pub fn welcome(draft: RwSignal<String>) -> Element {
+pub fn welcome(draft: RwSignal<String>, input_height: RwSignal<f32>) -> Element {
     render! {
         ScrollView(style: theme::fill()) {
             View(
-                style: theme::column()
-                    .width(percent(100))
-                    .max_width(px(size::READING))
-                    .align_self(AlignSelf::Center)
-                    .padding(px(space::XXL))
-                    .padding_top(px(chat_layout::CONTENT_TOP + space::HERO))
-                    .padding_bottom(px(chat_layout::CONTENT_BOTTOM))
-                    .gap(px(space::XL))
-                    .flex_shrink(0.0),
+                style: computed(move || {
+                    theme::column()
+                        .width(percent(100))
+                        .max_width(px(size::READING))
+                        .align_self(AlignSelf::Center)
+                        .padding(px(space::XXL))
+                        .padding_top(px(chat_layout::CONTENT_TOP + space::HERO))
+                        .padding_bottom(px(chat_layout::content_bottom(input_height.get())))
+                        .gap(px(space::XL))
+                        .flex_shrink(0.0)
+                }),
             ) {
                 View(style: theme::row().gap(px(space::MD))) {
                     Text(

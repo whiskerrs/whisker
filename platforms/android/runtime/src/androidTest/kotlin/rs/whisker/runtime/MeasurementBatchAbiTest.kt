@@ -80,7 +80,7 @@ class MeasurementBatchAbiTest {
                 arrayOf("first", "ja-JP", "second", "en-US"),
                 arrayOf(arrayOf("sans-serif"), arrayOf("serif")),
                 arrayOf(arrayOf("kern=1"), arrayOf("wght=700")),
-                arrayOf(byteArrayOf(1, 2), byteArrayOf(3, 4, 5)),
+                arrayOf(WhiskerValue.Bytes(byteArrayOf(1, 2)), WhiskerValue.Map(mapOf("width" to WhiskerValue.Int(73)))),
             )
 
             assertArrayEquals(

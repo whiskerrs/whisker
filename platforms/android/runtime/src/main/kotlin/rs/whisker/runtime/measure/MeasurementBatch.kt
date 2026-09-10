@@ -67,7 +67,7 @@ internal object HostMeasureBatchAbi {
         requestStrings: Array<String>,
         fontFamilies: Array<Array<String>>,
         fontSettings: Array<Array<String>>,
-        payloads: Array<ByteArray>,
+        payloads: Array<WhiskerValue?>,
         paragraphs: Array<WhiskerValue?> = arrayOfNulls(payloads.size),
     ): HostMeasureBatchResponse {
         require(requestLongs.size % REQUEST_LONG_STRIDE == 0)

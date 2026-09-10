@@ -32,7 +32,7 @@
 
 #define WHISKER_MOBILE_ABI_MAJOR 2
 
-#define WHISKER_MOBILE_ABI_MINOR 31
+#define WHISKER_MOBILE_ABI_MINOR 32
 
 #define WHISKER_FRAME_PROTOCOL_MAJOR 1
 
@@ -433,7 +433,7 @@ typedef struct WhiskerMobileMeasureRequest {
   float indent_logical_pixels;
   float indent_percentage;
   uint32_t max_lines;
-  struct WhiskerBytesRef payload;
+  const struct WhiskerValueRaw *payload;
   float intrinsic_width;
   float intrinsic_height;
   uint32_t intrinsic_mask;
@@ -852,7 +852,7 @@ WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerKeyValueRaw) == 40, "WhiskerKeyValueRaw 
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileHostCapabilities) == 24, "WhiskerMobileHostCapabilities ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileOperation) == 72, "WhiskerMobileOperation ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileFrame) == 72, "WhiskerMobileFrame ABI drift");
-WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureRequest) == 232, "WhiskerMobileMeasureRequest ABI drift");
+WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureRequest) == 224, "WhiskerMobileMeasureRequest ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureResponse) == 96, "WhiskerMobileMeasureResponse ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileText) == 256, "WhiskerMobileText ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileBoxPaint) == 272, "WhiskerMobileBoxPaint ABI drift");

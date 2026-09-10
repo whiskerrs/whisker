@@ -300,9 +300,7 @@ private func measureCustomElement(
     _ request: WhiskerMobileMeasureRequest,
     response: inout WhiskerMobileMeasureResponse
 ) {
-    let payload = request.payload.ptr.map {
-        Data(bytes: $0, count: request.payload.len)
-    } ?? Data()
+    let payload = request.payload.map { WhiskerValue.from(raw: $0.pointee) } ?? .null
     let custom = WhiskerElementRegistry.measure(
         Int(request.element_type),
         request: WhiskerMeasureRequest(
@@ -315,7 +313,7 @@ private func measureCustomElement(
             knownWidth: request.known_mask & 1 != 0 ? CGFloat(request.known_width) : nil,
             knownHeight: request.known_mask & 2 != 0 ? CGFloat(request.known_height) : nil,
             payloadVersion: request.payload_version,
-            payload: .bytes(payload)
+            payload: payload
         )
     )
     if let custom {

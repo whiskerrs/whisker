@@ -117,6 +117,13 @@ pub trait DynRenderer {
     fn create_element_by_schema(&self, schema: &ElementSchema) -> Element {
         self.create_element_by_name(&schema.name)
     }
+    /// Registers a property-to-payload projection for a Custom leaf element.
+    fn set_measurement_builder(
+        &self,
+        _handle: Element,
+        _builder: crate::module_measurement::MeasurementPayloadBuilder,
+    ) {
+    }
     fn release_element(&self, handle: Element);
 
     fn set_attribute(&self, handle: Element, key: &str, value: &str);
@@ -1079,4 +1086,18 @@ pub fn flush() {
 #[doc(hidden)]
 pub fn mark_inline_truncation(handle: Element) {
     with_renderer(|renderer| renderer.mark_inline_truncation(handle), ());
+}
+
+/// Registers the payload function declared by `module_element`.
+#[doc(hidden)]
+pub fn set_measurement_builder(
+    handle: Element,
+    builder: crate::module_measurement::MeasurementPayloadBuilder,
+) {
+    if !is_phantom(handle) {
+        with_renderer(
+            |renderer| renderer.set_measurement_builder(handle, builder),
+            (),
+        );
+    }
 }

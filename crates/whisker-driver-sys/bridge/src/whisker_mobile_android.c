@@ -713,7 +713,6 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
 static bool valid_measure_request(const WhiskerMobileMeasureRequest* r) {
     return r->text.len <= INT32_MAX && (r->text.ptr == NULL) == (r->text.len == 0) &&
         r->locale.len <= INT32_MAX && (r->locale.ptr == NULL) == (r->locale.len == 0) &&
-        r->payload.len <= INT32_MAX && (r->payload.ptr == NULL) == (r->payload.len == 0) &&
         r->font_family_count <= 4096 &&
         (r->font_families == NULL) == (r->font_family_count == 0) &&
         (r->kind != WHISKER_MEASURE_TEXT || r->font_family_count != 0) &&
@@ -745,17 +744,16 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
     jfloatArray request_floats = (*env)->NewFloatArray(env, (jsize)(count * MEASURE_REQUEST_FLOAT_STRIDE));
     jclass string_class = (*env)->FindClass(env, "java/lang/String");
     jclass string_array_class = (*env)->FindClass(env, "[Ljava/lang/String;");
-    jclass byte_array_class = (*env)->FindClass(env, "[B");
-    jclass paragraph_class = (*env)->FindClass(env, "rs/whisker/runtime/WhiskerValue");
-    jobjectArray paragraphs = paragraph_class == NULL ? NULL : (*env)->NewObjectArray(env, (jsize)count, paragraph_class, NULL);
+    jclass value_class = (*env)->FindClass(env, "rs/whisker/runtime/WhiskerValue");
+    jobjectArray paragraphs = value_class == NULL ? NULL : (*env)->NewObjectArray(env, (jsize)count, value_class, NULL);
     jobjectArray request_strings = string_class == NULL ? NULL : (*env)->NewObjectArray(
         env, (jsize)(count * MEASURE_REQUEST_STRING_STRIDE), string_class, NULL);
     jobjectArray family_batches = string_array_class == NULL ? NULL : (*env)->NewObjectArray(
         env, (jsize)count, string_array_class, NULL);
     jobjectArray setting_batches = string_array_class == NULL ? NULL : (*env)->NewObjectArray(
         env, (jsize)count, string_array_class, NULL);
-    jobjectArray payload_batches = byte_array_class == NULL ? NULL : (*env)->NewObjectArray(
-        env, (jsize)count, byte_array_class, NULL);
+    jobjectArray payload_batches = value_class == NULL ? NULL : (*env)->NewObjectArray(
+        env, (jsize)count, value_class, NULL);
     jlong* longs = calloc(count * MEASURE_REQUEST_LONG_STRIDE + 1, sizeof(jlong));
     jint* ints = calloc(count * MEASURE_REQUEST_INT_STRIDE + 1, sizeof(jint));
     jfloat* values = calloc(count * MEASURE_REQUEST_FLOAT_STRIDE + 1, sizeof(jfloat));
@@ -807,12 +805,9 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
         jobjectArray families = string_refs(env, r->font_families, r->font_family_count);
         jobjectArray settings = font_settings(env, r->font_features, r->font_feature_count,
                                                r->font_variations, r->font_variation_count);
-        jbyteArray payload = (*env)->NewByteArray(env, (jsize)r->payload.len);
-        ok = text != NULL && locale != NULL && families != NULL && settings != NULL && payload != NULL;
-        if (ok && r->payload.len > 0) {
-            (*env)->SetByteArrayRegion(env, payload, 0, (jsize)r->payload.len,
-                                      (const jbyte*)r->payload.ptr);
-        }
+        jobject payload = r->payload ? raw_to_value(env, r->payload) : NULL;
+        ok = text != NULL && locale != NULL && families != NULL && settings != NULL &&
+            (r->payload == NULL || payload != NULL);
         if (ok) {
             (*env)->SetObjectArrayElement(env, request_strings,
                 (jsize)(i * MEASURE_REQUEST_STRING_STRIDE), text);
@@ -930,11 +925,10 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
     if (result) (*env)->DeleteLocalRef(env, result);
     if (payload_batches) (*env)->DeleteLocalRef(env, payload_batches);
     if (paragraphs) (*env)->DeleteLocalRef(env, paragraphs);
-    if (paragraph_class) (*env)->DeleteLocalRef(env, paragraph_class);
+    if (value_class) (*env)->DeleteLocalRef(env, value_class);
     if (setting_batches) (*env)->DeleteLocalRef(env, setting_batches);
     if (family_batches) (*env)->DeleteLocalRef(env, family_batches);
     if (request_strings) (*env)->DeleteLocalRef(env, request_strings);
-    if (byte_array_class) (*env)->DeleteLocalRef(env, byte_array_class);
     if (string_array_class) (*env)->DeleteLocalRef(env, string_array_class);
     if (string_class) (*env)->DeleteLocalRef(env, string_class);
     if (request_floats) (*env)->DeleteLocalRef(env, request_floats);
@@ -1099,7 +1093,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     METHOD(g_finish_bootstrap,"finishBootstrapFromNative","()Z")
     METHOD(g_present_frame,"presentFrameFromNative","(IIJJ[J[[F[Ljava/lang/String;[[Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;[J)Z")
     METHOD(g_current_revision,"currentRevisionFromNative","()J")
-    METHOD(g_measure_batch,"measureBatchFromNative","([J[I[F[Ljava/lang/String;[[Ljava/lang/String;[[Ljava/lang/String;[[B[Lrs/whisker/runtime/WhiskerValue;)Lrs/whisker/runtime/measure/HostMeasureBatchResponse;")
+    METHOD(g_measure_batch,"measureBatchFromNative","([J[I[F[Ljava/lang/String;[[Ljava/lang/String;[[Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;[Lrs/whisker/runtime/WhiskerValue;)Lrs/whisker/runtime/measure/HostMeasureBatchResponse;")
     METHOD(g_resource_command,"resourceCommandFromNative","(IIIJJLjava/lang/String;[B)Z")
     METHOD(g_invoke_module,"invokeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;ZJJ)Z")
     METHOD(g_observe_module,"observeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;Z)V")

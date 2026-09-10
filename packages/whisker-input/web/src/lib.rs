@@ -1,5 +1,7 @@
 //! Browser Host implementation for `whisker-input`.
 
+mod measurement;
+
 use std::rc::Rc;
 
 use whisker_protocol::{
@@ -368,6 +370,8 @@ fn input_definition() -> WebViewDefinition<InputWebView> {
         view.set_value(value);
         Ok(())
     })
+    .prop("auto-size", |_, _| Ok(()), |_| Ok(()))
+    .measurement(measurement::measure)
     .text_style(|view, style| view.apply_text_style(style))
 }
 
