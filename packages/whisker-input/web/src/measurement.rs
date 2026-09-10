@@ -1,6 +1,6 @@
 use web_sys::wasm_bindgen::JsCast;
 use whisker_protocol::AvailableSpace;
-use whisker_web::{WhiskerMeasureRequest, WhiskerMeasuredSize, WhiskerValue};
+use whisker_web::{WhiskerMeasureRequest, WhiskerMeasuredSize};
 
 mod data {
     use serde::Deserialize;
@@ -138,6 +138,7 @@ fn measure_in(
 mod tests {
     use super::*;
     use wasm_bindgen_test::wasm_bindgen_test;
+    use whisker_web::WhiskerValue;
 
     fn request(text: &str, width: f32) -> WhiskerMeasureRequest {
         WhiskerMeasureRequest {
