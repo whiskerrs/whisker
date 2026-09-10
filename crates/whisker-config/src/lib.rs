@@ -345,7 +345,8 @@ impl AndroidConfig {
 /// launcher icons: legacy mipmaps (`res/mipmap-*/ic_launcher.png`,
 /// API ≤ 25) plus an adaptive icon (API 26+, `source` as the
 /// foreground over a white background by default) and the
-/// `android:icon` manifest attribute.
+/// `android:icon` manifest attribute. On macOS it produces a multiresolution
+/// `AppIcon.icns` registered through `CFBundleIconFile`.
 ///
 /// Beyond the single shared source there are two per-platform
 /// refinement layers, both optional:

@@ -12,6 +12,8 @@ use whisker_config::Config;
 use crate::fingerprint;
 use crate::render::render;
 
+mod icon;
+
 const CARGO_TOML: &str = include_str!("templates/macos/Cargo.toml.template");
 const MAIN_RS: &str = include_str!("templates/macos/src/main.rs");
 const INFO_PLIST: &str = include_str!("templates/macos/Info.plist");
@@ -44,6 +46,8 @@ pub struct MacosInputs {
     pub element_modules: Vec<crate::RustElementModuleInput>,
     /// Minimum supported macOS release placed in `Info.plist`.
     pub minimum_system_version: String,
+    /// Source PNG configured through the shared AppIcon plugin.
+    pub app_icon_png: Option<Vec<u8>>,
     /// Bumped whenever the generated project shape changes.
     pub template_version: u32,
 }
@@ -59,6 +63,11 @@ pub fn sync(out_dir: &Path, inputs: &MacosInputs) -> Result<bool> {
         return Ok(false);
     }
 
+    let icon_images = inputs
+        .app_icon_png
+        .as_deref()
+        .map(icon::render)
+        .transpose()?;
     clean_managed_tree(out_dir)?;
     let vars = template_vars(inputs);
     write_text(
@@ -76,6 +85,13 @@ pub fn sync(out_dir: &Path, inputs: &MacosInputs) -> Result<bool> {
     write_text(&out_dir.join("Entitlements.plist"), ENTITLEMENTS)?;
     std::fs::create_dir_all(out_dir.join("Resources"))
         .with_context(|| format!("create {}/Resources", out_dir.display()))?;
+    if let Some(images) = icon_images {
+        let iconset = out_dir.join("AppIcon.iconset");
+        std::fs::create_dir_all(&iconset)?;
+        for (name, png) in images {
+            std::fs::write(iconset.join(name), png).context("write macOS icon image")?;
+        }
+    }
     write_text(&fingerprint_path, &new_fingerprint)?;
     Ok(true)
 }
@@ -102,6 +118,7 @@ pub fn inputs_from(
     let build_number = app_config.build_number.unwrap_or(1);
     let background = crate::background::AppBackground::resolve(app_config)?;
     let generated_package = format!("{user_package}-whisker-macos");
+    let app_icon_png = icon::source(app_config, &user_crate_path)?;
     Ok(MacosInputs {
         app_name,
         background: background.hex().to_string(),
@@ -115,7 +132,8 @@ pub fn inputs_from(
         whisker_desktop_dependency: format!("{:?}", env!("CARGO_PKG_VERSION")),
         element_modules: Vec::new(),
         minimum_system_version: "12.0".to_string(),
-        template_version: 9,
+        app_icon_png,
+        template_version: 10,
     })
 }
 
@@ -147,6 +165,15 @@ fn template_vars(inputs: &MacosInputs) -> std::collections::HashMap<&'static str
     vars.insert("bundle_id", xml_escape(&inputs.bundle_id));
     vars.insert("version", xml_escape(&inputs.version));
     vars.insert("build_number", inputs.build_number.to_string());
+    vars.insert(
+        "app_icon_plist",
+        if inputs.app_icon_png.is_some() {
+            "    <key>CFBundleIconFile</key>\n    <string>AppIcon.icns</string>"
+        } else {
+            ""
+        }
+        .to_string(),
+    );
     vars.insert("generated_package", inputs.generated_package.clone());
     vars.insert("user_package_toml", toml_string(&inputs.user_package));
     vars.insert(
@@ -249,7 +276,8 @@ mod tests {
             whisker_desktop_dependency: "{ path = \"/tmp/whisker/platforms/desktop\" }".into(),
             element_modules: Vec::new(),
             minimum_system_version: "12.0".into(),
-            template_version: 9,
+            app_icon_png: None,
+            template_version: 10,
         }
     }
 
@@ -269,6 +297,8 @@ mod tests {
             assert!(out.join(path).exists(), "missing {path}");
         }
         assert!(!sync(&out, &sample()).unwrap());
+        let plist = std::fs::read_to_string(out.join("Info.plist")).unwrap();
+        assert!(!plist.contains("CFBundleIconFile"));
         let manifest = std::fs::read_to_string(out.join("Cargo.toml")).unwrap();
         assert!(manifest.contains("package = \"hello\""));
         assert!(manifest.contains("whisker-macos = { path ="));
@@ -306,6 +336,58 @@ mod tests {
         let main = std::fs::read_to_string(out.join("src/main.rs")).unwrap();
         assert!(main.contains(".with_background_rgb(16, 16, 24)"));
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn shared_icon_source_generates_iconset_and_invalidates_on_content_changes() {
+        let root = tempdir();
+        let source = root.join("icon.png");
+        let mut config = Config::default();
+        config.name("Chat").bundle_id("rs.whisker.chat");
+        config.plugin::<whisker_config::AppIcon>(|icon| {
+            icon.source("icon.png");
+        });
+        let resolve =
+            || inputs_from(&config, "chat".into(), root.clone(), "\"0.13\"".into()).unwrap();
+        let out = root.join("gen/macos");
+
+        for color in [[32, 40, 48, 128], [64, 72, 80, 128]] {
+            image::RgbaImage::from_pixel(1024, 1024, image::Rgba(color))
+                .save(&source)
+                .unwrap();
+            let inputs = resolve();
+            assert!(sync(&out, &inputs).unwrap());
+            assert!(!sync(&out, &inputs).unwrap());
+            let plist = std::fs::read_to_string(out.join("Info.plist")).unwrap();
+            assert!(
+                plist.contains("<key>CFBundleIconFile</key>\n    <string>AppIcon.icns</string>")
+            );
+            assert_eq!(
+                std::fs::read_dir(out.join("AppIcon.iconset"))
+                    .unwrap()
+                    .count(),
+                10
+            );
+            for size in [16, 32, 128, 256, 512] {
+                for scale in [1, 2] {
+                    let suffix = if scale == 2 { "@2x" } else { "" };
+                    let path = out.join(format!("AppIcon.iconset/icon_{size}x{size}{suffix}.png"));
+                    let image = image::open(path).unwrap().to_rgba8();
+                    assert_eq!(image.dimensions(), (size * scale, size * scale));
+                    assert_eq!(image.get_pixel(0, 0).0, color);
+                }
+            }
+        }
+        let mut inputs = resolve();
+        inputs.app_icon_png = None;
+        assert!(sync(&out, &inputs).unwrap());
+        assert!(!out.join("AppIcon.iconset").exists());
+        assert!(
+            !std::fs::read_to_string(out.join("Info.plist"))
+                .unwrap()
+                .contains("CFBundleIconFile")
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -6,6 +6,7 @@
     <string>en</string>
     <key>CFBundleDisplayName</key>
     <string>{{app_name}}</string>
+{{app_icon_plist}}
     <key>CFBundleExecutable</key>
     <string>{{generated_package}}</string>
     <key>CFBundleIdentifier</key>
