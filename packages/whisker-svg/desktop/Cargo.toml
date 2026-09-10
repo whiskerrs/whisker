@@ -1,6 +1,6 @@
 [package]
 name = "whisker-svg-desktop"
-version = "0.13.8"
+version = "0.13.9"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,5 +11,5 @@ description = "Desktop Host implementation for whisker-svg."
 base64 = { workspace = true }
 csscolorparser = "0.7.2"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
-whisker-desktop = { path = "../../../platforms/desktop", version = "0.13.8" }
-whisker-svg = { path = "..", version = "0.13.8" }
+whisker-desktop = { path = "../../../platforms/desktop", version = "0.13.10" }
+whisker-svg = { path = "..", version = "0.13.9" }

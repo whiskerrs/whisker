@@ -1,6 +1,6 @@
 [package]
 name = "whisker-video"
-version = "0.13.8"
+version = "0.13.9"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -39,4 +39,4 @@ web = { manifest = "web/Cargo.toml" }
 # `::whisker::runtime::view::Element`, `::whisker::platform_module::WhiskerValue`,
 # …) resolve under the `whisker` name. A published module would write
 # `whisker = "0.1"`.
-whisker = { path = "../../crates/whisker", version = "0.13.8" }
+whisker = { path = "../../crates/whisker", version = "0.13.10" }
