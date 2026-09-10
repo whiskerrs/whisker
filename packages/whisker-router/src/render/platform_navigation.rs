@@ -183,6 +183,15 @@ fn install_edge_swipe(container: Element, nav: RouterHandle) {
 /// **predictive-back** pose mode, and return the bridge. `None` means no
 /// gesture should begin.
 pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> {
+    let mode = if cfg!(target_os = "android") {
+        PoseMode::Predictive(edge)
+    } else {
+        PoseMode::Transition(RouteTransition::slide(), transition::Direction::Pop)
+    };
+    begin_with_mode(nav, mode)
+}
+
+pub(super) fn begin_with_mode(nav: &RouterHandle, mode: PoseMode) -> Option<StackBridge> {
     // An active `whisker::back::on_back` handler owns the back action;
     // no interactive preview on either platform.
     if whisker::back::has_active_handler() {
@@ -195,19 +204,7 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
     if !bridge.can_back {
         return None;
     }
-    // The interactive preview is platform-native:
-    //  - Android: the Material **predictive-back** Card (shrink + rounded
-    //    corners + backdrop dim).
-    //  - iOS / others: the interactive **iOS slide-back** (the top slides
-    //    off to the right, the under parallaxes back) — the route's slide
-    //    pose driven by the finger, NOT the Material card.
-    let android = cfg!(target_os = "android");
-    let mode = if android {
-        PoseMode::Predictive(edge)
-    } else {
-        // A swipe-back is a Pop direction.
-        PoseMode::Transition(RouteTransition::slide(), transition::Direction::Pop)
-    };
+    let predictive = matches!(mode, PoseMode::Predictive(_));
     if let (Some(ctrl), Some(top), Some(under)) =
         (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)
     {
@@ -219,7 +216,7 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
         point(under, ctrl, Role::Under, mode);
         // The Material backdrop dim is Android-only; the iOS slide carries
         // its own subtle under-screen dim in `slide_pose`.
-        if android {
+        if predictive {
             if let Some(dim_drive) = &bridge.dim_drive {
                 dim_drive.set(Some(ctrl.clone()));
             }
