@@ -8,7 +8,7 @@ use std::ffi::c_void;
 use crate::{WhiskerBytesRef, WhiskerStringRef, WhiskerValueRaw};
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 31;
+pub const MOBILE_ABI_MINOR: u16 = 32;
 pub const FRAME_PROTOCOL_MAJOR: u16 = 1;
 pub const FRAME_PROTOCOL_MINOR: u16 = 5;
 
@@ -504,7 +504,7 @@ pub struct MobileMeasureRequest {
     pub indent_logical_pixels: f32,
     pub indent_percentage: f32,
     pub max_lines: u32,
-    pub payload: WhiskerBytesRef,
+    pub payload: *const WhiskerValueRaw,
     pub intrinsic_width: f32,
     pub intrinsic_height: f32,
     pub intrinsic_mask: u32,
@@ -677,7 +677,7 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileMemberRegistration>(), 24);
             assert_eq!(std::mem::size_of::<MobileElementRegistration>(), 72);
             assert_eq!(std::mem::size_of::<MobileBootstrap>(), 24);
-            assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 232);
+            assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 224);
             assert_eq!(std::mem::size_of::<MobileMeasureResponse>(), 96);
             assert_eq!(std::mem::size_of::<MobileText>(), 256);
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);

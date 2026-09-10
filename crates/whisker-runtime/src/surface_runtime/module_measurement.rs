@@ -70,7 +70,7 @@ impl BindingState {
             let spec = payload.map(|payload| {
                 let mut hash = DefaultHasher::new();
                 payload.version.hash(&mut hash);
-                payload.data.hash(&mut hash);
+                hash_value(&payload.data, &mut hash);
                 MeasurementSpec {
                     content_hash: hash.finish(),
                     style_hash: 0,
@@ -82,5 +82,84 @@ impl BindingState {
             binding.previous = Some(inputs);
         }
         Ok(())
+    }
+}
+
+fn hash_value(value: &WhiskerValue, hash: &mut impl Hasher) {
+    std::mem::discriminant(value).hash(hash);
+    match value {
+        WhiskerValue::Null => {}
+        WhiskerValue::Bool(value) => value.hash(hash),
+        WhiskerValue::Int(value) => value.hash(hash),
+        WhiskerValue::Float(value) => {
+            (if *value == 0.0 { 0.0_f64 } else { *value })
+                .to_bits()
+                .hash(hash);
+        }
+        WhiskerValue::String(value) | WhiskerValue::Error(value) => value.hash(hash),
+        WhiskerValue::Bytes(value) => value.hash(hash),
+        WhiskerValue::Array(values) => {
+            values.len().hash(hash);
+            for value in values {
+                hash_value(value, hash);
+            }
+        }
+        WhiskerValue::Map(values) => {
+            values.len().hash(hash);
+            for (key, value) in values {
+                key.hash(hash);
+                hash_value(value, hash);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hash(value: &WhiskerValue) -> u64 {
+        let mut state = DefaultHasher::new();
+        hash_value(value, &mut state);
+        state.finish()
+    }
+
+    #[test]
+    fn measurement_hash_preserves_value_types_structure_and_float_equality() {
+        let variants = [
+            WhiskerValue::Null,
+            WhiskerValue::Bool(false),
+            WhiskerValue::Int(0),
+            WhiskerValue::Float(0.0),
+            WhiskerValue::String("0".into()),
+            WhiskerValue::Bytes(vec![0]),
+            WhiskerValue::Array(vec![WhiskerValue::Int(0)]),
+            WhiskerValue::map([("n", WhiskerValue::Int(0))]),
+            WhiskerValue::Error("0".into()),
+        ];
+        let hashes: std::collections::HashSet<_> = variants.iter().map(hash).collect();
+        assert_eq!(hashes.len(), variants.len());
+        assert_eq!(
+            hash(&WhiskerValue::Float(0.0)),
+            hash(&WhiskerValue::Float(-0.0))
+        );
+        let nested = |value| {
+            WhiskerValue::map([(
+                "values",
+                WhiskerValue::Array(vec![WhiskerValue::Float(value)]),
+            )])
+        };
+        assert_ne!(hash(&nested(1.0)), hash(&nested(2.0)));
+        assert_eq!(hash(&nested(1.0)), hash(&nested(1.0).clone()));
+        assert_ne!(
+            hash(&WhiskerValue::Array(vec![
+                WhiskerValue::Int(1),
+                WhiskerValue::Int(2)
+            ])),
+            hash(&WhiskerValue::Array(vec![
+                WhiskerValue::Int(2),
+                WhiskerValue::Int(1)
+            ]))
+        );
     }
 }

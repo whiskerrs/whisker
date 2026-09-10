@@ -25,7 +25,7 @@ fn payload(context: ModuleMeasureContext<'_>) -> Option<CustomMeasurePayload> {
     let size = context.text_style().unwrap().style.font_size;
     Some(CustomMeasurePayload {
         version: 1,
-        data: format!("{value}:{size}:{}", context.scale_factor()).into_bytes(),
+        data: WhiskerValue::String(format!("{value}:{size}:{}", context.scale_factor())),
     })
 }
 
@@ -45,7 +45,9 @@ impl MeasurementProvider for Host {
             let MeasurementPayload::Custom(payload) = &request.payload else {
                 panic!("custom payload expected")
             };
-            let text = String::from_utf8(payload.data.clone()).unwrap();
+            let WhiskerValue::String(text) = &payload.data else {
+                panic!("string payload expected")
+            };
             let length = text.split(':').next().unwrap().len() as f32;
             let width = request.constraints.known_dimensions[0].unwrap_or(100.0);
             responses.push(MeasurementResponse::Ready {
@@ -159,7 +161,7 @@ fn custom_payload_tracks_props_and_inherited_style_without_host_views() {
     let MeasurementPayload::Custom(last) = &host.requests.last().unwrap().payload else {
         unreachable!()
     };
-    assert!(String::from_utf8_lossy(&last.data).contains(":24:"));
+    assert!(matches!(&last.data, WhiskerValue::String(text) if text.contains(":24:")));
     with_installed_renderer(surface.renderer(), || {
         value.set(String::new());
         whisker::flush();

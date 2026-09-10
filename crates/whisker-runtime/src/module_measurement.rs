@@ -34,6 +34,6 @@ impl ModuleMeasureContext<'_> {
 }
 
 /// Builds versioned Host inputs without accessing Signals or mounted native views.
-/// Include every size-affecting input in the payload; the Runtime hashes its bytes.
+/// Include every size-affecting input in the payload; the Runtime hashes its value tree.
 /// Returning `None` disables intrinsic measurement for the element.
 pub type MeasurementPayloadBuilder = fn(ModuleMeasureContext<'_>) -> Option<CustomMeasurePayload>;

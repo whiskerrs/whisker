@@ -6,7 +6,7 @@ import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.widget.EditText
-import org.json.JSONObject
+import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.WhiskerAvailableSpace
 import rs.whisker.runtime.WhiskerMeasureRequest
 import rs.whisker.runtime.WhiskerMeasuredSize
@@ -42,16 +42,19 @@ internal object InputTypography {
 
 internal fun measureInput(request: WhiskerMeasureRequest): WhiskerMeasuredSize? {
     if (request.payloadVersion != 1) return null
-    val bytes = request.payload.asBytes() ?: return null
-    val data = try { JSONObject(bytes.toString(Charsets.UTF_8)) } catch (_: org.json.JSONException) { return null }
-    val scale = data.getDouble("scale_factor").toFloat()
+    val data = (request.payload as? WhiskerValue.Map)?.value ?: return null
+    val scale = data["scale_factor"]?.asDouble()?.toFloat() ?: return null
+    val fontSize = data["font_size"]?.asDouble()?.toFloat() ?: return null
+    val weight = data["font_weight"]?.asInt()?.toInt() ?: return null
+    val italic = data["italic"]?.asBool() ?: return null
+    val spacing = data["letter_spacing"]?.asDouble()?.toFloat() ?: return null
+    val text = data["text"]?.asString() ?: return null
+    val multiline = data["multiline"]?.asBool() ?: return null
     val paint = TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = data.getDouble("font_size").toFloat() * scale
-        typeface = InputTypography.typeface(if (data.isNull("font_family")) null else data.getString("font_family"), data.getInt("font_weight"), data.getBoolean("italic"))
-        letterSpacing = data.getDouble("letter_spacing").toFloat() * scale / textSize
+        textSize = fontSize * scale
+        typeface = InputTypography.typeface(data["font_family"]?.asString(), weight, italic)
+        letterSpacing = spacing * scale / textSize
     }
-    val text = data.getString("text")
-    val multiline = data.getBoolean("multiline")
     val content = if (multiline) text else text.replace('\n', ' ')
     val desired = Layout.getDesiredWidth(content, paint)
     val width = request.knownWidth?.times(scale) ?: when (request.availableWidthKind) {
@@ -59,7 +62,7 @@ internal fun measureInput(request: WhiskerMeasureRequest): WhiskerMeasuredSize? 
         WhiskerAvailableSpace.MIN_CONTENT -> if (multiline) 1f else desired
         WhiskerAvailableSpace.MAX_CONTENT -> desired
     }
-    val lineHeight = if (data.isNull("line_height")) null else data.getDouble("line_height").toFloat() * scale
+    val lineHeight = data["line_height"]?.asDouble()?.toFloat()?.times(scale)
     val layout = StaticLayout.Builder.obtain(content, 0, content.length, paint, ceil(width.toDouble()).toInt().coerceAtLeast(1))
         .setIncludePad(false)
         .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)

@@ -52,7 +52,7 @@ internal struct InputTypography {
   }
 }
 
-private struct InputMeasureData: Decodable {
+private struct InputMeasureData {
   let text: String
   let multiline: Bool
   let fontFamily: String?
@@ -61,13 +61,29 @@ private struct InputMeasureData: Decodable {
   let italic: Bool
   let lineHeight: CGFloat?
   let letterSpacing: CGFloat
+
+  init?(_ payload: WhiskerValue) {
+    guard case .map(let fields) = payload,
+      let text = fields["text"]?.asString,
+      let multiline = fields["multiline"]?.asBool,
+      let fontSize = fields["font_size"]?.asDouble,
+      let fontWeight = fields["font_weight"]?.asInt,
+      let italic = fields["italic"]?.asBool,
+      let letterSpacing = fields["letter_spacing"]?.asDouble
+    else { return nil }
+    self.text = text
+    self.multiline = multiline
+    self.fontFamily = fields["font_family"]?.asString
+    self.fontSize = CGFloat(fontSize)
+    self.fontWeight = Int(fontWeight)
+    self.italic = italic
+    self.lineHeight = fields["line_height"]?.asDouble.map { CGFloat($0) }
+    self.letterSpacing = CGFloat(letterSpacing)
+  }
 }
 
 internal func measureInput(_ request: WhiskerMeasureRequest) -> WhiskerMeasuredSize? {
-  guard request.payloadVersion == 1, case .bytes(let bytes) = request.payload else { return nil }
-  let decoder = JSONDecoder()
-  decoder.keyDecodingStrategy = .convertFromSnakeCase
-  guard let input = try? decoder.decode(InputMeasureData.self, from: bytes) else { return nil }
+  guard request.payloadVersion == 1, let input = InputMeasureData(request.payload) else { return nil }
   let typography = InputTypography(
     family: input.fontFamily, size: input.fontSize, weight: input.fontWeight, italic: input.italic,
     lineHeight: input.lineHeight, letterSpacing: input.letterSpacing)

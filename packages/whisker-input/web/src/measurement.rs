@@ -3,13 +3,12 @@ use whisker_protocol::AvailableSpace;
 use whisker_web::{WhiskerMeasureRequest, WhiskerMeasuredSize, WhiskerValue};
 
 mod data {
-    use serde::{Deserialize, Serialize};
+    use serde::Deserialize;
 
     pub const VERSION: u16 = 1;
 
-    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[derive(Clone, Debug, Deserialize)]
     pub struct InputMeasureData {
-        pub scale_factor: f32,
         pub text: String,
         pub multiline: bool,
         pub font_family: Option<String>,
@@ -25,10 +24,7 @@ pub(super) fn measure(request: &WhiskerMeasureRequest) -> Option<WhiskerMeasured
     if request.payload_version != data::VERSION {
         return None;
     }
-    let WhiskerValue::Bytes(bytes) = &request.payload else {
-        return None;
-    };
-    let input: data::InputMeasureData = serde_json::from_slice(bytes).ok()?;
+    let input: data::InputMeasureData = request.payload.deserialize_into().ok()?;
     let document = web_sys::window()?.document()?;
     let probe = document
         .create_element("div")
@@ -148,20 +144,17 @@ mod tests {
             known_dimensions: [Some(width), None],
             available_space: [AvailableSpace::Definite(width), AvailableSpace::MaxContent],
             payload_version: data::VERSION,
-            payload: WhiskerValue::Bytes(
-                serde_json::to_vec(&data::InputMeasureData {
-                    scale_factor: 1.0,
-                    text: text.into(),
-                    multiline: true,
-                    font_family: None,
-                    font_size: 16.0,
-                    font_weight: 400,
-                    italic: false,
-                    line_height: Some(24.0),
-                    letter_spacing: 0.0,
-                })
-                .unwrap(),
-            ),
+            payload: WhiskerValue::map([
+                ("scale_factor", WhiskerValue::Float(1.0)),
+                ("text", WhiskerValue::String(text.into())),
+                ("multiline", WhiskerValue::Bool(true)),
+                ("font_family", WhiskerValue::Null),
+                ("font_size", WhiskerValue::Float(16.0)),
+                ("font_weight", WhiskerValue::Int(400)),
+                ("italic", WhiskerValue::Bool(false)),
+                ("line_height", WhiskerValue::Float(24.0)),
+                ("letter_spacing", WhiskerValue::Float(0.0)),
+            ]),
         }
     }
 

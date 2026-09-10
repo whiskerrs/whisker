@@ -323,7 +323,7 @@ WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerKeyValueRaw) == 40, "WhiskerKeyValueRaw 
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileHostCapabilities) == 24, "WhiskerMobileHostCapabilities ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileOperation) == 72, "WhiskerMobileOperation ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileFrame) == 72, "WhiskerMobileFrame ABI drift");
-WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureRequest) == 232, "WhiskerMobileMeasureRequest ABI drift");
+WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureRequest) == 224, "WhiskerMobileMeasureRequest ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureResponse) == 96, "WhiskerMobileMeasureResponse ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileText) == 256, "WhiskerMobileText ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileBoxPaint) == 272, "WhiskerMobileBoxPaint ABI drift");

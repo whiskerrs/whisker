@@ -1046,7 +1046,7 @@ mod tests {
             MeasurementKind::Custom { version } => {
                 MeasurementPayload::Custom(CustomMeasurePayload {
                     version,
-                    data: b"payload".to_vec(),
+                    data: whisker_protocol::WhiskerValue::Bytes(b"payload".to_vec()),
                 })
             }
         }

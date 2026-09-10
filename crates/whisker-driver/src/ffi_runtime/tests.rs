@@ -1057,3 +1057,65 @@ fn paragraph_geometry_is_released_on_rejected_and_malformed_measurement_batches(
         assert_eq!(released.get(), 2);
     }
 }
+
+#[test]
+fn mobile_measure_batch_retains_structured_payloads_and_native_bytes() {
+    use whisker_engine::whisker_protocol::{
+        CustomMeasurePayload, ElementTypeId, MeasureConstraints, MeasurementKey,
+        NativeControlMeasurePayload,
+    };
+    let value = WhiskerValue::map([
+        ("text", WhiskerValue::String("こんにちは".into())),
+        (
+            "metrics",
+            WhiskerValue::Array(vec![
+                WhiskerValue::Float(24.5),
+                WhiskerValue::Bool(true),
+                WhiskerValue::Null,
+            ]),
+        ),
+        ("opaque", WhiskerValue::Bytes(vec![0, 255])),
+    ]);
+    let request = |index, payload| MeasurementRequest {
+        key: MeasurementKey::new(index).unwrap(),
+        node: NodeId::new(index).unwrap(),
+        element_type: ElementTypeId::new(9).unwrap(),
+        environment_epoch: 1,
+        constraints: MeasureConstraints {
+            known_dimensions: [None, None],
+            available_space: [AvailableSpace::MaxContent; 2],
+        },
+        payload,
+    };
+    let mut requests: Vec<_> = (1..65)
+        .map(|index| {
+            request(
+                index,
+                MeasurementPayload::Custom(CustomMeasurePayload {
+                    version: 3,
+                    data: value.clone(),
+                }),
+            )
+        })
+        .collect();
+    requests.push(request(
+        65,
+        MeasurementPayload::NativeControl(NativeControlMeasurePayload {
+            control_type: 1,
+            version: 2,
+            state: vec![1, 2, 3],
+        }),
+    ));
+    let batch = MobileMeasureBatch::new(&requests);
+    drop(requests);
+    for raw in &batch.requests[..64] {
+        assert_eq!(raw.payload_version, 3);
+        // SAFETY: the batch owns each value tree until it is dropped.
+        assert_eq!(unsafe { decode_value(raw.payload) }, value);
+    }
+    // SAFETY: the batch owns the native-control value until it is dropped.
+    assert_eq!(
+        unsafe { decode_value(batch.requests[64].payload) },
+        WhiskerValue::Bytes(vec![1, 2, 3])
+    );
+}
