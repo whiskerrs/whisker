@@ -136,15 +136,14 @@ impl std::fmt::Debug for RouteTransition {
     }
 }
 
-/// The platform default: iOS gets the full [`slide`](RouteTransition::slide),
-/// Android gets the subtler [`slide_fade`](RouteTransition::slide_fade)
-/// (small slide + fade), and Web/Desktop swap instantly. This is whisker's
-/// analogue of Flutter's `PageTransitionsTheme` per-`TargetPlatform` default.
+/// Platform defaults: iOS slides, Android uses slide-fade for pushes and
+/// an opaque horizontal slide for button backs, and Web/Desktop swap instantly.
+/// Android back gestures use the separate interactive predictive-back pose.
 impl Default for RouteTransition {
     fn default() -> Self {
         #[cfg(target_os = "android")]
         {
-            RouteTransition::slide_fade()
+            RouteTransition::custom(AndroidDefault)
         }
         #[cfg(target_os = "ios")]
         {
@@ -547,9 +546,28 @@ impl Transition for Slide {
     }
 }
 
-/// The Android default: a small horizontal slide + a fade (Material
-/// shared-axis feel). The top slides only a short distance from the right
-/// while fading in; the under shifts slightly without becoming transparent.
+#[cfg(any(target_os = "android", test))]
+pub(super) struct AndroidDefault;
+
+#[cfg(any(target_os = "android", test))]
+impl Transition for AndroidDefault {
+    fn config(&self) -> AnimConfig {
+        SlideFade.config()
+    }
+
+    fn name(&self) -> &'static str {
+        "android"
+    }
+
+    fn pose(&self, ctx: PoseContext) -> Pose {
+        match ctx.direction {
+            Direction::Push => SlideFade.pose(ctx),
+            Direction::Pop => Slide.pose(ctx),
+        }
+    }
+}
+
+/// Small horizontal slide plus fade, with an opaque under route.
 struct SlideFade;
 impl Transition for SlideFade {
     fn config(&self) -> AnimConfig {

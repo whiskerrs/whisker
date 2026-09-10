@@ -7,6 +7,8 @@
 //! the right active child. The visual transition + gesture + actual
 //! mount/swap behaviour is verified on-device.
 
+mod android_back;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
