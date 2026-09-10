@@ -13,6 +13,7 @@ is no application server, build-time credential, or bundled API key.
 - Markdown headings, lists, quotes, inline styles, links, tables, and highlighted code blocks.
 - Saved drafts and partial-answer recovery after an interrupted session.
 - An edge-to-edge conversation list with a floating header, composer, and Latest control.
+- On focus, the composer outline inflates into a Send button; on blur, the button folds back into the input bar.
 - Light and dark appearances, with a device-local preference and live theme switching.
 - Mobile stack navigation and a collapsible desktop/browser conversation sidebar.
 

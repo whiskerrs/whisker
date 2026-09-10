@@ -6653,6 +6653,7 @@ dependencies = [
  "whisker-router",
  "whisker-safe-area",
  "whisker-secure-store",
+ "whisker-svg",
  "whisker-web-browser",
 ]
 

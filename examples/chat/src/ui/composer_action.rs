@@ -1,11 +1,15 @@
-use super::theme::{self, size};
-use whisker::css::{Cursor, PointerEvents};
+use super::{
+    composer_surface::reveal,
+    theme::{self, size},
+};
+use whisker::css::{Cursor, PointerEvents, Transform, TransformFn, Visibility};
 use whisker::prelude::*;
 use whisker_icons::{Icon, lucide};
 
 #[component]
 pub fn composer_action(
     busy: ReadSignal<bool>,
+    progress: ReadSignal<f32>,
     draft: RwSignal<String>,
     on_press: Callback,
 ) -> Element {
@@ -24,19 +28,27 @@ pub fn composer_action(
                     .state(AccessibilityState::new().disabled(disabled.get()))
             }),
             on_tap: move |_| {
-                if !disabled.get_untracked() {
+                if progress.get_untracked() > 0.0 && !disabled.get_untracked() {
                     on_press.call();
                 }
             },
-            style: theme::style(move |palette| {
+            style: computed(move || {
                 theme::row()
                     .justify_content(JustifyContent::Center)
-                    .width(px(size::TOUCH))
-                    .height(px(size::TOUCH))
+                    .width(px(64))
+                    .height(px(64))
                     .flex_shrink(0.0)
-                    .border_radius(px(size::TOUCH / 2.0))
-                    .background_color(Color::hex(palette.accent))
-                    .opacity(if disabled.get() { 0.4 } else { 1.0 })
+                    .opacity(reveal(progress.get()) * if disabled.get() { 0.4 } else { 1.0 })
+                    .visibility(if progress.get() > 0.0 {
+                        Visibility::Visible
+                    } else {
+                        Visibility::Hidden
+                    })
+                    .pointer_events(if progress.get() > 0.0 {
+                        PointerEvents::Auto
+                    } else {
+                        PointerEvents::None
+                    })
                     .cursor(if disabled.get() {
                         Cursor::NotAllowed
                     } else {
@@ -44,7 +56,14 @@ pub fn composer_action(
                     })
             }),
         ) {
-            View(style: Css::new().pointer_events(PointerEvents::None)) {
+            View(
+                style: theme::row()
+                    .justify_content(JustifyContent::Center)
+                    .width(px(size::TOUCH))
+                    .height(px(size::TOUCH))
+                    .transform(Transform::new().push(TransformFn::TranslateX(px(5.0).into())))
+                    .pointer_events(PointerEvents::None),
+            ) {
                 Icon(
                     svg: computed(move || {
                         if busy.get() {
@@ -53,7 +72,7 @@ pub fn composer_action(
                             lucide::ArrowUp.into()
                         }
                     }),
-                    color: computed(move || format!("#{:06x}", appearance.get().palette().on_accent)),
+                    color: computed(move || format!("#{:06x}", appearance.get().palette().ink)),
                     size: "20",
                 )
             }
