@@ -125,6 +125,8 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.98.1
       - uses: Swatinem/rust-cache@v2
+      - name: Install Linux build dependencies
+        run: bash .github/scripts/install-ubuntu-packages.sh libfontconfig1-dev
       - name: Resume unpublished crates and finalize the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
