@@ -22,15 +22,18 @@ pub struct ConnectionForm {
 pub fn use_connection_form(saved: Callback) -> ConnectionForm {
     let app = use_context::<AppState>().expect("AppState context");
     let initial = app.connection().get_untracked().unwrap_or_default();
+    let saved_key = storage::load_key(&initial);
+    let remember =
+        storage::secure_keys_available() || saved_key.as_ref().is_ok_and(|key| key.is_some());
     let mut form = ConnectionForm {
         name: signal(initial.name),
         base_url: signal(initial.base_url),
         model: signal(initial.model),
         key: signal(String::new()),
-        notice: signal(String::new()),
+        notice: signal(saved_key.err().unwrap_or_default()),
         checking: signal(false),
         models: signal(Vec::new()),
-        remember: signal(storage::persistent_keys_available()),
+        remember: signal(remember),
         discover: Callback::new(|()| {}),
         save: Callback::new(|()| {}),
     };
@@ -105,6 +108,7 @@ impl ConnectionForm {
         }
     }
     pub fn endpoint_changed(self) {
+        self.remember.set(storage::secure_keys_available());
         self.key.set(String::new());
         self.models.set(Vec::new());
         self.notice.set(String::new());

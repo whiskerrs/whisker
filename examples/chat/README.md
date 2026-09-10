@@ -32,19 +32,23 @@ cargo run -p whisker-cli --bin whisker -- run web --manifest-path examples/chat/
 cargo run -p whisker-cli --bin whisker -- run desktop --manifest-path examples/chat/Cargo.toml
 ```
 
-Open **Settings → API key & provider**, enter your API base URL and key,
-discover models or enter a model ID, and save the connection. Saving returns to
-Settings; **Back to chat** returns to the conversation. Model discovery calls
+When no API key is available, connection setup opens before the chat, including
+after restarting Desktop or Web without a saved key. Enter your API base URL and key, discover models
+or enter a model ID, then select **Start chatting**. To edit a configured connection,
+open **Settings → API key & provider**. Saving those changes returns to Settings;
+**Back to chat** returns to the conversation. Model discovery calls
 `GET /models`; generation uses streamed Chat Completions. Availability and usage charges are controlled by your provider.
 Browser connections require the provider to permit cross-origin requests.
 
-On Web and Desktop, **Chats** opens an animated sidebar; **Hide sidebar**
-gives the conversation more room. The header hides **Chats** while the sidebar
-is visible. Use a conversation’s **…** menu to rename it or move it to Trash. **Settings → Color theme** switches appearance without resetting the
+On Web and Desktop at widths of at least 768 logical pixels, **Chats** opens an
+animated sidebar; **Hide sidebar** gives the conversation more room. The header
+button fades and collapses with the sidebar animation. Below that width, **Chats**
+opens the same left-sliding history screen used on iOS and Android. Narrowing an
+open sidebar closes it, preserving the selected conversation and draft. Use a conversation’s **…** menu to rename it or move it to Trash. **Settings → Color theme** switches appearance without resetting the
 conversation or draft. Dark is the initial default; the selected appearance is
 restored on launch. Settings uses a section sidebar on wide screens and stacks
 the navigation as horizontal section controls above the form on narrow screens.
-The browser starts with the sidebar closed. On iOS and Android,
+Web and Desktop start with the sidebar closed. On iOS and Android,
 **Chats** opens a separate history screen that slides in from the left through
 `whisker-router`.
 
@@ -52,10 +56,17 @@ The browser starts with the sidebar closed. On iOS and Android,
 
 Conversation data is local JSON and is not encrypted. Moving a conversation to Trash retains it on the device. **Undo** restores the
 last trashed conversation while the history panel remains open. Native keys use endpoint-scoped
-Keychain/Keystore storage when **Remember key securely** is selected. Web and
-Desktop retain keys in memory only. Changing the endpoint clears the key field;
-a retained key is never reused for another endpoint. Keys are excluded from
-conversation storage and provider error messages.
+Keychain/Keystore storage when **Remember key securely** is selected. Desktop
+retains keys in memory only. Web defaults to session-only storage and offers an
+explicit, unchecked browser-storage consent option in setup and connection settings.
+Opting in saves the API key in localStorage without app-level encryption. Scripts
+running on the site, extensions with site access, and people using the same browser
+profile may be able to read it. Uncheck the option and save to remove the stored key
+while continuing to use it for the current session. Clearing browser site data also
+removes it. Browser storage retains only the current endpoint's key; saving another
+connection replaces or removes that entry. Changing the endpoint clears the key
+field and browser-storage consent. A retained key is never reused for another
+endpoint. Keys are excluded from conversation storage and provider error messages.
 
 One answer can run at a time. Generation belongs to the app Owner above the
 router, so covering or switching a screen preserves the active request. Stop

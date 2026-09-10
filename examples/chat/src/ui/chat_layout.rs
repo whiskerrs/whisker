@@ -13,7 +13,6 @@ pub fn header() -> Css {
         .right(px(space::MD))
         .height(px(HEADER_HEIGHT))
         .padding(px(space::SM))
-        .gap(px(space::SM))
         .z_index(2)
 }
 

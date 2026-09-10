@@ -1,6 +1,6 @@
 use super::{
     button::Button, chat_layout, composer::Composer, history_sidebar::HistorySidebar,
-    messages::TurnRow, theme, welcome::Welcome,
+    history_trigger::HistoryTrigger, messages::TurnRow, theme, welcome::Welcome,
 };
 use crate::{
     hooks::{SidebarState, use_chat, use_sidebar},
@@ -15,12 +15,8 @@ use whisker_router::use_navigator;
 pub fn chat_screen() -> Element {
     let app = use_context::<AppState>().expect("AppState context");
     let selected = app.clone();
-    let sidebar = use_sidebar(cfg!(not(any(
-        target_os = "ios",
-        target_os = "android",
-        target_arch = "wasm32"
-    ))));
-    render! {
+    let sidebar = use_sidebar();
+    let element = render! {
         View(
             style: theme::style(move |palette| palette.screen().flex_direction(FlexDirection::Row)),
         ) {
@@ -33,7 +29,9 @@ pub fn chat_screen() -> Element {
                 },
             )
         }
-    }
+    };
+    sidebar.observe_container(element);
+    element
 }
 
 #[component]
@@ -48,7 +46,7 @@ fn conversation_view(session: Session, sidebar: SidebarState) -> Element {
     let list_ref = actions.list.r();
     let retry = actions.retry;
     let open_history = Callback::new(move |()| {
-        if cfg!(any(target_os = "ios", target_os = "android")) {
+        if sidebar.compact.get_untracked() {
             if nav.navigate("/history").is_err() {
                 notice.set("Could not open conversations.".into());
             }
@@ -96,14 +94,8 @@ fn conversation_view(session: Session, sidebar: SidebarState) -> Element {
                         )
                 }),
             ) {
-                Show(when: move || !sidebar.visible.get()) {
-                    Button(
-                        label: "Chats",
-                        icon: lucide::PanelLeft,
-                        on_press: open_history,
-                    )
-                }
-                View(style: theme::fill()) {
+                HistoryTrigger(sidebar: sidebar, pressed: open_history)
+                View(style: theme::fill().margin_right(px(theme::space::SM))) {
                     Text(
                         value: session.title,
                         max_lines: 1u32,

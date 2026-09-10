@@ -1,5 +1,6 @@
 use super::{
     button::Button,
+    key_storage_choice::KeyStorageChoice,
     navigation,
     settings_shell::{self, SettingsSection, SettingsShell},
     theme::{self, size, space},
@@ -7,25 +8,34 @@ use super::{
 use crate::{hooks::use_connection_form, state::AppState, storage};
 use whisker::prelude::*;
 use whisker_input::{AutoCapitalize, Input, KeyboardType};
-use whisker_router::use_navigator;
+use whisker_router::{use_navigator, use_pathname};
 
 #[component]
 pub fn connection_screen() -> Element {
     let app = use_context::<AppState>().expect("AppState context");
     let nav = use_navigator();
     let notice = app.notice();
+    let setup = use_pathname().get_untracked() == navigation::SETUP;
     let form = use_connection_form(Callback::new(move |()| {
-        navigation::return_to_settings(&nav, notice)
+        if setup {
+            navigation::complete_setup(&nav, notice);
+        } else {
+            navigation::return_to_settings(&nav, notice);
+        }
     }));
     render! {
-        SettingsShell(section: SettingsSection::Connection) {
+        SettingsShell(section: SettingsSection::Connection, setup: setup) {
             View(style: theme::column().gap(px(16))) {
                 Text(
                     value: "API key & provider",
                     style: theme::style(settings_shell::heading),
                 )
                 Text(
-                    value: "Manage your provider, API key, and model.",
+                    value: if setup {
+                        "Connect a provider to start chatting."
+                    } else {
+                        "Manage your provider, API key, and model."
+                    },
                     style: theme::style(settings_shell::description),
                 )
                 View(style: theme::row().gap(px(space::SM))) {
@@ -50,7 +60,11 @@ pub fn connection_screen() -> Element {
                         secure: true,
                         auto_capitalize: AutoCapitalize::None,
                         autocorrect: false,
-                        placeholder: "Enter a key, or keep your saved key",
+                        placeholder: if setup {
+                            "Enter your API key"
+                        } else {
+                            "Enter a key, or keep your saved key"
+                        },
                         style: theme::style(settings_shell::field),
                     )
                     View(style: theme::row()) {
@@ -90,7 +104,7 @@ pub fn connection_screen() -> Element {
                             style: theme::column().height(px(132)).flex_shrink(0.0),
                         )
                     }
-                    Show(when: storage::persistent_keys_available) {
+                    Show(when: storage::secure_keys_available) {
                         Button(
                             compact: true,
                             label: computed(move || {
@@ -103,7 +117,12 @@ pub fn connection_screen() -> Element {
                             on_press: move |()| form.remember.update(|remember| *remember = !*remember),
                         )
                     }
-                    Show(when: || !storage::persistent_keys_available()) {
+                    Show(when: || cfg!(target_arch = "wasm32")) {
+                        KeyStorageChoice(remember: form.remember)
+                    }
+                    Show(
+                        when: || !storage::secure_keys_available() && !cfg!(target_arch = "wasm32"),
+                    ) {
                         Text(
                             value: "Session-only key. Re-enter it after restarting.",
                             style: theme::style(settings_shell::description),
@@ -118,7 +137,7 @@ pub fn connection_screen() -> Element {
                     View(style: theme::row().padding_top(px(8))) {
                         Button(
                             compact: true,
-                            label: "Save connection",
+                            label: if setup { "Start chatting" } else { "Save connection" },
                             primary: true,
                             on_press: form.save,
                         )

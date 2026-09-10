@@ -7,12 +7,14 @@ use whisker_router::{NavError, RouteSet, RouterHandle, routes};
 
 const CHAT: &str = "/";
 const SETTINGS: &str = "/settings";
+pub const SETUP: &str = "/setup";
 const CONNECTION: &str = "/settings/connection";
 
 pub fn routes() -> RouteSet {
     routes! {
         Stack {
             Route(path: "", component: ChatScreen)
+            Route(path: "setup", component: ConnectionScreen)
             Route(path: "settings", component: SettingsScreen)
             Route(path: "settings/connection", component: ConnectionScreen)
             Route(
@@ -25,8 +27,14 @@ pub fn routes() -> RouteSet {
 }
 
 pub fn start_setup(nav: &RouterHandle) -> Result<(), String> {
-    nav.replace(SETTINGS)
-        .map_err(|_| "Could not open settings.".into())
+    nav.replace(SETUP)
+        .map_err(|_| "Could not open connection setup.".into())
+}
+
+pub fn complete_setup(nav: &RouterHandle, notice: RwSignal<String>) {
+    if nav.replace(CHAT).is_err() {
+        notice.set("Could not open the conversation.".into());
+    }
 }
 
 pub fn open_settings(nav: &RouterHandle, notice: RwSignal<String>) {
@@ -82,11 +90,11 @@ mod tests {
     }
 
     #[test]
-    fn completing_setup_replaces_the_initial_settings_entry() {
+    fn completing_setup_replaces_the_initial_setup_entry() {
         with_navigation(|nav, notice| {
             start_setup(&nav).unwrap();
-            assert_eq!(use_pathname().get_untracked(), SETTINGS);
-            return_to_chat(&nav, notice);
+            assert_eq!(use_pathname().get_untracked(), SETUP);
+            complete_setup(&nav, notice);
             assert_eq!(use_pathname().get_untracked(), CHAT);
             assert_eq!(nav.back(), Err(NavError::NothingToPop));
             assert!(notice.get_untracked().is_empty());

@@ -1,25 +1,33 @@
 use super::{button::Button, navigation, theme};
 use crate::state::AppState;
 use whisker::prelude::*;
-use whisker_router::{Outlet, use_navigator};
+use whisker_router::{Outlet, use_navigator, use_pathname};
 
 #[component]
 pub fn startup() -> Element {
     let app = use_context::<AppState>().expect("AppState context");
     let nav = use_navigator();
     let restored = signal(None::<Result<(), String>>);
+    let pathname = use_pathname();
+    let restore_app = app.clone();
+    let restore_nav = nav.clone();
     let restore = Callback::new(move |()| {
-        let result = app.restore().and_then(|()| {
-            if app.connection().get_untracked().is_none()
-                && app
-                    .active()
-                    .is_none_or(|s| s.turns.with_untracked(Vec::is_empty))
-            {
-                navigation::start_setup(&nav)?;
+        let result = restore_app.restore().and_then(|()| {
+            if !restore_app.ready() {
+                navigation::start_setup(&restore_nav)?;
             }
             Ok(())
         });
         restored.set(Some(result));
+    });
+    effect(move || {
+        if restored.with(|result| matches!(result, Some(Ok(()))))
+            && !app.ready()
+            && pathname.get() != navigation::SETUP
+            && let Err(error) = navigation::start_setup(&nav)
+        {
+            app.notice().set(error);
+        }
     });
     on_mount(move || restore.call());
     render! {

@@ -58,7 +58,8 @@ pub fn use_chat(session: Session) -> ChatActions {
             } else {
                 following.set(true);
                 if let Err(SendError::MissingConnection) = app.send(session) {
-                    settings.call();
+                    app.notice()
+                        .set("Add an API key in Settings to continue.".into());
                 }
             }
         }
@@ -68,7 +69,8 @@ pub fn use_chat(session: Session) -> ChatActions {
         move |()| {
             following.set(true);
             if let Err(SendError::MissingConnection) = app.retry(session) {
-                settings.call();
+                app.notice()
+                    .set("Add an API key in Settings to continue.".into());
             }
         }
     });

@@ -70,6 +70,10 @@ impl AppState {
     pub fn client(&self) -> Result<ApiClient, crate::api::ApiError> {
         self.0.client.clone()
     }
+    pub fn ready(&self) -> bool {
+        self.0.connection.get().is_some() && self.has_key()
+    }
+
     pub fn has_key(&self) -> bool {
         !self.0.key.borrow().is_empty()
     }

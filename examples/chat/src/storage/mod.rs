@@ -1,3 +1,6 @@
+#[cfg(any(target_arch = "wasm32", test))]
+mod browser_key;
+
 use crate::state::{Connection, Conversation, Library};
 use serde::{Deserialize, Serialize};
 use whisker_local_store::WhiskerLocalStore;
@@ -57,7 +60,7 @@ fn save<T: Serialize>(key: &str, value: &T) -> Result<(), String> {
     }
 }
 
-pub fn persistent_keys_available() -> bool {
+pub fn secure_keys_available() -> bool {
     cfg!(any(target_os = "android", target_os = "ios"))
 }
 
@@ -68,7 +71,9 @@ pub fn load_key(connection: &Connection) -> Result<Option<String>, String> {
         connection.base_url
     ))
     .map_err(|_| "Could not restore your API key. Enter it again in Settings.".into());
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(target_arch = "wasm32")]
+    return browser_key::load(connection);
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
     {
         let _ = connection;
         Ok(None)
@@ -94,7 +99,9 @@ pub fn save_key(connection: &Connection, key: &str, remember: bool) -> Result<()
         WhiskerSecureStore::remove(format!("chat.api-key.v1:{}", connection.base_url))
             .map_err(|_| "Could not remove the saved API key.".into())
     }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(target_arch = "wasm32")]
+    return browser_key::save(connection, key, remember);
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
     {
         let _ = (connection, key, remember);
         Ok(())

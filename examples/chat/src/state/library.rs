@@ -98,6 +98,22 @@ mod tests {
     }
 
     #[test]
+    fn saved_connection_and_history_do_not_bypass_missing_key_setup() {
+        with_app(|app| {
+            app.new_conversation();
+            app.0.connection.set(Some(Connection::default()));
+            assert!(!app.ready());
+            *app.0.key.borrow_mut() = "test-key".into();
+            assert!(app.ready());
+            app.0.key.borrow_mut().clear();
+            assert!(!app.ready());
+            *app.0.key.borrow_mut() = "test-key".into();
+            app.0.connection.set(None);
+            assert!(!app.ready());
+        });
+    }
+
+    #[test]
     fn switching_and_trashing_preserve_other_drafts_and_restore_identity() {
         with_app(|app| {
             app.new_conversation();

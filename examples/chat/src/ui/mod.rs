@@ -10,6 +10,8 @@ mod history_dialog;
 mod history_row;
 mod history_sidebar;
 mod history_transition;
+mod history_trigger;
+mod key_storage_choice;
 mod markdown;
 mod messages;
 pub(crate) mod navigation;
