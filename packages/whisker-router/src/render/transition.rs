@@ -136,14 +136,14 @@ impl std::fmt::Debug for RouteTransition {
     }
 }
 
-/// Platform defaults: iOS slides, Android uses slide-fade for pushes and
-/// an opaque horizontal slide for button backs, and Web/Desktop swap instantly.
+/// Platform defaults: iOS slides, Android uses a small slide and fade,
+/// and Web/Desktop swap instantly.
 /// Android back gestures use the separate interactive predictive-back pose.
 impl Default for RouteTransition {
     fn default() -> Self {
         #[cfg(target_os = "android")]
         {
-            RouteTransition::custom(AndroidDefault)
+            RouteTransition::slide_fade()
         }
         #[cfg(target_os = "ios")]
         {
@@ -546,27 +546,6 @@ impl Transition for Slide {
     }
 }
 
-#[cfg(any(target_os = "android", test))]
-pub(super) struct AndroidDefault;
-
-#[cfg(any(target_os = "android", test))]
-impl Transition for AndroidDefault {
-    fn config(&self) -> AnimConfig {
-        SlideFade.config()
-    }
-
-    fn name(&self) -> &'static str {
-        "android"
-    }
-
-    fn pose(&self, ctx: PoseContext) -> Pose {
-        match ctx.direction {
-            Direction::Push => SlideFade.pose(ctx),
-            Direction::Pop => Slide.pose(ctx),
-        }
-    }
-}
-
 /// Small horizontal slide plus fade, with an opaque under route.
 struct SlideFade;
 impl Transition for SlideFade {
@@ -673,7 +652,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn desktop_and_web_default_to_an_instant_transition() {
+    fn platform_default_uses_the_expected_transition() {
+        #[cfg(target_os = "android")]
+        assert_eq!(RouteTransition::default().name(), "slide-fade");
+        #[cfg(target_os = "ios")]
+        assert_eq!(RouteTransition::default().name(), "slide");
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         assert_eq!(RouteTransition::default().name(), "none");
     }
