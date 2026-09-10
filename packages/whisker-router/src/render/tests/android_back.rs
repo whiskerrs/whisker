@@ -1,9 +1,7 @@
 use super::*;
 use crate::render::handle::StackBridge;
 use crate::render::platform_navigation::begin_with_mode;
-use crate::render::transition::{
-    AndroidDefault, Direction, PoseContext, PoseMode, Role, Transition, pose_for,
-};
+use crate::render::transition::{Direction, PoseMode, pose_for};
 use whisker::css::{LengthPercentage, TransformFn};
 
 fn android_stack() -> RouterHandle {
@@ -13,11 +11,9 @@ fn android_stack() -> RouterHandle {
     ]));
     let mut registry = RouteRegistry::new();
     for id in ["home", "detail"] {
-        registry = registry.route_with(
-            id,
-            RouteTransition::custom(AndroidDefault),
-            |_: &RouteInstance| whisker::runtime::view::create_phantom_element(),
-        );
+        registry = registry.route_with(id, RouteTransition::slide_fade(), |_: &RouteInstance| {
+            whisker::runtime::view::create_phantom_element()
+        });
     }
     let nav = RouterHandle::new((tree, registry));
     mount_node(&nav, NodePath::root());
@@ -28,10 +24,10 @@ fn android_stack() -> RouterHandle {
     nav
 }
 
-fn assert_button_slide(bridge: &StackBridge) {
-    for (binding, translation) in [
-        (bridge.top_pose.as_ref().unwrap(), 50.0),
-        (bridge.under_pose.as_ref().unwrap(), -15.0),
+fn assert_button_slide_fade(bridge: &StackBridge) {
+    for (binding, translation, opacity) in [
+        (bridge.top_pose.as_ref().unwrap(), 4.0, 0.5),
+        (bridge.under_pose.as_ref().unwrap(), -2.0, 1.0),
     ] {
         let mode = binding.mode.get_untracked();
         assert!(matches!(mode, PoseMode::Transition(_, Direction::Pop)));
@@ -42,23 +38,87 @@ fn assert_button_slide(bridge: &StackBridge) {
             panic!("button back must only translate horizontally: {pose:?}");
         };
         assert!((x.0 - translation).abs() < 0.0001);
-        assert_eq!(pose.opacity, 1.0);
+        assert_eq!(pose.opacity, opacity);
         assert_eq!(pose.radius_px, 0.0);
     }
     assert!(bridge.dim_drive.unwrap().get_untracked().is_none());
 }
 
 #[test]
-fn android_button_back_slides_both_routes_without_scale_or_fade() {
+fn android_button_back_uses_a_small_slide_and_fade_without_scale() {
     with_runtime(|| {
         let nav = android_stack();
         let bridge = nav.active_stack_bridge().unwrap();
         nav.back().unwrap();
         flush();
-        assert_button_slide(&bridge);
+        assert_button_slide_fade(&bridge);
         settle_animations();
         assert_eq!(nav.current().get().path, NodePath(vec![0]));
     });
+}
+
+#[test]
+fn android_button_preview_events_do_not_start_a_swipe() {
+    use crate::render::platform_navigation::install_android_predictive_back;
+    use whisker::platform_module::WhiskerValue;
+    use whisker::runtime::module::{ModuleHost, with_module_host};
+
+    for with_progress in [false, true] {
+        with_runtime(|| {
+            let host = ModuleHost::new(
+                |_, _, _, _, result| {
+                    result(WhiskerValue::Null);
+                    true
+                },
+                |_, _, _| {},
+            );
+            with_module_host(&host, || {
+                let nav = android_stack();
+                let bridge = nav.active_stack_bridge().unwrap();
+                install_android_predictive_back(nav.clone());
+                let payload = WhiskerValue::Map(
+                    [
+                        ("swipeEdge".into(), WhiskerValue::Int(2)),
+                        ("progress".into(), WhiskerValue::Float(0.5)),
+                    ]
+                    .into_iter()
+                    .collect(),
+                );
+                let events = if with_progress {
+                    &["backStarted", "backProgressed"][..]
+                } else {
+                    &["backStarted"][..]
+                };
+                for event in events {
+                    assert!(host.dispatch_event(
+                        "whisker-router:PredictiveBack",
+                        event,
+                        payload.clone()
+                    ));
+                }
+                flush();
+                let binding = bridge.top_pose.as_ref().unwrap();
+                assert!(matches!(
+                    binding.mode.get_untracked(),
+                    PoseMode::Transition(_, Direction::Push)
+                ));
+                assert_eq!(
+                    binding.ctrl.get_untracked().value().get_untracked(),
+                    1.0,
+                    "a button preview must not scrub the swipe controller"
+                );
+                assert!(host.dispatch_event(
+                    "whisker-router:PredictiveBack",
+                    "backInvoked",
+                    WhiskerValue::Null
+                ));
+                flush();
+                assert_button_slide_fade(&bridge);
+                settle_animations();
+                assert_eq!(nav.current().get().path, NodePath(vec![0]));
+            });
+        });
+    }
 }
 
 #[test]
@@ -98,21 +158,8 @@ fn android_button_back_after_cancelled_swipe_does_not_reuse_predictive_pose() {
         assert_eq!(nav.current().get().path, NodePath(vec![1]));
         nav.back().unwrap();
         flush();
-        assert_button_slide(&bridge);
+        assert_button_slide_fade(&bridge);
         settle_animations();
         assert_eq!(nav.current().get().path, NodePath(vec![0]));
     });
-}
-
-#[test]
-fn android_push_keeps_the_slide_fade_transition() {
-    for role in [Role::Top, Role::Under] {
-        for progress in [0.0, 0.5, 1.0] {
-            let ctx = PoseContext::new(role, progress, Direction::Push);
-            let actual = AndroidDefault.pose(ctx);
-            let expected = RouteTransition::slide_fade().pose(ctx);
-            assert_eq!(actual.transform, expected.transform);
-            assert_eq!(actual.opacity, expected.opacity);
-        }
-    }
 }

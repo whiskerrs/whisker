@@ -350,7 +350,7 @@ fn point(binding: &PoseBinding, c: &AnimationController, role: Role, mode: PoseM
 ///
 /// On API < 34 the platform delivers only `backInvoked` (no preview), so
 /// back still works without the interactive drag preview.
-fn install_android_predictive_back(nav: RouterHandle) {
+pub(super) fn install_android_predictive_back(nav: RouterHandle) {
     let module = pb_module();
 
     // Prime the device radius once the Host view is attached. Gesture events
@@ -406,7 +406,7 @@ fn install_android_predictive_back(nav: RouterHandle) {
             // Fallback in case the router-init fetch ran before the host
             // Activity attached (idempotent once installed).
             try_fetch_device_corner_radius();
-            *state.borrow_mut() = begin(nav, back_edge(&payload));
+            *state.borrow_mut() = back_edge(&payload).and_then(|edge| begin(nav, edge));
         })
     };
 
@@ -540,16 +540,15 @@ pub(crate) fn try_fetch_device_corner_radius() {
     CORNER_RADIUS_INSTALLED.store(true, Ordering::Relaxed);
 }
 
-/// Read `swipeEdge` (0 = left, 1 = right) from a back-event payload,
-/// defaulting to left.
-fn back_edge(payload: &WhiskerValue) -> SwipeEdge {
+// Android also sends preview events for buttons, with EDGE_NONE (2).
+fn back_edge(payload: &WhiskerValue) -> Option<SwipeEdge> {
     let WhiskerValue::Map(fields) = payload else {
-        return SwipeEdge::Left;
+        return None;
     };
     match fields.get(PB_K_SWIPE_EDGE) {
-        Some(WhiskerValue::Int(v)) => SwipeEdge::from_android(*v),
-        Some(WhiskerValue::Float(v)) => SwipeEdge::from_android(*v as i64),
-        _ => SwipeEdge::Left,
+        Some(WhiskerValue::Int(0)) | Some(WhiskerValue::Float(0.0)) => Some(SwipeEdge::Left),
+        Some(WhiskerValue::Int(1)) | Some(WhiskerValue::Float(1.0)) => Some(SwipeEdge::Right),
+        _ => None,
     }
 }
 
