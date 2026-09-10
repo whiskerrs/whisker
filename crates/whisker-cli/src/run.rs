@@ -207,6 +207,15 @@ fn run_inner(
     };
     let web = match target {
         Target::Web => Some(WebParams {
+            base_path: format!(
+                "{}/",
+                m.config
+                    .web
+                    .base_path
+                    .as_deref()
+                    .unwrap_or("/")
+                    .trim_end_matches('/')
+            ),
             project_dir: sync.gen_dir.clone(),
             target_dir: workspace_root.join("target/.whisker/web"),
             dist_dir: sync.gen_dir.join("dist"),

@@ -65,6 +65,8 @@ pub struct Config {
     pub url_schemes: Vec<String>,
     pub ios: IosConfig,
     pub android: AndroidConfig,
+    #[serde(default)]
+    pub web: WebConfig,
     /// Per-plugin Config serialized as JSON, keyed by the Config
     /// struct's `PluginConfig::NAME`. `whisker-cng` reads this map
     /// when composing the plugin pipeline — every entry corresponds
@@ -75,6 +77,26 @@ pub struct Config {
     /// and HashMap's random ordering would break the skip path.
     #[serde(default)]
     pub plugins: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct WebConfig {
+    /// URL path under which the Web app is served; defaults to `/`.
+    pub base_path: Option<String>,
+    /// SVG, PNG, or ICO favicon path relative to the application directory.
+    pub favicon: Option<PathBuf>,
+}
+
+impl WebConfig {
+    pub fn base_path(&mut self, path: impl Into<String>) -> &mut Self {
+        self.base_path = Some(path.into());
+        self
+    }
+
+    pub fn favicon(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.favicon = Some(path.into());
+        self
+    }
 }
 
 impl Config {
@@ -125,6 +147,11 @@ impl Config {
 
     pub fn android(&mut self, f: impl FnOnce(&mut AndroidConfig)) -> &mut Self {
         f(&mut self.android);
+        self
+    }
+
+    pub fn web(&mut self, f: impl FnOnce(&mut WebConfig)) -> &mut Self {
+        f(&mut self.web);
         self
     }
 

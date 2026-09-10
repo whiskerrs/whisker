@@ -1,5 +1,7 @@
 //! Web History API Host adapter for `whisker-router`.
 
+mod base_path;
+
 use std::cell::RefCell;
 
 use wasm_bindgen::JsCast;
@@ -79,11 +81,23 @@ fn window() -> Result<web_sys::Window, String> {
     web_sys::window().ok_or_else(|| "browser Window is unavailable".into())
 }
 
+fn deployment_base(window: &web_sys::Window) -> Result<String, String> {
+    let document = window.document().ok_or("browser Document is unavailable")?;
+    Ok(document
+        .query_selector("meta[name=\"whisker-base-path\"]")
+        .map_err(js_error)?
+        .and_then(|element| element.get_attribute("content"))
+        .unwrap_or_else(|| "/".into()))
+}
+
 fn current_url(window: &web_sys::Window) -> Result<String, String> {
     let location = window.location();
     Ok(format!(
         "{}{}{}",
-        location.pathname().map_err(js_error)?,
+        base_path::app_path(
+            &deployment_base(window)?,
+            &location.pathname().map_err(js_error)?
+        )?,
         location.search().map_err(js_error)?,
         location.hash().map_err(js_error)?,
     ))
@@ -106,7 +120,7 @@ fn initialize() -> Result<WhiskerValue, String> {
         .replace_state_with_url(
             &wasm_bindgen::JsValue::from_str(&state.encode()),
             "",
-            Some(&url),
+            Some(&base_path::browser_url(&deployment_base(&window)?, &url)?),
         )
         .map_err(js_error)?;
     Ok(location_payload(url, state.target))
@@ -116,7 +130,9 @@ fn write(args: &[WhiskerValue], replace: bool) -> Result<WhiskerValue, String> {
     let [WhiskerValue::String(url), WhiskerValue::String(target)] = args else {
         return Err("History push/replace requires public URL and internal target strings".into());
     };
-    let history = window()?.history().map_err(js_error)?;
+    let window = window()?;
+    let url = base_path::browser_url(&deployment_base(&window)?, url)?;
+    let history = window.history().map_err(js_error)?;
     let current_index = history
         .state()
         .ok()
@@ -134,11 +150,11 @@ fn write(args: &[WhiskerValue], replace: bool) -> Result<WhiskerValue, String> {
     let encoded = wasm_bindgen::JsValue::from_str(&state.encode());
     if replace {
         history
-            .replace_state_with_url(&encoded, "", Some(url))
+            .replace_state_with_url(&encoded, "", Some(&url))
             .map_err(js_error)?;
     } else {
         history
-            .push_state_with_url(&encoded, "", Some(url))
+            .push_state_with_url(&encoded, "", Some(&url))
             .map_err(js_error)?;
     }
     Ok(WhiskerValue::Null)

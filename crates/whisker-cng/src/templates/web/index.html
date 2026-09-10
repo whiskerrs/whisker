@@ -3,7 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="whisker-base-path" content="{{base_path}}" />
     <title>{{app_name_html}}</title>
+    {{favicon_html}}
     <style>
       html, body, #whisker-root {
         width: 100%;
@@ -17,7 +19,7 @@
     <div id="whisker-root"></div>
     <pre id="whisker-dev-error" hidden></pre>
     <script type="module">
-      import init, * as whisker from "/whisker_app.js";
+      import init, * as whisker from "{{base_path}}whisker_app.js";
       const reportDevelopmentError = (error) => {
         const output = document.getElementById("whisker-dev-error");
         output.hidden = false;
