@@ -678,7 +678,7 @@ mod element_registry_tests {
             },
             payload: MeasurementPayload::Custom(CustomMeasurePayload {
                 version: 1,
-                data: Vec::new(),
+                data: WhiskerValue::Bytes(Vec::new()),
             }),
         };
         let module_request = WhiskerMeasureRequest::from(&request);

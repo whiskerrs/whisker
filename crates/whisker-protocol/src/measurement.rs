@@ -297,8 +297,8 @@ pub struct EmbeddedSurfaceMeasurePayload {
 pub struct CustomMeasurePayload {
     /// Module payload schema version.
     pub version: u16,
-    /// Opaque bytes interpreted only by the negotiated module schema.
-    pub data: Vec<u8>,
+    /// Structured data interpreted only by the negotiated module schema.
+    pub data: WhiskerValue,
 }
 
 /// Typed provider input carried across the Rust-to-Host boundary.
@@ -578,7 +578,7 @@ pub struct ModuleMeasureRequest {
     pub known_dimensions: [Option<f32>; 2],
     /// Remaining width and height availability, including min/max-content.
     pub available_space: [AvailableSpace; 2],
-    /// Version of module-owned payload bytes, or zero when no payload exists.
+    /// Version of module-owned payload data, or zero when no payload exists.
     pub payload_version: u16,
     /// Module-owned application data affecting intrinsic size.
     pub payload: WhiskerValue,
@@ -590,9 +590,7 @@ impl From<&MeasurementRequest> for ModuleMeasureRequest {
             MeasurementPayload::NativeControl(payload) => {
                 (payload.version, WhiskerValue::Bytes(payload.state.clone()))
             }
-            MeasurementPayload::Custom(payload) => {
-                (payload.version, WhiskerValue::Bytes(payload.data.clone()))
-            }
+            MeasurementPayload::Custom(payload) => (payload.version, payload.data.clone()),
             MeasurementPayload::Text(_)
             | MeasurementPayload::ReplacedContent(_)
             | MeasurementPayload::EmbeddedSurface(_) => (0, WhiskerValue::Null),
@@ -948,7 +946,10 @@ mod tests {
         request.constraints.known_dimensions = [Some(40.0), None];
         request.payload = MeasurementPayload::Custom(CustomMeasurePayload {
             version: 3,
-            data: vec![1, 2, 3],
+            data: WhiskerValue::map([
+                ("text", WhiskerValue::String("hello".into())),
+                ("width", WhiskerValue::Float(40.0)),
+            ]),
         });
         let module = ModuleMeasureRequest::from(&request);
         assert_eq!(module.known_dimensions, [Some(40.0), None]);
@@ -957,7 +958,13 @@ mod tests {
             [AvailableSpace::MaxContent, AvailableSpace::MinContent]
         );
         assert_eq!(module.payload_version, 3);
-        assert_eq!(module.payload, WhiskerValue::Bytes(vec![1, 2, 3]));
+        assert_eq!(
+            module.payload,
+            WhiskerValue::map([
+                ("text", WhiskerValue::String("hello".into())),
+                ("width", WhiskerValue::Float(40.0))
+            ])
+        );
 
         request.payload = MeasurementPayload::NativeControl(NativeControlMeasurePayload {
             control_type: 2,
@@ -1283,7 +1290,7 @@ mod tests {
 
         let custom_data = CustomMeasurePayload {
             version: 3,
-            data: vec![1, 2],
+            data: WhiskerValue::Bytes(vec![1, 2]),
         };
         let cloned = <CustomMeasurePayload as Clone>::clone(std::hint::black_box(&custom_data));
         assert_eq!(std::hint::black_box(cloned), custom_data);
@@ -1294,7 +1301,7 @@ mod tests {
         assert_eq!(
             MeasurementPayload::Custom(CustomMeasurePayload {
                 version: 0,
-                data: Vec::new(),
+                data: WhiskerValue::Bytes(Vec::new()),
             })
             .validate(),
             Err(MeasurementPayloadError::InvalidPayloadVersion)

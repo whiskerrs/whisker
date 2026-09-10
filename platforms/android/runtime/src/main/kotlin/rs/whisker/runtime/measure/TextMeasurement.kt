@@ -43,7 +43,7 @@ internal class HostMeasurementProvider(
         fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
         lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float,
         maxLines: Int, fontSettings: Array<String>, fontFeatureCount: Int,
-        fontOpticalSizing: Int, payloadVersion: Int, payload: ByteArray,
+        fontOpticalSizing: Int, payloadVersion: Int, payload: WhiskerValue?,
         intrinsicWidth: Float, intrinsicHeight: Float, intrinsicMask: Int,
         direction: Int, alignment: Int,
         paragraph: WhiskerValue? = null,
@@ -76,7 +76,7 @@ internal class HostMeasurementProvider(
                 if (knownMask and WIDTH != 0) knownWidth else null,
                 if (knownMask and HEIGHT != 0) knownHeight else null,
                 payloadVersion,
-                WhiskerValue.Bytes(payload),
+                payload ?: WhiskerValue.Null,
             ),
         ) ?: return HostMeasurementResult(status = UNSUPPORTED, reason = UNSUPPORTED_FEATURE)
         return ready(

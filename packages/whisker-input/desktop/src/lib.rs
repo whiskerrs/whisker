@@ -4,6 +4,8 @@
 //! `whisker-desktop` only routes window focus, keyboard, clipboard, and IME
 //! messages through its generic editable-text seam.
 
+mod measurement;
+
 use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
@@ -257,6 +259,11 @@ impl InputDesktopView {
             DesktopTextInputEvent::Commit(text) => self.commit(text),
             DesktopTextInputEvent::Preedit { text, cursor } => self.preedit(text, *cursor),
             DesktopTextInputEvent::Key { key, shift } => self.handle_key(*key, *shift),
+            DesktopTextInputEvent::Submit => {
+                if self.composition.is_none() {
+                    self.emit_value("submit");
+                }
+            }
             DesktopTextInputEvent::SelectAll => {
                 self.selection = (0, self.value.len());
                 self.invalidate();
@@ -416,42 +423,6 @@ impl InputDesktopView {
             .text_style
             .as_ref()
             .map_or(&default_style, |style| &style.style);
-        let font_size = style.font_size * scale;
-        let line_height = match style.line_height {
-            MeasureLineHeight::Normal => font_size * 1.2,
-            MeasureLineHeight::LogicalPixels(value) => value * scale,
-        };
-        let mut buffer = Buffer::new(&mut state.font_system, Metrics::new(font_size, line_height));
-        buffer.set_size(
-            &mut state.font_system,
-            Some(width as f32),
-            Some(height as f32),
-        );
-        buffer.set_wrap(
-            &mut state.font_system,
-            if self.multiline {
-                Wrap::Word
-            } else {
-                Wrap::None
-            },
-        );
-        let family = style
-            .font_families
-            .iter()
-            .map(|family| match family {
-                MeasureFontFamily::System => Family::SansSerif,
-                MeasureFontFamily::Named(name) => Family::Name(name),
-            })
-            .next()
-            .unwrap_or(Family::SansSerif);
-        let attrs = Attrs::new()
-            .family(family)
-            .weight(Weight(style.font_weight))
-            .style(match style.font_style {
-                MeasureFontStyle::Normal => Style::Normal,
-                MeasureFontStyle::Italic => Style::Italic,
-                MeasureFontStyle::Oblique => Style::Oblique,
-            });
         let placeholder = self.value.is_empty() && !self.placeholder.is_empty();
         let display = if placeholder {
             self.placeholder.clone()
@@ -460,8 +431,22 @@ impl InputDesktopView {
         } else {
             self.value.clone()
         };
-        buffer.set_text(&mut state.font_system, &display, &attrs, Shaping::Advanced);
-        buffer.shape_until_scroll(&mut state.font_system, false);
+        let (mut buffer, line_height) = measurement::text_buffer(
+            &mut state.font_system,
+            &display,
+            style,
+            self.multiline,
+            Some(width as f32),
+            Some(height as f32),
+            scale,
+        );
+        if !placeholder {
+            buffer.shape_until_cursor(
+                &mut state.font_system,
+                text_cursor(&display, self.display_offset(self.selection.1)),
+                false,
+            );
+        }
         InputTextLayout {
             buffer,
             display,
@@ -560,6 +545,8 @@ impl WhiskerModule for InputModule {
     fn definition() -> Self::Definition {
         ModuleDefinition::new().name(MODULE_NAME).view(
             DesktopViewDefinition::new(MODULE_NAME, InputDesktopView::new)
+                .prop("auto-size", |_, _| {}, |_| {})
+                .measurement(measurement::measure)
                 .prop(
                     "value",
                     set_string(|view, value| view.set_value(value)),
@@ -905,6 +892,21 @@ mod tests {
         assert_eq!(input.value, "é日");
         assert_eq!(input.selection, (0, 0));
         assert_eq!(input.composition, Some((0, "é日".len())));
+    }
+
+    #[test]
+    fn explicit_submit_preserves_multiline_text_and_marked_text() {
+        let mut input = InputDesktopView::new(DesktopEventEmitter::default());
+        input.multiline = true;
+        input.set_value("draft");
+        input.handle_input(&DesktopTextInputEvent::Submit);
+        assert_eq!(input.value, "draft");
+        input.preedit("に", None);
+        let value = input.value.clone();
+        let composition = input.composition;
+        input.handle_input(&DesktopTextInputEvent::Submit);
+        assert_eq!(input.value, value);
+        assert_eq!(input.composition, composition);
     }
 
     #[test]

@@ -807,3 +807,49 @@ mod reentrancy {
         assert!(log.iter().any(|l| l == "set_attr 101 level=3"));
     }
 }
+
+#[test]
+fn released_children_leave_no_stale_detach_or_phantom_mirror_entries() {
+    crate::reactive::__reset_for_tests();
+    let (renderer, log) = RecordingRenderer::with_log();
+    with_installed_renderer(Box::new(renderer), || {
+        for phantom in [false, true] {
+            let parent = create_element(ElementTag::View);
+            let child = if phantom {
+                create_phantom_element()
+            } else {
+                create_element(ElementTag::View)
+            };
+            append_child(parent, child);
+            release_element(child);
+            assert!(children_of(parent).is_empty());
+            log.borrow_mut().clear();
+            remove_child(parent, child);
+            assert!(log.borrow().is_empty());
+            release_element(parent);
+        }
+    });
+}
+
+#[test]
+fn releasing_a_parent_clears_surviving_child_parent_links() {
+    crate::reactive::__reset_for_tests();
+    let (renderer, log) = RecordingRenderer::with_log();
+    with_installed_renderer(Box::new(renderer), || {
+        let parent = create_element(ElementTag::View);
+        let child = create_element(ElementTag::View);
+        append_child(parent, child);
+        release_element(parent);
+        assert!(children_of(parent).is_empty());
+        log.borrow_mut().clear();
+        remove_child(parent, child);
+        assert!(log.borrow().is_empty());
+        let replacement = create_element(ElementTag::View);
+        append_child(replacement, child);
+        assert_eq!(children_of(replacement), vec![child]);
+        remove_child(replacement, child);
+        assert!(children_of(replacement).is_empty());
+        release_element(child);
+        release_element(replacement);
+    });
+}

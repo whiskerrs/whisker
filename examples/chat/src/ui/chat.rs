@@ -1,0 +1,134 @@
+use super::{
+    button::Button, chat_layout, composer::Composer, history_sidebar::HistorySidebar,
+    history_trigger::HistoryTrigger, messages::TurnRow, theme, welcome::Welcome,
+};
+use crate::{
+    hooks::{SidebarState, use_chat, use_sidebar},
+    state::{AppState, Session, Turn},
+};
+use whisker::css::{FontWeight, PositionKind};
+use whisker::prelude::*;
+use whisker_icons::lucide;
+use whisker_router::use_navigator;
+
+#[component]
+pub fn chat_screen() -> Element {
+    let app = use_context::<AppState>().expect("AppState context");
+    let selected = app.clone();
+    let sidebar = use_sidebar();
+    let element = render! {
+        View(
+            style: theme::style(move |palette| palette.screen().flex_direction(FlexDirection::Row)),
+        ) {
+            HistorySidebar(state: sidebar)
+            ForEach(
+                each: move || selected.active().into_iter().collect::<Vec<_>>(),
+                key: |session: &Session| session.id,
+                children: move |session: Session| render! {
+                    ConversationView(session: session, sidebar: sidebar)
+                },
+            )
+        }
+    };
+    sidebar.observe_container(element);
+    element
+}
+
+#[component]
+fn conversation_view(session: Session, sidebar: SidebarState) -> Element {
+    let app = use_context::<AppState>().expect("AppState context");
+    let actions = use_chat(session);
+    let input_height = signal(theme::size::TOUCH);
+    let nav = use_navigator();
+    let notice = app.notice();
+    let connection = app.connection();
+    let scroll = actions.scroll;
+    let list_ref = actions.list.r();
+    let retry = actions.retry;
+    let open_history = Callback::new(move |()| {
+        if sidebar.compact.get_untracked() {
+            if nav.navigate("/history").is_err() {
+                notice.set("Could not open conversations.".into());
+            }
+        } else {
+            sidebar.open.update(|open| *open = !*open);
+        }
+    });
+    render! {
+        View(style: theme::fill().position(PositionKind::Relative)) {
+            Show(when: move || session.turns.with(Vec::is_empty)) {
+                Welcome(draft: session.draft, input_height: input_height)
+            }
+            Show(when: move || !session.turns.with(Vec::is_empty)) {
+                List(
+                    each: move || session.turns.get(),
+                    key: |turn: &RwSignal<Turn>| turn.with_untracked(|t| t.id),
+                    children: move |turn: ReadSignal<RwSignal<Turn>>| render! {
+                        TurnRow(turn: turn.get_untracked(), session: session, retry: retry)
+                    },
+                    list_ref: list_ref.clone(),
+                    header: || chat_layout::spacer(chat_layout::CONTENT_TOP),
+                    footer: move || render! {
+                        View(
+                            style: computed(move || {
+                                theme::column()
+                                    .height(px(chat_layout::content_bottom(input_height.get())))
+                                    .flex_shrink(0.0)
+                            }),
+                        )
+                    },
+                    on_scroll: move |event| scroll.changed.run(event),
+                    style: theme::fill(),
+                )
+            }
+            View(
+                style: theme::style(move |palette| {
+                    chat_layout::header()
+                        .background_color(Color::hex(palette.paper))
+                        .border_radius(px(theme::radius::CARD))
+                        .border(
+                            whisker::css::Border::new()
+                                .width(px(1))
+                                .color(Color::hex(palette.border))
+                                .style(whisker::css::BorderStyle::Solid),
+                        )
+                }),
+            ) {
+                HistoryTrigger(sidebar: sidebar, pressed: open_history)
+                View(style: theme::fill().margin_right(px(theme::space::SM))) {
+                    Text(
+                        value: session.title,
+                        max_lines: 1u32,
+                        style: theme::style(move |palette| palette.text(15.0).font_weight(FontWeight::Bold)),
+                    )
+                    Text(
+                        value: computed(move || {
+                            connection
+                                .get()
+                                .map(|c| c.model)
+                                .unwrap_or_else(|| "Connect a model".into())
+                        }),
+                        max_lines: 1u32,
+                        style: theme::style(move |palette| palette.muted()),
+                    )
+                }
+                Button(
+                    label: "",
+                    icon: lucide::Settings2,
+                    accessible_label: "Settings",
+                    on_press: actions.settings,
+                )
+            }
+            Show(when: move || !scroll.at_end.get() && !session.turns.with(Vec::is_empty)) {
+                View(
+                    style: computed(move || chat_layout::latest(input_height.get())),
+                ) {
+                    Button(label: "Latest", icon: lucide::ArrowDown, on_press: actions.latest)
+                }
+            }
+            View(style: chat_layout::composer()) {
+                Composer(session: session, actions: actions, input_height: input_height)
+            }
+        }
+    }
+}

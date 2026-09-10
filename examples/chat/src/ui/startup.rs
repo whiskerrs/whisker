@@ -1,0 +1,63 @@
+use super::{button::Button, navigation, theme};
+use crate::state::AppState;
+use whisker::prelude::*;
+use whisker_router::{Outlet, use_navigator, use_pathname};
+
+#[component]
+pub fn startup() -> Element {
+    let app = use_context::<AppState>().expect("AppState context");
+    let nav = use_navigator();
+    let restored = signal(None::<Result<(), String>>);
+    let pathname = use_pathname();
+    let restore_app = app.clone();
+    let restore_nav = nav.clone();
+    let restore = Callback::new(move |()| {
+        let result = restore_app.restore().and_then(|()| {
+            if !restore_app.ready() {
+                navigation::start_setup(&restore_nav)?;
+            }
+            Ok(())
+        });
+        restored.set(Some(result));
+    });
+    effect(move || {
+        if restored.with(|result| matches!(result, Some(Ok(()))))
+            && !app.ready()
+            && pathname.get() != navigation::SETUP
+            && let Err(error) = navigation::start_setup(&nav)
+        {
+            app.notice().set(error);
+        }
+    });
+    on_mount(move || restore.call());
+    render! {
+        View(style: theme::fill()) {
+            Show(when: move || restored.with(Option::is_none)) {
+                Text(
+                    value: "Whisker Chat — Loading…",
+                    style: theme::style(move |palette| palette.text(20.0).padding(px(24))),
+                )
+            }
+            Show(when: move || restored.with(|result| matches!(result, Some(Err(_))))) {
+                View(style: theme::column().padding(px(24)).gap(px(16))) {
+                    Text(
+                        value: computed(move || {
+                            restored.with(|result| match result {
+                                Some(Err(error)) => error.clone(),
+                                _ => String::new(),
+                            })
+                        }),
+                        style: theme::style(move |palette| palette.muted()),
+                    )
+                    Button(
+                        label: "Try loading again",
+                        on_press: restore,
+                    )
+                }
+            }
+            Show(when: move || restored.with(|result| matches!(result, Some(Ok(()))))) {
+                Outlet()
+            }
+        }
+    }
+}

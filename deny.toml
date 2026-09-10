@@ -29,13 +29,6 @@ yanked = "deny"
 #     compatible glyphon/wgpu release lets us remove both exceptions.
 #
 # Vulnerability accepted with rationale (no compatible fixed version):
-#   RUSTSEC-2026-0119  hickory-proto 0.24.4 ← atrium-identity's DoH TXT
-#     resolver, examples/bluesky ONLY. O(n²) CPU during DNS *message
-#     encoding* — reachable only by encoding a message with many
-#     compressible names. The example encodes a single `_atproto.<handle>`
-#     TXT query (one name) against a trusted DoH endpoint, so the
-#     pathological input isn't reachable. The fix lands in hickory 0.25,
-#     which atrium 0.24 doesn't yet allow. Revisit on the atrium bump.
 #   RUSTSEC-2026-0194 / RUSTSEC-2026-0195  quick-xml 0.38.4 <-
 #     zbus-xml 5.1 <- zbus-lockstep <- AccessKit's Linux AT-SPI backend.
 #     This path parses only the upstream AT-SPI crate's checked-in interface
@@ -49,10 +42,11 @@ yanked = "deny"
 #     ratatui uses resize/get_or_insert. Upgrading glyphon currently requires
 #     wgpu 28 and Rust 1.92; revisit with the existing glyphon/wgpu upgrade.
 ignore = [
+    # Syntect decodes bundled syntax/theme data; external bincode input is never accepted.
+    "RUSTSEC-2025-0141",
     "RUSTSEC-2024-0436",
     "RUSTSEC-2025-0119",
     "RUSTSEC-2026-0173",
-    "RUSTSEC-2026-0119",
     "RUSTSEC-2026-0206",
     "RUSTSEC-2026-0192",
     "RUSTSEC-2026-0194",

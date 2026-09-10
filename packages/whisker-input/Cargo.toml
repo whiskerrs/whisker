@@ -19,7 +19,7 @@ include = [
     "Cargo.toml",
     "Package.swift",
     "build.gradle.kts",
-    "src/lib.rs",
+    "src/**/*.rs",
     "android/**/*.kt",
     "ios/**/*.swift",
     "desktop/**/*.rs",

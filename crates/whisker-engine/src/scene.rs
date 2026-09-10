@@ -67,6 +67,11 @@ impl SceneNode {
         }
     }
 
+    /// Returns the current explicitly set element properties.
+    pub fn properties(&self) -> &BTreeMap<PropertyId, WhiskerValue> {
+        &self.properties
+    }
+
     /// Returns the registered element type.
     pub const fn element_type(&self) -> ElementTypeId {
         self.element_type
@@ -1702,9 +1707,20 @@ mod tests {
         scene
             .set_property(root, property, WhiskerValue::Bool(true))
             .expect("set property");
+        assert_eq!(
+            scene.node(root).unwrap().properties().get(&property),
+            Some(&WhiskerValue::Bool(true))
+        );
         scene
             .clear_property(root, property)
             .expect("clear property");
+        assert!(
+            !scene
+                .node(root)
+                .unwrap()
+                .properties()
+                .contains_key(&property)
+        );
         scene
             .set_pointer_capture(root, pointer)
             .expect("capture pointer");

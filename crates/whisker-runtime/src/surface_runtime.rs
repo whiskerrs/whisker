@@ -39,11 +39,18 @@ use whisker_engine::{
     lower_color, lower_paint, lower_transform,
 };
 
+mod module_measurement;
+
 const MAX_LIST_LAYOUT_PASSES: usize = 4;
 
 /// A mutation emitted by `render!` that could not enter the retained surface.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeBindingError {
+    /// A payload builder requires a leaf element with Custom measurement.
+    InvalidMeasurementBinding {
+        /// Element with an incompatible schema.
+        element: Element,
+    },
     /// Logical text content could not be lowered into a valid paragraph.
     InvalidParagraph {
         /// Element whose content failed validation.
@@ -405,6 +412,7 @@ impl SurfaceRuntime {
                 elements: HashMap::new(),
                 node_elements: HashMap::new(),
                 text_layout_observed: HashSet::new(),
+                module_measurements: HashMap::new(),
                 #[cfg(debug_assertions)]
                 text_style_diagnostics: RefCell::new(HashSet::new()),
                 presented_paragraphs: HashMap::new(),
@@ -795,6 +803,9 @@ impl SurfaceRuntime {
             state
                 .flush_background_projections()
                 .map_err(RuntimeLayoutError::Binding)?;
+            state
+                .flush_module_measurements()
+                .map_err(RuntimeLayoutError::Binding)?;
             let root = state.root.ok_or(RuntimeLayoutError::MissingRoot)?;
             let layout = state
                 .surface
@@ -1095,6 +1106,7 @@ struct BindingState {
     node_elements: HashMap<NodeId, Element>,
     text_queries: Rc<RefCell<crate::text_query::Queries>>,
     text_layout_observed: HashSet<Element>,
+    module_measurements: HashMap<Element, module_measurement::Binding>,
     #[cfg(debug_assertions)]
     text_style_diagnostics: RefCell<
         HashSet<(

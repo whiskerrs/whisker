@@ -183,7 +183,7 @@ fn declared_text_style_and_measurement_reach_the_module_handlers() {
         },
         payload: MeasurementPayload::Custom(CustomMeasurePayload {
             version: 1,
-            data: Vec::new(),
+            data: WhiskerValue::Bytes(Vec::new()),
         }),
     };
     assert!(matches!(

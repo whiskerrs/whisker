@@ -117,6 +117,13 @@ pub trait DynRenderer {
     fn create_element_by_schema(&self, schema: &ElementSchema) -> Element {
         self.create_element_by_name(&schema.name)
     }
+    /// Registers a property-to-payload projection for a Custom leaf element.
+    fn set_measurement_builder(
+        &self,
+        _handle: Element,
+        _builder: crate::module_measurement::MeasurementPayloadBuilder,
+    ) {
+    }
     fn release_element(&self, handle: Element);
 
     fn set_attribute(&self, handle: Element, key: &str, value: &str);
@@ -490,20 +497,23 @@ pub fn release_element(handle: Element) {
     for callback in callbacks.into_iter().flatten() {
         callback.cancel();
     }
-    if is_phantom(handle) {
-        // Phantom never reached Host; tear down mirror state only.
-        PHANTOM_ELEMENTS.with_borrow_mut(|s| {
-            s.remove(&handle);
-        });
-        CHILDREN_OF.with_borrow_mut(|m| {
-            m.remove(&handle);
-        });
-        PARENT_OF.with_borrow_mut(|m| {
-            m.remove(&handle);
-        });
-        return;
+    let parent = PARENT_OF.with_borrow_mut(|parents| parents.remove(&handle));
+    let children = CHILDREN_OF.with_borrow_mut(|entries| {
+        if let Some(parent) = parent.and_then(|parent| entries.get_mut(&parent)) {
+            parent.retain(|child| *child != handle);
+        }
+        entries.remove(&handle).unwrap_or_default()
+    });
+    PARENT_OF.with_borrow_mut(|parents| {
+        for child in children {
+            if parents.get(&child) == Some(&handle) {
+                parents.remove(&child);
+            }
+        }
+    });
+    if !PHANTOM_ELEMENTS.with_borrow_mut(|elements| elements.remove(&handle)) {
+        with_renderer(|renderer| renderer.release_element(handle), ());
     }
-    with_renderer(|r| r.release_element(handle), ())
 }
 
 /// Stores a framework-level element identifier.
@@ -792,8 +802,11 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
 
 /// Detach `child` from `parent` in the mirror. Host-side: any real
 /// descendants of `child` (or `child` itself if it's real) are
-/// removed from the nearest real ancestor.
+/// removed from the nearest real ancestor; an already detached child is ignored.
 pub fn remove_child(parent: Element, child: Element) {
+    if PARENT_OF.with_borrow(|parents| parents.get(&child).copied()) != Some(parent) {
+        return;
+    }
     let parent_is_phantom = is_phantom(parent);
     let child_is_phantom = is_phantom(child);
 
@@ -1073,4 +1086,18 @@ pub fn flush() {
 #[doc(hidden)]
 pub fn mark_inline_truncation(handle: Element) {
     with_renderer(|renderer| renderer.mark_inline_truncation(handle), ());
+}
+
+/// Registers the payload function declared by `module_element`.
+#[doc(hidden)]
+pub fn set_measurement_builder(
+    handle: Element,
+    builder: crate::module_measurement::MeasurementPayloadBuilder,
+) {
+    if !is_phantom(handle) {
+        with_renderer(
+            |renderer| renderer.set_measurement_builder(handle, builder),
+            (),
+        );
+    }
 }

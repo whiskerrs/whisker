@@ -676,7 +676,7 @@ class WhiskerView(context: Context) :
         requestStrings: Array<String>,
         fontFamilies: Array<Array<String>>,
         fontSettings: Array<Array<String>>,
-        payloads: Array<ByteArray>,
+        payloads: Array<WhiskerValue?>,
         paragraphs: Array<WhiskerValue?> = arrayOfNulls(payloads.size),
     ): HostMeasureBatchResponse = HostMeasureBatchAbi.measure(
         measurements,

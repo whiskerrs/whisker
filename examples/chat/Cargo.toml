@@ -1,0 +1,39 @@
+[package]
+name = "whisker-chat"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true, features = ["tokio"] }
+whisker-web-browser = { path = "../../packages/whisker-web-browser" }
+whisker-icons = { path = "../../packages/whisker-icons" }
+whisker-svg = { path = "../../packages/whisker-svg" }
+pulldown-cmark = { version = "0.13", default-features = false }
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
+whisker-router = { path = "../../packages/whisker-router" }
+whisker-input = { path = "../../packages/whisker-input" }
+whisker-keyboard = { path = "../../packages/whisker-keyboard" }
+whisker-safe-area = { path = "../../packages/whisker-safe-area" }
+whisker-local-store = { path = "../../packages/whisker-local-store" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+futures-util = { version = "0.3", features = ["async-await"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+url = "2"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tokio = { workspace = true, features = ["time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+gloo-timers = { version = "0.3", features = ["futures"] }
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+whisker-secure-store = { path = "../../packages/whisker-secure-store" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "net", "io-util", "time"] }

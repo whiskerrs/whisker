@@ -1379,7 +1379,7 @@ private class Driver(
             arrayOf(command.getString("text"), command.optString("locale", "")),
             arrayOf(families),
             arrayOf((featureSettings + variationSettings).toTypedArray()),
-            arrayOf(byteArrayOf()),
+            arrayOf(WhiskerValue.Null),
         )
         val result = floatArrayOf(
             batch.ints[0].toFloat(),

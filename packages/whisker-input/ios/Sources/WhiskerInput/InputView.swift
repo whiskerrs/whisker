@@ -94,8 +94,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     private var cachedAutocorrect: UITextAutocorrectionType = .default
     private var cachedSpellCheck: UITextSpellCheckingType = .default
     private var cachedTextColor: UIColor = .label
-    private var cachedFontSize: CGFloat = 17
-    private var cachedFontWeight: UIFont.Weight = .regular
+    private var typography = InputTypography(family: nil, size: 17, weight: 400, italic: false, lineHeight: nil, letterSpacing: 0)
     private var cachedTextAlignment: NSTextAlignment = .natural
 
     /// Distinguishes "no control yet" from "control exists, possibly needs
@@ -199,7 +198,10 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         if let tf = textField {
             if tf.text != s { tf.text = s }
         } else if let tv = textView {
-            if tv.text != s { tv.text = s }
+            if tv.text != s {
+                tv.text = s
+                applyFont()
+            }
         }
     }
 
@@ -228,9 +230,17 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     }
 
     private func applyFont() {
-        let font = UIFont.systemFont(ofSize: cachedFontSize, weight: cachedFontWeight)
-        textField?.font = font
-        textView?.font = font
+        textField?.font = typography.font
+        textView?.font = typography.font
+        var attributes = typography.attributes(alignment: cachedTextAlignment)
+        attributes[.foregroundColor] = cachedTextColor
+        textField?.defaultTextAttributes = attributes
+        if let view = textView {
+            let selection = view.selectedRange
+            view.textStorage.addAttributes(attributes, range: NSRange(location: 0, length: view.textStorage.length))
+            view.typingAttributes = attributes
+            view.selectedRange = selection
+        }
     }
 
     private func applyTextAlignment() {
@@ -393,8 +403,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
 
     public func applyTextStyle(_ style: WhiskerTextStyle) {
         cachedTextColor = style.color
-        cachedFontSize = style.fontSize
-        cachedFontWeight = Self.mapFontWeight(style.fontWeight)
+        typography = InputTypography(style)
         cachedTextAlignment = switch style.alignment {
         case .left: .left
         case .right: .right
@@ -516,20 +525,6 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         case "words":      return .words
         case "characters": return .allCharacters
         default:           return .sentences
-        }
-    }
-
-    private static func mapFontWeight(_ value: Int) -> UIFont.Weight {
-        switch value {
-        case ...150: .ultraLight
-        case ...250: .thin
-        case ...350: .light
-        case ...450: .regular
-        case ...550: .medium
-        case ...650: .semibold
-        case ...750: .bold
-        case ...850: .heavy
-        default: .black
         }
     }
 

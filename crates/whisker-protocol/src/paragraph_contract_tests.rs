@@ -155,7 +155,7 @@ fn paragraph_metrics_reject_unmatched_duplicate_and_nonfinite_placements() {
     assert!(!metrics.matches_payload(&payload));
     let custom = MeasurementPayload::Custom(CustomMeasurePayload {
         version: 1,
-        data: vec![],
+        data: WhiskerValue::Bytes(vec![]),
     });
     assert!(!metrics.matches_payload(&custom));
     metrics.paragraph = None;

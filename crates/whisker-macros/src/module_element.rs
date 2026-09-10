@@ -103,6 +103,7 @@ enum ModuleElementArgs {
     Schema {
         name: LitStr,
         measurement: Ident,
+        measurement_payload: Option<syn::Path>,
         text_style: bool,
         commands: Vec<(LitStr, Ident)>,
     },
@@ -111,6 +112,7 @@ enum ModuleElementArgs {
 struct SchemaArgs {
     name: LitStr,
     measurement: Ident,
+    measurement_payload: Option<syn::Path>,
     text_style: bool,
     commands: Vec<(LitStr, Ident)>,
 }
@@ -126,6 +128,7 @@ impl Parse for SchemaArgs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut name = None;
         let mut measurement = None;
+        let mut measurement_payload = None;
         let mut text_style = None;
         let mut commands = None;
 
@@ -157,7 +160,23 @@ impl Parse for SchemaArgs {
                             "duplicate `measurement` argument",
                         ));
                     }
-                    measurement = Some(input.parse()?);
+                    let kind: Ident = input.parse()?;
+                    if input.peek(syn::token::Paren) {
+                        if kind != "Custom" {
+                            return Err(syn::Error::new(
+                                kind.span(),
+                                "only `Custom` accepts a measurement payload function",
+                            ));
+                        }
+                        let content;
+                        syn::parenthesized!(content in input);
+                        measurement_payload = Some(content.parse::<syn::Path>()?);
+                        if !content.is_empty() {
+                            return Err(content
+                                .error("expected a single measurement payload function path"));
+                        }
+                    }
+                    measurement = Some(kind);
                 }
                 "text_style" => {
                     if text_style.is_some() {
@@ -212,6 +231,7 @@ impl Parse for SchemaArgs {
             name: name.ok_or_else(|| syn::Error::new(input.span(), "missing `name` argument"))?,
             measurement: measurement
                 .ok_or_else(|| syn::Error::new(input.span(), "missing `measurement` argument"))?,
+            measurement_payload,
             text_style: text_style.unwrap_or(false),
             commands: commands.unwrap_or_default(),
         })
@@ -226,6 +246,7 @@ fn parse_args(attr: TokenStream2) -> syn::Result<ModuleElementArgs> {
     Ok(ModuleElementArgs::Schema {
         name: args.name,
         measurement: args.measurement,
+        measurement_payload: args.measurement_payload,
         text_style: args.text_style,
         commands: args.commands,
     })
@@ -488,9 +509,26 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         ModuleElementArgs::Schema {
             name,
             measurement,
+            measurement_payload,
             text_style,
             commands,
         } => {
+            if let Some(path) = measurement_payload
+                && props
+                    .iter()
+                    .any(|prop| matches!(prop.kind, PropKind::Children | PropKind::TextChildren))
+            {
+                return syn::Error::new(
+                    path.span(),
+                    "measurement payload functions require a leaf module element without children",
+                )
+                .to_compile_error();
+            }
+            let registration = measurement_payload.as_ref().map(|path| {
+                quote! {
+                    ::whisker::runtime::view::renderer::set_measurement_builder(__element, #path);
+                }
+            });
             let definition = SchemaDefinition {
                 name,
                 measurement,
@@ -503,9 +541,13 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             };
             (
                 quote! {
-                    ::whisker::runtime::view::create_element_by_schema(
-                        &#schema_mod::schema()
-                    )
+                    {
+                        let __element = ::whisker::runtime::view::create_element_by_schema(
+                            &#schema_mod::schema()
+                        );
+                        #registration
+                        __element
+                    }
                 },
                 schema,
             )
@@ -629,9 +671,15 @@ pub fn expand_builtin(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         Ok(ModuleElementArgs::Schema {
             name,
             measurement,
+            measurement_payload,
             text_style,
             commands,
-        }) => (name, measurement, text_style, commands),
+        }) => {
+            if let Some(path) = measurement_payload {
+                return syn::Error::new(path.span(), "measurement payload functions are supported by `module_element`, not `builtin_element`").to_compile_error();
+            }
+            (name, measurement, text_style, commands)
+        }
         Ok(ModuleElementArgs::Legacy(name)) => {
             return syn::Error::new(
                 name.span(),
@@ -1364,6 +1412,57 @@ fn to_pascal_case(snake: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn measurement_payload_declarations_reject_non_custom_kinds() {
+        for kind in ["None", "Text", "ReplacedContent"] {
+            let args: TokenStream2 =
+                format!("name = \"test:Control\", measurement = {kind}(payload)")
+                    .parse()
+                    .unwrap();
+            let error = parse_args(args).err().expect("invalid measurement kind");
+            assert!(error.to_string().contains("only `Custom`"));
+        }
+    }
+
+    #[test]
+    fn measurement_payload_declarations_require_one_function_path() {
+        for arguments in ["", "one, two", "|context| context"] {
+            let args: TokenStream2 =
+                format!("name = \"test:Control\", measurement = Custom({arguments})")
+                    .parse()
+                    .unwrap();
+            assert!(parse_args(args).is_err());
+        }
+    }
+
+    #[test]
+    fn measurement_payload_declarations_require_leaf_module_elements() {
+        for children in [quote!(Children), quote!(TextChildren)] {
+            let output = expand(
+                quote!(
+                    name = "test:Control",
+                    measurement = Custom(measurement::payload)
+                ),
+                quote!(pub fn control(children: #children) {}),
+            )
+            .to_string();
+            assert!(output.contains("compile_error"));
+            assert!(output.contains("leaf module element"));
+        }
+        let output = expand_builtin(
+            quote!(
+                name = "test:Control",
+                measurement = Custom(measurement::payload)
+            ),
+            quote!(
+                pub fn control() {}
+            ),
+        )
+        .to_string();
+        assert!(output.contains("compile_error"));
+        assert!(output.contains("not `builtin_element`"));
+    }
 
     #[test]
     fn common_builder_props_cannot_enter_a_component_schema() {

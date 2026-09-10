@@ -1,5 +1,7 @@
 //! Browser Host implementation for `whisker-input`.
 
+mod measurement;
+
 use std::rc::Rc;
 
 use whisker_protocol::{
@@ -180,18 +182,11 @@ fn input_definition() -> WebViewDefinition<InputWebView> {
             let textarea = document
                 .create_element("textarea")?
                 .dyn_into::<web_sys::HtmlTextAreaElement>()?;
-            input.set_class_name("whisker-input-control");
-            textarea.set_class_name("whisker-input-control");
             configure_control(&input.clone().unchecked_into())?;
             configure_control(&textarea.clone().unchecked_into())?;
             textarea.style().set_property("resize", "none")?;
             textarea.style().set_property("display", "none")?;
-            let style = document.create_element("style")?;
-            style.set_text_content(Some(
-                ".whisker-input-control::placeholder{color:var(--whisker-placeholder-color)}\
-                 .whisker-input-control::selection{background:var(--whisker-selection-color)}",
-            ));
-            root.append_child(&style)?;
+            configure_root(document, &root)?;
             root.append_child(&input)?;
             root.append_child(&textarea)?;
 
@@ -320,19 +315,13 @@ fn input_definition() -> WebViewDefinition<InputWebView> {
     .prop(
         "max-length",
         |view, value| {
-            let value = match expect_int(value, "max-length")? {
-                value if value <= 0 => -1,
-                value => value.min(i32::MAX as i64) as i32,
-            };
-            view.input.set_max_length(value);
-            view.textarea.set_max_length(value);
-            Ok(())
+            set_max_length(
+                &view.input,
+                &view.textarea,
+                expect_int(value, "max-length")?,
+            )
         },
-        |view| {
-            view.input.set_max_length(-1);
-            view.textarea.set_max_length(-1);
-            Ok(())
-        },
+        |view| set_max_length(&view.input, &view.textarea, 0),
     )
     .prop(
         "keyboard-type",
@@ -381,10 +370,26 @@ fn input_definition() -> WebViewDefinition<InputWebView> {
         view.set_value(value);
         Ok(())
     })
+    .prop("auto-size", |_, _| Ok(()), |_| Ok(()))
+    .measurement(measurement::measure)
     .text_style(|view, style| view.apply_text_style(style))
 }
 
+fn configure_root(
+    document: &web_sys::Document,
+    root: &web_sys::HtmlElement,
+) -> Result<(), wasm_bindgen::JsValue> {
+    let style = document.create_element("style")?;
+    style.set_text_content(Some(
+        ".whisker-input-control::placeholder{color:var(--whisker-placeholder-color,#999999);opacity:1}\
+         .whisker-input-control::selection{background:var(--whisker-selection-color)}",
+    ));
+    root.append_child(&style)?;
+    Ok(())
+}
+
 fn configure_control(element: &web_sys::HtmlElement) -> Result<(), wasm_bindgen::JsValue> {
+    element.set_class_name("whisker-input-control");
     let style = element.style();
     for (name, value) in [
         ("position", "absolute"),
@@ -395,7 +400,7 @@ fn configure_control(element: &web_sys::HtmlElement) -> Result<(), wasm_bindgen:
         ("border", "0"),
         ("outline", "0"),
         ("margin", "0"),
-        ("padding", "0"),
+        ("padding", "inherit"),
         ("background", "transparent"),
     ] {
         style.set_property(name, value)?;
@@ -426,19 +431,28 @@ fn install_control_listeners(
             });
         })?);
     }
-    if !multiline {
+    {
         let emitter = emitter.clone();
         let value = Rc::clone(&value);
         listeners.push(Listener::new(target, "keydown", move |event| {
             let Some(event) = event.dyn_ref::<web_sys::KeyboardEvent>() else {
                 return;
             };
-            if event.key() == "Enter" && !event.is_composing() {
+            if is_submit_key(event, multiline) {
+                event.prevent_default();
                 emit_value(&emitter, "submit", &value());
             }
         })?);
     }
     Ok(())
+}
+
+fn is_submit_key(event: &web_sys::KeyboardEvent, multiline: bool) -> bool {
+    event.key() == "Enter"
+        && !event.is_composing()
+        && !event.repeat()
+        && (!multiline
+            || ((event.meta_key() || event.ctrl_key()) && !event.shift_key() && !event.alt_key()))
 }
 
 fn emit_value(emitter: &WebEventEmitter, event: &str, value: &str) {
@@ -538,9 +552,12 @@ fn color_prop(
     name: &'static str,
 ) -> impl Fn(&mut InputWebView, &WhiskerValue) -> Result<(), wasm_bindgen::JsValue> {
     move |view, value| {
-        view.root
-            .style()
-            .set_property(name, expect_string(value, name)?)
+        let value = expect_string(value, name)?;
+        if value.is_empty() {
+            view.root.style().remove_property(name).map(|_| ())
+        } else {
+            view.root.style().set_property(name, value)
+        }
     }
 }
 
@@ -623,6 +640,21 @@ fn js_error(message: &str) -> wasm_bindgen::JsValue {
     wasm_bindgen::JsValue::from_str(message)
 }
 
+fn set_max_length(
+    input: &web_sys::HtmlInputElement,
+    textarea: &web_sys::HtmlTextAreaElement,
+    value: i64,
+) -> Result<(), wasm_bindgen::JsValue> {
+    if value <= 0 {
+        input.remove_attribute("maxlength")?;
+        textarea.remove_attribute("maxlength")
+    } else {
+        let value = value.min(i32::MAX as i64).to_string();
+        input.set_attribute("maxlength", &value)?;
+        textarea.set_attribute("maxlength", &value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,3 +665,6 @@ mod tests {
         assert_eq!(definition.factories().len(), 1);
     }
 }
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod browser_tests;
