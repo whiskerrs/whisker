@@ -8,6 +8,17 @@ description = "Example app for `whisker-secure-store`. On launch it runs a save 
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = []
+
 [dependencies]
+whisker-config = { workspace = true }
 whisker = { workspace = true }
 whisker-secure-store = { path = ".." }

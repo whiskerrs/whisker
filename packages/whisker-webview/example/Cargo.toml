@@ -8,6 +8,17 @@ description = "Example app for `whisker-webview`. Exercises a URL-loading web vi
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = []
+
 [dependencies]
+whisker-config = { workspace = true }
 whisker = { workspace = true }
 whisker-webview = { path = ".." }

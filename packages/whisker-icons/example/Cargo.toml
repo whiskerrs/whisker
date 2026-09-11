@@ -8,7 +8,18 @@ description = "Example app for `whisker-icons`. Renders the entire Lucide-icon s
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = []
+
 [dependencies]
+whisker-config = { workspace = true }
 whisker = { workspace = true }
 whisker-icons = { path = ".." }
 # Reactive accessor for the host view's safe-area insets — used to

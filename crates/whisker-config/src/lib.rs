@@ -1,41 +1,53 @@
-//! App configuration types used by `whisker.rs`.
+//! App configuration types and the [`run`] entry point used by `whisker.rs`.
 //!
-//! Users build a `Config` via the builder API:
-//! ```ignore
-//! pub fn configure(app: &mut Config) {
-//!     app.name("MyApp")
-//!        .bundle_id("dev.example.myapp")
-//!        .background("#FFFFFF")
-//!        .version("1.0.0");
+//! Applications depend on this crate directly and register `whisker.rs` as a
+//! Cargo binary so rust-analyzer can provide completion and navigation.
+//! The binary's `main` function calls [`run`] to build a [`Config`] and write
+//! it as JSON for the Whisker CLI.
+//! The CLI evaluates this file in a lightweight probe containing configuration
+//! and plugin dependencies, without compiling the application library.
 //!
-//!     app.android(|a| a
-//!         .application_id("dev.example.myapp")
-//!         .launcher_activity(".MainActivity")
-//!         .min_sdk(24));
-//!
-//!     app.ios(|i| i
-//!         .bundle_id("dev.example.MyApp")
-//!         .scheme("MyApp")
-//!         .deployment_target("14.0"));
-//!
-//!     // Whisker CNG plugin declarations live alongside the platform
-//!     // blocks.
-//!     app.plugin::<Firebase>(|c| c
-//!         .google_service_path("ios/GoogleService-Info.plist"));
-//! }
+//! ```no_run
+//! whisker_config::run(|app| {
+//!     app.name("MyApp").bundle_id("dev.example.myapp");
+//!     app.android(|android| {
+//!         android.min_sdk(24);
+//!     });
+//!     app.ios(|ios| {
+//!         ios.deployment_target("15.0");
+//!     });
+//! });
 //! ```
-//!
-//! `whisker run` compiles a tiny probe binary that includes the user's
-//! `whisker.rs` and serializes the resulting `Config` to JSON over
-//! stdout. The host shell (`whisker-cli`) parses that JSON, projects
-//! the fields it needs (paths, application id, bundle id, scheme, …),
-//! and passes them as flat parameters to `whisker-dev-server`. The
-//! dev-server itself does not depend on this crate.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use whisker_plugin::{Plugin, PluginConfig};
+
+/// Evaluate application configuration and write its JSON representation to stdout.
+///
+/// Call this once from `whisker.rs`'s `main` function. The closure receives a
+/// fresh [`Config::default()`]. This only emits configuration; the Whisker CLI
+/// handles project generation and builds. Keep stdout reserved for the JSON
+/// result and use stderr for diagnostics.
+///
+/// # Panics
+///
+/// Panics if the configuration cannot be serialized or written to stdout.
+///
+/// # Examples
+///
+/// ```no_run
+/// whisker_config::run(|app| {
+///     app.name("My App").version("1.0.0");
+/// });
+/// ```
+pub fn run(configure: impl FnOnce(&mut Config)) {
+    let mut config = Config::default();
+    configure(&mut config);
+    serde_json::to_writer(std::io::stdout().lock(), &config)
+        .expect("write Whisker configuration to stdout");
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {

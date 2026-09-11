@@ -8,6 +8,17 @@ description = "Example app for `whisker-paths`. On launch it resolves all four p
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = []
+
 [dependencies]
+whisker-config = { workspace = true }
 whisker = { workspace = true }
 whisker-paths = { path = ".." }

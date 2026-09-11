@@ -81,6 +81,11 @@ whisker run ios          # also: android, web, desktop
 `whisker run` watches your source and hot-patches the running app in under
 a second — no restart, no state loss.
 
+App metadata and platform settings live in `whisker.rs`. New projects register
+it as a Cargo binary for rust-analyzer completion and navigation, with no extra
+editor configuration. Its `whisker-config` feature keeps it out of default
+builds. Add plugin dependencies with `cargo add` and configure them in that file.
+
 ## Documentation
 
 Everything — installation, core concepts, guides, and the full API

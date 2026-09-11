@@ -263,6 +263,23 @@ and registered build plugins into platform projects under `gen/<platform>/`.
 Generated mobile projects compose the application with the Android or iOS Host
 SDK instead of containing a copy of the Host implementation.
 
+`whisker.rs` is registered as a `[[bin]]` target in the application's own Cargo
+package and calls `whisker_config::run` from `main`. This gives rust-analyzer the
+application's dependency graph for completion and navigation, including plugins
+added with `cargo add`. The target requires the non-default `whisker-config`
+feature, so ordinary builds omit the configuration executable.
+
+The CLI evaluates configuration in `target/.whisker/config-probe`, a generated
+Cargo package with `whisker-config` and discovered plugin dependencies. For a
+Cargo-registered configuration binary, the probe uses `whisker.rs` directly as
+its binary source. Otherwise it adapts the legacy `configure(&mut Config)` entry
+point. Both emit the same JSON. The probe avoids building the application library,
+which Cargo would also compile when running a binary in the application's own
+package. It does not inherit arbitrary application dependencies or features;
+configuration code uses `whisker-config`, the standard library, and plugin APIs
+available with plugin default features disabled. `target/.whisker/` is disposable
+build output and is not committed.
+
 The tooling has a different lifetime from the shipped UI runtime:
 
 | Tooling crate | Responsibility |

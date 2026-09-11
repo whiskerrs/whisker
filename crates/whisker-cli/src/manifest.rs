@@ -4,7 +4,7 @@
 //! The dev-server itself is manifest-agnostic — it accepts flat
 //! parameters (paths, bundle ids, application ids, …) via
 //! `whisker_dev_server::Config`. Translating the user's
-//! `whisker.rs::configure(&mut Config)` result into those flat
+//! `whisker.rs` result into those flat
 //! values is the CLI's job and lives in [`mod@super::run`].
 //!
 //! ## Discovery
@@ -36,7 +36,7 @@ pub struct ResolvedManifest {
     /// the cargo `-p` argument, and by `whisker-build` to find the
     /// `lib<package>.so` / `.dylib` artifact.
     pub package: String,
-    /// Result of running the user's `whisker.rs::configure`. Owned
+    /// Result of running the user's `whisker.rs`. Owned
     /// (decoded from JSON) so subsequent CLI logic can pattern-match
     /// on optional fields without rerunning the probe.
     pub config: Config,
@@ -72,7 +72,7 @@ pub fn resolve(cargo_toml_override: Option<&Path>) -> Result<ResolvedManifest> {
     let whisker_rs = crate_dir.join("whisker.rs");
     if !whisker_rs.is_file() {
         anyhow::bail!(
-            "no whisker.rs next to {} — every Whisker app needs a `whisker.rs` at the crate root that defines `fn configure(app: &mut Config)`",
+            "no whisker.rs next to {} — every Whisker app needs a `whisker.rs` at the crate root (run `whisker new` for a complete template)",
             cargo_toml.display(),
         );
     }

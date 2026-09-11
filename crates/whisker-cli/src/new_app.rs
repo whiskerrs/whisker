@@ -152,11 +152,23 @@ edition = "2024"
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = []
+
 [dependencies]
 whisker = "{whisker_version}"
+whisker-config = "{config_version}"
 "#,
         name = v.crate_name,
         whisker_version = whisker_dep_version(),
+        config_version = env!("CARGO_PKG_VERSION"),
     )
 }
 
@@ -306,31 +318,27 @@ fn button(label: &'static str, delta: i32, count: RwSignal<i32>) -> Element {{
 
 fn whisker_rs(v: &Vars) -> String {
     format!(
-        r##"// `whisker.rs` — Whisker app configuration.
-//
-// `whisker run` compiles this file as a tiny probe binary that
-// serializes the resulting `Config` to JSON; the CLI reads that
-// JSON and projects it into the dev-server's flat `Config`.
+        r##"fn main() {{
+    whisker_config::run(|app| {{
+        app.name("{display}")
+            .bundle_id("{bundle_id}")
+            .background("#FFFFFF")
+            .version("0.1.0")
+            .build_number(1);
 
-pub fn configure(app: &mut whisker_config::Config) {{
-    app.name("{display}")
-        .bundle_id("{bundle_id}")
-        .background("#FFFFFF")
-        .version("0.1.0")
-        .build_number(1);
+        app.android(|a| {{
+            a.package("{bundle_id}")
+                .application_id("{bundle_id}")
+                .launcher_activity(".MainActivity")
+                .min_sdk(24)
+                .target_sdk(34);
+        }});
 
-    app.android(|a| {{
-        a.package("{bundle_id}")
-            .application_id("{bundle_id}")
-            .launcher_activity(".MainActivity")
-            .min_sdk(24)
-            .target_sdk(34);
-    }});
-
-    app.ios(|i| {{
-        i.bundle_id("{bundle_id}")
-            .scheme("{display}")
-            .deployment_target("13.0");
+        app.ios(|i| {{
+            i.bundle_id("{bundle_id}")
+                .scheme("{display}")
+                .deployment_target("13.0");
+        }});
     }});
 }}
 "##,
@@ -420,7 +428,15 @@ restart, no state loss.
 App-level metadata (bundle id, app name, Android / iOS deployment
 settings) lives in [`whisker.rs`](whisker.rs). Edits there require
 a full `whisker run` restart since they shape the generated native
-project.
+project. Cargo registers this file as the `whisker-config` binary, so
+rust-analyzer provides completion and navigation without extra editor settings.
+The `whisker-config` feature keeps it out of default builds. To print its JSON:
+
+```sh
+cargo run --bin whisker-config --features whisker-config
+```
+
+Add plugin crates with `cargo add`, then configure them in `whisker.rs`.
 
 ## Build for release
 
@@ -586,12 +602,31 @@ mod tests {
         // Tracks the CLI's own major.minor (workspace versions advance in lockstep),
         // so this stays correct across version bumps.
         assert!(cargo.contains(&format!("whisker = \"{}\"", super::whisker_dep_version())));
+        let manifest: toml::Value = cargo.parse().unwrap();
+        let bin = &manifest["bin"][0];
+        assert_eq!(bin["name"].as_str(), Some("whisker-config"));
+        assert_eq!(bin["path"].as_str(), Some("whisker.rs"));
+        assert_eq!(bin["required-features"][0].as_str(), Some("whisker-config"));
+        assert_eq!(bin["test"].as_bool(), Some(false));
+        assert_eq!(bin["bench"].as_bool(), Some(false));
+        assert!(
+            manifest["features"]["whisker-config"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            manifest["dependencies"]["whisker-config"].as_str(),
+            Some(env!("CARGO_PKG_VERSION")),
+        );
 
         let whisker_rs = std::fs::read_to_string(root.join("whisker.rs")).unwrap();
         // Default display name + bundle id are derived.
         assert!(whisker_rs.contains("Demo App"));
         assert!(whisker_rs.contains("rs.example.demo_app"));
         assert!(whisker_rs.contains(".background(\"#FFFFFF\")"));
+        assert!(whisker_rs.contains("fn main()"));
+        assert!(whisker_rs.contains("whisker_config::run(|app|"));
 
         let gitignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
         // Sanity-check the load-bearing entries — losing either of

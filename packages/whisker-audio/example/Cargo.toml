@@ -8,7 +8,18 @@ description = "Example app for `whisker-audio`. Plays a short MP3 with play / pa
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = []
+
 [dependencies]
+whisker-config = { workspace = true }
 whisker = { workspace = true }
 whisker-audio = { path = ".." }
 whisker-safe-area = { path = "../../whisker-safe-area" }
