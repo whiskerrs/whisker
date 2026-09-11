@@ -24,7 +24,7 @@ pub fn run(root: &Path, host: &str) -> Result<()> {
         _ => bail!("unknown mobile Host {host:?}; expected android or ios"),
     };
 
-    let gen_dir = sync_project(root, &fixture, target)?;
+    let gen_dir = sync_project(&fixture, target)?;
     build_cli(root)?;
     match host {
         "android" => android(root, &gen_dir),
@@ -33,11 +33,8 @@ pub fn run(root: &Path, host: &str) -> Result<()> {
     }
 }
 
-fn sync_project(root: &Path, fixture: &Path, target: Target) -> Result<PathBuf> {
+fn sync_project(fixture: &Path, target: Target) -> Result<PathBuf> {
     let manifest_path = fixture.join("Cargo.toml");
-    let manifest = whisker_cli::manifest::resolve(Some(&manifest_path))
-        .context("resolve the standalone mobile link test app")?;
-    ensure!(manifest.package == PACKAGE, "unexpected link test package");
 
     let platform_dir = match target {
         Target::Android => "android",
@@ -50,14 +47,10 @@ fn sync_project(root: &Path, fixture: &Path, target: Target) -> Result<PathBuf> 
             .with_context(|| format!("remove stale {}", gen_dir.display()))?;
     }
 
-    let sync = whisker_cli::platforms::sync_for_target(
-        target,
-        &manifest.config,
-        &manifest.crate_dir,
-        root,
-        &manifest.package,
-    )
-    .with_context(|| format!("generate {platform_dir} consumer project"))?;
+    let manifest = whisker_cli::manifest::resolve_for_target(Some(&manifest_path), target)
+        .context("generate the link-test application")?;
+    ensure!(manifest.package == PACKAGE, "unexpected link-test package");
+    let sync = manifest.project(target)?;
     ensure!(
         sync.regenerated,
         "clean link test project was not regenerated"

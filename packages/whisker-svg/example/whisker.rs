@@ -1,5 +1,5 @@
 fn main() {
-    whisker_config::run(|app| {
+    whisker_cng::run(|app| {
         app.name("WhiskerSvgExample")
             .bundle_id("rs.whisker.svgexample")
             .version("0.1.0")

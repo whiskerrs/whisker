@@ -1,53 +1,13 @@
-//! App configuration types and the [`run`] entry point used by `whisker.rs`.
+//! Application metadata and plugin configuration types.
 //!
-//! Applications depend on this crate directly and register `whisker.rs` as a
-//! Cargo binary so rust-analyzer can provide completion and navigation.
-//! The binary's `main` function calls [`run`] to build a [`Config`] and write
-//! it as JSON for the Whisker CLI.
-//! The CLI evaluates this file in a lightweight probe containing configuration
-//! and plugin dependencies, without compiling the application library.
-//!
-//! ```no_run
-//! whisker_config::run(|app| {
-//!     app.name("MyApp").bundle_id("dev.example.myapp");
-//!     app.android(|android| {
-//!         android.min_sdk(24);
-//!     });
-//!     app.ios(|ios| {
-//!         ios.deployment_target("15.0");
-//!     });
-//! });
-//! ```
+//! [`Config`] provides the builder used by `whisker_cng::run` in `whisker.rs`.
+//! This crate contains configuration data; project generation belongs to
+//! `whisker-cng`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use whisker_plugin::{Plugin, PluginConfig};
-
-/// Evaluate application configuration and write its JSON representation to stdout.
-///
-/// Call this once from `whisker.rs`'s `main` function. The closure receives a
-/// fresh [`Config::default()`]. This only emits configuration; the Whisker CLI
-/// handles project generation and builds. Keep stdout reserved for the JSON
-/// result and use stderr for diagnostics.
-///
-/// # Panics
-///
-/// Panics if the configuration cannot be serialized or written to stdout.
-///
-/// # Examples
-///
-/// ```no_run
-/// whisker_config::run(|app| {
-///     app.name("My App").version("1.0.0");
-/// });
-/// ```
-pub fn run(configure: impl FnOnce(&mut Config)) {
-    let mut config = Config::default();
-    configure(&mut config);
-    serde_json::to_writer(std::io::stdout().lock(), &config)
-        .expect("write Whisker configuration to stdout");
-}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {

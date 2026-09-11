@@ -1,5 +1,5 @@
 fn main() {
-    whisker_config::run(|app| {
+    whisker_cng::run(|app| {
         app.name("WhiskerRouterExample")
             .bundle_id("rs.whisker.router.example")
             .background("#101018")

@@ -8,6 +8,7 @@ fn workspace() -> tempfile::TempDir {
     for member in [
         "crates/whisker-runtime",
         "crates/whisker-cli",
+        "crates/whisker-cng",
         "packages/router",
         "packages/router/web",
         "packages/untouched",
@@ -20,6 +21,7 @@ fn workspace() -> tempfile::TempDir {
     write(root, "Cargo.toml", &manifest.to_string());
     for (path, name, dependency) in [
         ("crates/whisker-runtime", "whisker-runtime", ""),
+        ("crates/whisker-cng", "whisker-cng", ""),
         (
             "crates/whisker-cli",
             "whisker-cli",
@@ -151,7 +153,7 @@ fn core_patch_pins_core_without_republishing_packages() {
     prepare::prepare_selection(root, &mut plan, Some("0.13.4")).unwrap();
     assert_eq!(
         plan.publishing().keys().cloned().collect::<Vec<_>>(),
-        ["whisker", "whisker-cli", "whisker-runtime"]
+        ["whisker", "whisker-cli", "whisker-cng", "whisker-runtime"]
     );
     let workspace = read_toml(&root.join("Cargo.toml")).unwrap();
     assert_eq!(
@@ -263,6 +265,7 @@ fn native_pin_changes_require_core_and_select_packages_whose_swift_manifests_cha
     selected.ios = Some("0.1.14".into());
     prepare::prepare_selection(root, &mut selected, Some("0.13.4")).unwrap();
     assert!(selected.publishing().contains_key("whisker-cli"));
+    assert!(selected.publishing().contains_key("whisker-cng"));
     assert!(selected.publishing().contains_key("router"));
     assert!(!selected.publishing().contains_key("untouched"));
     write(root, &selected.notes_path(), "notes");

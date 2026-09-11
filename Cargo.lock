@@ -6608,7 +6608,7 @@ version = "0.1.0"
 dependencies = [
  "whisker",
  "whisker-audio",
- "whisker-config",
+ "whisker-cng",
  "whisker-safe-area",
 ]
 
@@ -6647,7 +6647,7 @@ dependencies = [
  "tokio",
  "url",
  "whisker",
- "whisker-config",
+ "whisker-cng",
  "whisker-icons",
  "whisker-input",
  "whisker-keyboard",
@@ -6882,7 +6882,7 @@ name = "whisker-icons-example"
 version = "0.1.0"
 dependencies = [
  "whisker",
- "whisker-config",
+ "whisker-cng",
  "whisker-icons",
  "whisker-safe-area",
 ]
@@ -6912,7 +6912,7 @@ name = "whisker-image-example"
 version = "0.1.0"
 dependencies = [
  "whisker",
- "whisker-config",
+ "whisker-cng",
  "whisker-image",
 ]
 
@@ -6949,7 +6949,7 @@ name = "whisker-input-example"
 version = "0.1.0"
 dependencies = [
  "whisker",
- "whisker-config",
+ "whisker-cng",
  "whisker-input",
 ]
 
@@ -7057,7 +7057,7 @@ name = "whisker-paths-example"
 version = "0.1.0"
 dependencies = [
  "whisker",
- "whisker-config",
+ "whisker-cng",
  "whisker-paths",
 ]
 
@@ -7097,7 +7097,7 @@ name = "whisker-router-example"
 version = "0.1.0"
 dependencies = [
  "whisker",
- "whisker-config",
+ "whisker-cng",
  "whisker-router",
  "whisker-safe-area",
 ]
@@ -7147,7 +7147,7 @@ name = "whisker-secure-store-example"
 version = "0.1.0"
 dependencies = [
  "whisker",
- "whisker-config",
+ "whisker-cng",
  "whisker-secure-store",
 ]
 
@@ -7216,7 +7216,7 @@ name = "whisker-svg-example"
 version = "0.1.0"
 dependencies = [
  "whisker",
- "whisker-config",
+ "whisker-cng",
  "whisker-svg",
 ]
 
@@ -7314,7 +7314,7 @@ name = "whisker-webview-example"
 version = "0.1.0"
 dependencies = [
  "whisker",
- "whisker-config",
+ "whisker-cng",
  "whisker-webview",
 ]
 

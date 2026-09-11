@@ -1,61 +1,80 @@
-//! Whisker CNG (Continuous Native Generation).
+//! Generate platform projects by executing an application's `whisker.rs`.
 //!
-//! Renders platform Host projects under `gen/<platform>/`
-//! from the user's `whisker.rs` (= [`whisker_config::Config`]).
-//! Drift between the in-tree files and the current config is detected
-//! via a content-hashed fingerprint stored alongside each generated
-//! tree (`gen/<platform>/.whisker-fingerprint`).
+//! Call [`run`] from the configuration binary's `main`. The `generate` feature
+//! enables project generation, plugin builds, and Cargo dependency discovery.
+//! Applications can disable default features and enable `generate` only through
+//! their configuration binary's required feature. Configuration types and the
+//! [`run`] interface remain available to editors with generation disabled.
 //!
-//! Modelled on Expo's CNG: the declarative config is the source of
-//! truth and `gen/` is a build artifact, never committed. Unlike Expo
-//! there is no separate `whisker generate` command — every command
-//! that needs the native tree (`whisker run`, `whisker build`) calls
-//! [`sync_android`] / [`sync_ios`] first, and the fingerprint-match
-//! fast path is a single file read.
-//!
-//! ## Public entry points
-//!
-//! - [`sync_android`] / [`sync_ios`] / [`sync_macos`] — render-or-skip for one
-//!   platform. Returns whether files were actually rewritten.
-//! - [`AndroidInputs`] / [`IosInputs`] — the renderer's input bundle.
-//!   Build them yourself for full control, or use
-//!   [`android::inputs_from`] / [`ios::inputs_from`] for the
-//!   "extract from Config + defaults" path.
-//!
-//! The crate has no CLI surface and shells out to nothing —
-//! `whisker-cli` runs `xcodegen`, `gradle`, etc. after a sync
-//! completes, which keeps the renderer unit-testable against tempdirs.
+//! ```no_run
+//! whisker_cng::run(|app| {
+//!     app.name("My App").bundle_id("com.example.myapp");
+//! });
+//! ```
 
+mod runner;
+pub use runner::{GenerationReport, GenerationTarget, PlatformSync, run};
+#[cfg(feature = "generate")]
+mod generator;
+#[cfg(feature = "generate")]
+pub use generator::sync_for_target;
+#[cfg(feature = "generate")]
+mod project;
+#[cfg(feature = "generate")]
+pub use project::generate;
+
+#[cfg(feature = "generate")]
 pub mod android;
+#[cfg(feature = "generate")]
 mod background;
+#[cfg(feature = "generate")]
 pub mod compose;
+#[cfg(feature = "generate")]
 pub mod dependency_graph;
+#[cfg(feature = "generate")]
 pub mod discovery;
+#[cfg(feature = "generate")]
 mod fingerprint;
+#[cfg(feature = "generate")]
 pub mod ios;
+#[cfg(feature = "generate")]
 pub mod ios_modules;
+#[cfg(feature = "generate")]
 pub mod macos;
+#[cfg(feature = "generate")]
 pub mod modules;
+#[cfg(feature = "generate")]
 pub mod plugins;
+#[cfg(feature = "generate")]
 mod render;
+#[cfg(feature = "generate")]
 pub mod web;
 
+#[cfg(feature = "generate")]
 pub use android::{AndroidInputs, sync as sync_android};
+#[cfg(feature = "generate")]
 pub use compose::{EnabledTargets, Engine, SubprocessPlugin};
+#[cfg(feature = "generate")]
 pub use dependency_graph::ProjectDependencyGraph;
+#[cfg(feature = "generate")]
 pub use discovery::{DiscoveredPlugin, discover_plugins};
+#[cfg(feature = "generate")]
 pub use ios::{IosInputs, sync as sync_ios};
+#[cfg(feature = "generate")]
 pub use macos::{MacosInputs, sync as sync_macos};
+#[cfg(feature = "generate")]
 pub use modules::{
     ModulePlatform, NativeManifestKind, ResolvedModule, ResolvedNativeManifest,
     ResolvedPlatformImplementation, ResolvedRustHostSource, ResolvedRustModuleContribution,
     build_modules_report, discover as discover_modules, refresh_gradle_module_cache,
 };
+#[cfg(feature = "generate")]
 pub use web::{WebInputs, sync as sync_web};
-pub use whisker_config::Config;
+pub use whisker_config::*;
 
 /// One Cargo module crate and target definition wired into a generated Rust Host.
 #[derive(Clone, Debug, serde::Serialize)]
+#[cfg(feature = "generate")]
 pub struct RustElementModuleInput {
     /// Cargo package name of the platform-neutral element crate.
     pub package: String,
@@ -69,6 +88,7 @@ pub struct RustElementModuleInput {
 
 /// Cargo dependency source selected for a Rust Host contribution.
 #[derive(Clone, Debug, serde::Serialize)]
+#[cfg(feature = "generate")]
 pub enum RustHostDependency {
     /// Nested package available in a local path or git checkout.
     Path(std::path::PathBuf),
@@ -76,6 +96,7 @@ pub enum RustHostDependency {
     Registry { version: String },
 }
 
+#[cfg(feature = "generate")]
 fn rust_element_module_dependencies(modules: &[RustElementModuleInput]) -> String {
     modules
         .iter()
@@ -102,6 +123,7 @@ fn rust_element_module_dependencies(modules: &[RustElementModuleInput]) -> Strin
         .join("\n")
 }
 
+#[cfg(feature = "generate")]
 fn rust_element_module_config(modules: &[RustElementModuleInput]) -> String {
     modules
         .iter()
@@ -115,6 +137,7 @@ fn rust_element_module_config(modules: &[RustElementModuleInput]) -> String {
         .collect()
 }
 
+#[cfg(feature = "generate")]
 fn rust_crate_name(package: &str) -> String {
     package
         .chars()
@@ -128,7 +151,7 @@ fn rust_crate_name(package: &str) -> String {
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "generate"))]
 mod rust_host_dependency_tests {
     use super::*;
 

@@ -382,10 +382,10 @@ fn check_credentials() -> Vec<Check> {
     use whisker_credentials::{Identity, Store};
 
     let mut out = Vec::new();
-    let Ok(m) = crate::manifest::resolve(None) else {
+    let Ok(m) = crate::manifest::read_generated(None) else {
         out.push(Check::ok(
             "credentials",
-            "not inside a Whisker app (skipped)",
+            "no generated app metadata; credential checks skipped",
         ));
         return out;
     };
@@ -429,8 +429,7 @@ fn check_credentials() -> Vec<Check> {
         )),
     }
 
-    // Per-identifier coverage, using the same resolution the build
-    // commands use.
+    // Inspect identifiers recorded by the last successful generation.
     if let Some(bundle_id) = m
         .config
         .ios

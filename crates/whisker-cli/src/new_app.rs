@@ -3,7 +3,7 @@
 //! Creates a directory matching the supplied crate name with the
 //! minimum-viable Whisker app skeleton: a single-crate workspace
 //! `Cargo.toml`, a tiny `src/lib.rs` with `#[whisker::main]`, the
-//! `whisker.rs` `Config` probe, a `.gitignore`, a `rust-analyzer.toml`
+//! `whisker.rs` project generator, a `.gitignore`, a `rust-analyzer.toml`
 //! (format-on-save via `whisker fmt`), and a `README.md`.
 //! The result compiles standalone — the user runs `whisker run
 //! --target host` (or `--target ios` / `android` if their machine
@@ -160,15 +160,15 @@ test = false
 bench = false
 
 [features]
-whisker-config = []
+whisker-config = ["whisker-cng/generate"]
 
 [dependencies]
 whisker = "{whisker_version}"
-whisker-config = "{config_version}"
+whisker-cng = {{ version = "{cng_version}", default-features = false }}
 "#,
         name = v.crate_name,
         whisker_version = whisker_dep_version(),
-        config_version = env!("CARGO_PKG_VERSION"),
+        cng_version = env!("CARGO_PKG_VERSION"),
     )
 }
 
@@ -319,7 +319,7 @@ fn button(label: &'static str, delta: i32, count: RwSignal<i32>) -> Element {{
 fn whisker_rs(v: &Vars) -> String {
     format!(
         r##"fn main() {{
-    whisker_config::run(|app| {{
+    whisker_cng::run(|app| {{
         app.name("{display}")
             .bundle_id("{bundle_id}")
             .background("#FFFFFF")
@@ -430,18 +430,21 @@ settings) lives in [`whisker.rs`](whisker.rs). Edits there require
 a full `whisker run` restart since they shape the generated native
 project. Cargo registers this file as the `whisker-config` binary, so
 rust-analyzer provides completion and navigation without extra editor settings.
-The `whisker-config` feature keeps it out of default builds. To print its JSON:
+The `whisker-config` feature enables the generator and keeps its engine out of
+default builds. To generate an Xcode project:
 
 ```sh
-cargo run --bin whisker-config --features whisker-config
+cargo run --bin whisker-config --features whisker-config -- ios
 ```
 
+Pass `android`, `desktop`, or `web` to generate another platform, or omit the
+platform to generate all four. Generation does not build or launch the app.
+`whisker run` and `whisker build` execute the same generator automatically.
 Add plugin crates with `cargo add`, then configure them in `whisker.rs`.
 
 ## Build for release
 
-Whisker doesn't wrap release builds — drive xcodebuild / gradle the
-same way CI does:
+Build the generated projects with Xcode or Gradle, or use `whisker build`:
 
 ```sh
 # Android release APK
@@ -609,15 +612,17 @@ mod tests {
         assert_eq!(bin["required-features"][0].as_str(), Some("whisker-config"));
         assert_eq!(bin["test"].as_bool(), Some(false));
         assert_eq!(bin["bench"].as_bool(), Some(false));
-        assert!(
-            manifest["features"]["whisker-config"]
-                .as_array()
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            manifest["features"]["whisker-config"][0].as_str(),
+            Some("whisker-cng/generate")
         );
         assert_eq!(
-            manifest["dependencies"]["whisker-config"].as_str(),
-            Some(env!("CARGO_PKG_VERSION")),
+            manifest["dependencies"]["whisker-cng"]["version"].as_str(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(
+            manifest["dependencies"]["whisker-cng"]["default-features"].as_bool(),
+            Some(false)
         );
 
         let whisker_rs = std::fs::read_to_string(root.join("whisker.rs")).unwrap();
@@ -626,7 +631,7 @@ mod tests {
         assert!(whisker_rs.contains("rs.example.demo_app"));
         assert!(whisker_rs.contains(".background(\"#FFFFFF\")"));
         assert!(whisker_rs.contains("fn main()"));
-        assert!(whisker_rs.contains("whisker_config::run(|app|"));
+        assert!(whisker_rs.contains("whisker_cng::run(|app|"));
 
         let gitignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
         // Sanity-check the load-bearing entries — losing either of

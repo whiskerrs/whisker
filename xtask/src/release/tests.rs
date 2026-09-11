@@ -287,7 +287,7 @@ pub(super) fn fixture() -> tempfile::TempDir {
     }
     write(
         root,
-        CLI_PATH,
+        CNG_PATH,
         "const WHISKER_SDK_VERSION: &str = \"0.1.21\";\nconst WHISKER_GRADLE_PLUGIN_VERSION: &str = \"0.5.0\";\n",
     );
     write(

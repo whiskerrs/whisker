@@ -1,7 +1,7 @@
 //! `whisker run` — start the dev server.
 //!
 //! Thin wrapper: resolves the user crate's `whisker.rs` config (via
-//! [`super::manifest::resolve`] + [`super::probe::run`]), translates
+//! [`super::manifest::resolve`] + `whisker_cng::generate`), translates
 //! the resulting [`whisker_config::Config`] into a flat
 //! [`whisker_dev_server::Config`], and hands off to
 //! `DevServer::run`. All the heavy lifting (file watch / cargo build
@@ -46,9 +46,7 @@ pub struct Args {
     #[arg(long)]
     pub no_hot_patch: bool,
 
-    /// Override the workspace root (= directory containing the
-    /// `Cargo.toml` with `[workspace]`). Defaults to walking up from
-    /// the resolved manifest's parent dir.
+    /// Explicit workspace root; must match the application's Cargo workspace.
     #[arg(long)]
     pub workspace_root: Option<PathBuf>,
 }
@@ -78,22 +76,20 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
     // Resolve the user-facing manifest before doing anything UI-y so
     // that the TUI header can display the bundle id from the moment
     // it first paints.
-    let m = manifest::resolve(args.manifest_path.as_deref())
-        .context("resolve user-crate manifest (Cargo.toml + whisker.rs)")?;
-    let workspace_root = match &args.workspace_root {
-        Some(p) => p.clone(),
-        None => find_workspace_root(&m.crate_dir).ok_or_else(|| {
-            anyhow!(
-                "no [workspace] Cargo.toml at or above {}",
-                m.crate_dir.display()
-            )
-        })?,
-    };
     let target: Target = args.target.into();
     if target == Target::Macos && !cfg!(target_os = "macos") {
         return Err(anyhow!(
             "`whisker run desktop` currently supports the macOS Host only"
         ));
+    }
+    let m = manifest::resolve_for_target(args.manifest_path.as_deref(), target)
+        .context("resolve user-crate manifest (Cargo.toml + whisker.rs)")?;
+    let workspace_root = m.workspace_root.clone();
+    if let Some(override_root) = &args.workspace_root {
+        anyhow::ensure!(
+            override_root.canonicalize()? == workspace_root,
+            "--workspace-root must match the application's Cargo workspace"
+        );
     }
     let target_label = target_label(target);
     let bundle = m
@@ -102,10 +98,7 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
         .clone()
         .unwrap_or_else(|| m.package.clone());
 
-    // Start the TUI as the very first user-visible action so the
-    // long setup steps (sync, plugin build, initial build, install)
-    // render with a proper progress indicator instead of leaking
-    // ahead of an inline status bar.
+    // Generation resolves the identity before the build and development UI starts.
     let tui_session = if tui_enabled {
         match crate::tui::TuiSession::start(
             crate::tui::WorkflowKind::Run,
@@ -154,19 +147,7 @@ fn run_inner(
     // Android and iOS generation is self-contained. Their bootstrap projects
     // are plain platform applications backed by the Whisker Host SDK.
 
-    // cng templates are `include_str!`-baked into this binary, so a CLI
-    // older than the sources under `crates/whisker-cng/src` renders
-    // stale gen/ files. Only fires inside a whisker checkout.
-    warn_if_cli_older_than_cng(&workspace_root);
-
-    let sync = crate::platforms::sync_for_target(
-        target,
-        &m.config,
-        &m.crate_dir,
-        &workspace_root,
-        &m.package,
-    )
-    .context("sync generated platform project (gen/<platform>/)")?;
+    let sync = m.project(target)?;
     // Always say which path was taken: a template edit that didn't bump
     // cng's `template_version` leaves the old gen/ tree on disk, and a
     // silent "reused" makes that undiagnosable.
@@ -534,88 +515,9 @@ fn ios_params_from(m: &manifest::ResolvedManifest, project_dir: &Path) -> Result
     })
 }
 
-/// Walk up from `start` looking for a `Cargo.toml` containing a
-/// `[workspace]` section. Returns the directory holding the matching
-/// Cargo.toml, or `None` if we walk off the top of the filesystem.
-pub(crate) fn find_workspace_root(start: &Path) -> Option<PathBuf> {
-    // Canonicalize so the upward walk doesn't bottom out at an empty
-    // PathBuf when `start` is relative and the workspace root happens
-    // to be the process's cwd. An empty `workspace_root` later feeds
-    // `Command::current_dir("")`, which posix-spawns ENOENT and
-    // surfaces as "spawn cargo: No such file or directory".
-    let mut cur = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
-    loop {
-        let cargo = cur.join("Cargo.toml");
-        if cargo.is_file() {
-            if let Ok(txt) = std::fs::read_to_string(&cargo) {
-                if txt.contains("[workspace]") {
-                    return Some(cur);
-                }
-            }
-        }
-        if !cur.pop() {
-            return None;
-        }
-    }
-}
-
-/// Warn if the running `whisker` binary predates the cng
-/// template/renderer sources, i.e. its `include_str!`-baked templates
-/// are stale relative to the repo. No-op unless
-/// `crates/whisker-cng/src` exists under `workspace_root` — installed
-/// users never see it. Read-only: compares mtimes, warns, nothing else.
-fn warn_if_cli_older_than_cng(workspace_root: &Path) {
-    let cng_src = workspace_root.join("crates/whisker-cng/src");
-    if !cng_src.is_dir() {
-        return; // not a whisker repo checkout
-    }
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    let Ok(cli_mtime) = std::fs::metadata(&exe).and_then(|m| m.modified()) else {
-        return;
-    };
-    let Some(cng_mtime) = newest_mtime_under(&cng_src) else {
-        return;
-    };
-    if cng_mtime > cli_mtime {
-        whisker_build::ui::warn(format!(
-            "running `whisker` ({}) is older than crates/whisker-cng/src — its \
-             embedded templates may be stale and gen/ could be generated from old \
-             templates. Rebuild and use the workspace CLI \
-             (e.g. `cargo run -p whisker-cli -- run …`).",
-            exe.display(),
-        ));
-    }
-}
-
-/// Newest file mtime anywhere under `dir` (recursive). `None` if the tree is
-/// unreadable or empty. Best-effort: unreadable entries are skipped.
-fn newest_mtime_under(dir: &Path) -> Option<std::time::SystemTime> {
-    let mut newest: Option<std::time::SystemTime> = None;
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            if is_dir {
-                stack.push(entry.path());
-                continue;
-            }
-            if let Ok(mtime) = entry.metadata().and_then(|m| m.modified()) {
-                newest = Some(newest.map_or(mtime, |n| n.max(mtime)));
-            }
-        }
-    }
-    newest
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
     fn cli_target_maps_to_dev_server_target() {
@@ -623,50 +525,5 @@ mod tests {
         assert_eq!(Target::from(CliTarget::Ios), Target::IosSimulator);
         assert_eq!(Target::from(CliTarget::Desktop), Target::Macos);
         assert_eq!(Target::from(CliTarget::Web), Target::Web);
-    }
-
-    fn unique_tempdir() -> PathBuf {
-        static SEQ: AtomicU64 = AtomicU64::new(0);
-        let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let pid = std::process::id();
-        let p = std::env::temp_dir().join(format!("whisker-cli-run-test-{pid}-{n}"));
-        std::fs::create_dir_all(&p).unwrap();
-        p
-    }
-
-    #[test]
-    fn find_workspace_root_returns_dir_when_cargo_toml_at_start() {
-        let tmp = unique_tempdir();
-        std::fs::write(tmp.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
-        // Compare against the canonical form — `find_workspace_root`
-        // canonicalises its input to avoid the empty-PathBuf ENOENT
-        // (see fn docs), and on macOS `std::env::temp_dir()` returns a
-        // path under `/var/folders/...` which is a symlink to
-        // `/private/var/folders/...`.
-        let canonical_tmp = std::fs::canonicalize(&tmp).unwrap();
-        assert_eq!(
-            find_workspace_root(&tmp).as_deref(),
-            Some(canonical_tmp.as_path()),
-        );
-        std::fs::remove_dir_all(&tmp).ok();
-    }
-
-    #[test]
-    fn find_workspace_root_walks_up_from_a_member_dir() {
-        let tmp = unique_tempdir();
-        std::fs::write(tmp.join("Cargo.toml"), "[workspace]\nmembers = [\"app\"]\n").unwrap();
-        let nested = tmp.join("app");
-        std::fs::create_dir_all(&nested).unwrap();
-        std::fs::write(
-            nested.join("Cargo.toml"),
-            "[package]\nname = \"app\"\nversion = \"0.0.0\"\n",
-        )
-        .unwrap();
-        let canonical_tmp = std::fs::canonicalize(&tmp).unwrap();
-        assert_eq!(
-            find_workspace_root(&nested).as_deref(),
-            Some(canonical_tmp.as_path()),
-        );
-        std::fs::remove_dir_all(&tmp).ok();
     }
 }

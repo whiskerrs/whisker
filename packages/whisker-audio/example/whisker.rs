@@ -1,7 +1,7 @@
 // `whisker.rs` for the `whisker-audio` example.
 
 fn main() {
-    whisker_config::run(|app| {
+    whisker_cng::run(|app| {
         app.name("WhiskerAudioExample")
             .bundle_id("rs.whisker.audioexample")
             .version("0.1.0")

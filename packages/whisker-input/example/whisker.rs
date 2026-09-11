@@ -3,7 +3,7 @@
 // Tells `whisker run` how to install / launch / hot-patch this app.
 
 fn main() {
-    whisker_config::run(|app| {
+    whisker_cng::run(|app| {
         app.name("WhiskerInputExample")
             .bundle_id("rs.whisker.inputexample")
             .version("0.1.0")

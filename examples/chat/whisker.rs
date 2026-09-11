@@ -1,10 +1,10 @@
 fn main() {
-    whisker_config::run(|app| {
+    whisker_cng::run(|app| {
         app.name("Whisker Chat")
             .bundle_id("rs.whisker.chat")
             .version("0.1.0")
             .build_number(1);
-        app.plugin::<whisker_config::AppIcon>(|icon| {
+        app.plugin::<whisker_cng::AppIcon>(|icon| {
             icon.source("assets/icon.png");
         });
         app.web(|web| {

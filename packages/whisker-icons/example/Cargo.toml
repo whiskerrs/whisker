@@ -16,10 +16,10 @@ test = false
 bench = false
 
 [features]
-whisker-config = []
+whisker-config = ["whisker-cng/generate"]
 
 [dependencies]
-whisker-config = { workspace = true }
+whisker-cng = { path = "../../../crates/whisker-cng", version = "0.13.10", default-features = false }
 whisker = { workspace = true }
 whisker-icons = { path = ".." }
 # Reactive accessor for the host view's safe-area insets — used to

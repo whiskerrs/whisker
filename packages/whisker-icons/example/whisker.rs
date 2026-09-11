@@ -1,7 +1,7 @@
 // `whisker.rs` for the `whisker-icons` example.
 
 fn main() {
-    whisker_config::run(|app| {
+    whisker_cng::run(|app| {
         app.name("WhiskerIconsExample")
             .bundle_id("rs.whisker.iconsexample")
             .version("0.1.0")
