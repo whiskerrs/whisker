@@ -1,6 +1,6 @@
 [package]
 name = "whisker-image-desktop"
-version = "0.13.9"
+version = "0.14.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,4 +13,4 @@ image = { version = "0.25", default-features = false, features = ["gif", "jpeg",
 lru = "0.18.2"
 serde_json = { workspace = true }
 ureq = "2.12"
-whisker-desktop = { path = "../../../platforms/desktop", version = "0.13.10" }
+whisker-desktop = { path = "../../../platforms/desktop", version = "0.14.0" }

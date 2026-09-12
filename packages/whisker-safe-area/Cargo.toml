@@ -1,6 +1,6 @@
 [package]
 name = "whisker-safe-area"
-version = "0.13.10"
+version = "0.14.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -36,4 +36,4 @@ web = { kind = "common" }
 desktop = { kind = "common" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.13.10" }
+whisker = { path = "../../crates/whisker", version = "0.14.0" }

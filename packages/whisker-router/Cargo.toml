@@ -1,6 +1,6 @@
 [package]
 name = "whisker-router"
-version = "0.13.12"
+version = "0.14.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -55,24 +55,24 @@ bench = false
 doc = false
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.13.10" }
+whisker = { path = "../../crates/whisker", version = "0.14.0" }
 # Plugin support (trait + IR types + JSON envelope + subprocess runner).
 # Light deps so the config-probe build path stays cheap.
-whisker-plugin = { path = "../../crates/whisker-plugin", version = "0.13.10" }
+whisker-plugin = { path = "../../crates/whisker-plugin", version = "0.14.0" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 # The `routes!` declarative route-tree macro, re-exported below.
-whisker-macros = { path = "../../crates/whisker-macros", version = "0.13.10" }
+whisker-macros = { path = "../../crates/whisker-macros", version = "0.14.0" }
 
 [dev-dependencies]
 # Test-only: drive animation frames (`__step_for_tests`) so the
 # render-layer tests can advance a push/pop transition to completion and
 # assert the wrappers settle to their resting pose.
-whisker-animation = { path = "../../crates/whisker-animation", version = "0.13.10" }
-whisker-style = { path = "../../crates/whisker-style", version = "0.13.10" }
+whisker-animation = { path = "../../crates/whisker-animation", version = "0.14.0" }
+whisker-style = { path = "../../crates/whisker-style", version = "0.14.0" }
 # Test-only: drive `RouterPlugin` through the real CNG engine + Android
 # renderer (`tests/plugin_e2e.rs`) and assert the generated manifest gets
 # `enableOnBackInvokedCallback`. No cycle: whisker-cng depends on
 # whisker-plugin / whisker-config, never on whisker-router.
-whisker-cng = { path = "../../crates/whisker-cng", version = "0.13.10" }
-whisker-config = { path = "../../crates/whisker-config", version = "0.13.10" }
+whisker-cng = { path = "../../crates/whisker-cng", version = "0.14.0" }
+whisker-config = { path = "../../crates/whisker-config", version = "0.14.0" }

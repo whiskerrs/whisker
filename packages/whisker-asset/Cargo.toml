@@ -1,6 +1,6 @@
 [package]
 name = "whisker-asset"
-version = "0.13.9"
+version = "0.14.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -58,7 +58,7 @@ whisker-asset-macros = { path = "../whisker-asset-macros", version = "0.13.8" }
 
 # Plugin support. Light deps (trait + IR types + JSON envelope +
 # subprocess runner) so the config-probe build path stays cheap.
-whisker-plugin = { path = "../../crates/whisker-plugin", version = "0.13.10" }
+whisker-plugin = { path = "../../crates/whisker-plugin", version = "0.14.0" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 
@@ -66,5 +66,5 @@ anyhow = { workspace = true }
 # End-to-end test drives the plugin through the real CNG engine +
 # renderers (`tests/plugin_e2e.rs`). No cycle: whisker-cng depends on
 # whisker-plugin / whisker-config, never on whisker-asset.
-whisker-cng = { path = "../../crates/whisker-cng", version = "0.13.10" }
-whisker-config = { path = "../../crates/whisker-config", version = "0.13.10" }
+whisker-cng = { path = "../../crates/whisker-cng", version = "0.14.0" }
+whisker-config = { path = "../../crates/whisker-config", version = "0.14.0" }

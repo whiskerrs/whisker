@@ -19,6 +19,6 @@ bench = false
 whisker-config = ["whisker-cng/generate"]
 
 [dependencies]
-whisker-cng = { path = "../../../crates/whisker-cng", version = "0.13.10", default-features = false }
+whisker-cng = { path = "../../../crates/whisker-cng", version = "0.14.0", default-features = false }
 whisker = { workspace = true }
 whisker-input = { path = ".." }
