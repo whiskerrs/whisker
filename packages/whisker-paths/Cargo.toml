@@ -1,6 +1,6 @@
 [package]
 name = "whisker-paths"
-version = "0.13.9"
+version = "0.14.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -34,4 +34,4 @@ android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.13.10" }
+whisker = { path = "../../crates/whisker", version = "0.14.0" }

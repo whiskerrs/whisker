@@ -1,6 +1,6 @@
 [package]
 name = "whisker-svg"
-version = "0.13.9"
+version = "0.14.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -36,7 +36,7 @@ web = { manifest = "web/Cargo.toml" }
 desktop = { manifest = "desktop/Cargo.toml" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.13.10" }
+whisker = { path = "../../crates/whisker", version = "0.14.0" }
 # Base64 for transporting display-list bytes through the existing
 # string-typed Prop pipeline. `base64` is the de-facto crate
 # (~10 KB compiled). The platform replayers decode with the OS
