@@ -8,7 +8,18 @@ description = "Example app for `whisker-router`: a tabbed app (one `Stack` per t
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = ["whisker-cng/generate"]
+
 [dependencies]
+whisker-cng = { path = "../../../crates/whisker-cng", version = "0.13.10", default-features = false }
 whisker = { workspace = true }
 whisker-router = { path = ".." }
 whisker-safe-area = { path = "../../whisker-safe-area" }

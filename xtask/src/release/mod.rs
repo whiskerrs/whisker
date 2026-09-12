@@ -22,7 +22,7 @@ mod selection_tests;
 mod tests;
 
 const PLAN_PATH: &str = ".github/release.json";
-const CLI_PATH: &str = "crates/whisker-cli/src/platforms.rs";
+const CNG_PATH: &str = "crates/whisker-cng/src/generator.rs";
 const IOS_PATH: &str = "crates/whisker-cng/src/ios_modules.rs";
 const REPOSITORY: &str = "whiskerrs/whisker";
 

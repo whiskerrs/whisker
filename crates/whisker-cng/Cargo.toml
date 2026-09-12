@@ -5,9 +5,6 @@
 # Modelled on Expo's CNG: the source of truth is the declarative
 # config, the platforms directory are build artifacts, never committed.
 #
-# Pure logic crate — no CLI surface. `whisker-cli` consumes the
-# `sync_android` / `sync_ios` entry points and handles user interaction.
-
 [package]
 name = "whisker-cng"
 version.workspace = true
@@ -30,6 +27,10 @@ include = [
     "CHANGELOG.md",
 ]
 
+[features]
+default = ["generate"]
+generate = ["dep:cargo_metadata", "dep:sha2", "dep:toml", "dep:image"]
+
 [dependencies]
 anyhow = { workspace = true }
 serde = { workspace = true }
@@ -37,9 +38,9 @@ serde_json = { workspace = true }
 whisker-config = { workspace = true }
 # Resolves runtime modules and generation-time plugins together from one
 # activated Cargo dependency graph.
-cargo_metadata = "0.18"
-sha2 = "0.10"
-toml = "0.8"
+cargo_metadata = { version = "0.18", optional = true }
+sha2 = { version = "0.10", optional = true }
+toml = { version = "0.8", optional = true }
 # `Plugin` / `PluginConfig` trait + IR types the engine drives the
 # plugin pipeline against. The compose module turns each user-side
 # `Config.plugins[name]` JSON entry back into the plugin's typed
@@ -50,7 +51,7 @@ whisker-plugin = { workspace = true }
 # `png` codec only — the other format decoders would triple the
 # build cost for nothing. Runs in the CLI process, never in the
 # config probe, so probe builds stay cheap.
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 # Tiny stdin/stdout echo-style plugin binary the subprocess
 # integration test in `tests/subprocess.rs` spawns. Declared here

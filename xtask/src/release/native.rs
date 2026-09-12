@@ -4,8 +4,8 @@ const MAVEN: &str = "https://whiskerrs.github.io/whisker/maven";
 
 fn definition(stream: &str) -> Result<(&'static str, &'static str, &'static str)> {
     match stream {
-        "sdk" => Ok((CLI_PATH, "WHISKER_SDK_VERSION", "sdk-v")),
-        "gradle" => Ok((CLI_PATH, "WHISKER_GRADLE_PLUGIN_VERSION", "gradle-plugin-v")),
+        "sdk" => Ok((CNG_PATH, "WHISKER_SDK_VERSION", "sdk-v")),
+        "gradle" => Ok((CNG_PATH, "WHISKER_GRADLE_PLUGIN_VERSION", "gradle-plugin-v")),
         "ios" => Ok((IOS_PATH, "WHISKER_IOS_SPM_VERSION", "v")),
         _ => bail!("unknown native stream {stream:?}"),
     }

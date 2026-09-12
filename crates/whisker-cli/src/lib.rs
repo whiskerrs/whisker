@@ -7,7 +7,7 @@
 //! - `run` — `whisker run`: build → install → launch → file-watch +
 //!   hot-patch loop. Thin wrapper around
 //!   [`whisker_dev_server::DevServer`]; the cli's job is to resolve
-//!   the user crate's `whisker.rs` (via [`manifest`] + [`probe`])
+//!   the user crate's `whisker.rs` (via [`manifest`] + `whisker_cng::generate`)
 //!   and project the resulting `Config` into the dev-server's
 //!   flat [`whisker_dev_server::Config`].
 //! - `new` / `new-module` — scaffolding.
@@ -43,7 +43,6 @@ pub mod manifest;
 pub mod new_app;
 pub mod new_module;
 pub mod platforms;
-pub mod probe;
 pub mod run;
 pub mod rustc_shim;
 pub mod tui;
@@ -87,7 +86,7 @@ enum Command {
     NewModule(new_module::NewModuleArgs),
     /// Scaffold a new Whisker app — single-crate workspace with
     /// `Cargo.toml`, a `#[whisker::main]` `src/lib.rs`, the
-    /// `whisker.rs` `Config` probe, `.gitignore`, and `README.md`.
+    /// `whisker.rs` project generator, `.gitignore`, and `README.md`.
     /// The result compiles standalone; run `whisker run android` or
     /// `whisker run ios` from inside the new directory.
     New(new_app::NewAppArgs),

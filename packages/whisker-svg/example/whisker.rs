@@ -1,20 +1,22 @@
-pub fn configure(app: &mut whisker_config::Config) {
-    app.name("WhiskerSvgExample")
-        .bundle_id("rs.whisker.svgexample")
-        .version("0.1.0")
-        .build_number(1);
+fn main() {
+    whisker_cng::run(|app| {
+        app.name("WhiskerSvgExample")
+            .bundle_id("rs.whisker.svgexample")
+            .version("0.1.0")
+            .build_number(1);
 
-    app.android(|a| {
-        a.package("rs.whisker.svgexample")
-            .application_id("rs.whisker.svgexample")
-            .launcher_activity(".MainActivity")
-            .min_sdk(24)
-            .target_sdk(34);
-    });
+        app.android(|a| {
+            a.package("rs.whisker.svgexample")
+                .application_id("rs.whisker.svgexample")
+                .launcher_activity(".MainActivity")
+                .min_sdk(24)
+                .target_sdk(34);
+        });
 
-    app.ios(|i| {
-        i.bundle_id("rs.whisker.svgexample")
-            .scheme("WhiskerSvgExample")
-            .deployment_target("13.0");
+        app.ios(|i| {
+            i.bundle_id("rs.whisker.svgexample")
+                .scheme("WhiskerSvgExample")
+                .deployment_target("13.0");
+        });
     });
 }

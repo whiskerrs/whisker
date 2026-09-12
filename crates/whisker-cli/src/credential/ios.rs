@@ -49,7 +49,10 @@ pub fn run(args: IosArgs) -> Result<()> {
              the credentials/ directory, and give CI only $WHISKER_CREDENTIALS_KEY"
         );
     }
-    let m = manifest::resolve(args.manifest_path.as_deref())?;
+    let m = manifest::resolve_for_target(
+        args.manifest_path.as_deref(),
+        whisker_dev_server::Target::IosSimulator,
+    )?;
     let store = super::open_or_bootstrap(&m.crate_dir)?;
 
     let rel = ios_asc_rel(args.id.as_deref());

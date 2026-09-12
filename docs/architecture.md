@@ -263,13 +263,45 @@ and registered build plugins into platform projects under `gen/<platform>/`.
 Generated mobile projects compose the application with the Android or iOS Host
 SDK instead of containing a copy of the Host implementation.
 
+`whisker.rs` is registered as a `[[bin]]` target in the application's own Cargo
+package and calls `whisker_cng::run` from `main`. Execution evaluates its
+configuration, discovers Cargo modules and CNG plugins, builds the host plugin
+executables, and generates the requested projects. With no platform arguments
+it generates Android, iOS, macOS, and Web projects. CNG owns Host version pins,
+plugin preparation, and rendering; the CLI owns application builds and launches.
+
+The application depends on `whisker-cng` with default features disabled. Its
+non-default `whisker-config` feature enables `whisker-cng/generate` and is required
+by the configuration binary. CNG keeps the configuration types and `run`
+interface available for rust-analyzer while Cargo discovery, image processing,
+and the renderer implementation are disabled. Plugin crates added with `cargo
+add` participate in the same application's editor dependency graph.
+
+The CLI calls `whisker_cng::generate` to compile and execute the configuration
+program in a generated Cargo package under `target/.whisker/generator`. This
+avoids compiling the application library, which a direct `cargo run` of the
+application's configuration bin also compiles. The generated package uses the
+application's resolved CNG dependency and discovered plugin dependencies;
+arbitrary application dependencies and features are not inherited. Legacy
+`configure(&mut Config)` files receive an entry point that calls `whisker_cng::run`.
+There is no configuration-only execution mode or configuration-output cache.
+
+Each execution performs generation and its fingerprint checks. After all requested
+projects succeed, CNG atomically publishes `target/.whisker/generation.json`
+containing application identity, configuration, and generated project paths. CLI
+invocations additionally use unique completion-report paths so a failed generator
+cannot be mistaken for a successful earlier invocation. The CLI consumes this
+report instead of generating a second time. `whisker doctor` can inspect the last
+completed report without executing user code. Generated packages, reports, and
+build caches under `target/.whisker/` are disposable and are not committed.
+
 The tooling has a different lifetime from the shipped UI runtime:
 
 | Tooling crate | Responsibility |
 |---|---|
-| [`whisker-cli`](../crates/whisker-cli/) | Reads configuration and selects the command and target |
+| [`whisker-cli`](../crates/whisker-cli/) | Executes the application generator, then coordinates builds and launches |
 | [`whisker-config`](../crates/whisker-config/) | Defines the configuration consumed by generation and builds |
-| [`whisker-cng`](../crates/whisker-cng/) and [`whisker-plugin`](../crates/whisker-plugin/) | Generate platform projects and incorporate module build requirements |
+| [`whisker-cng`](../crates/whisker-cng/) and [`whisker-plugin`](../crates/whisker-plugin/) | Discover modules, build and apply plugins, and generate platform projects |
 | [`whisker-build`](../crates/whisker-build/) | Compiles and packages application artifacts with the target toolchain |
 | [`whisker-dev-server`](../crates/whisker-dev-server/) | Coordinates the native development session, watching, patch delivery, and reload commands |
 

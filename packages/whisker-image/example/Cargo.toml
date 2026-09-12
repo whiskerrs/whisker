@@ -8,6 +8,17 @@ description = "Example app for `whisker-image`. Loads a public image, a URL that
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = ["whisker-cng/generate"]
+
 [dependencies]
+whisker-cng = { path = "../../../crates/whisker-cng", version = "0.13.10", default-features = false }
 whisker = { workspace = true }
 whisker-image = { path = ".." }

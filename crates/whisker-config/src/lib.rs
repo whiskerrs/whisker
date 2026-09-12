@@ -1,36 +1,8 @@
-//! App configuration types used by `whisker.rs`.
+//! Application metadata and plugin configuration types.
 //!
-//! Users build a `Config` via the builder API:
-//! ```ignore
-//! pub fn configure(app: &mut Config) {
-//!     app.name("MyApp")
-//!        .bundle_id("dev.example.myapp")
-//!        .background("#FFFFFF")
-//!        .version("1.0.0");
-//!
-//!     app.android(|a| a
-//!         .application_id("dev.example.myapp")
-//!         .launcher_activity(".MainActivity")
-//!         .min_sdk(24));
-//!
-//!     app.ios(|i| i
-//!         .bundle_id("dev.example.MyApp")
-//!         .scheme("MyApp")
-//!         .deployment_target("14.0"));
-//!
-//!     // Whisker CNG plugin declarations live alongside the platform
-//!     // blocks.
-//!     app.plugin::<Firebase>(|c| c
-//!         .google_service_path("ios/GoogleService-Info.plist"));
-//! }
-//! ```
-//!
-//! `whisker run` compiles a tiny probe binary that includes the user's
-//! `whisker.rs` and serializes the resulting `Config` to JSON over
-//! stdout. The host shell (`whisker-cli`) parses that JSON, projects
-//! the fields it needs (paths, application id, bundle id, scheme, …),
-//! and passes them as flat parameters to `whisker-dev-server`. The
-//! dev-server itself does not depend on this crate.
+//! [`Config`] provides the builder used by `whisker_cng::run` in `whisker.rs`.
+//! This crate contains configuration data; project generation belongs to
+//! `whisker-cng`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

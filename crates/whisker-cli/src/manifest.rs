@@ -4,7 +4,7 @@
 //! The dev-server itself is manifest-agnostic — it accepts flat
 //! parameters (paths, bundle ids, application ids, …) via
 //! `whisker_dev_server::Config`. Translating the user's
-//! `whisker.rs::configure(&mut Config)` result into those flat
+//! `whisker.rs` result into those flat
 //! values is the CLI's job and lives in [`mod@super::run`].
 //!
 //! ## Discovery
@@ -23,7 +23,8 @@ use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use whisker_config::Config;
 
-use crate::probe;
+use std::collections::BTreeMap;
+use whisker_cng::{GenerationReport, GenerationTarget, PlatformSync};
 
 /// One CLI invocation's worth of resolved user-crate state.
 #[derive(Debug)]
@@ -36,15 +37,76 @@ pub struct ResolvedManifest {
     /// the cargo `-p` argument, and by `whisker-build` to find the
     /// `lib<package>.so` / `.dylib` artifact.
     pub package: String,
-    /// Result of running the user's `whisker.rs::configure`. Owned
+    /// Result of running the user's `whisker.rs`. Owned
     /// (decoded from JSON) so subsequent CLI logic can pattern-match
-    /// on optional fields without rerunning the probe.
+    /// on optional fields without rerunning the generator.
     pub config: Config,
+    pub workspace_root: PathBuf,
+    pub projects: BTreeMap<GenerationTarget, PlatformSync>,
 }
 
-/// Resolve the manifest. `cargo_toml_override` (set via
-/// `whisker run --manifest-path <path>`) bypasses cwd discovery.
+/// Generate all supported projects and resolve their application metadata.
+/// An explicit manifest bypasses current-directory discovery. Targeted commands
+/// use [`resolve_for_target`] to generate only the project they need.
 pub fn resolve(cargo_toml_override: Option<&Path>) -> Result<ResolvedManifest> {
+    resolve_targets(cargo_toml_override, &[])
+}
+
+/// Generate the requested platform and resolve the resulting application metadata.
+pub fn resolve_for_target(
+    cargo_toml_override: Option<&Path>,
+    target: whisker_dev_server::Target,
+) -> Result<ResolvedManifest> {
+    resolve_targets(
+        cargo_toml_override,
+        &[crate::platforms::generation_target(target)],
+    )
+}
+
+fn resolve_targets(
+    cargo_toml_override: Option<&Path>,
+    targets: &[GenerationTarget],
+) -> Result<ResolvedManifest> {
+    let cargo_toml = application_manifest(cargo_toml_override)?;
+    Ok(from_report(whisker_cng::generate(&cargo_toml, targets)?))
+}
+
+/// Read metadata from the last successful generation without executing user code.
+pub fn read_generated(cargo_toml_override: Option<&Path>) -> Result<ResolvedManifest> {
+    let cargo_toml = application_manifest(cargo_toml_override)?;
+    let report = cargo_toml
+        .parent()
+        .unwrap()
+        .join("target/.whisker/generation.json");
+    let report: GenerationReport = serde_json::from_slice(&std::fs::read(report)?)?;
+    anyhow::ensure!(
+        report.schema_version == 1 && report.crate_dir == cargo_toml.parent().unwrap(),
+        "invalid generation report"
+    );
+    Ok(from_report(report))
+}
+
+fn from_report(report: GenerationReport) -> ResolvedManifest {
+    ResolvedManifest {
+        crate_dir: report.crate_dir,
+        package: report.package,
+        config: report.config,
+        workspace_root: report.workspace_root,
+        projects: report.projects,
+    }
+}
+
+impl ResolvedManifest {
+    /// The generated project for this invocation's build target.
+    pub fn project(&self, target: whisker_dev_server::Target) -> Result<PlatformSync> {
+        self.projects
+            .get(&crate::platforms::generation_target(target))
+            .cloned()
+            .ok_or_else(|| anyhow!("generator did not produce the requested project"))
+    }
+}
+
+fn application_manifest(cargo_toml_override: Option<&Path>) -> Result<PathBuf> {
     let cargo_toml = match cargo_toml_override {
         Some(p) => p.to_path_buf(),
         None => {
@@ -64,24 +126,8 @@ pub fn resolve(cargo_toml_override: Option<&Path>) -> Result<ResolvedManifest> {
     // surfaces as posix-spawn ENOENT.
     let cargo_toml = std::fs::canonicalize(&cargo_toml)
         .with_context(|| format!("canonicalize {}", cargo_toml.display()))?;
-    let crate_dir = cargo_toml
-        .parent()
-        .ok_or_else(|| anyhow!("Cargo.toml has no parent dir: {}", cargo_toml.display()))?
-        .to_path_buf();
-    let package = parse_package_name(&cargo_toml)?;
-    let whisker_rs = crate_dir.join("whisker.rs");
-    if !whisker_rs.is_file() {
-        anyhow::bail!(
-            "no whisker.rs next to {} — every Whisker app needs a `whisker.rs` at the crate root that defines `fn configure(app: &mut Config)`",
-            cargo_toml.display(),
-        );
-    }
-    let config = probe::run(&whisker_rs, &crate_dir, &package)?;
-    Ok(ResolvedManifest {
-        crate_dir,
-        package,
-        config,
-    })
+    parse_package_name(&cargo_toml)?;
+    Ok(cargo_toml)
 }
 
 /// Walk up from `start` looking for the first Cargo.toml with a

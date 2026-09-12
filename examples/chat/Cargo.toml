@@ -7,7 +7,18 @@ publish = false
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = ["whisker-cng/generate"]
+
 [dependencies]
+whisker-cng = { path = "../../crates/whisker-cng", version = "0.13.10", default-features = false }
 whisker = { workspace = true, features = ["tokio"] }
 whisker-web-browser = { path = "../../packages/whisker-web-browser" }
 whisker-icons = { path = "../../packages/whisker-icons" }

@@ -1,12 +1,12 @@
 //! `whisker build web` — release build of the CNG-generated Web project.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 use clap::Args as ClapArgs;
 use std::path::PathBuf;
 use whisker_build::Profile;
 use whisker_dev_server::Target;
 
-use crate::{manifest, platforms};
+use crate::manifest;
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
@@ -17,22 +17,10 @@ pub struct Args {
 }
 
 pub fn run(args: Args, no_tui: bool) -> Result<()> {
-    let manifest = manifest::resolve(args.manifest_path.as_deref())?;
-    let workspace_root = crate::run::find_workspace_root(&manifest.crate_dir).ok_or_else(|| {
-        anyhow!(
-            "no [workspace] Cargo.toml at or above {}",
-            manifest.crate_dir.display()
-        )
-    })?;
+    let manifest = manifest::resolve_for_target(args.manifest_path.as_deref(), Target::Web)?;
+    let workspace_root = manifest.workspace_root.clone();
     let build_ui = super::BuildUi::start(no_tui, "Web", &manifest.package);
-    let sync = platforms::sync_for_target(
-        Target::Web,
-        &manifest.config,
-        &manifest.crate_dir,
-        &workspace_root,
-        &manifest.package,
-    )
-    .context("sync gen/web")?;
+    let sync = manifest.project(Target::Web)?;
     let dist = sync.gen_dir.join("dist");
     let artifacts = whisker_build::web::build(&whisker_build::web::WebBuild {
         project_dir: sync.gen_dir,

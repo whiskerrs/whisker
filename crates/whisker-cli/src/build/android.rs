@@ -10,7 +10,7 @@ use whisker_build::android::ReleaseArtifact;
 use whisker_build::ui;
 use whisker_dev_server::Target;
 
-use crate::{credential, manifest, platforms};
+use crate::{credential, manifest};
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
@@ -21,19 +21,14 @@ pub struct Args {
 }
 
 pub fn run(artifact: ReleaseArtifact, args: Args, no_tui: bool) -> Result<()> {
-    let m = manifest::resolve(args.manifest_path.as_deref())?;
+    let m = manifest::resolve_for_target(args.manifest_path.as_deref(), Target::Android)?;
     let application_id = manifest::android_application_id(&m.config).ok_or_else(|| {
         anyhow!(
             "whisker.rs: app.android(|a| a.application_id(\"…\")) (or app.bundle_id) \
              is required for Android builds"
         )
     })?;
-    let workspace_root = crate::run::find_workspace_root(&m.crate_dir).ok_or_else(|| {
-        anyhow!(
-            "no [workspace] Cargo.toml at or above {}",
-            m.crate_dir.display()
-        )
-    })?;
+    let workspace_root = m.workspace_root.clone();
 
     // Announce the fully resolved identity FIRST. `configure()` is
     // arbitrary Rust and may branch on ambient env (WHISKER_ENV-
@@ -45,7 +40,7 @@ pub fn run(artifact: ReleaseArtifact, args: Args, no_tui: bool) -> Result<()> {
         ReleaseArtifact::AppBundle => "appbundle (.aab)",
         ReleaseArtifact::Apk => "apk",
     };
-    // Credential pre-step BEFORE any compilation: the decryption-key
+    // Credential pre-step BEFORE native application compilation: the decryption-key
     // prompt (if any) happens now, and key problems fail before, not
     // after, the long gradle+cargo build. `_staging` must stay alive
     // until gradle exits — the signing paths point into it.
@@ -57,13 +52,7 @@ pub fn run(artifact: ReleaseArtifact, args: Args, no_tui: bool) -> Result<()> {
         "building {application_id} {version} ({build_number}) — release {label}",
     ));
 
-    let sync = platforms::sync_for_target(
-        Target::Android,
-        &m.config,
-        &m.crate_dir,
-        &workspace_root,
-        &m.package,
-    )?;
+    let sync = m.project(Target::Android)?;
 
     // The Gradle Settings plugin trusts a Cargo.lock-keyed module
     // report cache that goes stale in ways the lock hash can't see

@@ -10,7 +10,7 @@ use whisker_build::ios::{ExportMethod, IosReleaseInputs, ReleaseSigning};
 use whisker_build::ui;
 use whisker_dev_server::Target;
 
-use crate::{credential, manifest, platforms};
+use crate::{credential, manifest};
 
 /// Mirrors Apple's ExportOptions `method` spellings (`ad-hoc`, not
 /// fastlane's `adhoc`) so CLI input, plist content, and xcodebuild
@@ -47,7 +47,7 @@ pub struct Args {
 }
 
 pub fn run(args: Args, no_tui: bool) -> Result<()> {
-    let m = manifest::resolve(args.manifest_path.as_deref())?;
+    let m = manifest::resolve_for_target(args.manifest_path.as_deref(), Target::IosSimulator)?;
     // Same resolution `whisker run ios` uses (run.rs::ios_params_from).
     let bundle_id = m
         .config
@@ -73,18 +73,13 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
                  is required for iOS builds"
             )
         })?;
-    let workspace_root = crate::run::find_workspace_root(&m.crate_dir).ok_or_else(|| {
-        anyhow!(
-            "no [workspace] Cargo.toml at or above {}",
-            m.crate_dir.display()
-        )
-    })?;
+    let workspace_root = m.workspace_root.clone();
 
     // Resolved-identity banner first — see build/android.rs for why.
     let version = m.config.version.clone().unwrap_or_else(|| "0.1.0".into());
     let build_number = m.config.build_number.unwrap_or(1);
     let method: ExportMethod = args.method.into();
-    // Credential pre-step before any compilation (prompt up front,
+    // Credential pre-step before native application compilation (prompt up front,
     // fail fast on key problems). `_staging` holds the decrypted .p8
     // until xcodebuild finishes.
     let (_staging, signing) = credential::require_ios_signing(&m.crate_dir, &bundle_id)?;
@@ -99,13 +94,7 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
     // `Target::IosSimulator` here only selects which gen tree to
     // render — gen/ios/ is one project for simulator and device;
     // release vs dev is xcodebuild's -destination, not cng's concern.
-    let sync = platforms::sync_for_target(
-        Target::IosSimulator,
-        &m.config,
-        &m.crate_dir,
-        &workspace_root,
-        &m.package,
-    )?;
+    let sync = m.project(Target::IosSimulator)?;
     // Stage Whisker modules' iOS Swift sources before xcodebuild so
     // the pbxproj's WhiskerModules SwiftPM ref resolves — same step
     // the dev loop runs (see whisker-dev-server::builder). Writes a

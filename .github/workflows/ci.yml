@@ -32,6 +32,10 @@ jobs:
           RUST_TEST_THREADS: 1
           WGPU_BACKEND: vulkan
       - run: cargo test --workspace --doc
+      - name: Check CNG without its generation engine
+        run: cargo check -p whisker-cng --no-default-features --lib
+      - name: Check application configuration binaries
+        run: cargo check --workspace --bins --features whisker-config
       - name: Verify CNG Host templates are publishable
         run: |
           package_files="$(cargo package -p whisker-cng --allow-dirty --list)"

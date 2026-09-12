@@ -44,7 +44,10 @@ pub struct AndroidArgs {
 }
 
 pub fn run(args: AndroidArgs) -> Result<()> {
-    let m = manifest::resolve(args.manifest_path.as_deref())?;
+    let m = manifest::resolve_for_target(
+        args.manifest_path.as_deref(),
+        whisker_dev_server::Target::Android,
+    )?;
     let application_id = match args.id {
         Some(id) => id,
         // Same resolution `whisker run android` uses: explicit
