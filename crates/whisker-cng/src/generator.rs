@@ -343,6 +343,7 @@ fn build_discovered_plugins(
     for plugin in discovered {
         let output = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
             .arg("build")
+            .arg("--quiet")
             .arg("--manifest-path")
             .arg(workspace_root.join("Cargo.toml"))
             .arg("--package")
