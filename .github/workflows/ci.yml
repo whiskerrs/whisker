@@ -120,6 +120,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: gradle/actions/setup-gradle@v6
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Install Android NDK
         run: sdkmanager "ndk;27.1.12297006"
       - name: Build and inspect generated Android consumer

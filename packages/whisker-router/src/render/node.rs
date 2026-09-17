@@ -22,7 +22,7 @@
 //! and that container's effect does not re-run — the fine-grained
 //! property.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use whisker::css::ext::{percent, px};
@@ -31,7 +31,8 @@ use whisker::css::{
 };
 use whisker::runtime::reactive::{Owner, effect};
 use whisker::runtime::view::{
-    Element, append_child, create_element, create_phantom_element, remove_child,
+    Element, append_child, create_element, create_phantom_element, insert_child_at,
+    on_next_frame_applied, remove_child,
 };
 use whisker::{
     AnimationController, ElementTag, apply_style, computed, provide_context, use_context,
@@ -278,6 +279,8 @@ struct StackWrapper {
     /// Reactive content below the presentation wrapper. Buried content is
     /// paused independently while the wrapper's pose effect remains live.
     content_owner: Owner,
+    /// Cancellable wait for the frame containing the push start pose.
+    pending_push: Rc<Cell<bool>>,
     /// This wrapper's **own** controller — the one used to drive the
     /// transition when *this* wrapper is the moving top (push-in /
     /// pop-out). It is also what an under wrapper's pose is pointed at
@@ -377,6 +380,21 @@ fn reconcile_stack(
     let new_len = stack.history.len();
     let old_len = live.borrow().len();
 
+    let navigation_changed = new_len != old_len || {
+        let entries = live.borrow();
+        entries
+            .last()
+            .zip(stack.history.last())
+            .is_some_and(|(old, new)| old.child != new.child || old.fingerprint != new.state)
+    };
+    if navigation_changed {
+        // A retained wrapper can outlive its pending push (Back, replace, or a
+        // second push). Its later Host acknowledgement must not restart it.
+        for entry in live.borrow().iter() {
+            entry.pending_push.set(false);
+        }
+    }
+
     // ----- Grow: a push (or initial mount).
     if new_len > old_len {
         for idx in old_len..new_len {
@@ -411,7 +429,7 @@ fn reconcile_stack(
                 if w.transition.is_instant() {
                     drive.set_value(1.0);
                 } else {
-                    drive.forward();
+                    start_push_after_frame(&w);
                 }
                 live.borrow_mut().push(w);
             }
@@ -535,8 +553,9 @@ fn reconcile_stack(
     {
         let l = live.borrow();
         let top = l.len().saturating_sub(1);
+        let preparing_push = l.iter().any(|w| w.pending_push.get());
         for (i, w) in l.iter().enumerate() {
-            let pose_animating = w.pose_ctrl.get_untracked().is_animating();
+            let pose_animating = preparing_push || w.pose_ctrl.get_untracked().is_animating();
             if i == top {
                 w.content_owner.resume();
                 if !pose_animating {
@@ -559,7 +578,7 @@ fn reconcile_stack(
 
     // ----- Keep the dim layer immediately below the top wrapper so it
     // darkens the under card + backdrop but is itself covered by the top.
-    // Remove + re-append both so order is `[…lower, dim, top]`.
+    // Move both in place so order is `[…lower, dim, top]`.
     //
     // ONLY for a push / steady state. During a **pop** the live top is the
     // revealed survivor, but the wrapper that must paint on top is the
@@ -571,10 +590,8 @@ fn reconcile_stack(
     if new_len >= old_len {
         let l = live.borrow();
         if let Some(top_w) = l.last() {
-            remove_child(slot, dim);
-            remove_child(slot, top_w.wrapper);
-            append_child(slot, dim);
-            append_child(slot, top_w.wrapper);
+            insert_child_at(slot, dim, usize::MAX);
+            insert_child_at(slot, top_w.wrapper, usize::MAX);
         }
     }
 
@@ -592,6 +609,7 @@ fn reconcile_stack(
         owner: Owner::current().expect("stack reconcile owner"),
         registration: None,
         top_ctrl: top_w.map(|w| w.ctrl.clone()),
+        pending_push: top_w.map(|w| w.pending_push.clone()),
         top_pose: top_w.map(pose_of),
         under_pose: under_w.map(pose_of),
         #[cfg(test)]
@@ -652,8 +670,7 @@ fn run_pop(
     // The leaving card slides off ON TOP of the revealed survivor, so it
     // must paint above it. Move the popped wrapper to
     // the end (topmost) for the duration of the slide-out.
-    remove_child(slot, popped.wrapper);
-    append_child(slot, popped.wrapper);
+    insert_child_at(slot, popped.wrapper, usize::MAX);
 
     let popped_wrapper = popped.wrapper;
     let popped_owner = popped.owner;
@@ -698,10 +715,8 @@ fn settle_survivor(slot: Element, dim: Element, survivor: Option<&SurvivorHandle
         Direction::Push,
     ));
 
-    remove_child(slot, dim);
-    remove_child(slot, survivor.wrapper);
-    append_child(slot, dim);
-    append_child(slot, survivor.wrapper);
+    insert_child_at(slot, dim, usize::MAX);
+    insert_child_at(slot, survivor.wrapper, usize::MAX);
 }
 
 /// Build a wrapper for `entry` at history index `idx`: choose its
@@ -793,11 +808,34 @@ fn mount_wrapper(
         wrapper,
         owner,
         content_owner,
+        pending_push: Rc::new(Cell::new(false)),
         ctrl,
         pose_ctrl,
         pose_role,
         pose_mode,
         transition,
+    }
+}
+
+/// Keep both cards at progress zero until their initial frame has been applied.
+/// Starting here registers the controller after this frame's animation step;
+/// its first step (and clock origin) therefore belongs to the next Host frame.
+fn start_push_after_frame(w: &StackWrapper) {
+    w.pending_push.set(true);
+    let pending = w.pending_push.clone();
+    let drive = w.ctrl.clone();
+    let supported = w.owner.with(|| {
+        on_next_frame_applied(w.wrapper, move |_| {
+            if pending.replace(false) {
+                drive.forward();
+            }
+        })
+    });
+    if !supported {
+        // Lightweight renderers without frame acknowledgements retain their
+        // synchronous behavior. All retained SurfaceRuntime Hosts support it.
+        w.pending_push.set(false);
+        w.ctrl.forward();
     }
 }
 

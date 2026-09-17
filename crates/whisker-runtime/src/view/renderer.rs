@@ -181,7 +181,8 @@ pub trait DynRenderer {
     }
 
     /// Insert `child` into `parent` immediately before `reference`
-    /// (`None` = append at the tail). Only called when
+    /// (`None` = append at the tail). An already attached child in the same
+    /// parent is moved without detaching its subtree. Only called when
     /// [`supports_insert_before`](Self::supports_insert_before) is
     /// `true`; the default panics to catch a mis-wired caller.
     fn insert_child_before(&self, _parent: Element, _child: Element, _reference: Option<Element>) {
@@ -204,6 +205,13 @@ pub trait DynRenderer {
         bind_type: BindType,
         callback: Box<dyn Fn(WhiskerValue) + 'static>,
     );
+
+    /// Queues a one-shot callback after a future accepted frame includes this
+    /// element in resolved, participating layout. The argument is the accepted
+    /// revision, not a GPU presentation timestamp. Returns false when unsupported.
+    fn on_next_frame_applied(&self, _handle: Element, _callback: Box<dyn FnOnce(u64)>) -> bool {
+        false
+    }
 
     /// Observes resolved Rust layout for framework control primitives.
     /// Ordinary renderers may ignore this; SurfaceRuntime reports after each
@@ -879,12 +887,40 @@ fn insert_or_append(real_parent: Element, real_child: Element, position: usize) 
 }
 
 /// Places `child` at mirror `index` in `parent`'s child list (appends
-/// when `index >= len`). The following siblings are **not touched** on
+/// when `index >= len`). An existing child is moved to the final index;
+/// its parent and attachment remain unchanged. The following siblings are
+/// **not touched** on
 /// the Host side: `child` is realized with a positioned insert
 /// (the private `insert_or_append` → native `insert_before` on Host), so a
 /// stateful native sibling (a focused `<input>`, a scrolled list) keeps
 /// its state.
 pub fn insert_child_at(parent: Element, child: Element, index: usize) {
+    let previous_parent = PARENT_OF.with_borrow(|map| map.get(&child).copied());
+    let moving = previous_parent == Some(parent);
+    if moving {
+        let unchanged = CHILDREN_OF.with_borrow(|map| {
+            map.get(&parent).is_some_and(|children| {
+                children.iter().position(|entry| *entry == child)
+                    == Some(index.min(children.len().saturating_sub(1)))
+            })
+        });
+        if unchanged {
+            return;
+        }
+        // Legacy renderers cannot move an attached child. Preserve their
+        // detach/insert fallback, including transparent descendants.
+        if !with_renderer(|r| r.supports_insert_before(), false) {
+            remove_child(parent, child);
+        } else {
+            CHILDREN_OF.with_borrow_mut(|map| {
+                if let Some(children) = map.get_mut(&parent) {
+                    children.retain(|entry| *entry != child);
+                }
+            });
+        }
+    } else if let Some(previous) = previous_parent {
+        remove_child(previous, child);
+    }
     CHILDREN_OF.with_borrow_mut(|map| {
         let children = map.entry(parent).or_default();
         if index < children.len() {
@@ -902,7 +938,9 @@ pub fn insert_child_at(parent: Element, child: Element, index: usize) {
         insert_or_append(parent, child, pos);
     }
 
-    crate::reactive::on_component_root_attached(parent, child);
+    if !moving {
+        crate::reactive::on_component_root_attached(parent, child);
+    }
 }
 
 /// Return the element handle that appears immediately before `child`
@@ -974,6 +1012,33 @@ pub fn set_event_listener(
     with_renderer(
         |r| r.set_event_listener(handle, event_name, bind_type, callback),
         (),
+    )
+}
+
+/// Runs once after the Host accepts a future frame containing this element's
+/// resolved layout. Disposal of the registering owner or element cancels it.
+/// This does not wait for images or GPU presentation. A callback registered by
+/// a callback waits for a later frame. Returns false for unsupported renderers.
+#[doc(hidden)]
+pub fn on_next_frame_applied(handle: Element, callback: impl FnOnce(u64) + 'static) -> bool {
+    if is_phantom(handle) {
+        return false;
+    }
+    let scoped = element_callback(handle, Some(callback));
+    with_renderer(
+        |renderer| {
+            renderer.on_next_frame_applied(
+                handle,
+                Box::new(move |revision| {
+                    scoped.with_mut(|callback| {
+                        if let Some(callback) = callback.take() {
+                            callback(revision);
+                        }
+                    });
+                }),
+            )
+        },
+        false,
     )
 }
 

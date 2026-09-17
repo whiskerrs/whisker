@@ -41,6 +41,9 @@ use whisker_engine::{
 
 mod module_measurement;
 
+#[cfg(test)]
+mod frame_applied_tests;
+
 const MAX_LIST_LAYOUT_PASSES: usize = 4;
 
 /// A mutation emitted by `render!` that could not enter the retained surface.
@@ -412,6 +415,7 @@ impl SurfaceRuntime {
                 elements: HashMap::new(),
                 node_elements: HashMap::new(),
                 text_layout_observed: HashSet::new(),
+                frame_applied_callbacks: HashMap::new(),
                 module_measurements: HashMap::new(),
                 #[cfg(debug_assertions)]
                 text_style_diagnostics: RefCell::new(HashSet::new()),
@@ -445,6 +449,14 @@ impl SurfaceRuntime {
     /// Returns the semantic surface identifier.
     pub fn surface(&self) -> SurfaceId {
         self.state.borrow().surface.surface()
+    }
+
+    // List observers may invalidate the last layout pass. Keep driving those
+    // passes while an applied-frame observer is waiting; blocked measurement
+    // is excluded by the caller and wakes separately when its result arrives.
+    pub(crate) fn has_pending_frame_application(&self) -> bool {
+        let state = self.state.borrow();
+        !state.frame_applied_callbacks.is_empty() && state.surface.needs_layout()
     }
 
     /// Returns the latest presentation accepted by the Host.
@@ -902,6 +914,23 @@ impl SurfaceRuntime {
         state
             .flush_background_projections()
             .map_err(RuntimePresentError::Binding)?;
+        // Capture eligibility before calling the sink. A detached node or an
+        // unfinished List relayout must not be released by an unrelated frame.
+        let applied_elements = if !state.surface.needs_layout() {
+            state.frame_applied_callbacks.keys().copied().filter(|handle| {
+                let Some(node) = state.elements.get(handle).and_then(|entry| entry.node) else {
+                    return false;
+                };
+                let Some(layout) = state.surface.last_layout() else {
+                    return false;
+                };
+                layout.get_with_participation(node).is_some_and(|(_, participation)| {
+                    participation == whisker_engine::whisker_layout::LayoutParticipation::Participating
+                })
+            }).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let (presentation, paragraph_changes) = {
             let BindingState {
                 surface,
@@ -931,8 +960,26 @@ impl SurfaceRuntime {
         } else {
             Vec::new()
         };
+        let applied_callbacks =
+            if let Some(whisker_protocol::ApplyResult::Accepted { revision }) = presentation {
+                applied_elements
+                    .into_iter()
+                    .flat_map(|element| {
+                        state
+                            .frame_applied_callbacks
+                            .remove(&element)
+                            .unwrap_or_default()
+                    })
+                    .map(|callback| (callback, revision))
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
         drop(state);
         with_installed_renderer(self.renderer(), || {
+            for (callback, revision) in applied_callbacks {
+                callback(revision);
+            }
             for (callback, body) in notifications {
                 callback(body);
             }
@@ -988,6 +1035,7 @@ struct BoundElement {
     base_specified: SpecifiedStyle,
     specified: SpecifiedStyle,
     resolved: Option<ResolvedNodeStyle>,
+    resolution: RefCell<Option<CachedStyleResolution>>,
     text: Option<PlainTextInput>,
     raw_text: String,
     id: String,
@@ -1008,6 +1056,16 @@ struct BoundElement {
     layout_transitions: Option<Box<ActivePropertyTransitions>>,
     animations: Vec<ActiveKeyframeAnimation>,
     pending_motion_events: VecDeque<PendingMotionEvent>,
+}
+
+// One result per element. The base style is immutable; parent values and
+// environment are compared explicitly, including during speculative batches.
+#[derive(Clone)]
+struct CachedStyleResolution {
+    specified: SpecifiedStyle,
+    parent: Option<InheritedStyle>,
+    environment: StyleEnvironment,
+    resolved: ResolvedNodeStyle,
 }
 
 #[derive(Clone, Default)]
@@ -1096,6 +1154,7 @@ struct RuntimeListener {
 }
 
 type PlannedListener = (Element, Rc<dyn Fn(WhiskerValue) + 'static>);
+type FrameAppliedCallback = Box<dyn FnOnce(u64)>;
 
 struct BindingState {
     surface: SurfaceEngine,
@@ -1106,6 +1165,7 @@ struct BindingState {
     node_elements: HashMap<NodeId, Element>,
     text_queries: Rc<RefCell<crate::text_query::Queries>>,
     text_layout_observed: HashSet<Element>,
+    frame_applied_callbacks: HashMap<Element, Vec<FrameAppliedCallback>>,
     module_measurements: HashMap<Element, module_measurement::Binding>,
     #[cfg(debug_assertions)]
     text_style_diagnostics: RefCell<
@@ -1460,7 +1520,7 @@ impl BindingState {
             return Ok(());
         }
         let node = entry.node;
-        let resolved = resolve_style(&entry.effective_specified(), parent, environment)?;
+        let resolved = self.resolve_node_style(element, &entry.specified, parent, environment)?;
         let children = entry.children.clone();
         updates.push(EnvironmentStyleUpdate {
             element,
@@ -1556,6 +1616,12 @@ impl BindingState {
                 children: Vec::new(),
                 base_specified,
                 specified: SpecifiedStyle::new(),
+                resolution: RefCell::new(resolved.as_ref().map(|resolved| CachedStyleResolution {
+                    specified: SpecifiedStyle::new(),
+                    parent: None,
+                    environment: self.environment,
+                    resolved: resolved.clone(),
+                })),
                 resolved,
                 text,
                 raw_text: String::new(),
@@ -1765,10 +1831,8 @@ impl BindingState {
         if entry.kind.is_raw_text() {
             return Ok(());
         }
-        #[cfg(test)]
-        self.style_resolution_count
-            .set(self.style_resolution_count.get() + 1);
-        let resolved = resolve_style(&entry.effective_specified(), parent_style, self.environment)?;
+        let resolved =
+            self.resolve_node_style(element, &entry.specified, parent_style, self.environment)?;
         if let Some(node) = entry.node {
             surface.update_computed_style(node, resolved.computed())?;
             if entry.kind.receives_text_style() {
@@ -1853,6 +1917,38 @@ impl BindingState {
         Ok(elements)
     }
 
+    fn resolve_node_style(
+        &self,
+        element: Element,
+        specified: &SpecifiedStyle,
+        parent: Option<&InheritedStyle>,
+        environment: StyleEnvironment,
+    ) -> Result<ResolvedNodeStyle, RuntimeBindingError> {
+        let entry = self.element(element)?;
+        if let Some(cached) = entry.resolution.borrow().as_ref()
+            && cached.specified == *specified
+            && cached.parent.as_ref() == parent
+            && cached.environment == environment
+        {
+            return Ok(cached.resolved.clone());
+        }
+        #[cfg(test)]
+        self.style_resolution_count
+            .set(self.style_resolution_count.get() + 1);
+        let resolved = resolve_style(
+            &entry.base_specified.clone().merge(specified.clone()),
+            parent,
+            environment,
+        )?;
+        *entry.resolution.borrow_mut() = Some(CachedStyleResolution {
+            specified: specified.clone(),
+            parent: parent.cloned(),
+            environment,
+            resolved: resolved.clone(),
+        });
+        Ok(resolved)
+    }
+
     fn style_changes_inheritance(
         &self,
         root: Element,
@@ -1864,11 +1960,7 @@ impl BindingState {
             .and_then(|parent| self.elements.get(&parent))
             .and_then(|parent| parent.resolved.as_ref())
             .map(ResolvedNodeStyle::inherited_for_children);
-        let next = resolve_style(
-            &entry.base_specified.clone().merge(style.clone()),
-            parent_style,
-            self.environment,
-        );
+        let next = self.resolve_node_style(root, style, parent_style, self.environment);
         let inherited_unchanged =
             next.as_ref()
                 .ok()
@@ -1979,6 +2071,9 @@ impl BindingState {
         child: Element,
         before: Option<Element>,
     ) -> Result<(), RuntimeBindingError> {
+        if self.element(child)?.parent == Some(parent) {
+            return self.move_before(parent, child, before);
+        }
         let parent_entry = self.element(parent)?;
         let child_entry = self.element(child)?;
         if child_entry.inline_truncation && !parent_entry.kind.is_rich_text() {
@@ -2038,6 +2133,55 @@ impl BindingState {
             self.surface
                 .insert_child(parent_node, child_node, scene_index)?;
             self.apply_subtree(child)?;
+        } else {
+            self.refresh_text(parent)?;
+        }
+        Ok(())
+    }
+
+    fn move_before(
+        &mut self,
+        parent: Element,
+        child: Element,
+        before: Option<Element>,
+    ) -> Result<(), RuntimeBindingError> {
+        let entry = self.element(parent)?;
+        let old = entry
+            .children
+            .iter()
+            .position(|value| *value == child)
+            .ok_or(RuntimeBindingError::UnknownElement { element: child })?;
+        let target = match before {
+            Some(reference) => entry
+                .children
+                .iter()
+                .position(|value| *value == reference)
+                .ok_or(RuntimeBindingError::UnknownElement { element: reference })?,
+            None => entry.children.len(),
+        };
+        let target = target - usize::from(old < target);
+        if old == target {
+            return Ok(());
+        }
+        let children = &mut self.element_mut(parent)?.children;
+        children.remove(old);
+        children.insert(target, child);
+        if self.element(parent)?.kind.is_rich_text() {
+            self.sync_paragraph_children(parent)?;
+            return self.refresh_text(parent);
+        }
+        if let Some(child_node) = self.element(child)?.node {
+            let entry = self.element(parent)?;
+            let scene_index = entry.children[..target]
+                .iter()
+                .filter(|child| {
+                    self.elements
+                        .get(child)
+                        .is_some_and(|entry| entry.node.is_some())
+                })
+                .count() as u32;
+            self.surface
+                .move_child(entry.node.expect("scene parent"), child_node, scene_index)?;
         } else {
             self.refresh_text(parent)?;
         }
@@ -2492,6 +2636,107 @@ mod layout_observer_tests {
                 )
             })
             .unwrap();
+    }
+
+    #[test]
+    fn moving_phantom_children_preserves_retained_nodes_and_style_context() {
+        use crate::view::{children_of, create_phantom_element, insert_child_at};
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(93).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        with_installed_renderer(surface.renderer(), || {
+            let root = create_element(ElementTag::View);
+            let slot = create_phantom_element();
+            let a = create_element(ElementTag::View);
+            let b = create_element(ElementTag::View);
+            let c = create_element(ElementTag::View);
+            append_child(slot, a);
+            append_child(slot, b);
+            append_child(root, slot);
+            append_child(root, c);
+            surface.state.borrow().style_resolution_count.set(0);
+            for (index, expected) in [(1, vec![c, a, b]), (0, vec![a, b, c]), (1, vec![c, a, b])] {
+                insert_child_at(root, slot, index);
+                let state = surface.state.borrow();
+                let node = state.element(root).unwrap().node.unwrap();
+                let expected = expected
+                    .iter()
+                    .map(|el| state.element(*el).unwrap().node.unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(state.surface.node(node).unwrap().children(), expected);
+                assert_eq!(state.style_resolution_count.get(), 0);
+            }
+            assert_eq!(children_of(root), vec![c, slot]);
+            assert_eq!(children_of(slot), vec![a, b]);
+        });
+    }
+
+    #[test]
+    fn cached_style_tracks_final_parent_and_environment_after_batched_changes() {
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(94).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let (parent, child) = with_installed_renderer(surface.renderer(), || {
+            let parent = create_element(ElementTag::View);
+            let child = create_element(ElementTag::View);
+            append_child(parent, child);
+            (parent, child)
+        });
+        let color = |name: &str| {
+            SpecifiedStyle::new().push(
+                StyleProperty::Color,
+                StyleValue::Color(whisker_style::ColorValue::Named(name.into())),
+            )
+        };
+        surface.begin_mutation_batch();
+        with_installed_renderer(surface.renderer(), || {
+            // Cache the child with the old inherited context first.
+            set_specified_style(child, &absolute_box(40.0, 60.0));
+            set_specified_style(parent, &color("red"));
+        });
+        surface.finish_mutation_batch().unwrap();
+        let verify = || {
+            let state = surface.state.borrow();
+            let parent = state.element(parent).unwrap().resolved.as_ref().unwrap();
+            let child = state.element(child).unwrap();
+            let expected = resolve_style(
+                &child.effective_specified(),
+                Some(parent.inherited_for_children()),
+                state.environment,
+            )
+            .unwrap();
+            assert_eq!(child.resolved.as_ref(), Some(&expected));
+        };
+        verify();
+        surface
+            .state
+            .borrow_mut()
+            .update_environment(StyleEnvironment::new(640.0, 960.0, 2.0, 20.0))
+            .unwrap();
+        verify();
+        with_installed_renderer(surface.renderer(), || {
+            set_specified_style(parent, &color("blue"));
+        });
+        verify();
+    }
+
+    #[test]
+    fn unchanged_style_inputs_reuse_resolution_during_lowering() {
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(95).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let root = with_installed_renderer(surface.renderer(), || {
+            let root = create_element(ElementTag::View);
+            set_specified_style(root, &absolute_box(40.0, 60.0));
+            root
+        });
+        surface.state.borrow().style_resolution_count.set(0);
+        surface.state.borrow_mut().apply_subtree(root).unwrap();
+        surface.state.borrow_mut().apply_subtree(root).unwrap();
+        assert_eq!(surface.state.borrow().style_resolution_count.get(), 0);
     }
 
     #[test]

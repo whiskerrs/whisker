@@ -21,6 +21,7 @@ public final class WhiskerView: UIView {
     private var dirtyScrollOffsets: [UInt64: CGPoint] = [:]
     private let modules = HostModuleDispatcher()
     let preparedParagraphs = PreparedParagraphs()
+    let textMeasurementCache = TextMeasurementCache()
     private let resources = HostResourceStore()
     private lazy var resourceService = HostResourceService(store: resources)
     private var rasterResourceObserver: ((WhiskerRasterResourceEvent) -> Void)?
@@ -304,6 +305,8 @@ public final class WhiskerView: UIView {
 
     @discardableResult
     private func driveRuntimeFrame(timestampMs: Double) -> Bool {
+        textMeasurementCache.removeAll()
+        defer { textMeasurementCache.removeAll() }
         guard let handle = runtimeHandle else { return true }
         return whiskerViewTick(
             handle,
@@ -345,7 +348,8 @@ public final class WhiskerView: UIView {
         _ frame: WhiskerMobileFrame,
         response: inout WhiskerMobileApplyResponse
     ) -> Bool {
-        scene.applyFrame(frame, response: &response)
+        textMeasurementCache.removeAll()
+        return scene.applyFrame(frame, response: &response)
     }
     private func dispatchElementEvent(node: UInt64, name: String, detail: WhiskerValue) {
         scene.dispatchOrDefer { [weak self] in

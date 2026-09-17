@@ -1209,12 +1209,15 @@ impl RuntimeInstance {
                     )
                     .map_err(RuntimeDriveError::Frame)?;
                 let recovery = matches!(frame.presentation, Some(ApplyResult::NeedSnapshot { .. }));
+                let pending_frame_application =
+                    frame.layout.has_layout() && surface.has_pending_frame_application();
                 let drained_events = self
                     .drain_pending_host_events()
                     .map_err(RuntimeDriveError::HostEvent)?;
                 Ok(RuntimeDrive {
                     frame,
                     needs_frame: recovery
+                        || pending_frame_application
                         || pending_text_queries
                         || self.activations.borrow().has_pending_longpress()
                         || drained_events > 0

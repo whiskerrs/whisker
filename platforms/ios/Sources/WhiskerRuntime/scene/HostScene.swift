@@ -591,9 +591,13 @@ final class HostScene {
             mounted.registration.childPolicy.acceptsElements,
             "\(mounted.registration.name) does not accept element children"
         )
-        child.removeFromSuperview()
-        parents[childID] = parentID
         let childrenHost = parent.sceneChildrenHost()
+        // MOVE preserves the live subtree, including focus and window
+        // attachment. Only a change of parent requires detachment.
+        if child.superview !== childrenHost {
+            child.removeFromSuperview()
+        }
+        parents[childID] = parentID
         childrenHost.insertSubview(child, at: index)
     }
 

@@ -55,6 +55,14 @@ private final class ZOrderCountingView: UIView {
     }
 }
 
+private final class WindowAttachmentProbe: UIView {
+    var windowChanges = 0
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        windowChanges += 1
+    }
+}
+
 @MainActor
 final class HostConformanceTests: XCTestCase {
     override class func setUp() {
@@ -117,6 +125,57 @@ final class HostConformanceTests: XCTestCase {
                 }
             }
         }
+    }
+
+    func testMoveKeepsSubtreeAttachedToWindow() throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let root = UIView(frame: window.bounds)
+        window.addSubview(root)
+        let scene = HostScene(root: root, resources: HostResourceStore(),
+            logicalBounds: { root.bounds }, emitElementEvent: { _, _, _ in },
+            updateScrollOffset: { _, _ in }, removeScrollOffset: { _ in })
+        XCTAssertTrue(WhiskerElementRegistry.bind([WhiskerElementRegistration(
+            elementType: 1, name: WhiskerBuiltInElements.viewName,
+            childPolicy: .elements, measurement: .none)]))
+        func present(_ operations: [WhiskerMobileOperation], revision: UInt64) {
+            operations.withUnsafeBufferPointer { buffer in
+                var frame = WhiskerMobileFrame()
+                frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                frame.protocol_major = 1
+                frame.mode = UInt8(revision == 1 ? WHISKER_FRAME_SNAPSHOT : WHISKER_FRAME_DELTA)
+                frame.scene_epoch = 1
+                frame.base_revision = revision - 1
+                frame.target_revision = revision
+                frame.operations = buffer.baseAddress
+                frame.operation_count = buffer.count
+                var response = WhiskerMobileApplyResponse()
+                XCTAssertTrue(scene.applyFrame(frame, response: &response))
+                XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
+            }
+        }
+        present([
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 2, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 3, member: 1),
+            operation(tag: UInt32(WHISKER_OP_INSERT), parent: 1, child: 2),
+            operation(tag: UInt32(WHISKER_OP_INSERT), parent: 1, child: 3, index: 1),
+        ], revision: 1)
+        let parent = try XCTUnwrap(root.subviews.first as? WhiskerNodeView)
+        let children = parent.sceneChildrenHost()
+        let moved = try XCTUnwrap(children.subviews.first)
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        scroll.contentSize = CGSize(width: 100, height: 1000)
+        moved.addSubview(scroll)
+        let probe = WindowAttachmentProbe()
+        scroll.addSubview(probe)
+        scroll.contentOffset = CGPoint(x: 0, y: 137)
+        XCTAssertTrue(probe.window === window)
+        probe.windowChanges = 0
+        present([operation(tag: UInt32(WHISKER_OP_MOVE), parent: 1, child: 2, index: 1)], revision: 2)
+        XCTAssertTrue(children.subviews.last === moved)
+        XCTAssertTrue(probe.window === window)
+        XCTAssertEqual(probe.windowChanges, 0)
+        XCTAssertEqual(scroll.contentOffset, CGPoint(x: 0, y: 137))
     }
 
     func testPaintOnlyFrameDoesNotReprojectRootZOrder() {

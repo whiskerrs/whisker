@@ -80,6 +80,8 @@ pub(crate) struct StackBridge {
     pub registration: Option<whisker::runtime::lifetime::Cancellation>,
     /// The top wrapper's transition controller (what the gesture scrubs).
     pub top_ctrl: Option<AnimationController>,
+    /// A not-yet-applied push has no visible card to scrub.
+    pub pending_push: Option<Rc<std::cell::Cell<bool>>>,
     /// The top wrapper's pose binding.
     pub top_pose: Option<PoseBinding>,
     /// The revealed-under wrapper's pose binding, if any.

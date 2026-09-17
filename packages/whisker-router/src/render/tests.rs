@@ -1457,6 +1457,8 @@ mod replace_repro {
 
     #[derive(Default)]
     struct Inner {
+        defer_frames: bool,
+        frame_callbacks: Vec<Box<dyn FnOnce(u64)>>,
         next_id: u32,
         children: HashMap<Element, Vec<Element>>,
         attrs: HashMap<Element, BTreeMap<String, String>>,
@@ -1588,6 +1590,15 @@ mod replace_repro {
     }
 
     impl DynRenderer for Rec {
+        fn on_next_frame_applied(&self, _handle: Element, callback: Box<dyn FnOnce(u64)>) -> bool {
+            let mut inner = self.0.borrow_mut();
+            if !inner.defer_frames {
+                return false;
+            }
+            inner.frame_callbacks.push(callback);
+            true
+        }
+
         fn create_element(&self, _tag: ElementTag) -> Element {
             let mut inner = self.0.borrow_mut();
             inner.next_id += 1;
@@ -1787,6 +1798,127 @@ mod replace_repro {
             mk("detail"),
         );
         RouterHandle::new((tree, registry))
+    }
+
+    fn accept_frame(rec: &Rec) {
+        let callbacks = std::mem::take(&mut rec.0.borrow_mut().frame_callbacks);
+        for callback in callbacks {
+            callback(1);
+        }
+    }
+
+    #[test]
+    fn push_clock_starts_after_initial_frame_is_applied() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            rec.0.borrow_mut().defer_frames = true;
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle();
+                let _root = mount_node(&h, NodePath::root());
+                h.push("/detail/1").unwrap();
+                flush();
+                let bridge = h.active_stack_bridge().unwrap();
+                let ctrl = bridge.top_ctrl.clone().unwrap();
+                assert!(!ctrl.is_animating());
+                assert_eq!(ctrl.value().get_untracked(), 0.0);
+                assert_eq!(
+                    bridge
+                        .under_pose
+                        .as_ref()
+                        .unwrap()
+                        .ctrl
+                        .get_untracked()
+                        .value()
+                        .get_untracked(),
+                    0.0
+                );
+                assert!(
+                    crate::render::platform_navigation::begin(
+                        &h,
+                        crate::render::transition::SwipeEdge::Left
+                    )
+                    .is_none()
+                );
+                whisker_animation::__step_for_tests(100.0);
+                // Simulate an expensive mount/Host application. The 67 ms
+                // gap must not become elapsed animation time.
+                accept_frame(&rec);
+                assert!(ctrl.is_animating());
+                whisker_animation::__step_for_tests(167.0);
+                assert_eq!(ctrl.value().get_untracked(), 0.0);
+                whisker_animation::__step_for_tests(183.0);
+                assert!(ctrl.value().get_untracked() > 0.0);
+                assert!(ctrl.value().get_untracked() < 0.5);
+            });
+        });
+    }
+
+    #[test]
+    fn back_before_push_acknowledgement_does_not_restart_push() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            rec.0.borrow_mut().defer_frames = true;
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle();
+                let _root = mount_node(&h, NodePath::root());
+                h.push("/detail/1").unwrap();
+                flush();
+                let ctrl = h.active_stack_bridge().unwrap().top_ctrl.unwrap();
+                h.back().unwrap();
+                flush();
+                accept_frame(&rec);
+                whisker_animation::__step_for_tests(100.0);
+                // Reverse from zero finishes immediately and disposes the
+                // cancelled card; the acknowledgement must not run forward.
+                assert_eq!(rec.count_cid("1"), 0);
+                assert!(!ctrl.is_animating());
+                assert_eq!(h.current().get_untracked().path, NodePath(vec![0]));
+            });
+        });
+    }
+
+    #[test]
+    fn second_push_invalidates_the_first_pending_start() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            rec.0.borrow_mut().defer_frames = true;
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle();
+                let _root = mount_node(&h, NodePath::root());
+                h.push("/detail/1").unwrap();
+                flush();
+                let first = h.active_stack_bridge().unwrap().top_ctrl.unwrap();
+                h.push("/detail/2").unwrap();
+                flush();
+                let second = h.active_stack_bridge().unwrap().top_ctrl.unwrap();
+                accept_frame(&rec);
+                assert!(!first.is_animating());
+                assert!(second.is_animating());
+                whisker_animation::__step_for_tests(100.0);
+                assert_eq!(second.value().get_untracked(), 0.0);
+                whisker_animation::__step_for_tests(1_000.0);
+                assert_eq!(rec.count_cid("1"), 1);
+                assert_eq!(rec.count_cid("2"), 1);
+            });
+        });
+    }
+
+    #[test]
+    fn instant_push_does_not_wait_for_a_frame_acknowledgement() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            rec.0.borrow_mut().defer_frames = true;
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle_with_transition(RouteTransition::none());
+                let _root = mount_node(&h, NodePath::root());
+                h.push("/detail/1").unwrap();
+                flush();
+                assert!(rec.0.borrow().frame_callbacks.is_empty());
+                let ctrl = h.active_stack_bridge().unwrap().top_ctrl.unwrap();
+                assert_eq!(ctrl.value().get_untracked(), 1.0);
+                assert!(!ctrl.is_animating());
+            });
+        });
     }
 
     #[test]
