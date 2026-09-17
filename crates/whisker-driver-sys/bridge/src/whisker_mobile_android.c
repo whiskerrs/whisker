@@ -233,9 +233,10 @@ static jobject raw_to_value(JNIEnv* env, const WhiskerValueRaw* raw) {
 }
 
 static jfloatArray floats(JNIEnv* env, const float* values, size_t count) {
-    if (values == NULL || count == 0) return NULL;
+    // An empty payload clears collections such as box shadows; null means absent.
+    if (values == NULL && count != 0) return NULL;
     jfloatArray result = (*env)->NewFloatArray(env, (jsize)count);
-    if (result) (*env)->SetFloatArrayRegion(env, result, 0, (jsize)count, values);
+    if (result && count != 0) (*env)->SetFloatArrayRegion(env, result, 0, (jsize)count, values);
     return result;
 }
 

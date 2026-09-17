@@ -34,6 +34,7 @@ members = [
     "platforms/linux",
     "platforms/web",
     "examples/chat",
+    "examples/news",
     "tests/mobile-link-test",
     "tests/rust-host-link-test",
     "packages/whisker-haptics",

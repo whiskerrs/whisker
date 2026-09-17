@@ -350,8 +350,9 @@ impl BindingState {
                 });
             } else if entry.kind.is_rich_text() {
                 self.diagnose_inline_style(*child);
-                let child_style = resolve_style(
-                    &entry.effective_specified(),
+                let child_style = self.resolve_node_style(
+                    *child,
+                    &entry.specified,
                     Some(resolved.inherited_for_children()),
                     environment,
                 )?;
@@ -363,8 +364,9 @@ impl BindingState {
                     "whisker.ui/View" | "whisker-image:Image"
                 )
             }) {
-                let child_style = resolve_style(
-                    &entry.effective_specified(),
+                let child_style = self.resolve_node_style(
+                    *child,
+                    &entry.specified,
                     Some(resolved.inherited_for_children()),
                     environment,
                 )?;

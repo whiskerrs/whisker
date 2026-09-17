@@ -853,3 +853,26 @@ fn releasing_a_parent_clears_surviving_child_parent_links() {
         release_element(replacement);
     });
 }
+
+#[test]
+fn reorder_existing_child_preserves_attachment_and_mirror() {
+    let (renderer, log) = RecordingRenderer::with_log_insert_support();
+    with_installed_renderer(Box::new(renderer), || {
+        let parent = create_element(ElementTag::View);
+        let a = create_element(ElementTag::View);
+        let b = create_element(ElementTag::View);
+        append_child(parent, a);
+        append_child(parent, b);
+        log.borrow_mut().clear();
+        insert_child_at(parent, a, 1);
+        assert_eq!(children_of(parent), vec![b, a]);
+        assert!(
+            !log.borrow()
+                .iter()
+                .any(|op| matches!(op, Op::Remove { .. }))
+        );
+        log.borrow_mut().clear();
+        insert_child_at(parent, a, 1);
+        assert!(log.borrow().is_empty(), "an unchanged order is a no-op");
+    });
+}

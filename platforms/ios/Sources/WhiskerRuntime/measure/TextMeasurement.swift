@@ -4,6 +4,7 @@ import WhiskerModule
 
 let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses in
     guard let data, let requests, let responses else { return false }
+    let view = Unmanaged<WhiskerView>.fromOpaque(data).takeUnretainedValue()
     var textFontFamilies = [[String]?](repeating: nil, count: count)
     for index in 0..<count {
         let request = requests.advanced(by: index).pointee
@@ -37,7 +38,8 @@ let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses i
         case UInt32(WHISKER_MEASURE_TEXT):
             measureText(
                 request,
-                preparedParagraphs: Unmanaged<WhiskerView>.fromOpaque(data).takeUnretainedValue().preparedParagraphs,
+                preparedParagraphs: view.preparedParagraphs,
+                cache: view.textMeasurementCache,
                 fontFamilies: textFontFamilies[index] ?? ["system"],
                 response: &response
             )
@@ -59,21 +61,10 @@ let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses i
 private func measureText(
     _ request: WhiskerMobileMeasureRequest,
     preparedParagraphs: PreparedParagraphs,
+    cache: TextMeasurementCache,
     fontFamilies: [String],
     response: inout WhiskerMobileMeasureResponse
 ) {
-    let style: WhiskerTextFontStyle = switch request.font_style {
-    case 0: .normal
-    case 1: .italic
-    default: .oblique
-    }
-    var baseFont = resolveWhiskerBaseFont(
-        fontFamilies: fontFamilies,
-        fontSize: CGFloat(request.font_size),
-        fontWeight: Int(request.font_weight),
-        fontStyle: style
-    ).font
-    baseFont = configuredMeasureFont(baseFont, request)
     let widthBasis: CGFloat
     if request.known_mask & 1 != 0 {
         widthBasis = CGFloat(request.known_width)
@@ -82,12 +73,6 @@ private func measureText(
     } else {
         widthBasis = 0
     }
-    let paragraph = whiskerTextParagraphStyle(request, widthBasis: widthBasis)
-    let attributes: [NSAttributedString.Key: Any] = [
-        .font: baseFont,
-        .kern: CGFloat(request.letter_spacing),
-        .paragraphStyle: paragraph,
-    ]
     let width: CGFloat
     if request.wrap == 0 {
         width = .greatestFiniteMagnitude
@@ -99,26 +84,58 @@ private func measureText(
         }
     }
     let source = hostString(request.text)
-    if let pointer = request.paragraph {
+    let payload = request.paragraph.map { WhiskerValue.from(raw: $0.pointee) }
+    func prepareAttributes() -> (UIFont, [NSAttributedString.Key: Any]) {
+        let style: WhiskerTextFontStyle = switch request.font_style {
+        case 0: .normal
+        case 1: .italic
+        default: .oblique
+        }
+        var baseFont = resolveWhiskerBaseFont(
+            fontFamilies: fontFamilies,
+            fontSize: CGFloat(request.font_size),
+            fontWeight: Int(request.font_weight),
+            fontStyle: style
+        ).font
+        baseFont = configuredMeasureFont(baseFont, request)
+        let paragraph = whiskerTextParagraphStyle(request, widthBasis: widthBasis)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: baseFont,
+            .kern: CGFloat(request.letter_spacing),
+            .paragraphStyle: paragraph,
+        ]
+        return (baseFont, attributes)
+    }
+    let input = TextMeasurementCache.Input(
+        source: source, payload: payload,
+        style: TextMeasurementCache.Style(request, families: fontFamilies, widthBasis: widthBasis),
+        width: payload != nil && request.known_mask & 1 != 0 ? CGFloat(request.known_width) : width,
+        maxLines: payload != nil && request.wrap == 0 ? 1 : Int(request.max_lines),
+        overflow: request.overflow, wordBreak: request.word_break, environmentEpoch: request.environment_epoch
+    )
+    if let payload {
         do {
-            let rich = try WhiskerParagraph(value: .from(raw: pointer.pointee), text: source)
-            let (layout, measuredParagraph) = rich.prepare(attributes: attributes,
-                width: request.known_mask & 1 != 0 ? CGFloat(request.known_width) : width,
-                maxLines: request.wrap == 0 ? 1 : Int(request.max_lines), overflow: request.overflow == 1 ? .ellipsis : .clip)
+            let measured = try cache.paragraph(node: request.node, input: input) {
+                let (_, attributes) = prepareAttributes()
+                let rich = try WhiskerParagraph(value: payload, text: source)
+                let (layout, paragraph) = rich.prepare(attributes: attributes,
+                    width: input.width, maxLines: input.maxLines, overflow: request.overflow == 1 ? .ellipsis : .clip)
+                return TextMeasurementCache.Paragraph(layout: layout, paragraph: paragraph)
+            }
             response.status = UInt32(WHISKER_MEASURE_READY)
-            response.width = request.known_mask & 1 != 0 ? request.known_width : Float(ceil(layout.size.width))
-            response.height = request.known_mask & 2 != 0 ? request.known_height : Float(ceil(layout.size.height))
-            response.first_baseline = Float(layout.baselines.first)
-            response.last_baseline = Float(layout.baselines.last)
+            response.width = request.known_mask & 1 != 0 ? request.known_width : Float(ceil(measured.size.width))
+            response.height = request.known_mask & 2 != 0 ? request.known_height : Float(ceil(measured.size.height))
+            response.first_baseline = Float(measured.firstBaseline)
+            response.last_baseline = Float(measured.lastBaseline)
             response.metrics_mask = 7
             response.prepared_content = request.key
-            let prepared = preparedParagraphs.insert(layout, id: request.key)
+            let prepared = preparedParagraphs.insert(measured.layout, id: request.key)
             response.prepared_layout = Unmanaged.passRetained(prepared).toOpaque()
             response.release_prepared_layout = { pointer in
                 if let pointer { Unmanaged<PreparedParagraph>.fromOpaque(pointer).release() }
             }
             let geometry = UnsafeMutablePointer<WhiskerValueRaw>.allocate(capacity: 1)
-            geometry.initialize(to: layout.measurementGeometry(measuredParagraph).toRaw())
+            geometry.initialize(to: measured.geometry.toRaw())
             response.paragraph = geometry
             response.release_paragraph = { pointer in
                 guard let pointer else { return }
@@ -132,27 +149,32 @@ private func measureText(
         }
         return
     }
-    let measuredText = request.word_break == 2 ? protectCJKBreaks(source) : source
-    var measured = (measuredText as NSString).boundingRect(
-        with: CGSize(width: width, height: .greatestFiniteMagnitude),
-        options: [.usesLineFragmentOrigin, .usesFontLeading],
-        attributes: attributes,
-        context: nil
-    ).size
-    if request.max_lines > 0 {
-        let lineHeight = request.line_height > 0
-            ? CGFloat(request.line_height) : baseFont.lineHeight
-        measured.height = min(measured.height, lineHeight * CGFloat(request.max_lines))
+    let measured = cache.plain(node: request.node, input: input) {
+        let (baseFont, attributes) = prepareAttributes()
+        let measuredText = request.word_break == 2 ? protectCJKBreaks(source) : source
+        var measured = (measuredText as NSString).boundingRect(
+            with: CGSize(width: input.width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes,
+            context: nil
+        ).size
+        if request.max_lines > 0 {
+            let lineHeight = request.line_height > 0
+                ? CGFloat(request.line_height) : baseFont.lineHeight
+            measured.height = min(measured.height, lineHeight * CGFloat(request.max_lines))
+        }
+        return TextMeasurementCache.Plain(size: measured,
+            ascender: Float(baseFont.ascender), descender: Float(abs(baseFont.descender)))
     }
     response.status = UInt32(WHISKER_MEASURE_READY)
     response.width = request.known_mask & 1 != 0
-        ? request.known_width : Float(ceil(measured.width))
+        ? request.known_width : Float(ceil(measured.size.width))
     response.height = request.known_mask & 2 != 0
-        ? request.known_height : Float(ceil(measured.height))
-    response.first_baseline = Float(baseFont.ascender)
+        ? request.known_height : Float(ceil(measured.size.height))
+    response.first_baseline = measured.ascender
     response.last_baseline = max(
         response.first_baseline,
-        response.height - Float(abs(baseFont.descender))
+        response.height - measured.descender
     )
     response.metrics_mask = 7
     response.prepared_content = request.key

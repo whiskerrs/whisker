@@ -18,7 +18,37 @@ use crate::{
     WebNativeEvent, WhiskerValue, isolates_element_failures, js_error, paint, px, set_style,
 };
 
-type ScrollListener = Closure<dyn FnMut(web_sys::Event)>;
+struct ScrollListener {
+    element: web_sys::Element,
+    name: &'static str,
+    callback: Closure<dyn FnMut(web_sys::Event)>,
+}
+
+impl ScrollListener {
+    fn register(
+        element: &web_sys::Element,
+        name: &'static str,
+        callback: Closure<dyn FnMut(web_sys::Event)>,
+    ) -> Result<Self, WebError> {
+        element
+            .add_event_listener_with_callback(name, callback.as_ref().unchecked_ref())
+            .map_err(|error| js_error("register Whisker scroll listener", error))?;
+        Ok(Self {
+            element: element.clone(),
+            name,
+            callback,
+        })
+    }
+}
+
+impl Drop for ScrollListener {
+    fn drop(&mut self) {
+        // A pooled DOM element outlives its Rust node and may still receive events.
+        let _ = self
+            .element
+            .remove_event_listener_with_callback(self.name, self.callback.as_ref().unchecked_ref());
+    }
+}
 
 pub(crate) struct DomFrameSink {
     pub(crate) prepared_paragraphs:
@@ -377,22 +407,13 @@ impl DomFrameSink {
                             ]),
                         });
                     });
-                    element
-                        .add_event_listener_with_callback(
-                            "scroll",
-                            listener.as_ref().unchecked_ref(),
-                        )
-                        .map_err(|error| js_error("register Whisker scroll listener", error))?;
+                    let listener = ScrollListener::register(&element, "scroll", listener)?;
                     let snap_element = element.clone();
                     let snap_listener = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
                         settle_scroll_snap(&snap_element);
                     });
-                    element
-                        .add_event_listener_with_callback(
-                            "scrollend",
-                            snap_listener.as_ref().unchecked_ref(),
-                        )
-                        .map_err(|error| js_error("register Whisker scrollend listener", error))?;
+                    let snap_listener =
+                        ScrollListener::register(&element, "scrollend", snap_listener)?;
                     self.scroll_listeners
                         .insert(*node, vec![listener, snap_listener]);
                 }
@@ -1012,3 +1033,55 @@ impl FrameSink for DomFrameSink {
 mod content;
 
 use content::*;
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod listener_tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn recycled_scroll_element_does_not_call_a_disposed_listener() {
+        let element = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .create_element("div")
+            .unwrap();
+        let calls = Rc::new(Cell::new(0));
+        for name in ["scroll", "scrollend"] {
+            let count = Rc::clone(&calls);
+            let listener = ScrollListener::register(
+                &element,
+                name,
+                Closure::new(move |_| {
+                    count.set(count.get() + 1);
+                }),
+            )
+            .unwrap();
+            element
+                .dispatch_event(&web_sys::Event::new(name).unwrap())
+                .unwrap();
+            let before = calls.get();
+            drop(listener);
+            element
+                .dispatch_event(&web_sys::Event::new(name).unwrap())
+                .unwrap();
+            assert_eq!(calls.get(), before);
+        }
+        // Reusing the same element installs exactly one live listener.
+        let count = Rc::clone(&calls);
+        let _listener = ScrollListener::register(
+            &element,
+            "scroll",
+            Closure::new(move |_| {
+                count.set(count.get() + 1);
+            }),
+        )
+        .unwrap();
+        let before = calls.get();
+        element
+            .dispatch_event(&web_sys::Event::new("scroll").unwrap())
+            .unwrap();
+        assert_eq!(calls.get(), before + 1);
+    }
+}

@@ -60,6 +60,7 @@ impl DynRenderer for SurfaceRuntime {
         let mut state = self.state.borrow_mut();
         let result = (|| {
             state.text_layout_observed.remove(&handle);
+            state.frame_applied_callbacks.remove(&handle);
             state.module_measurements.remove(&handle);
             #[cfg(debug_assertions)]
             state
@@ -336,6 +337,20 @@ impl DynRenderer for SurfaceRuntime {
             Ok(())
         })();
         state.record(result);
+    }
+
+    fn on_next_frame_applied(&self, handle: Element, callback: Box<dyn FnOnce(u64)>) -> bool {
+        let mut state = self.state.borrow_mut();
+        let result = state.element(handle).map(|_| ());
+        if result.is_ok() {
+            state
+                .frame_applied_callbacks
+                .entry(handle)
+                .or_default()
+                .push(callback);
+        }
+        state.record(result);
+        true
     }
 
     fn observe_layout(&self, handle: Element, callback: Box<dyn Fn(LayoutObservation) + 'static>) {

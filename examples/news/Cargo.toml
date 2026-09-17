@@ -1,0 +1,34 @@
+[package]
+name = "whisker-news"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = ["whisker-cng/generate"]
+perf = []
+# Diagnostic comparison only: Android currently crashes when capturing backdrop blur.
+perf-no-blur = []
+
+[dependencies]
+whisker = { workspace = true }
+whisker-cng = { path = "../../crates/whisker-cng", default-features = false }
+whisker-image = { path = "../../packages/whisker-image" }
+whisker-asset = { path = "../../packages/whisker-asset" }
+whisker-router = { path = "../../packages/whisker-router" }
+whisker-safe-area = { path = "../../packages/whisker-safe-area" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { version = "=0.3.104" }
+wasm-bindgen = { version = "=0.2.127" }
+web-sys = { version = "=0.3.104", features = ["Window", "Location", "console"] }

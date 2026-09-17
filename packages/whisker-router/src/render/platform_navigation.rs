@@ -201,7 +201,12 @@ pub(super) fn begin_with_mode(nav: &RouterHandle, mode: PoseMode) -> Option<Stac
     // Edge-swipe back is installed by the Router's platform driver. It is
     // not gated on the route's transition; the only requirement is that the
     // stack can pop.
-    if !bridge.can_back {
+    if !bridge.can_back
+        || bridge
+            .pending_push
+            .as_ref()
+            .is_some_and(|pending| pending.get())
+    {
         return None;
     }
     let predictive = matches!(mode, PoseMode::Predictive(_));

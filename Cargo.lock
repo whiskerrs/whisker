@@ -7046,6 +7046,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-news"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
+ "whisker",
+ "whisker-asset",
+ "whisker-cng",
+ "whisker-image",
+ "whisker-router",
+ "whisker-safe-area",
+]
+
+[[package]]
 name = "whisker-paths"
 version = "0.14.0"
 dependencies = [

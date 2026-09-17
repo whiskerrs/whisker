@@ -1592,7 +1592,6 @@ fn sync_child_order(parent: Element, target: &[Element]) {
             continue;
         }
         if let Some(previous) = current.iter().position(|candidate| *candidate == child) {
-            remove_child(parent, child);
             current.remove(previous);
         }
         insert_child_at(parent, child, index);
