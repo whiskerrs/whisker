@@ -17,7 +17,7 @@ use crate::manifest;
 #[derive(ClapArgs, Debug)]
 pub struct Args {
     #[command(flatten)]
-    cargo: manifest::FeatureArgs,
+    cargo: crate::manifest::FeatureArgs,
     /// Explicit path to the app's Cargo.toml. Defaults to walking up
     /// from the current directory.
     #[arg(long)]
