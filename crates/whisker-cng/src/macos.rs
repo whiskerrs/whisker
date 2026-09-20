@@ -50,6 +50,8 @@ pub struct MacosInputs {
     pub app_icon_png: Option<Vec<u8>>,
     /// Bumped whenever the generated project shape changes.
     pub template_version: u32,
+    /// Application Cargo inputs included in the generation fingerprint.
+    pub cargo_selection: crate::CargoSelection,
 }
 
 /// Generates or reuses the complete `gen/macos` project.
@@ -133,7 +135,8 @@ pub fn inputs_from(
         element_modules: Vec::new(),
         minimum_system_version: "12.0".to_string(),
         app_icon_png,
-        template_version: 10,
+        template_version: 11,
+        cargo_selection: crate::CargoSelection::default(),
     })
 }
 
@@ -175,6 +178,10 @@ fn template_vars(inputs: &MacosInputs) -> std::collections::HashMap<&'static str
         .to_string(),
     );
     vars.insert("generated_package", inputs.generated_package.clone());
+    vars.insert(
+        "user_cargo_options",
+        inputs.cargo_selection.dependency_options(),
+    );
     vars.insert("user_package_toml", toml_string(&inputs.user_package));
     vars.insert(
         "user_crate_path_toml",
@@ -277,8 +284,43 @@ mod tests {
             element_modules: Vec::new(),
             minimum_system_version: "12.0".into(),
             app_icon_png: None,
-            template_version: 10,
+            template_version: 11,
+            cargo_selection: crate::CargoSelection::default(),
         }
+    }
+
+    #[test]
+    fn feature_selection_updates_the_application_dependency_and_fingerprint() {
+        let root = tempdir();
+        let mut inputs = sample();
+        assert!(sync(&root, &inputs).unwrap());
+        inputs.cargo_selection.features = vec!["auth".into()];
+        inputs.cargo_selection.no_default_features = true;
+        assert!(sync(&root, &inputs).unwrap());
+        let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let app = &manifest["dependencies"]["whisker-app"];
+        assert_eq!(app["default-features"].as_bool(), Some(false));
+        assert_eq!(
+            app["features"].as_array().unwrap(),
+            &[toml::Value::String("auth".into())]
+        );
+        assert!(!sync(&root, &inputs).unwrap());
+        inputs.cargo_selection.features.clear();
+        assert!(sync(&root, &inputs).unwrap());
+        let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            manifest["dependencies"]["whisker-app"]["features"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

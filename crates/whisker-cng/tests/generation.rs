@@ -105,6 +105,7 @@ edition = "2024"
 [workspace]
 [dependencies]
 whisker-cng = {{ path = {:?}, default-features = false }}
+cng-test-widget = {{ path = {:?}, optional = true }}
 [[bin]]
 name = "whisker-config"
 path = "./whisker.rs"
@@ -112,9 +113,12 @@ required-features = ["whisker-config"]
 test = false
 bench = false
 [features]
+widgets = ["dep:cng-test-widget"]
+extra = []
 whisker-config = ["whisker-cng/generate"]
 "#,
-            cng
+            cng,
+            cng.join("../../tests/cng-module-fixture/widget")
         ),
     );
     app.write(
@@ -144,6 +148,33 @@ fn main() {
     assert_eq!(std::fs::read(&project).unwrap(), expected_project);
     let reused = generate(&app.manifest(), &[Target::Ios]).unwrap();
     assert!(!reused.projects[&Target::Ios].regenerated);
+
+    let selection = whisker_cng::CargoSelection {
+        features: vec!["widgets".into(), "extra".into()],
+        no_default_features: true,
+        target: Some("aarch64-apple-ios".into()),
+    };
+    let enabled =
+        whisker_cng::generate_with_selection(&app.manifest(), &[Target::Ios], &selection).unwrap();
+    assert!(enabled.projects[&Target::Ios].regenerated);
+    assert_eq!(enabled.selection, selection);
+    let registrar = app
+        .0
+        .join("gen/ios/whisker_modules/Sources/WhiskerModules/RegisterAll.swift");
+    assert!(
+        std::fs::read_to_string(&registrar)
+            .unwrap()
+            .contains("CngTestWidget")
+    );
+    let lock = std::fs::read(app.0.join("Cargo.lock")).unwrap();
+    let disabled = generate(&app.manifest(), &[Target::Ios]).unwrap();
+    assert!(disabled.projects[&Target::Ios].regenerated);
+    assert!(
+        !std::fs::read_to_string(&registrar)
+            .unwrap()
+            .contains("CngTestWidget")
+    );
+    assert_eq!(std::fs::read(app.0.join("Cargo.lock")).unwrap(), lock);
 
     let gated = app.cargo(&["run", "--bin", "whisker-config"]);
     assert!(!gated.status.success());

@@ -38,6 +38,17 @@ rootProject.name = "{{android_project_name}}"
 include(":app")
 
 val whiskerWorkspace = file("{{whisker_workspace_path}}")
+// Refresh before the Settings plugin reads its Cargo.lock cache. Feature and
+// path-manifest edits need not change Cargo.lock. Keeping this in the generated
+// project also supports the currently published Gradle plugin.
+val whiskerCli = System.getenv("WHISKER_CLI")?.takeIf { it.isNotBlank() } ?: "whisker"
+val moduleRefresh = ProcessBuilder(
+    whiskerCli, "modules",
+    "--workspace=${whiskerWorkspace.absolutePath}",
+    "--package={{whisker_user_package}}", "--write-cache",
+).inheritIO().start()
+check(moduleRefresh.waitFor() == 0) { "Whisker module discovery failed" }
+
 whisker {
     workspace = whiskerWorkspace
     userPackage = "{{whisker_user_package}}"

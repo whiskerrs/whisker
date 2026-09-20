@@ -29,7 +29,7 @@
 //! runtime-module discovery from the same Cargo metadata snapshot.
 
 use anyhow::{Context, Result, anyhow};
-use cargo_metadata::{Metadata, MetadataCommand};
+use cargo_metadata::Metadata;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 /// A plugin declared by a dep of the user app, after the dep's
 /// `[package.metadata.whisker.plugins.<name>]` table has been
 /// resolved against the cargo dep graph.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct DiscoveredPlugin {
     /// The plugin's stable name. Matches `Plugin::name()` /
     /// `PluginConfig::NAME` and the `Config.plugins` map key.
@@ -69,16 +69,7 @@ pub struct DiscoveredPlugin {
 /// entry, or the same plugin `name` declared by two different crates
 /// (which has no disambiguation at dispatch time).
 pub fn discover_plugins(manifest_path: &Path, app_package: &str) -> Result<Vec<DiscoveredPlugin>> {
-    let metadata = MetadataCommand::new()
-        .manifest_path(manifest_path)
-        .exec()
-        .with_context(|| {
-            format!(
-                "cargo metadata failed for {} (package: {app_package})",
-                manifest_path.display(),
-            )
-        })?;
-    discover_plugins_from_metadata(&metadata, app_package)
+    Ok(crate::ProjectDependencyGraph::resolve(manifest_path, app_package)?.cng_plugins)
 }
 
 pub(crate) fn discover_plugins_from_metadata(

@@ -11,7 +11,12 @@ pub(crate) fn generate_config(
     manifest: &Path,
     config: Config,
     targets: &[Target],
+    selection: &crate::CargoSelection,
 ) -> Result<GenerationReport> {
+    anyhow::ensure!(
+        selection.target.is_none() || targets.len() == 1,
+        "--cargo-target requires exactly one generation platform"
+    );
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(manifest)
         .no_deps()
@@ -30,12 +35,15 @@ pub(crate) fn generate_config(
     } else {
         targets
     };
-    let graph = ProjectDependencyGraph::resolve(manifest.as_path(), &package.name)?;
     let mut projects = std::collections::BTreeMap::new();
     for &target in targets {
         if projects.contains_key(&target) {
             continue;
         }
+        let selection = selection.for_platform(target);
+        selection.validate_platform(target)?;
+        let graph =
+            ProjectDependencyGraph::resolve_with_selection(&manifest, &package.name, &selection)?;
         projects.insert(
             target,
             sync_with_graph(
@@ -45,11 +53,13 @@ pub(crate) fn generate_config(
                 workspace_root,
                 &package.name,
                 &graph,
+                &selection,
             )?,
         );
     }
     Ok(GenerationReport {
         schema_version: 1,
+        selection: selection.clone(),
         crate_dir: crate_dir.to_path_buf(),
         workspace_root: workspace_root.to_path_buf(),
         package: package.name.clone(),
@@ -68,8 +78,13 @@ pub fn sync_for_target(
     workspace_root: &Path,
     package: &str,
 ) -> Result<PlatformSync> {
-    let graph = ProjectDependencyGraph::resolve(&workspace_root.join("Cargo.toml"), package)
-        .with_context(|| format!("resolve Whisker dependencies for `{package}`"))?;
+    let selection = crate::CargoSelection::load(workspace_root, package, target)?;
+    let graph = ProjectDependencyGraph::resolve_with_selection(
+        &workspace_root.join("Cargo.toml"),
+        package,
+        &selection,
+    )
+    .with_context(|| format!("resolve Whisker dependencies for `{package}`"))?;
     sync_with_graph(
         target,
         app_config,
@@ -77,6 +92,7 @@ pub fn sync_for_target(
         workspace_root,
         package,
         &graph,
+        &selection,
     )
 }
 
@@ -87,13 +103,55 @@ fn sync_with_graph(
     workspace_root: &Path,
     package: &str,
     graph: &ProjectDependencyGraph,
+    selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
-    match target {
-        Target::Android => sync_android(app_config, crate_dir, workspace_root, package, graph),
-        Target::Ios => sync_ios(app_config, crate_dir, workspace_root, package, graph),
-        Target::Macos => sync_macos(app_config, crate_dir, workspace_root, package, graph),
-        Target::Web => sync_web(app_config, crate_dir, workspace_root, package, graph),
+    selection.validate_platform(target)?;
+    if matches!(target, Target::Web | Target::Macos) {
+        anyhow::ensure!(
+            selection
+                .features
+                .iter()
+                .all(|feature| !feature.contains('/')),
+            "Web and macOS generation require application feature names; declare a Cargo feature in the application to forward dependency features"
+        );
     }
+    let result = match target {
+        Target::Android => sync_android(
+            app_config,
+            crate_dir,
+            workspace_root,
+            package,
+            graph,
+            selection,
+        ),
+        Target::Ios => sync_ios(
+            app_config,
+            crate_dir,
+            workspace_root,
+            package,
+            graph,
+            selection,
+        ),
+        Target::Macos => sync_macos(
+            app_config,
+            crate_dir,
+            workspace_root,
+            package,
+            graph,
+            selection,
+        ),
+        Target::Web => sync_web(
+            app_config,
+            crate_dir,
+            workspace_root,
+            package,
+            graph,
+            selection,
+        ),
+    }?;
+    selection.save(&result.gen_dir)?;
+    graph.save(&result.gen_dir)?;
+    Ok(result)
 }
 
 /// SDK version pinned into the cng-generated
@@ -123,6 +181,7 @@ fn sync_android(
     workspace_root: &Path,
     package: &str,
     graph: &ProjectDependencyGraph,
+    selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     // The Settings plugin reads `workspace` as a `file(...)`, which
     // Gradle resolves relative to `gen/android/`. Pass an absolute
@@ -131,7 +190,7 @@ fn sync_android(
     let workspace_path = workspace_root.to_path_buf();
     let engine =
         build_engine_with_discovered_plugins(crate_dir, workspace_root, &graph.cng_plugins)?;
-    let inputs = crate::android::inputs_from_with_engine(
+    let mut inputs = crate::android::inputs_from_with_engine(
         &engine,
         app_config,
         package.replace('-', "_"),
@@ -141,6 +200,7 @@ fn sync_android(
         WHISKER_GRADLE_PLUGIN_VERSION.to_string(),
         WHISKER_MAVEN_URL.to_string(),
     )?;
+    inputs.cargo_selection = selection.clone();
     let gen_dir = crate_dir.join("gen/android");
     let template_version = inputs.template_version;
     let regenerated = crate::sync_android(&gen_dir, &inputs).context("render gen/android")?;
@@ -148,7 +208,13 @@ fn sync_android(
     // that the Settings/Project plugins share so a fresh generated project
     // can immediately run `./gradlew assembleDebug` without a preceding
     // `whisker run` or `whisker build` invocation.
-    crate::modules::write_gradle_module_cache(workspace_root, package, &graph.modules)
+    let mut report = crate::modules::build_modules_report_from_resolved(
+        workspace_root,
+        package,
+        &graph.modules,
+    )?;
+    report.selection = selection.clone();
+    crate::modules::write_gradle_report(workspace_root, &report)
         .context("stage Android module dependency report")?;
     Ok(PlatformSync {
         gen_dir,
@@ -163,6 +229,7 @@ fn sync_ios(
     workspace_root: &Path,
     package: &str,
     graph: &ProjectDependencyGraph,
+    selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/ios");
     // CNG fills `gen/ios/whisker_modules/` in the same transaction as
@@ -177,6 +244,7 @@ fn sync_ios(
         workspace_root.to_path_buf(),
         package.to_string(),
     )?;
+    inputs.cargo_selection = selection.clone();
     inputs.modules = graph.modules.clone();
     // whisker-cng renders the full Xcode project directly (pbxproj +
     // xcworkspacedata + sources). No xcodegen subprocess needed —
@@ -195,6 +263,7 @@ fn sync_macos(
     workspace_root: &Path,
     package: &str,
     graph: &ProjectDependencyGraph,
+    selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/macos");
     // Inside the Whisker monorepo, point at the in-tree Host so examples
@@ -217,6 +286,7 @@ fn sync_macos(
         inputs.whisker_desktop_dependency =
             format!("{{ path = {:?} }}", in_tree_desktop.display().to_string());
     }
+    inputs.cargo_selection = selection.clone();
     inputs.element_modules = graph
         .modules
         .iter()
@@ -256,6 +326,7 @@ fn sync_web(
     workspace_root: &Path,
     package: &str,
     graph: &ProjectDependencyGraph,
+    selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/web");
     let in_tree_host = workspace_root.join("platforms/web");
@@ -270,6 +341,7 @@ fn sync_web(
         crate_dir.to_path_buf(),
         dependency,
     )?;
+    inputs.cargo_selection = selection.clone();
     inputs.element_modules = graph
         .modules
         .iter()

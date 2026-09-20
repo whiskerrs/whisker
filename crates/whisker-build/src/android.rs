@@ -203,6 +203,14 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     if let Some(flag) = b.profile.cargo_flag() {
         cmd.arg(flag);
     }
+    let selection = whisker_cng::ProjectDependencyGraph::native_build_selection(
+        b.workspace_root,
+        b.package,
+        whisker_cng::GenerationTarget::Android,
+        triple,
+        b.features,
+    )?;
+    selection.apply(&mut cmd);
     for feat in b.features {
         cmd.args(["--features", feat]);
     }

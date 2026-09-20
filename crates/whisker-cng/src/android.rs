@@ -158,6 +158,8 @@ pub struct AndroidInputs {
     /// placeholder, …). The fingerprint mixes this in, so without a
     /// bump existing `gen/` trees keep their stale output.
     pub template_version: u32,
+    /// Application Cargo inputs included in the generation fingerprint.
+    pub cargo_selection: crate::CargoSelection,
 }
 
 /// Render the Android project into `out_dir` (typically
@@ -758,7 +760,8 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 36,
+        template_version: 37,
+        cargo_selection: crate::CargoSelection::default(),
     })
 }
 
@@ -802,7 +805,8 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 36,
+            template_version: 37,
+            cargo_selection: crate::CargoSelection::default(),
         }
     }
 

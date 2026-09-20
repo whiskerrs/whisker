@@ -13,7 +13,9 @@
 //! ```
 
 mod runner;
+mod selection;
 pub use runner::{GenerationReport, GenerationTarget, PlatformSync, run};
+pub use selection::CargoSelection;
 #[cfg(feature = "generate")]
 mod generator;
 #[cfg(feature = "generate")]
@@ -21,7 +23,7 @@ pub use generator::sync_for_target;
 #[cfg(feature = "generate")]
 mod project;
 #[cfg(feature = "generate")]
-pub use project::generate;
+pub use project::{generate, generate_with_selection};
 
 #[cfg(feature = "generate")]
 pub mod android;
@@ -110,7 +112,7 @@ fn rust_element_module_dependencies(modules: &[RustElementModuleInput]) -> Strin
                 }
             };
             format!(
-                "{} = {{ package = {:?}, path = {:?} }}\n{} = {{ package = {:?}, {} }}",
+                "{} = {{ package = {:?}, path = {:?}, default-features = false }}\n{} = {{ package = {:?}, {} }}",
                 module.package,
                 module.package,
                 module.crate_path.display().to_string(),

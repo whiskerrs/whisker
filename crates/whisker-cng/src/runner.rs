@@ -61,6 +61,9 @@ pub struct PlatformSync {
 pub struct GenerationReport {
     /// Report format version, independent of the CNG package version.
     pub schema_version: u32,
+    /// Cargo inputs supplied to generation.
+    #[serde(default)]
+    pub selection: crate::CargoSelection,
     /// Canonical directory containing the application's Cargo.toml.
     pub crate_dir: PathBuf,
     /// The application's workspace root as resolved by Cargo.
@@ -120,6 +123,7 @@ fn run_inner(configure: impl FnOnce(&mut Config)) -> anyhow::Result<()> {
     let mut manifest = None;
     let mut report = None;
     let mut targets = Vec::new();
+    let mut selection = crate::CargoSelection::default();
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
@@ -140,9 +144,24 @@ fn run_inner(configure: impl FnOnce(&mut Config)) -> anyhow::Result<()> {
                     .context("target must be UTF-8")?
                     .parse()?,
             ),
+            Some("--features") => selection.features.push(
+                args.next()
+                    .context("--features requires a value")?
+                    .into_string()
+                    .map_err(|_| anyhow::anyhow!("features must be UTF-8"))?,
+            ),
+            Some("--no-default-features") => selection.no_default_features = true,
+            Some("--cargo-target") => {
+                selection.target = Some(
+                    args.next()
+                        .context("--cargo-target requires a triple")?
+                        .into_string()
+                        .map_err(|_| anyhow::anyhow!("target must be UTF-8"))?,
+                )
+            }
             Some("--help" | "-h") => {
                 println!(
-                    "Generate Whisker projects: [android|ios|desktop|web]... [--manifest-path Cargo.toml] [--report-path path]\nWith no platform arguments, generate all four projects."
+                    "Generate Whisker projects: [android|ios|desktop|web]... [--manifest-path Cargo.toml] [--report-path path] [--features names] [--no-default-features] [--cargo-target triple]\nWith no platform arguments, generate all four projects."
                 );
                 return Ok(());
             }
@@ -184,7 +203,7 @@ fn run_inner(configure: impl FnOnce(&mut Config)) -> anyhow::Result<()> {
     }
     let mut config = Config::default();
     configure(&mut config);
-    let report = crate::generator::generate_config(&manifest, config, &targets)?;
+    let report = crate::generator::generate_config(&manifest, config, &targets, &selection)?;
     if report_path != default_report {
         write_report(&default_report, &report)?;
     }

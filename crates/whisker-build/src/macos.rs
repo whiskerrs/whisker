@@ -40,6 +40,10 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
         ui::OperationKind::Compile,
         format!("{} ({:?})", inputs.binary_name, inputs.profile),
     );
+    let selection = whisker_cng::CargoSelection::load_project(inputs.project_dir)?;
+    let triple = selection
+        .as_ref()
+        .and_then(|selection| selection.target.as_deref());
     let mut command = std::process::Command::new("cargo");
     command
         .arg("build")
@@ -47,6 +51,9 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
         .arg(&manifest)
         .arg("--target-dir")
         .arg(inputs.target_dir);
+    if let Some(triple) = triple {
+        command.arg("--target").arg(triple);
+    }
     if matches!(inputs.profile, Profile::Release) {
         command.arg("--release");
     }
@@ -71,7 +78,11 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
         Profile::Debug => "debug",
         Profile::Release => "release",
     };
-    let executable = inputs.target_dir.join(profile_dir).join(inputs.binary_name);
+    let artifacts = triple.map_or_else(
+        || inputs.target_dir.to_path_buf(),
+        |triple| inputs.target_dir.join(triple),
+    );
+    let executable = artifacts.join(profile_dir).join(inputs.binary_name);
     if !executable.is_file() {
         bail!(
             "macOS Host executable missing after cargo build: {}",

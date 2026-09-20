@@ -93,6 +93,8 @@ pub struct IosInputs {
     #[serde(default)]
     pub pbxproj_ops: Vec<PbxprojOp>,
     pub template_version: u32,
+    /// Application Cargo inputs included in the generation fingerprint.
+    pub cargo_selection: crate::CargoSelection,
 }
 
 /// Render the iOS project into `out_dir`. Returns whether files were
@@ -684,7 +686,8 @@ pub fn inputs_from_with_engine(
         // Bump on any template or renderer change: it feeds the sync
         // fingerprint, and without it existing `gen/ios/` trees keep
         // their stale output.
-        template_version: 38,
+        template_version: 39,
+        cargo_selection: crate::CargoSelection::default(),
     })
 }
 
@@ -718,7 +721,8 @@ mod tests {
             extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),
-            template_version: 38,
+            template_version: 39,
+            cargo_selection: crate::CargoSelection::default(),
         }
     }
 
