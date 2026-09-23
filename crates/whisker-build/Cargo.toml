@@ -26,6 +26,7 @@ description = "Whisker build orchestration: cargo cross-compile + gradle / xcode
 [dependencies]
 anyhow = { workspace = true }
 whisker-cng = { workspace = true }
+whisker-plugin = { workspace = true }
 # POSIX `kill(2)` for `child_guard` — SIGTERM in-flight build children
 # (cargo / gradle / xcodebuild) when `whisker run` hard-exits on `q` /
 # Ctrl-C. Every target we spawn builds on is POSIX.

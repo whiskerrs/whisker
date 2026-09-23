@@ -4,7 +4,7 @@ fn main() {
             .bundle_id("rs.whisker.news")
             .version("0.1.0")
             .build_number(1);
-        app.plugin::<whisker_asset::WhiskerAsset>(|assets| {
+        app.project_plugin::<whisker_asset::WhiskerAsset>(|assets| {
             assets.dir("assets");
         });
         app.ios(|ios| {

@@ -25,7 +25,7 @@
 //! converted to slashes: `rs.whisker.examples.helloworld` →
 //! `rs/whisker/examples/helloworld/`.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_config::Config;
@@ -35,20 +35,21 @@ use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
 use crate::render::{escape_xml, render};
 
+pub mod application;
+pub(crate) mod builtins;
+mod project_render;
+pub use project_render::{AndroidProjectInputs, render_project, sync_project};
+
 // Text templates go through `{{placeholder}}` substitution; the gradle
 // wrapper jar is copied verbatim, and `gradlew` needs the +x bit on
 // Unix, so each group is written separately below.
 
-const APP_BUILD_GRADLE_KTS: &str = include_str!("templates/android/app/build.gradle.kts");
-const APP_MANIFEST_XML: &str = include_str!("templates/android/app/src/main/AndroidManifest.xml");
 const COLORS_XML: &str = include_str!("templates/android/app/src/main/res/values/colors.xml");
 const STYLES_XML: &str = include_str!("templates/android/app/src/main/res/values/styles.xml");
 const STYLES_V31_XML: &str =
     include_str!("templates/android/app/src/main/res/values-v31/styles.xml");
 const MAIN_ACTIVITY_KT: &str =
     include_str!("templates/android/app/src/main/kotlin/MainActivity.kt");
-const ROOT_BUILD_GRADLE_KTS: &str = include_str!("templates/android/build.gradle.kts");
-const SETTINGS_GRADLE_KTS: &str = include_str!("templates/android/settings.gradle.kts");
 const GRADLE_PROPERTIES: &str = include_str!("templates/android/gradle.properties");
 const GRADLEW: &str = include_str!("templates/android/gradlew");
 const GRADLEW_BAT: &str = include_str!("templates/android/gradlew.bat");
@@ -167,24 +168,27 @@ pub struct AndroidInputs {
 /// rewritten — `false` means the cached fingerprint matched and the
 /// existing tree was reused.
 pub fn sync(out_dir: &Path, inputs: &AndroidInputs) -> Result<bool> {
-    crate::background::AppBackground::parse(&inputs.background)
-        .context("validate Android application background")?;
-    let new_fp = fingerprint::fingerprint(
-        serde_json::to_vec(inputs)
-            .context("serialize AndroidInputs for fingerprint")?
-            .as_slice(),
-    );
-    let fp_path = out_dir.join(".whisker-fingerprint");
-    if let Ok(existing) = std::fs::read_to_string(&fp_path)
-        && existing.trim() == new_fp
-    {
-        return Ok(false);
-    }
-
-    write_files(out_dir, inputs).context("write Android project files")?;
-    std::fs::write(&fp_path, &new_fp)
-        .with_context(|| format!("write fingerprint {}", fp_path.display()))?;
-    Ok(true)
+    sync_project(
+        out_dir,
+        &AndroidProjectInputs {
+            project: {
+                let result = crate::ProjectEngine::with_initializer(
+                    application::ApplicationPlugin::new(inputs.clone()),
+                )
+                .compose(
+                    &Config::default(),
+                    &whisker_plugin::project::ProjectIr::Android(Box::default()),
+                )?;
+                let whisker_plugin::project::ProjectIr::Android(project) = result.project else {
+                    unreachable!("project engine preserves platform")
+                };
+                *project
+            },
+            app_crate_dir: None,
+            cargo_selection: inputs.cargo_selection.clone(),
+            template_version: inputs.template_version,
+        },
+    )
 }
 
 /// Build the `{{var}}` table from `inputs`.
@@ -464,81 +468,12 @@ fn project_name(app_name: &str) -> String {
 
 /// Convert `rs.whisker.examples.helloworld` → `rs/whisker/examples/helloworld`.
 /// Used to build the on-disk path under `app/src/main/kotlin/`.
+#[cfg(test)]
 fn application_id_to_path(application_id: &str) -> PathBuf {
     application_id
         .split('.')
         .filter(|s| !s.is_empty())
         .fold(PathBuf::new(), |acc, seg| acc.join(seg))
-}
-
-fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
-    let vars = template_vars(inputs);
-
-    clean_managed_tree(out_dir).context("clean previous gen tree")?;
-
-    let kotlin_pkg = out_dir
-        .join("app/src/main/kotlin")
-        .join(application_id_to_path(&inputs.application_id));
-
-    let text_files: &[(PathBuf, &str)] = &[
-        (out_dir.join("app/build.gradle.kts"), APP_BUILD_GRADLE_KTS),
-        (
-            out_dir.join("app/src/main/AndroidManifest.xml"),
-            APP_MANIFEST_XML,
-        ),
-        (
-            out_dir.join("app/src/main/res/values/colors.xml"),
-            COLORS_XML,
-        ),
-        (
-            out_dir.join("app/src/main/res/values/styles.xml"),
-            STYLES_XML,
-        ),
-        (
-            out_dir.join("app/src/main/res/values-v31/styles.xml"),
-            STYLES_V31_XML,
-        ),
-        (kotlin_pkg.join("MainActivity.kt"), MAIN_ACTIVITY_KT),
-        (out_dir.join("build.gradle.kts"), ROOT_BUILD_GRADLE_KTS),
-        (out_dir.join("settings.gradle.kts"), SETTINGS_GRADLE_KTS),
-        (out_dir.join("gradle.properties"), GRADLE_PROPERTIES),
-        (
-            out_dir.join("gradle/wrapper/gradle-wrapper.properties"),
-            GRADLE_WRAPPER_PROPERTIES,
-        ),
-    ];
-    for (path, template) in text_files {
-        let rendered =
-            render(template, &vars).with_context(|| format!("render {}", path.display()))?;
-        write_file(path, rendered.as_bytes(), false)?;
-    }
-
-    // `gradlew` is shell — needs +x.
-    write_file(&out_dir.join("gradlew"), GRADLEW.as_bytes(), true)?;
-    write_file(&out_dir.join("gradlew.bat"), GRADLEW_BAT.as_bytes(), false)?;
-
-    write_file(
-        &out_dir.join("gradle/wrapper/gradle-wrapper.jar"),
-        GRADLE_WRAPPER_JAR,
-        false,
-    )?;
-
-    for (rel, entry) in &inputs.extra_files {
-        crate::render::validate_extra_file_path(rel).with_context(|| {
-            format!(
-                "extra_files entry `{}` (Android plugin contribution)",
-                rel.display(),
-            )
-        })?;
-        let abs = out_dir.join(rel);
-        let executable = entry.mode.map(|m| m & 0o100 != 0).unwrap_or(false);
-        let bytes = entry
-            .to_bytes()
-            .with_context(|| format!("decode extra_files entry `{}` contents", rel.display()))?;
-        write_file(&abs, &bytes, executable)?;
-    }
-
-    Ok(())
 }
 
 /// Delete the previous gen tree but keep `app/build/`, `.gradle/`, and
@@ -705,22 +640,14 @@ pub fn inputs_from_with_engine(
         .as_ref()
         .expect("EnabledTargets::android_only guarantees Some");
 
-    let app_name = android_ir
-        .app_name
-        .clone()
-        .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required"))?;
-    let version = android_ir
-        .version
-        .clone()
-        .unwrap_or_else(|| "0.1.0".to_string());
-    let build_number = android_ir.build_number.unwrap_or(1);
-    let application_id = android_ir.application_id.clone().ok_or_else(|| {
-        anyhow!(
-            "whisker.rs: app.android(|a| a.application_id(\"…\")) (or app.bundle_id) is required for Android"
-        )
-    })?;
-    let min_sdk = android_ir.min_sdk.unwrap_or(24);
-    let target_sdk = android_ir.target_sdk.unwrap_or(34);
+    let crate::plugins::application::AndroidApplication {
+        app_name,
+        version,
+        build_number,
+        application_id,
+        min_sdk,
+        target_sdk,
+    } = crate::plugins::application::android(android_ir)?;
     let background = crate::background::AppBackground::resolve(app_config)?;
 
     let extra_permissions = android_ir.manifest.permissions.clone();
@@ -760,7 +687,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 37,
+        template_version: 38,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -805,7 +732,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 37,
+            template_version: 38,
             cargo_selection: crate::CargoSelection::default(),
         }
     }
@@ -826,7 +753,9 @@ mod tests {
             MAIN_ACTIVITY_KT
                 .contains("intent.dataString?.let(WhiskerAppContext::dispatchDeepLink)")
         );
-        assert!(APP_BUILD_GRADLE_KTS.contains("androidx.activity:activity:1.8.2"));
+        let project = application::declarations(&sample_inputs()).unwrap();
+        assert!(project.modules[":app"].dependencies.iter().any(|d| matches!(&d.source,
+            whisker_plugin::project::GradleDependencySource::Maven(v) if v == "androidx.activity:activity:1.8.2")));
     }
 
     #[test]
@@ -1141,7 +1070,13 @@ mod tests {
         sync(&out, &previous).unwrap();
         let build = out.join("build.gradle.kts");
         let wrapper = out.join("gradle/wrapper/gradle-wrapper.properties");
-        std::fs::write(&build, ROOT_BUILD_GRADLE_KTS.replace("8.10.1", "8.6.1")).unwrap();
+        std::fs::write(
+            &build,
+            std::fs::read_to_string(&build)
+                .unwrap()
+                .replace("8.10.1", "8.6.1"),
+        )
+        .unwrap();
         std::fs::write(
             &wrapper,
             std::fs::read_to_string(&wrapper)

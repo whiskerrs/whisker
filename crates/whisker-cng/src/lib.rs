@@ -46,7 +46,11 @@ pub mod macos;
 #[cfg(feature = "generate")]
 pub mod modules;
 #[cfg(feature = "generate")]
+mod plugin_order;
+#[cfg(feature = "generate")]
 pub mod plugins;
+#[cfg(feature = "generate")]
+pub mod project_compose;
 #[cfg(feature = "generate")]
 mod render;
 #[cfg(feature = "generate")]
@@ -70,6 +74,8 @@ pub use modules::{
     ResolvedPlatformImplementation, ResolvedRustHostSource, ResolvedRustModuleContribution,
     build_modules_report, discover as discover_modules, refresh_gradle_module_cache,
 };
+#[cfg(feature = "generate")]
+pub use project_compose::{ProjectComposition, ProjectEngine, ProjectStep};
 #[cfg(feature = "generate")]
 pub use web::{WebInputs, sync as sync_web};
 pub use whisker_config::*;
@@ -177,3 +183,13 @@ mod rust_host_dependency_tests {
         );
     }
 }
+
+#[cfg(feature = "generate")]
+mod project_files;
+#[cfg(feature = "generate")]
+mod project_plist;
+
+#[cfg(feature = "generate")]
+pub mod desktop;
+#[cfg(feature = "generate")]
+mod project_xml;

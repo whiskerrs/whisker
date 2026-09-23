@@ -7,7 +7,11 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
     whisker_web::run_with_application_hash(
-        whisker_web::WebAppConfig::new({{app_title_rust}}){{element_module_config}},
+        whisker_web::WebAppConfig::new(
+            web_sys::window().and_then(|window| window.document())
+                .map(|document| document.title())
+                .unwrap_or_else(|| {{app_title_rust}}.into())
+        ){{element_module_config}},
         whisker_app::__whisker_application,
         whisker_app::__whisker_application_hash,
     )

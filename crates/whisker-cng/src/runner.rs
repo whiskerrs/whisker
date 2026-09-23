@@ -11,12 +11,21 @@ pub enum GenerationTarget {
     Android,
     Ios,
     Macos,
+    Windows,
+    Linux,
     Web,
 }
 
 impl GenerationTarget {
     /// All supported project generators, independent of the build machine.
-    pub const ALL: [Self; 4] = [Self::Android, Self::Ios, Self::Macos, Self::Web];
+    pub const ALL: [Self; 6] = [
+        Self::Android,
+        Self::Ios,
+        Self::Macos,
+        Self::Windows,
+        Self::Linux,
+        Self::Web,
+    ];
 
     /// The platform name used in arguments and generated directory names.
     pub fn as_str(self) -> &'static str {
@@ -24,6 +33,8 @@ impl GenerationTarget {
             Self::Android => "android",
             Self::Ios => "ios",
             Self::Macos => "macos",
+            Self::Windows => "windows",
+            Self::Linux => "linux",
             Self::Web => "web",
         }
     }
@@ -37,9 +48,11 @@ impl std::str::FromStr for GenerationTarget {
             "android" => Ok(Self::Android),
             "ios" => Ok(Self::Ios),
             "macos" | "desktop" => Ok(Self::Macos),
+            "windows" => Ok(Self::Windows),
+            "linux" => Ok(Self::Linux),
             "web" => Ok(Self::Web),
             _ => anyhow::bail!(
-                "unknown generation target `{value}`; expected android, ios, desktop, or web"
+                "unknown generation target `{value}`; expected android, ios, macos, windows, linux, or web"
             ),
         }
     }
@@ -161,7 +174,7 @@ fn run_inner(configure: impl FnOnce(&mut Config)) -> anyhow::Result<()> {
             }
             Some("--help" | "-h") => {
                 println!(
-                    "Generate Whisker projects: [android|ios|desktop|web]... [--manifest-path Cargo.toml] [--report-path path] [--features names] [--no-default-features] [--cargo-target triple]\nWith no platform arguments, generate all four projects."
+                    "Generate Whisker projects: [android|ios|macos|windows|linux|web]... [--manifest-path Cargo.toml] [--report-path path] [--features names] [--no-default-features] [--cargo-target triple]\nWith no platform arguments, generate all six projects."
                 );
                 return Ok(());
             }

@@ -49,6 +49,20 @@ impl CargoSelection {
                             "aarch64-apple-darwin"
                         }
                     }
+                    crate::GenerationTarget::Windows => {
+                        if cfg!(target_arch = "aarch64") {
+                            "aarch64-pc-windows-msvc"
+                        } else {
+                            "x86_64-pc-windows-msvc"
+                        }
+                    }
+                    crate::GenerationTarget::Linux => {
+                        if cfg!(target_arch = "aarch64") {
+                            "aarch64-unknown-linux-gnu"
+                        } else {
+                            "x86_64-unknown-linux-gnu"
+                        }
+                    }
                     crate::GenerationTarget::Web => "wasm32-unknown-unknown",
                 }
                 .into(),
@@ -66,6 +80,10 @@ impl CargoSelection {
             crate::GenerationTarget::Android => target.contains("-linux-android"),
             crate::GenerationTarget::Ios => target.contains("-apple-ios"),
             crate::GenerationTarget::Macos => target.ends_with("-apple-darwin"),
+            crate::GenerationTarget::Windows => target.contains("-windows-"),
+            crate::GenerationTarget::Linux => {
+                target.contains("-linux-") && !target.contains("android")
+            }
             crate::GenerationTarget::Web => target == "wasm32-unknown-unknown",
         };
         anyhow::ensure!(

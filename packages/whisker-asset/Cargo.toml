@@ -37,15 +37,15 @@ ios = { manifest = "Package.swift" }
 # picks this entry up, builds the `whisker-asset-plugin` binary below,
 # and runs it as part of every `whisker build` / `whisker run` gen-tree
 # sync. The user opts into actual bundling by calling
-# `app.plugin::<WhiskerAsset>(|c| …)` in their `whisker.rs`; with no
+# `app.project_plugin::<WhiskerAsset>(|c| …)` in their `whisker.rs`; with no
 # opt-in the plugin runs with `Config::default()` and contributes
 # nothing.
 [package.metadata.whisker.plugins.whisker-asset]
 bin = "whisker-asset-plugin"
+protocol = "project"
 
-# Subprocess binary entry point Whisker spawns. Reads a `PluginRequest`
-# JSON from stdin, mutates the IR via `WhiskerAsset::apply`, writes a
-# `PluginResponse` JSON to stdout.
+# Subprocess binary entry point Whisker spawns. Reads a versioned project request
+# and returns an additive IR contribution in the project response.
 [[bin]]
 name = "whisker-asset-plugin"
 path = "bin/whisker_asset_plugin.rs"
@@ -68,3 +68,6 @@ anyhow = { workspace = true }
 # whisker-plugin / whisker-config, never on whisker-asset.
 whisker-cng = { path = "../../crates/whisker-cng", version = "0.14.1" }
 whisker-config = { path = "../../crates/whisker-config", version = "0.14.1" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Document", "Element"] }

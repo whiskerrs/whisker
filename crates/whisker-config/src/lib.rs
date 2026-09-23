@@ -41,8 +41,8 @@ pub struct Config {
     pub web: WebConfig,
     /// Per-plugin Config serialized as JSON, keyed by the Config
     /// struct's `PluginConfig::NAME`. `whisker-cng` reads this map
-    /// when composing the plugin pipeline — every entry corresponds
-    /// to one `app.plugin::<T>(|cfg| ...)` call in `whisker.rs`.
+    /// when composing the selected plugin pipeline. Entries are configured
+    /// with `plugin` for the legacy engine or `project_plugin` for ProjectEngine.
     ///
     /// `BTreeMap` over `HashMap` for deterministic iteration order:
     /// `whisker-cng`'s fingerprint hashes the serialized Config,
@@ -124,6 +124,29 @@ impl Config {
 
     pub fn web(&mut self, f: impl FnOnce(&mut WebConfig)) -> &mut Self {
         f(&mut self.web);
+        self
+    }
+
+    /// Configure a declarative project plugin for the explicit ProjectEngine.
+    ///
+    /// Like `plugin`, stores options by PluginConfig::NAME; the last call wins.
+    /// This configures rather than registers the implementation. All six platform
+    /// generators discover project binaries via metadata protocol = "project";
+    /// explicit ProjectEngine users register them themselves. Unknown plugin
+    /// configurations are errors.
+    ///
+    /// Panics if the configuration cannot be serialized, as does `plugin`.
+    pub fn project_plugin<P: whisker_plugin::project::ProjectPlugin>(
+        &mut self,
+        f: impl FnOnce(&mut P::Config),
+    ) -> &mut Self {
+        let mut cfg = P::Config::default();
+        f(&mut cfg);
+        let name = P::Config::NAME;
+        let json = serde_json::to_value(&cfg).unwrap_or_else(|e| {
+            panic!("Config::project_plugin: failed to serialize Config for plugin `{name}`: {e}")
+        });
+        self.plugins.insert(name.to_string(), json);
         self
     }
 

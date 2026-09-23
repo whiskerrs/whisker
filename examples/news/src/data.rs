@@ -99,24 +99,6 @@ pub fn story(id: usize) -> Story {
 }
 
 pub fn photo(id: u32) -> String {
-    #[cfg(target_os = "macos")]
-    {
-        let path = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("../Resources/photos")
-            .join(format!("{id}.jpg"));
-        if path.is_file() {
-            return path.to_string_lossy().into_owned();
-        }
-        format!("{}/assets/photos/{id}.jpg", env!("CARGO_MANIFEST_DIR"))
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        format!("/photos/{id}.jpg")
-    }
-    #[cfg(not(any(target_os = "macos", target_arch = "wasm32")))]
     whisker_asset::resolve(&format!("photos/{id}.jpg"))
 }
 

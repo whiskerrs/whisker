@@ -58,6 +58,8 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
         capture: None,
     })?;
     build_ui.complete(&bundle);
-    whisker_build::ui::info("bundle is unsigned; distribution signing/notarization is a follow-up");
+    whisker_build::ui::info(
+        "bundle is ad-hoc signed; distribution signing/notarization is a follow-up",
+    );
     Ok(())
 }

@@ -1,7 +1,7 @@
 //! End-to-end check on `IosProjectIr.pbxproj_ops` → rendered
 //! `project.pbxproj`.
 //!
-//! The renderer uses template injection — no pbxproj parsing.
+//! The compatibility adapter maps operations to the declarative target graph.
 //! Plugin-contributed ops produce additions to:
 //!   - PBXBuildFile + PBXFileReference sections (file declared)
 //!   - PBXSourcesBuildPhase / PBXResourcesBuildPhase /
@@ -90,13 +90,13 @@ fn add_resource_appears_in_resources_build_phase_files_list() {
 }
 
 #[test]
-fn add_resource_appears_in_whisker_plugin_files_group() {
+fn add_resource_appears_in_files_group() {
     let mut app = base_app();
     app.plugin::<IosPbxprojOps>(|c| {
         c.add_resource("GoogleService-Info.plist");
     });
     let (tmp, pbxproj) = sync_and_read_pbxproj(&app);
-    let group_open = pbxproj.find("name = \"Whisker Plugin Files\"").unwrap();
+    let group_open = pbxproj.find("name = \"Files\"").unwrap();
     // Walk backwards to children = (
     let children_marker = pbxproj[..group_open].rfind("children = (").unwrap();
     let group_section = &pbxproj[children_marker..group_open];

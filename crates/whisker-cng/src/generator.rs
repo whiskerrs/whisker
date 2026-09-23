@@ -106,13 +106,16 @@ fn sync_with_graph(
     selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     selection.validate_platform(target)?;
-    if matches!(target, Target::Web | Target::Macos) {
+    if matches!(
+        target,
+        Target::Web | Target::Macos | Target::Windows | Target::Linux
+    ) {
         anyhow::ensure!(
             selection
                 .features
                 .iter()
                 .all(|feature| !feature.contains('/')),
-            "Web and macOS generation require application feature names; declare a Cargo feature in the application to forward dependency features"
+            "Cargo Host generation requires application feature names; declare a Cargo feature in the application to forward dependency features"
         );
     }
     let result = match target {
@@ -133,6 +136,15 @@ fn sync_with_graph(
             selection,
         ),
         Target::Macos => sync_macos(
+            app_config,
+            crate_dir,
+            workspace_root,
+            package,
+            graph,
+            selection,
+        ),
+        Target::Windows | Target::Linux => sync_desktop(
+            target,
             app_config,
             crate_dir,
             workspace_root,
@@ -188,11 +200,58 @@ fn sync_android(
     // path — the template embeds it verbatim, and absolute keeps the
     // generated tree independent of where `gen/android` sits on disk.
     let workspace_path = workspace_root.to_path_buf();
-    let engine =
-        build_engine_with_discovered_plugins(crate_dir, workspace_root, &graph.cng_plugins)?;
-    let mut inputs = crate::android::inputs_from_with_engine(
-        &engine,
-        app_config,
+    let discovered = &graph.cng_plugins;
+    let builtins = Engine::with_builtins();
+    anyhow::ensure!(
+        discovered.iter().all(|p| !builtins.contains_plugin(&p.name)
+            && p.name != crate::android::application::ApplicationPlugin::NAME),
+        "discovered Android plugins must not reuse a built-in plugin name"
+    );
+
+    let binaries = build_discovered_plugins(workspace_root, discovered)?;
+    let has_legacy = discovered
+        .iter()
+        .any(|p| p.protocol == crate::discovery::PluginProtocol::Legacy);
+    let mut legacy = if has_legacy {
+        Engine::with_builtins()
+    } else {
+        Engine::new()
+    }
+    .with_app_crate_dir(crate_dir);
+    let mut project_binaries = Vec::new();
+    for (plugin, binary) in discovered.iter().zip(binaries) {
+        match plugin.protocol {
+            crate::discovery::PluginProtocol::Legacy => {
+                legacy.register_subprocess(
+                    SubprocessPlugin::new(&plugin.name, binary)
+                        .after(plugin.after.clone())
+                        .before(plugin.before.clone()),
+                );
+            }
+            crate::discovery::PluginProtocol::Project => {
+                project_binaries.push((&plugin.name, binary));
+            }
+        }
+    }
+    // A legacy binary sees only the legacy context, before application declarations.
+    // Never send the declarative IR through a context-replacement mobile binary.
+    let project_names: std::collections::BTreeSet<_> = discovered
+        .iter()
+        .filter(|p| p.protocol == crate::discovery::PluginProtocol::Project)
+        .map(|p| p.name.as_str())
+        .chain([crate::android::application::ApplicationPlugin::NAME])
+        .collect();
+    let mut legacy_config: Config = serde_json::from_value(serde_json::to_value(app_config)?)?;
+    legacy_config
+        .plugins
+        .retain(|name, _| has_legacy && !project_names.contains(name.as_str()));
+    let mut project_config: Config = serde_json::from_value(serde_json::to_value(app_config)?)?;
+    project_config
+        .plugins
+        .retain(|name, _| !has_legacy || project_names.contains(name.as_str()));
+    let inputs = crate::android::inputs_from_with_engine(
+        &legacy,
+        &legacy_config,
         package.replace('-', "_"),
         workspace_path,
         package.to_string(),
@@ -200,10 +259,43 @@ fn sync_android(
         WHISKER_GRADLE_PLUGIN_VERSION.to_string(),
         WHISKER_MAVEN_URL.to_string(),
     )?;
-    inputs.cargo_selection = selection.clone();
+    let template_version = inputs.template_version;
+    let mut projects = if has_legacy {
+        // Built-in and legacy changes are already in inputs. The application
+        // plugin imports them once, before the new project contributions.
+        crate::ProjectEngine::with_initializer(crate::android::application::ApplicationPlugin::new(
+            inputs,
+        ))
+    } else {
+        crate::ProjectEngine::with_android_application(inputs)
+    }
+    .with_app_crate_dir(crate_dir);
+    for (name, binary) in project_binaries {
+        projects.register_subprocess(name, binary);
+    }
+    let result = projects
+        .compose(
+            &project_config,
+            &whisker_plugin::project::ProjectIr::Android(Box::default()),
+        )
+        .context("compose Android project plugins")?;
+    let whisker_plugin::project::ProjectIr::Android(project) = result.project else {
+        unreachable!("project engine preserves platform")
+    };
+    anyhow::ensure!(
+        project.application == ":app" && project.modules[":app"].directory.as_str() == "app",
+        "Whisker Android build driver requires primary module :app at app; additional modules may use other paths"
+    );
+    let inputs = crate::android::AndroidProjectInputs {
+        project: *project,
+        app_crate_dir: Some(crate_dir.to_path_buf()),
+        cargo_selection: selection.clone(),
+        template_version,
+    };
     let gen_dir = crate_dir.join("gen/android");
     let template_version = inputs.template_version;
-    let regenerated = crate::sync_android(&gen_dir, &inputs).context("render gen/android")?;
+    let regenerated =
+        crate::android::sync_project(&gen_dir, &inputs).context("render gen/android")?;
     // Gradle is the build driver after CNG finishes. Seed the module report
     // that the Settings/Project plugins share so a fresh generated project
     // can immediately run `./gradlew assembleDebug` without a preceding
@@ -232,28 +324,109 @@ fn sync_ios(
     selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/ios");
-    // CNG fills `gen/ios/whisker_modules/` in the same transaction as
-    // the Xcode project. The pbxproj references that local package.
-    let whisker_modules = gen_dir.join("whisker_modules");
-    let engine =
-        build_engine_with_discovered_plugins(crate_dir, workspace_root, &graph.cng_plugins)?;
+    let discovered = &graph.cng_plugins;
+    let builtin = Engine::with_builtins();
+    anyhow::ensure!(
+        discovered.iter().all(|p| !builtin.contains_plugin(&p.name)
+            && p.name != crate::ios::application::ApplicationPlugin::NAME),
+        "discovered iOS plugins must not reuse a built-in plugin name"
+    );
+    let has_legacy = discovered
+        .iter()
+        .any(|p| p.protocol == crate::discovery::PluginProtocol::Legacy);
+    let mut legacy = if has_legacy {
+        Engine::with_builtins()
+    } else {
+        Engine::new()
+    }
+    .with_app_crate_dir(crate_dir);
+    let mut project_binaries = Vec::new();
+    for (plugin, binary) in discovered
+        .iter()
+        .zip(build_discovered_plugins(workspace_root, discovered)?)
+    {
+        match plugin.protocol {
+            crate::discovery::PluginProtocol::Legacy => {
+                legacy.register_subprocess(
+                    SubprocessPlugin::new(&plugin.name, binary)
+                        .after(plugin.after.clone())
+                        .before(plugin.before.clone()),
+                );
+            }
+            crate::discovery::PluginProtocol::Project => {
+                project_binaries.push((&plugin.name, binary));
+            }
+        }
+    }
+    let project_names: std::collections::BTreeSet<_> = discovered
+        .iter()
+        .filter(|p| p.protocol == crate::discovery::PluginProtocol::Project)
+        .map(|p| p.name.as_str())
+        .chain([crate::ios::application::ApplicationPlugin::NAME])
+        .collect();
+    let mut legacy_config: Config = serde_json::from_value(serde_json::to_value(app_config)?)?;
+    legacy_config
+        .plugins
+        .retain(|name, _| has_legacy && !project_names.contains(name.as_str()));
+    let mut project_config: Config = serde_json::from_value(serde_json::to_value(app_config)?)?;
+    project_config
+        .plugins
+        .retain(|name, _| !has_legacy || project_names.contains(name.as_str()));
     let mut inputs = crate::ios::inputs_from_with_engine(
-        &engine,
-        app_config,
-        whisker_modules,
+        &legacy,
+        &legacy_config,
+        gen_dir.join("whisker_modules"),
         workspace_root.to_path_buf(),
         package.to_string(),
     )?;
     inputs.cargo_selection = selection.clone();
     inputs.modules = graph.modules.clone();
-    // whisker-cng renders the full Xcode project directly (pbxproj +
-    // xcworkspacedata + sources). No xcodegen subprocess needed —
-    // see crates/whisker-cng/src/ios.rs for the rationale.
-    let regenerated = crate::sync_ios(&gen_dir, &inputs).context("render gen/ios")?;
+    let project_name = inputs.scheme.clone();
+    let template_version = inputs.template_version;
+    let mut projects = if has_legacy {
+        crate::ProjectEngine::with_initializer(crate::ios::application::ApplicationPlugin::new(
+            inputs,
+        ))
+    } else {
+        crate::ProjectEngine::with_ios_application(inputs)
+    }
+    .with_app_crate_dir(crate_dir);
+    for (name, binary) in project_binaries {
+        projects.register_subprocess(name, binary);
+    }
+    let result = projects
+        .compose(
+            &project_config,
+            &whisker_plugin::project::ProjectIr::Ios(Default::default()),
+        )
+        .context("compose iOS project plugins")?;
+    let whisker_plugin::project::ProjectIr::Ios(project) = result.project else {
+        unreachable!()
+    };
+    anyhow::ensure!(
+        project
+            .apple
+            .schemes
+            .get(&project_name)
+            .is_some_and(|s| s.run_target.as_ref() == Some(&project.apple.application))
+            && project.apple.targets[&project.apple.application].product_name == project_name,
+        "Whisker iOS build driver requires the configured main scheme and application product name"
+    );
+    let regenerated = crate::ios::sync_project(
+        &gen_dir,
+        &crate::ios::IosProjectInputs {
+            project,
+            project_name,
+            app_crate_dir: Some(crate_dir.to_path_buf()),
+            cargo_selection: selection.clone(),
+            template_version,
+        },
+    )
+    .context("render gen/ios")?;
     Ok(PlatformSync {
         gen_dir,
         regenerated,
-        template_version: None,
+        template_version: Some(template_version),
     })
 }
 
@@ -312,11 +485,183 @@ fn sync_macos(
         })
         .collect();
     let template_version = inputs.template_version;
-    let regenerated = crate::sync_macos(&gen_dir, &inputs).context("render gen/macos")?;
+    let app_name = inputs.app_name.clone();
+    let generated_package = inputs.generated_package.clone();
+    let discovered: Vec<_> = graph
+        .cng_plugins
+        .iter()
+        .filter(|p| p.protocol == crate::discovery::PluginProtocol::Project)
+        .cloned()
+        .collect();
+    let builtin = Engine::with_builtins();
+    anyhow::ensure!(
+        discovered.iter().all(|p| !builtin.contains_plugin(&p.name)
+            && p.name != crate::macos::application::ApplicationPlugin::NAME),
+        "discovered macOS plugins must not reuse a built-in plugin name"
+    );
+    let mut project_config: Config = serde_json::from_value(serde_json::to_value(app_config)?)?;
+    for plugin in graph
+        .cng_plugins
+        .iter()
+        .filter(|p| p.protocol == crate::discovery::PluginProtocol::Legacy)
+    {
+        project_config.plugins.remove(&plugin.name);
+    }
+    let mut engine =
+        crate::ProjectEngine::with_macos_application(inputs).with_app_crate_dir(crate_dir);
+    for (plugin, binary) in discovered
+        .iter()
+        .zip(build_discovered_plugins(workspace_root, &discovered)?)
+    {
+        engine.register_subprocess(&plugin.name, binary);
+    }
+    let result = engine
+        .compose(
+            &project_config,
+            &whisker_plugin::project::ProjectIr::Macos(Default::default()),
+        )
+        .context("compose macOS project plugins")?;
+    let whisker_plugin::project::ProjectIr::Macos(project) = result.project else {
+        unreachable!()
+    };
+    let target = &project.apple.targets[&project.apple.application];
+    anyhow::ensure!(
+        target.product_name == app_name
+            && target
+                .rust
+                .as_ref()
+                .is_some_and(|r| r.package == generated_package && r.target == generated_package),
+        "macOS build/run driver requires the configured app and generated binary names"
+    );
+    let regenerated = crate::macos::sync_project(
+        &gen_dir,
+        &crate::macos::MacosProjectInputs {
+            project,
+            app_crate_dir: Some(crate_dir.to_path_buf()),
+            cargo_selection: selection.clone(),
+            template_version,
+        },
+    )?;
     Ok(PlatformSync {
         gen_dir,
         regenerated,
         template_version: Some(template_version),
+    })
+}
+
+fn sync_desktop(
+    target: Target,
+    app_config: &Config,
+    crate_dir: &Path,
+    workspace_root: &Path,
+    package: &str,
+    graph: &ProjectDependencyGraph,
+    selection: &crate::CargoSelection,
+) -> Result<PlatformSync> {
+    let gen_dir = crate_dir.join("gen").join(target.as_str());
+    // Inside the Whisker monorepo, point at the in-tree Host so examples
+    // exercise the current checkout. Installed projects use the published
+    // crate at the generator's matching version.
+    let in_tree_host = workspace_root.join("platforms").join(target.as_str());
+    let dependency = if in_tree_host.join("Cargo.toml").is_file() {
+        format!("{{ path = {:?} }}", in_tree_host.display().to_string())
+    } else {
+        format!("{:?}", env!("CARGO_PKG_VERSION"))
+    };
+    let mut inputs = crate::desktop::inputs_from(
+        app_config,
+        target,
+        package.to_string(),
+        crate_dir.to_path_buf(),
+        dependency,
+    )?;
+    let in_tree_desktop = workspace_root.join("platforms/desktop");
+    if in_tree_desktop.join("Cargo.toml").is_file() {
+        inputs.desktop_dependency =
+            format!("{{ path = {:?} }}", in_tree_desktop.display().to_string());
+    }
+    inputs.cargo_selection = selection.clone();
+    let module_platform = if target == Target::Windows {
+        crate::modules::ModulePlatform::Windows
+    } else {
+        crate::modules::ModulePlatform::Linux
+    };
+    inputs.element_modules = graph
+        .modules
+        .iter()
+        .cloned()
+        .filter_map(|module| {
+            let contribution = module.rust_host(module_platform)?.clone();
+            let host_dependency = match contribution.source {
+                crate::modules::ResolvedRustHostSource::Path(path) => {
+                    crate::RustHostDependency::Path(path)
+                }
+                crate::modules::ResolvedRustHostSource::Registry { version } => {
+                    crate::RustHostDependency::Registry { version }
+                }
+            };
+            Some(crate::RustElementModuleInput {
+                package: module.package,
+                crate_path: module.manifest_dir,
+                host_package: contribution.package,
+                host_dependency,
+            })
+        })
+        .collect();
+    let application_name = if target == Target::Windows {
+        crate::desktop::application::WindowsApplicationPlugin::NAME
+    } else {
+        crate::desktop::application::LinuxApplicationPlugin::NAME
+    };
+    let empty = inputs.empty_project()?;
+    let discovered: Vec<_> = graph
+        .cng_plugins
+        .iter()
+        .filter(|p| p.protocol == crate::discovery::PluginProtocol::Project)
+        .cloned()
+        .collect();
+    let builtin = Engine::with_builtins();
+    anyhow::ensure!(
+        discovered
+            .iter()
+            .all(|p| !builtin.contains_plugin(&p.name) && p.name != application_name),
+        "discovered desktop plugins must not reuse a built-in plugin name"
+    );
+    let mut project_config: Config = serde_json::from_value(serde_json::to_value(app_config)?)?;
+    for plugin in graph
+        .cng_plugins
+        .iter()
+        .filter(|p| p.protocol == crate::discovery::PluginProtocol::Legacy)
+    {
+        project_config.plugins.remove(&plugin.name);
+    }
+    let mut engine = if target == Target::Windows {
+        crate::ProjectEngine::with_windows_application(inputs)
+    } else {
+        crate::ProjectEngine::with_linux_application(inputs)
+    }
+    .with_app_crate_dir(crate_dir);
+    for (plugin, binary) in discovered
+        .iter()
+        .zip(build_discovered_plugins(workspace_root, &discovered)?)
+    {
+        engine.register_subprocess(&plugin.name, binary);
+    }
+    let result = engine
+        .compose(&project_config, &empty)
+        .context("compose desktop project plugins")?;
+    let regenerated = crate::desktop::sync_project(
+        &gen_dir,
+        &crate::desktop::DesktopProjectInputs {
+            project: result.project,
+            app_crate_dir: Some(crate_dir.to_path_buf()),
+            cargo_selection: selection.clone(),
+        },
+    )?;
+    Ok(PlatformSync {
+        gen_dir,
+        regenerated,
+        template_version: Some(1),
     })
 }
 
@@ -367,42 +712,73 @@ fn sync_web(
         })
         .collect();
     let template_version = inputs.template_version;
-    let regenerated = crate::sync_web(&gen_dir, &inputs).context("render gen/web")?;
+    let base_path = inputs.base_path.clone();
+    let generated_package = inputs.generated_package.clone();
+    // Legacy mobile plugins have no Web context. Preserve their previous no-op
+    // behavior without starting their executables; new project plugins run here.
+    let discovered: Vec<_> = graph
+        .cng_plugins
+        .iter()
+        .filter(|p| p.protocol == crate::discovery::PluginProtocol::Project)
+        .cloned()
+        .collect();
+    let builtin = Engine::with_builtins();
+    anyhow::ensure!(
+        discovered.iter().all(|p| !builtin.contains_plugin(&p.name)
+            && p.name != crate::web::application::ApplicationPlugin::NAME),
+        "discovered Web plugins must not reuse a built-in plugin name"
+    );
+    let mut project_config: Config = serde_json::from_value(serde_json::to_value(app_config)?)?;
+    for plugin in graph
+        .cng_plugins
+        .iter()
+        .filter(|p| p.protocol == crate::discovery::PluginProtocol::Legacy)
+    {
+        project_config.plugins.remove(&plugin.name);
+    }
+    let mut engine =
+        crate::ProjectEngine::with_web_application(inputs).with_app_crate_dir(crate_dir);
+    for (plugin, binary) in discovered
+        .iter()
+        .zip(build_discovered_plugins(workspace_root, &discovered)?)
+    {
+        engine.register_subprocess(&plugin.name, binary);
+    }
+    let result = engine
+        .compose(
+            &project_config,
+            &whisker_plugin::project::ProjectIr::Web(Box::default()),
+        )
+        .context("compose Web project plugins")?;
+    let whisker_plugin::project::ProjectIr::Web(project) = result.project else {
+        unreachable!()
+    };
+    anyhow::ensure!(
+        project.base_path == base_path,
+        "Web build/run driver requires the configured base_path; set it in Config.web"
+    );
+    anyhow::ensure!(
+        project
+            .wasm
+            .as_ref()
+            .is_some_and(|w| w.package == generated_package),
+        "Web build/run driver requires the configured generated package name"
+    );
+    let regenerated = crate::web::sync_project(
+        &gen_dir,
+        &crate::web::WebProjectInputs {
+            project: *project,
+            app_crate_dir: Some(crate_dir.to_path_buf()),
+            cargo_selection: selection.clone(),
+            template_version,
+        },
+    )
+    .context("render gen/web")?;
     Ok(PlatformSync {
         gen_dir,
         regenerated,
         template_version: Some(template_version),
     })
-}
-
-/// Build a [`crate::Engine`] populated with built-ins plus
-/// every 3rd-party plugin discovered via `[package.metadata.whisker.plugins]`
-/// in the user app's dep graph. Each discovered plugin's `[[bin]]`
-/// target gets `cargo build`d (debug profile, workspace target dir)
-/// and registered as a [`SubprocessPlugin`] pointing at the
-/// resulting binary.
-fn build_engine_with_discovered_plugins(
-    crate_dir: &Path,
-    workspace_root: &Path,
-    discovered: &[DiscoveredPlugin],
-) -> Result<Engine> {
-    // Stamp the app crate dir onto the engine so subprocess plugins
-    // (e.g. `whisker-asset`) can resolve paths the user spelled
-    // relative to their crate — they don't inherit a reliable cwd.
-    let mut engine = Engine::with_builtins().with_app_crate_dir(crate_dir);
-    if discovered.is_empty() {
-        return Ok(engine);
-    }
-
-    let binaries = build_discovered_plugins(workspace_root, discovered)?;
-    for (plugin, binary_path) in discovered.iter().cloned().zip(binaries) {
-        engine.register_subprocess(
-            SubprocessPlugin::new(plugin.name.clone(), binary_path)
-                .after(plugin.after.clone())
-                .before(plugin.before.clone()),
-        );
-    }
-    Ok(engine)
 }
 
 /// Compile plugin executables into the workspace target directory.

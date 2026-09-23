@@ -11,6 +11,8 @@
 //! bin = "my-plugin-cng"          # the [[bin]] name in this crate
 //! after = ["whisker-info-plist"] # optional ordering hints
 //! before = []
+//! # protocol = "project" selects the versioned project contract instead;
+//! # for that contract omit after/before here (the binary reports its ordering).
 //! ```
 //!
 //! One crate may declare multiple plugins by adding more entries
@@ -34,6 +36,18 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Subprocess contract selected explicitly by package metadata.
+/// The project protocol negotiates its exact wire/schema versions at runtime.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginProtocol {
+    /// Existing mobile context protocol; default for published packages.
+    #[default]
+    Legacy,
+    /// Versioned declarative project protocol (Android, iOS, macOS, Windows, Linux, and Web).
+    Project,
+}
+
 /// A plugin declared by a dep of the user app, after the dep's
 /// `[package.metadata.whisker.plugins.<name>]` table has been
 /// resolved against the cargo dep graph.
@@ -52,6 +66,8 @@ pub struct DiscoveredPlugin {
     /// compiled, produces the plugin binary the engine spawns.
     /// Resolving it to a file path is the caller's job.
     pub bin_target_name: String,
+    /// Contract used to dispatch this binary.
+    pub protocol: PluginProtocol,
     pub after: Vec<String>,
     pub before: Vec<String>,
 }
@@ -156,11 +172,19 @@ pub(crate) fn discover_plugins_from_metadata(
             })?;
 
         for (name, entry) in plugins_map {
+            anyhow::ensure!(
+                entry.protocol != PluginProtocol::Project
+                    || (entry.after.is_empty() && entry.before.is_empty()),
+                "project plugin `{name}` in {} must declare ordering in its protocol descriptor, not Cargo metadata",
+                pkg.manifest_path
+            );
+
             discovered.push(DiscoveredPlugin {
                 name,
                 source_crate: pkg.name.clone(),
                 source_manifest_dir: manifest_dir.clone(),
                 bin_target_name: entry.bin,
+                protocol: entry.protocol,
                 after: entry.after,
                 before: entry.before,
             });
@@ -178,6 +202,8 @@ pub(crate) fn discover_plugins_from_metadata(
 #[serde(deny_unknown_fields)]
 struct PluginEntryRaw {
     bin: String,
+    #[serde(default)]
+    protocol: PluginProtocol,
     #[serde(default)]
     after: Vec<String>,
     #[serde(default)]
@@ -218,6 +244,7 @@ mod tests {
             source_crate: source_crate.into(),
             source_manifest_dir: PathBuf::from("/fake"),
             bin_target_name: bin.into(),
+            protocol: PluginProtocol::Legacy,
             after: after.iter().map(|s| s.to_string()).collect(),
             before: before.iter().map(|s| s.to_string()).collect(),
         }
