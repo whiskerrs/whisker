@@ -39,20 +39,6 @@ Whisker itself**.
 - [`ios-spm-distribution.md`](ios-spm-distribution.md) — how iOS apps
   resolve the runtime from the remote SwiftPM package, version lockstep,
   and the monorepo-dev caveat.
-- [`cng-design.md`](cng-design.md) — current CNG composition model,
-  platform configuration boundaries, and the division between generated
-  app projects and settings owned by native packages.
-- [`cng-android-ir.md`](cng-android-ir.md) — declarative Android IR coverage,
-  Gradle module and variant contracts, and composition/validation boundaries.
-- [`cng-plugin-composition.md`](cng-plugin-composition.md) — application policy,
-  built-in plugin ownership, native scaffolding, declarative composition,
-  and versioned subprocess compatibility.
-- [`cng-apple-ir.md`](cng-apple-ir.md) — iOS/macOS target, configuration,
-  scheme and bundle contracts, composition, and native validation boundaries.
-- [`cng-web-ir.md`](cng-web-ir.md) — Web output ownership, static HTML,
-  PWA registration, response headers, and composition contracts.
-- [`cng-desktop-ir.md`](cng-desktop-ir.md) — Windows/Linux OS metadata,
-  packaging, native XML edits, and platform-specific validation.
 - [`comment-style.md`](comment-style.md) — the comment/doc convention.
   Cite it in code review.
 - [`documentation.md`](documentation.md) — which facts belong in internal docs,

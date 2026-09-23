@@ -295,46 +295,6 @@ report instead of generating a second time. `whisker doctor` can inspect the las
 completed report without executing user code. Generated packages, reports, and
 build caches under `target/.whisker/` are disposable and are not committed.
 
-Cargo selection is explicit: `whisker run` and `whisker build` accept
-`--features` and `--no-default-features`, and CNG's `generate_with_selection`
-accepts the same inputs plus a Rust target triple. Direct configuration-binary
-execution accepts these options after `--`, with `--cargo-target` distinguishing
-the Rust triple from the generation platform. For example:
-
-```sh
-cargo run --bin whisker-config --features whisker-config -- \
-  ios --cargo-target aarch64-apple-ios-sim --no-default-features --features auth
-```
-
-Each platform resolves the selected application's runtime dependencies with
-`cargo tree -p <app> --edges normal,no-proc-macro` and reads declarations from
-`cargo metadata`. Metadata alone unifies features across workspace members and
-build/dev roles, so it cannot determine which native modules the application
-uses. Modules and plugin declarations both come from the selected runtime graph;
-plugin executables and config-type dependencies are still built separately for
-the host. Build-only and dev-only dependencies do not register CNG plugins.
-
-The default triples are `aarch64-linux-android`, `aarch64-apple-ios`,
-`wasm32-unknown-unknown`, and the build machine's macOS architecture.
-`whisker run ios` selects the simulator triple instead. An explicit Cargo target
-requires a single generation platform. Web and macOS projects embed the chosen
-application features and default-feature policy in their Cargo dependency;
-use application feature names that forward to dependency features on these Hosts.
-
-Selection participates in renderer fingerprints and is saved alongside the
-native contribution snapshot in `gen/<platform>/.whisker/`. Keeping this state in
-the generated project preserves IDE builds across `cargo clean`. Mobile Cargo
-build drivers reuse it, including during hot reload. They compare the actual
-slice's native modules and plugins against the generated snapshot and require
-regeneration if they differ. A project can therefore serve multiple Android ABIs
-or iOS device/simulator slices when their native contributions agree.
-
-Generated Android settings refresh the module report on every Gradle Sync,
-including with the published Gradle plugin. Cargo.lock alone is insufficient:
-feature selection and path-dependency metadata can change without changing the
-lockfile. A changed native graph still requires CNG regeneration before a build,
-so plugin-generated settings cannot silently lag behind discovery.
-
 The tooling has a different lifetime from the shipped UI runtime:
 
 | Tooling crate | Responsibility |
