@@ -1,0 +1,218 @@
+{
+  "platform": "android",
+  "project": {
+    "application": ":app",
+    "settings": {
+      "plugin_management": {
+        "repositories": [
+          {
+            "id": "google",
+            "expression": "google()"
+          },
+          {
+            "id": "mavenCentral",
+            "expression": "mavenCentral()"
+          },
+          {
+            "id": "gradlePluginPortal",
+            "expression": "gradlePluginPortal()"
+          }
+        ],
+        "included_builds": [
+          "build-logic"
+        ]
+      },
+      "dependency_resolution": {
+        "repositories": [
+          {
+            "id": "google",
+            "expression": "google()"
+          },
+          {
+            "id": "mavenCentral",
+            "expression": "mavenCentral()"
+          }
+        ]
+      }
+    },
+    "properties": {
+      "android.useAndroidX": "true"
+    },
+    "modules": {
+      ":app": {
+        "directory": "app",
+        "dependencies": [
+          {
+            "configuration": "implementation",
+            "source": {
+              "kind": "project",
+              "value": ":shared"
+            }
+          }
+        ],
+        "build": {
+          "plugins": [
+            {
+              "id": "com.android.application",
+              "version": "8.7.3",
+              "apply": true
+            }
+          ]
+        },
+        "kind": {
+          "kind": "application",
+          "config": {
+            "android": {
+              "namespace": "com.example.host",
+              "sdk": {
+                "compile": {
+                  "kind": "release",
+                  "api": 35
+                },
+                "min": {
+                  "kind": "release",
+                  "value": 24
+                },
+                "target": {
+                  "kind": "release",
+                  "value": 34
+                }
+              },
+              "source_sets": {
+                "main": {
+                  "manifest": {
+                    "name": "manifest",
+                    "attributes": {
+                      "xmlns:android": "http://schemas.android.com/apk/res/android"
+                    },
+                    "children": [
+                      {
+                        "kind": "element",
+                        "value": {
+                          "name": "application",
+                          "children": [
+                            {
+                              "kind": "element",
+                              "value": {
+                                "name": "activity",
+                                "attributes": {
+                                  "android:name": ".MainActivity",
+                                  "android:exported": "true"
+                                },
+                                "children": [
+                                  {
+                                    "kind": "element",
+                                    "value": {
+                                      "name": "intent-filter",
+                                      "children": [
+                                        {
+                                          "kind": "element",
+                                          "value": {
+                                            "name": "action",
+                                            "attributes": {
+                                              "android:name": "android.intent.action.SEND"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "kind": "element",
+                                          "value": {
+                                            "name": "category",
+                                            "attributes": {
+                                              "android:name": "android.intent.category.DEFAULT"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "kind": "element",
+                                          "value": {
+                                            "name": "data",
+                                            "attributes": {
+                                              "android:mimeType": "image/*"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "sources": [
+                    "app/src/main/kotlin"
+                  ],
+                  "android_resources": [
+                    "app/src/main/res"
+                  ]
+                }
+              },
+              "default_config_statements": [
+                "versionCode = 1",
+                "versionName = \"1.0\""
+              ],
+              "statements": [
+                "buildTypes { getByName(\"release\") { isMinifyEnabled = true } }"
+              ]
+            },
+            "application_id": "com.example.app",
+            "dynamic_features": [
+              ":photos"
+            ]
+          }
+        }
+      },
+      ":shared": {
+        "directory": "shared",
+        "kind": {
+          "kind": "library",
+          "config": {
+            "namespace": "com.example.shared",
+            "sdk": {
+              "compile": {
+                "kind": "release",
+                "api": 35
+              },
+              "min": {
+                "kind": "release",
+                "value": 24
+              }
+            }
+          }
+        }
+      },
+      ":photos": {
+        "directory": "photos",
+        "kind": {
+          "kind": "dynamic_feature",
+          "config": {
+            "android": {
+              "namespace": "com.example.photos",
+              "sdk": {
+                "compile": {
+                  "kind": "release",
+                  "api": 35
+                },
+                "min": {
+                  "kind": "release",
+                  "value": 24
+                }
+              }
+            },
+            "base": ":app"
+          }
+        }
+      }
+    },
+    "files": {
+      "build-logic": {
+        "kind": "app_directory",
+        "source": "native/build-logic"
+      }
+    }
+  }
+}

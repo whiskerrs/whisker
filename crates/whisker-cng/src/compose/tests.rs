@@ -2,36 +2,6 @@ use super::*;
 use serde::{Deserialize, Serialize};
 use whisker_plugin::{PlistValue, PluginConfig};
 
-#[test]
-fn every_app_gets_orientations_because_the_store_rejects_a_bundle_without_them() {
-    let seeded = seed_orientation_plist(&[]);
-    let PlistValue::Array(phone) = &seeded["UISupportedInterfaceOrientations"] else {
-        panic!("expected an array");
-    };
-    assert_eq!(phone.len(), 4);
-    assert_eq!(
-        seeded["UISupportedInterfaceOrientations"],
-        seeded["UISupportedInterfaceOrientations~ipad"]
-    );
-    assert!(!seeded.contains_key("UIRequiresFullScreen"));
-}
-
-#[test]
-fn restricting_orientations_opts_out_of_ipad_multitasking() {
-    let seeded = seed_orientation_plist(&[whisker_config::Orientation::Portrait]);
-    assert_eq!(
-        seeded["UISupportedInterfaceOrientations"],
-        PlistValue::Array(vec![PlistValue::String(
-            "UIInterfaceOrientationPortrait".to_string()
-        )])
-    );
-    assert_eq!(
-        seeded["UIRequiresFullScreen"],
-        PlistValue::Boolean(true),
-        "Apple only allows fewer than four orientations when the app opts out"
-    );
-}
-
 #[derive(Default, Serialize, Deserialize)]
 struct BundleIdConfig {
     #[serde(default)]

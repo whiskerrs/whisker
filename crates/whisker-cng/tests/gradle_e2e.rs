@@ -127,12 +127,13 @@ fn gradle_dependencies_land_inside_the_dependencies_block() {
         c.add("implementation(\"com.example:lib:1.0\")");
     });
     let gradle = sync_and_read_gradle(&app);
-    let deps_open = gradle.find("dependencies {").unwrap();
-    let deps_close = gradle[deps_open..].find("\n}").unwrap() + deps_open;
-    let inside_deps = &gradle[deps_open..deps_close];
     assert!(
-        inside_deps.contains("com.example:lib:1.0"),
-        "must be inside dependencies block: {inside_deps}",
+        gradle.match_indices("\ndependencies {").any(|(start, _)| {
+            let block = &gradle[start + 1..];
+            let end = block.find("\n}").expect("closed dependencies block");
+            block[..end].contains("implementation(\"com.example:lib:1.0\")")
+        }),
+        "must be inside a dependencies block: {gradle}",
     );
 }
 

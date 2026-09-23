@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Migrate asset generation to ProjectPlugin and `project_plugin::<WhiskerAsset>`; keep Android/iOS runtime locations unchanged.
+- Declare app-relative file sources so renderers preserve file modes and fingerprint asset contents; reject escaping paths, symlinks, and duplicate logical paths.
+
+### Added
+
+- Windows/Linux distribution resources and automatic runtime paths relative to the application executable.
+
+- macOS bundle resources through the same Apple IR contract and automatic runtime lookup from the bundled executable.
+- Web asset distribution and route-independent, percent-encoded URLs using the configured deployment prefix.
+
+
 ## [0.13.1](https://github.com/whiskerrs/whisker/compare/whisker-asset-v0.13.0...whisker-asset-v0.13.1) - 2026-09-04
 
 ### Fixed

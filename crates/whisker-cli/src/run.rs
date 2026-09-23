@@ -21,6 +21,8 @@ use crate::manifest;
 
 #[derive(clap::Args, Debug)]
 pub struct Args {
+    #[command(flatten)]
+    pub cargo: manifest::FeatureArgs,
     /// Path to the user crate's `Cargo.toml`. Defaults to walking up
     /// from `cwd` until a `Cargo.toml` with a `[package]` section is
     /// found (cargo-style).
@@ -82,8 +84,23 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
             "`whisker run desktop` currently supports the macOS Host only"
         ));
     }
-    let m = manifest::resolve_for_target(args.manifest_path.as_deref(), target)
-        .context("resolve user-crate manifest (Cargo.toml + whisker.rs)")?;
+    let mut selection = args.cargo.selection();
+    if target == Target::IosSimulator {
+        selection.target = Some(
+            if cfg!(target_arch = "x86_64") {
+                "x86_64-apple-ios"
+            } else {
+                "aarch64-apple-ios-sim"
+            }
+            .into(),
+        );
+    }
+    let m = manifest::resolve_with_selection(
+        args.manifest_path.as_deref(),
+        crate::platforms::generation_target(target),
+        &selection,
+    )
+    .context("resolve user-crate manifest (Cargo.toml + whisker.rs)")?;
     let workspace_root = m.workspace_root.clone();
     if let Some(override_root) = &args.workspace_root {
         anyhow::ensure!(

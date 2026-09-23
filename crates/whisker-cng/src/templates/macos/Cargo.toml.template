@@ -13,7 +13,7 @@ publish = false
 hot-reload = ["whisker-macos/hot-reload"]
 
 [dependencies]
-whisker-app = { package = {{user_package_toml}}, path = {{user_crate_path_toml}} }
+whisker-app = { package = {{user_package_toml}}, path = {{user_crate_path_toml}}{{user_cargo_options}} }
 whisker-macos = {{whisker_macos_dependency}}
 whisker-desktop = {{whisker_desktop_dependency}}
 {{element_module_dependencies}}

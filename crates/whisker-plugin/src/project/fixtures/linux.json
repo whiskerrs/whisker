@@ -1,0 +1,149 @@
+{
+  "platform": "linux",
+  "project": {
+    "app_id": "com.example.App",
+    "application": "app",
+    "executables": {
+      "app": {
+        "source": {
+          "kind": "cargo",
+          "value": {
+            "manifest": "Host/Cargo.toml",
+            "package": "example-host",
+            "target": "example-host",
+            "kind": "bin",
+            "default_features": true
+          }
+        },
+        "destination": "bin/example"
+      }
+    },
+    "resources": [
+      {
+        "source": "assets/icon.png",
+        "destination": "share/icons/hicolor/256x256/apps/com.example.App.png",
+        "kind": "file"
+      }
+    ],
+    "desktop_entries": {
+      "share/applications/com.example.App.desktop": {
+        "entries": {
+          "Type": "Application",
+          "Name": "Example",
+          "Name[ja]": "サンプル",
+          "Exec": "example %U",
+          "Icon": "com.example.App",
+          "MimeType": [
+            "x-scheme-handler/example"
+          ],
+          "Actions": [
+            "New"
+          ]
+        },
+        "actions": {
+          "New": {
+            "Name": "New window",
+            "Exec": "example --new-window"
+          }
+        }
+      }
+    },
+    "mime_packages": {
+      "share/mime/packages/com.example.App.xml": {
+        "name": "mime-info",
+        "attributes": {
+          "xmlns": "http://www.freedesktop.org/standards/shared-mime-info"
+        },
+        "children": [
+          {
+            "kind": "element",
+            "value": {
+              "name": "mime-type",
+              "attributes": {
+                "type": "application/x-example"
+              },
+              "children": [
+                {
+                  "kind": "element",
+                  "value": {
+                    "name": "glob",
+                    "attributes": {
+                      "pattern": "*.example"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "metainfo": {
+      "share/metainfo/com.example.App.metainfo.xml": {
+        "name": "component",
+        "attributes": {
+          "type": "desktop-application"
+        },
+        "children": [
+          {
+            "kind": "element",
+            "value": {
+              "name": "id",
+              "children": [
+                {
+                  "kind": "text",
+                  "value": "com.example.App"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "dbus_services": {
+      "share/dbus-1/services/com.example.App.service": {
+        "entries": {
+          "Name": "com.example.App",
+          "Exec": "/usr/bin/example --dbus"
+        }
+      }
+    },
+    "packages": {
+      "flatpak": {
+        "kind": "flatpak",
+        "manifest": {
+          "runtime": "org.freedesktop.Platform",
+          "runtime_version": "24.08",
+          "sdk": "org.freedesktop.Sdk",
+          "command": {
+            "kind": "executable",
+            "id": "app"
+          },
+          "finish_args": [
+            "--socket=wayland"
+          ],
+          "modules": [
+            {
+              "name": "app",
+              "buildsystem": "simple",
+              "build-commands": [
+                "install -Dm755 example /app/bin/example"
+              ]
+            }
+          ]
+        }
+      },
+      "deb": {
+        "kind": "recipe",
+        "format": "deb",
+        "path": "packaging/debian.control"
+      }
+    },
+    "files": {
+      "assets/icon.png": {
+        "kind": "app_file",
+        "source": "icons/linux.png"
+      }
+    }
+  }
+}

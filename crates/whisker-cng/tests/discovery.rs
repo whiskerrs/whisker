@@ -217,3 +217,44 @@ fn typoed_plugin_entry_field_is_rejected_with_crate_path() {
     assert!(msg.contains("aftr"), "{msg}");
     assert!(msg.contains("plugin-a"), "{msg}");
 }
+
+#[test]
+fn project_protocol_is_explicit_and_ordering_belongs_to_handshake() {
+    let fx = WorkspaceFixture::new();
+    fx.add_app(&[
+        ("plugin-a", "../plugin-a"),
+        ("plugin-multi", "../plugin-multi"),
+    ]);
+    fx.add_plugin("plugin-multi", "plugin-multi", "");
+    fx.add_plugin(
+        "plugin-a",
+        "plugin-a",
+        r#"
+[package.metadata.whisker.plugins.project-plugin]
+bin = "project-plugin-cng"
+protocol = "project"
+"#,
+    );
+    let plugins = discover_plugins(&fx.app_manifest(), "test-app").unwrap();
+    assert_eq!(
+        plugins[0].protocol,
+        whisker_cng::discovery::PluginProtocol::Project
+    );
+    fx.add_plugin(
+        "plugin-a",
+        "plugin-a",
+        r#"
+[package.metadata.whisker.plugins.project-plugin]
+bin = "project-plugin-cng"
+protocol = "project"
+after = ["legacy"]
+"#,
+    );
+    assert!(
+        format!(
+            "{:#}",
+            discover_plugins(&fx.app_manifest(), "test-app").unwrap_err()
+        )
+        .contains("protocol descriptor")
+    );
+}

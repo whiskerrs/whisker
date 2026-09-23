@@ -13,7 +13,9 @@
 //! ```
 
 mod runner;
+mod selection;
 pub use runner::{GenerationReport, GenerationTarget, PlatformSync, run};
+pub use selection::CargoSelection;
 #[cfg(feature = "generate")]
 mod generator;
 #[cfg(feature = "generate")]
@@ -21,7 +23,7 @@ pub use generator::sync_for_target;
 #[cfg(feature = "generate")]
 mod project;
 #[cfg(feature = "generate")]
-pub use project::generate;
+pub use project::{generate, generate_with_selection};
 
 #[cfg(feature = "generate")]
 pub mod android;
@@ -44,7 +46,11 @@ pub mod macos;
 #[cfg(feature = "generate")]
 pub mod modules;
 #[cfg(feature = "generate")]
+mod plugin_order;
+#[cfg(feature = "generate")]
 pub mod plugins;
+#[cfg(feature = "generate")]
+pub mod project_compose;
 #[cfg(feature = "generate")]
 mod render;
 #[cfg(feature = "generate")]
@@ -68,6 +74,8 @@ pub use modules::{
     ResolvedPlatformImplementation, ResolvedRustHostSource, ResolvedRustModuleContribution,
     build_modules_report, discover as discover_modules, refresh_gradle_module_cache,
 };
+#[cfg(feature = "generate")]
+pub use project_compose::{ProjectComposition, ProjectEngine, ProjectStep};
 #[cfg(feature = "generate")]
 pub use web::{WebInputs, sync as sync_web};
 pub use whisker_config::*;
@@ -110,7 +118,7 @@ fn rust_element_module_dependencies(modules: &[RustElementModuleInput]) -> Strin
                 }
             };
             format!(
-                "{} = {{ package = {:?}, path = {:?} }}\n{} = {{ package = {:?}, {} }}",
+                "{} = {{ package = {:?}, path = {:?}, default-features = false }}\n{} = {{ package = {:?}, {} }}",
                 module.package,
                 module.package,
                 module.crate_path.display().to_string(),
@@ -175,3 +183,13 @@ mod rust_host_dependency_tests {
         );
     }
 }
+
+#[cfg(feature = "generate")]
+mod project_files;
+#[cfg(feature = "generate")]
+mod project_plist;
+
+#[cfg(feature = "generate")]
+pub mod desktop;
+#[cfg(feature = "generate")]
+mod project_xml;

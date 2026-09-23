@@ -26,6 +26,27 @@ use whisker_config::Config;
 use std::collections::BTreeMap;
 use whisker_cng::{GenerationReport, GenerationTarget, PlatformSync};
 
+/// Cargo feature selection shared by run and release commands.
+#[derive(clap::Args, Debug, Default)]
+pub struct FeatureArgs {
+    /// Application Cargo features (comma-separated or repeated).
+    #[arg(long, value_delimiter = ',')]
+    pub features: Vec<String>,
+    /// Disable the application's default Cargo features.
+    #[arg(long)]
+    pub no_default_features: bool,
+}
+
+impl FeatureArgs {
+    pub fn selection(&self) -> whisker_cng::CargoSelection {
+        whisker_cng::CargoSelection {
+            features: self.features.clone(),
+            no_default_features: self.no_default_features,
+            target: None,
+        }
+    }
+}
+
 /// One CLI invocation's worth of resolved user-crate state.
 #[derive(Debug)]
 pub struct ResolvedManifest {
@@ -61,6 +82,19 @@ pub fn resolve_for_target(
         cargo_toml_override,
         &[crate::platforms::generation_target(target)],
     )
+}
+
+pub fn resolve_with_selection(
+    cargo_toml_override: Option<&Path>,
+    target: GenerationTarget,
+    selection: &whisker_cng::CargoSelection,
+) -> Result<ResolvedManifest> {
+    let cargo_toml = application_manifest(cargo_toml_override)?;
+    Ok(from_report(whisker_cng::generate_with_selection(
+        &cargo_toml,
+        &[target],
+        selection,
+    )?))
 }
 
 fn resolve_targets(

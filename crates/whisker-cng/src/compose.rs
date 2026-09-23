@@ -21,14 +21,14 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use whisker_config::Config;
 use whisker_plugin::{
-    AndroidManifest, AndroidProjectIr, AppMeta, GenerateContext, IosProjectIr, MutationJournal,
-    MutationRecord, Operation, PlistValue, Plugin, PluginRequest, PluginResponse, Target,
+    GenerateContext, MutationJournal, MutationRecord, Operation, Plugin, PluginRequest,
+    PluginResponse, Target,
 };
 
 /// Which platform targets the current `compose` invocation should
@@ -102,16 +102,7 @@ impl Engine {
     /// `app.plugin::<…>(|c| …)` gets no extra output from them.
     pub fn with_builtins() -> Self {
         let mut e = Self::new();
-        e.register(crate::plugins::info_plist_extra::InfoPlistExtra)
-            .register(crate::plugins::android_permissions::AndroidPermissions)
-            .register(crate::plugins::android_meta_data::AndroidMetaData)
-            .register(crate::plugins::android_application_attributes::AndroidApplicationAttributes)
-            .register(crate::plugins::android_gradle_plugins::GradlePlugins)
-            .register(crate::plugins::android_gradle_dependencies::GradleDependencies)
-            .register(crate::plugins::ios_extra_files::IosExtraFiles)
-            .register(crate::plugins::android_extra_files::AndroidExtraFiles)
-            .register(crate::plugins::ios_pbxproj_ops::IosPbxprojOps)
-            .register(crate::plugins::app_icon::AppIcon);
+        crate::plugins::register_builtins(&mut e);
         e
     }
 
@@ -121,6 +112,10 @@ impl Engine {
     pub fn register<P: Plugin + 'static>(&mut self, plugin: P) -> &mut Self {
         self.plugins.push(Box::new(plugin));
         self
+    }
+
+    pub(crate) fn contains_plugin(&self, name: &str) -> bool {
+        self.plugins.iter().any(|p| p.name() == name)
     }
 
     /// Number of plugins currently registered.
@@ -135,7 +130,8 @@ impl Engine {
     /// Run the plugin pipeline against `app_config` and return the
     /// resulting [`GenerateContext`]. Steps:
     ///
-    /// 1. Build [`AppMeta`] + IR shells (or `None` per
+    /// 1. Initialize app metadata and IR shells through the application policy
+    ///    module (or `None` per
     ///    [`EnabledTargets`]).
     /// 2. Reject any `app_config.plugins` entry whose key doesn't
     ///    match a registered plugin's [`Plugin::name`] — a user
@@ -148,7 +144,7 @@ impl Engine {
     ///    on the same `(target, path)` and reject them. `Override`
     ///    is the escape hatch.
     pub fn compose(&self, app_config: &Config, enabled: EnabledTargets) -> Result<GenerateContext> {
-        let mut ctx = build_initial_context(app_config, enabled);
+        let mut ctx = crate::plugins::application::initial_context(app_config, enabled);
         ctx.app_crate_dir = self.app_crate_dir.clone();
 
         check_no_unregistered_plugin_configs(app_config, &self.plugins)
@@ -212,69 +208,6 @@ impl<P: Plugin> DynPlugin for P {
     }
 }
 
-fn build_initial_context(app_config: &Config, enabled: EnabledTargets) -> GenerateContext {
-    let app_meta = AppMeta {
-        name: app_config.name.clone().unwrap_or_default(),
-        version: app_config.version.clone().unwrap_or_default(),
-        build_number: app_config.build_number.unwrap_or(1),
-        ios_bundle_id: if enabled.ios {
-            app_config
-                .ios
-                .bundle_id
-                .clone()
-                .or_else(|| app_config.bundle_id.clone())
-        } else {
-            None
-        },
-        android_application_id: if enabled.android {
-            app_config
-                .android
-                .application_id
-                .clone()
-                .or_else(|| app_config.bundle_id.clone())
-        } else {
-            None
-        },
-    };
-
-    // The layering is "engine seeds defaults; plugins override via
-    // Operation::Override", so every core `Config` field lands in the
-    // IR before the first plugin runs.
-    let ios = enabled.ios.then(|| IosProjectIr {
-        app_name: app_config.name.clone(),
-        version: app_config.version.clone(),
-        build_number: app_config.build_number,
-        bundle_id: app_meta.ios_bundle_id.clone(),
-        scheme: app_config.ios.scheme.clone(),
-        deployment_target: app_config.ios.deployment_target.clone(),
-        info_plist: seed_orientation_plist(&app_config.ios.orientations),
-        ..Default::default()
-    });
-    let android = enabled.android.then(|| AndroidProjectIr {
-        app_name: app_config.name.clone(),
-        version: app_config.version.clone(),
-        build_number: app_config.build_number,
-        application_id: app_meta.android_application_id.clone(),
-        min_sdk: app_config.android.min_sdk,
-        target_sdk: app_config.android.target_sdk,
-        manifest: AndroidManifest {
-            main_activity_url_schemes: app_config.url_schemes.clone(),
-            ..Default::default()
-        },
-        ..Default::default()
-    });
-
-    GenerateContext {
-        app_meta,
-        ios,
-        android,
-        journal: MutationJournal::default(),
-        // Stamped by `Engine::compose`, which is where the app crate
-        // dir is known.
-        app_crate_dir: None,
-    }
-}
-
 fn check_no_unregistered_plugin_configs(
     app_config: &Config,
     plugins: &[Box<dyn DynPlugin>],
@@ -300,80 +233,17 @@ fn check_no_unregistered_plugin_configs(
     Ok(())
 }
 
-/// Kahn's algorithm with deterministic ordering: ties between
-/// candidates are broken alphabetically by plugin name so the same
-/// `(plugins, Config)` pair always produces the same execution
-/// order. The fingerprint path downstream depends on this.
 fn topo_sort(plugins: &[Box<dyn DynPlugin>]) -> Result<Vec<usize>> {
-    let mut name_to_idx: BTreeMap<&str, usize> = BTreeMap::new();
-    for (i, p) in plugins.iter().enumerate() {
-        if name_to_idx.insert(p.name(), i).is_some() {
-            bail!("two plugins registered with the same name `{}`", p.name());
-        }
-    }
-
-    // `X.after(Y)` and `Y.before(X)` both produce the edge `Y → X`.
-    let mut succ: HashMap<usize, Vec<usize>> = HashMap::new();
-    let mut in_degree: Vec<usize> = vec![0; plugins.len()];
-
-    let resolve = |this_name: &str, target_name: &str, kind: &str| -> Result<usize> {
-        name_to_idx.get(target_name).copied().ok_or_else(|| {
-            anyhow!(
-                "plugin `{this_name}` declares {kind}(`{target_name}`), \
-                 but no plugin with that name is registered"
-            )
-        })
-    };
-
-    for (i, p) in plugins.iter().enumerate() {
-        for after_name in p.after() {
-            let j = resolve(p.name(), after_name, "after")?;
-            if j == i {
-                bail!("plugin `{}` lists itself in after()", p.name());
-            }
-            succ.entry(j).or_default().push(i);
-            in_degree[i] += 1;
-        }
-        for before_name in p.before() {
-            let j = resolve(p.name(), before_name, "before")?;
-            if j == i {
-                bail!("plugin `{}` lists itself in before()", p.name());
-            }
-            succ.entry(i).or_default().push(j);
-            in_degree[j] += 1;
-        }
-    }
-
-    let mut queue: VecDeque<usize> = VecDeque::new();
-    let mut candidates: Vec<usize> = (0..plugins.len()).filter(|&i| in_degree[i] == 0).collect();
-    candidates.sort_by_key(|&i| plugins[i].name());
-    queue.extend(candidates);
-
-    let mut order = Vec::with_capacity(plugins.len());
-    while let Some(i) = queue.pop_front() {
-        order.push(i);
-        if let Some(succs) = succ.get(&i) {
-            let mut newly_ready: Vec<usize> = Vec::new();
-            for &j in succs {
-                in_degree[j] -= 1;
-                if in_degree[j] == 0 {
-                    newly_ready.push(j);
-                }
-            }
-            newly_ready.sort_by_key(|&j| plugins[j].name());
-            queue.extend(newly_ready);
-        }
-    }
-
-    if order.len() != plugins.len() {
-        let unfinished: Vec<&str> = (0..plugins.len())
-            .filter(|i| !order.contains(i))
-            .map(|i| plugins[i].name())
-            .collect();
-        bail!("plugin ordering cycle involving: {}", unfinished.join(", "));
-    }
-
-    Ok(order)
+    crate::plugin_order::sort(
+        &plugins
+            .iter()
+            .map(|p| crate::plugin_order::Order {
+                name: p.name(),
+                after: p.after(),
+                before: p.before(),
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn detect_conflicts(journal: &MutationJournal) -> Result<()> {
@@ -562,45 +432,6 @@ fn decode_response_bytes(plugin_name: &str, bytes: &[u8]) -> Result<PluginRespon
     }
     serde_json::from_slice(bytes)
         .with_context(|| format!("decode PluginResponse JSON from plugin `{plugin_name}`'s stdout"))
-}
-
-/// Seed `UISupportedInterfaceOrientations` (and its `~ipad` variant).
-///
-/// App Store validation rejects a bundle that declares no orientations
-/// at all, so every generated app gets all four by default. Restricting
-/// them is only legal for a bundle that also opts out of iPad
-/// multitasking, hence the `UIRequiresFullScreen` companion.
-///
-/// Seeded into the IR rather than the template so a plugin can still
-/// override either key.
-fn seed_orientation_plist(
-    orientations: &[whisker_config::Orientation],
-) -> std::collections::BTreeMap<String, PlistValue> {
-    let restricted = !orientations.is_empty();
-    let list = if restricted {
-        orientations.to_vec()
-    } else {
-        whisker_config::Orientation::all()
-    };
-    let value = PlistValue::Array(
-        list.iter()
-            .map(|o| PlistValue::String(o.plist_value().to_string()))
-            .collect(),
-    );
-
-    let mut seeded = std::collections::BTreeMap::new();
-    seeded.insert(
-        "UISupportedInterfaceOrientations".to_string(),
-        value.clone(),
-    );
-    seeded.insert("UISupportedInterfaceOrientations~ipad".to_string(), value);
-    if restricted {
-        seeded.insert(
-            "UIRequiresFullScreen".to_string(),
-            PlistValue::Boolean(true),
-        );
-    }
-    seeded
 }
 
 #[cfg(test)]

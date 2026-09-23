@@ -1,27 +1,25 @@
-//! Built-in Whisker CNG plugins.
+//! Built-in contributions and application policy for CNG.
 //!
-//! Each module here implements one [`whisker_plugin::Plugin`] that
-//! the engine registers automatically via
-//! [`crate::Engine::with_builtins`]. Plugins are intentionally
-//! narrow — one IR field, one mutation, no cross-plugin
-//! coordination — so a 3rd-party plugin can rely on a stable set of
-//! upstream writers when expressing `after()` / `before()` hints.
+//! `application` owns mandatory app-config initialization and final fallback
+//! values. It is separate from the opt-in native configuration helpers and the
+//! [`app_icon`] feature plugin. The engine owns scheduling, config decoding and
+//! conflict checks; mobile application plugins own native scaffolding.
 //!
-//! ## Opt-in semantics
+//! Optional plugins use an empty default config and retain their stable names
+//! and public module paths. Their single registration list lives here and is
+//! used by [`crate::Engine::with_builtins`]. Registration order is not execution
+//! order: the engine applies each plugin's before/after constraints.
 //!
-//! Every built-in is opt-in: the engine runs it on every `compose()`
-//! call, but a `Config::default()` produces an empty contribution, so
-//! nothing lands in the IR until the user writes
-//! `app.plugin::<MyPlugin>(|c| …)`.
+//! AppIcon's declaration/config types live in whisker-config so the config
+//! probe can name them without depending on the generation engine. Its plugin
+//! implementation and image generation live in [`app_icon`].
 //!
-//! [`app_icon`] is the exception to the "narrow" rule and to where
-//! declaration types live: its `AppIcon` / `AppIconConfig` sit in
-//! `whisker-config`, because the config probe depends only on that
-//! crate and so any type the user names in `app.plugin::<…>` must be
-//! reachable from there.
-//!
-//! A new built-in needs a module here and a registration line in
-//! [`crate::Engine::with_builtins`].
+//! These plugins retain the crate-root mobile GenerateContext contract. Android and iOS
+//! also implement the declarative ProjectPlugin contract using shared config
+//! and image processing.
+
+pub(crate) mod application;
+mod project;
 
 pub mod android_application_attributes;
 pub mod android_extra_files;
@@ -33,3 +31,18 @@ pub mod app_icon;
 pub mod info_plist_extra;
 pub mod ios_extra_files;
 pub mod ios_pbxproj_ops;
+
+/// Register the optional built-ins without exposing native policy in the engine.
+pub(crate) fn register_builtins(engine: &mut crate::Engine) {
+    engine
+        .register(info_plist_extra::InfoPlistExtra)
+        .register(android_permissions::AndroidPermissions)
+        .register(android_meta_data::AndroidMetaData)
+        .register(android_application_attributes::AndroidApplicationAttributes)
+        .register(android_gradle_plugins::GradlePlugins)
+        .register(android_gradle_dependencies::GradleDependencies)
+        .register(ios_extra_files::IosExtraFiles)
+        .register(android_extra_files::AndroidExtraFiles)
+        .register(ios_pbxproj_ops::IosPbxprojOps)
+        .register(app_icon::AppIcon);
+}

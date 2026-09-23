@@ -1,0 +1,117 @@
+{
+  "platform": "windows",
+  "project": {
+    "application": "app",
+    "executables": {
+      "app": {
+        "executable": {
+          "source": {
+            "kind": "cargo",
+            "value": {
+              "manifest": "Host/Cargo.toml",
+              "package": "example-host",
+              "target": "example-host",
+              "kind": "bin",
+              "default_features": true
+            }
+          },
+          "destination": "Example.exe"
+        },
+        "manifest": {
+          "name": "assembly",
+          "attributes": {
+            "xmlns": "urn:schemas-microsoft-com:asm.v1",
+            "manifestVersion": "1.0"
+          },
+          "children": [
+            {
+              "kind": "element",
+              "value": {
+                "name": "assemblyIdentity",
+                "attributes": {
+                  "type": "win32",
+                  "name": "Example",
+                  "version": "1.0.0.0"
+                }
+              }
+            }
+          ]
+        },
+        "icon": "assets/icon.ico",
+        "version_info": {
+          "file_version": [
+            1,
+            2,
+            0,
+            3
+          ],
+          "product_version": [
+            1,
+            2,
+            0,
+            0
+          ],
+          "strings": {
+            "040904b0": {
+              "ProductName": "Example"
+            }
+          }
+        },
+        "resource_scripts": [
+          "native/extra.rc"
+        ]
+      }
+    },
+    "resources": [
+      {
+        "source": "assets/data.bin",
+        "destination": "data.bin",
+        "kind": "file"
+      }
+    ],
+    "files": {
+      "assets/data.bin": {
+        "kind": "generated",
+        "entry": {
+          "contents": "",
+          "contents_base64": "AAEC/w==",
+          "mode": 420
+        }
+      }
+    },
+    "application_package": "main",
+    "packages": {
+      "main": {
+        "manifest": {
+          "name": "Package",
+          "attributes": {
+            "xmlns": "http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+          },
+          "children": [
+            {
+              "kind": "element",
+              "value": {
+                "name": "Identity",
+                "attributes": {
+                  "Name": "Example",
+                  "Version": "1.2.0.3",
+                  "Publisher": "CN=Example"
+                }
+              }
+            }
+          ]
+        },
+        "executables": [
+          "app"
+        ],
+        "resources": [
+          {
+            "source": "assets/logo.png",
+            "destination": "Assets/Logo.png",
+            "kind": "file"
+          }
+        ]
+      }
+    }
+  }
+}

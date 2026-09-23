@@ -110,6 +110,14 @@ fn cargo_build_ios_dylib(
             .env("CARGO_PROFILE_RELEASE_STRIP", "symbols")
             .env("CARGO_PROFILE_RELEASE_PANIC", "abort");
     }
+    let selection = whisker_cng::ProjectDependencyGraph::native_build_selection(
+        workspace_root,
+        package,
+        whisker_cng::GenerationTarget::Ios,
+        triple,
+        features,
+    )?;
+    selection.apply(&mut cmd);
     for feat in features {
         cmd.args(["--features", feat]);
     }

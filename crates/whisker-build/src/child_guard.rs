@@ -57,8 +57,17 @@ pub fn kill_all() {
         // SAFETY: `kill(2)` with any pid value is memory-safe; a stale
         // or already-reaped pid returns `ESRCH` rather than affecting an
         // unrelated process (PIDs aren't reused within a single run).
+        #[cfg(unix)]
         unsafe {
             libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
         }
     }
 }

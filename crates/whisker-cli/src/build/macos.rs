@@ -16,6 +16,8 @@ use crate::manifest;
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
+    #[command(flatten)]
+    cargo: crate::manifest::FeatureArgs,
     /// Explicit path to the app's Cargo.toml. Defaults to walking up
     /// from the current directory.
     #[arg(long)]
@@ -29,7 +31,11 @@ pub fn run(_args: Args, _no_tui: bool) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 pub fn run(args: Args, no_tui: bool) -> Result<()> {
-    let manifest = manifest::resolve_for_target(args.manifest_path.as_deref(), Target::Macos)?;
+    let manifest = manifest::resolve_with_selection(
+        args.manifest_path.as_deref(),
+        whisker_cng::GenerationTarget::Macos,
+        &args.cargo.selection(),
+    )?;
     let workspace_root = manifest.workspace_root.clone();
     let app_name = manifest
         .config
@@ -52,6 +58,8 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
         capture: None,
     })?;
     build_ui.complete(&bundle);
-    whisker_build::ui::info("bundle is unsigned; distribution signing/notarization is a follow-up");
+    whisker_build::ui::info(
+        "bundle is ad-hoc signed; distribution signing/notarization is a follow-up",
+    );
     Ok(())
 }

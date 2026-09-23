@@ -106,6 +106,14 @@ pub struct AndroidArgs {
 /// flags inline.
 #[derive(Args, Debug)]
 pub struct ModulesArgs {
+    #[command(flatten)]
+    cargo: crate::manifest::FeatureArgs,
+    /// Rust target triple. Defaults to the saved Android project selection.
+    #[arg(long)]
+    target: Option<String>,
+    /// Refresh the report consumed by Gradle without printing JSON.
+    #[arg(long)]
+    write_cache: bool,
     /// Workspace root containing the user app's top-level `Cargo.toml`.
     #[arg(long)]
     workspace: PathBuf,
@@ -131,14 +139,31 @@ fn canonicalize_workspace(p: &PathBuf) -> Result<PathBuf> {
 
 pub fn run_modules(args: ModulesArgs) -> Result<()> {
     let workspace = canonicalize_workspace(&args.workspace)?;
-    let report = whisker_build::modules::build_modules_report(&workspace, &args.package)
-        .with_context(|| {
-            format!(
-                "build modules report for `{}` (workspace={})",
-                args.package,
-                workspace.display(),
-            )
-        })?;
+    let mut selection = whisker_cng::CargoSelection::load(
+        &workspace,
+        &args.package,
+        whisker_cng::GenerationTarget::Android,
+    )?;
+    if args.cargo.no_default_features || !args.cargo.features.is_empty() || args.target.is_some() {
+        selection = args.cargo.selection();
+        selection.target = args.target;
+        selection = selection.for_platform(whisker_cng::GenerationTarget::Android);
+    }
+    let report = whisker_build::modules::build_modules_report_with_selection(
+        &workspace,
+        &args.package,
+        &selection,
+    )
+    .with_context(|| {
+        format!(
+            "build modules report for `{}` (workspace={})",
+            args.package,
+            workspace.display(),
+        )
+    })?;
+    if args.write_cache {
+        return whisker_build::modules::write_gradle_report(&workspace, &report);
+    }
     // Pretty-printed for humans; the Gradle plugin parses either form.
     let json = serde_json::to_string_pretty(&report).context("serialize modules report")?;
     println!("{json}");
@@ -182,10 +207,6 @@ pub fn run_ios(args: IosArgs) -> Result<()> {
 
 pub fn run_android(args: AndroidArgs) -> Result<()> {
     let workspace = canonicalize_workspace(&args.workspace)?;
-    let cargo_toml = workspace.join("Cargo.toml");
-    let modules = whisker_build::modules::discover(&cargo_toml, &args.package)
-        .with_context(|| format!("discover whisker modules in {}", cargo_toml.display()))?;
-
     let profile = parse_profile(&args.profile)?;
 
     let toolchain = whisker_build::android::resolve_toolchain(&args.abi, args.min_sdk)
@@ -214,10 +235,6 @@ pub fn run_android(args: AndroidArgs) -> Result<()> {
             )
         })?;
 
-    whisker_build::ui::info(format!(
-        "{} module(s) discovered (gradle-subproject wiring is the Gradle plugin's job)",
-        modules.len(),
-    ));
     Ok(())
 }
 
