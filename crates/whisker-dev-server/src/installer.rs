@@ -372,6 +372,23 @@ impl SimctlNoise {
     }
 }
 
+fn adb() -> Command {
+    Command::new(adb_program())
+}
+
+/// Resolves `adb` the way `whisker doctor` does: `PATH` first, then the SDK's `platform-tools`.
+fn adb_program() -> PathBuf {
+    let on_path = std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join("adb").is_file()));
+    if !on_path && let Ok(sdk) = crate::hotpatch::android_ndk::android_home() {
+        let bundled = sdk.join("platform-tools/adb");
+        if bundled.is_file() {
+            return bundled;
+        }
+    }
+    PathBuf::from("adb")
+}
+
 /// Write the dev token property and verify it landed by reading it
 /// back, retrying on mismatch. Only the `getprop` round-trip proves
 /// the write: `adb shell` exit codes are historically unreliable, and
@@ -383,10 +400,10 @@ async fn deliver_android_dev_token(token: &str) -> bool {
         if attempt > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
-        let mut setprop_cmd = Command::new("adb");
+        let mut setprop_cmd = adb();
         setprop_cmd.args(["shell", "setprop", "debug.whisker_dev_token", token]);
         let _ = run_filtered(setprop_cmd, SimctlNoise::Other).await;
-        let read_back = Command::new("adb")
+        let read_back = adb()
             .args(["shell", "getprop", "debug.whisker_dev_token"])
             .output()
             .await;
@@ -419,7 +436,7 @@ async fn android_install_and_launch(
     // physical device doesn't need it at all. Every adb call goes
     // through `run_filtered` so its stdio can't bypass the TUI's
     // capture pipe and overlay the live region.
-    let mut reverse_cmd = Command::new("adb");
+    let mut reverse_cmd = adb();
     reverse_cmd.args(["reverse", "tcp:9876", &format!("tcp:{dev_port}")]);
     let _ = run_filtered(reverse_cmd, SimctlNoise::Other).await;
 
@@ -444,7 +461,7 @@ async fn android_install_and_launch(
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "app-debug.apk".into()),
     );
-    let mut install_cmd = Command::new("adb");
+    let mut install_cmd = adb();
     install_cmd.args(["install", "-r"]).arg(&apk);
     let install = run_filtered(install_cmd, SimctlNoise::AdbInstall)
         .await
@@ -460,14 +477,14 @@ async fn android_install_and_launch(
 
 async fn android_launch(p: &AndroidParams) -> Result<()> {
     // force-stop first, so the relaunch really re-bootstraps.
-    let mut stop_cmd = Command::new("adb");
+    let mut stop_cmd = adb();
     stop_cmd.args(["shell", "am", "force-stop", &p.application_id]);
     let _ = run_filtered(stop_cmd, SimctlNoise::Other).await;
 
     let component = format!("{}/{}", p.application_id, p.launcher_activity);
     let launch_step =
         whisker_build::ui::step(whisker_build::ui::OperationKind::Launch, component.clone());
-    let mut launch_cmd = Command::new("adb");
+    let mut launch_cmd = adb();
     launch_cmd.args(["shell", "am", "start", "-n", &component]);
     let launch = run_filtered(launch_cmd, SimctlNoise::AdbAmStart)
         .await
