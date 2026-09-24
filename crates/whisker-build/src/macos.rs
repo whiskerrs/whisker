@@ -43,10 +43,7 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
         ui::OperationKind::Compile,
         format!("{} ({:?})", inputs.binary_name, inputs.profile),
     );
-    let selection = whisker_cng::CargoSelection::load_project(inputs.project_dir)?;
-    let triple = selection
-        .as_ref()
-        .and_then(|selection| selection.target.as_deref());
+    let triple = cargo_target(inputs.project_dir)?;
     let mut command = std::process::Command::new("cargo");
     command
         .arg("build")
@@ -59,7 +56,7 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
         .arg("--bin")
         .arg(&plan.rust.target)
         .env("MACOSX_DEPLOYMENT_TARGET", &plan.minimum_system_version);
-    if let Some(triple) = triple {
+    if let Some(triple) = &triple {
         command.arg("--target").arg(triple);
     }
     if matches!(inputs.profile, Profile::Release) {
@@ -92,15 +89,12 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
     }
     step.done("");
 
-    let profile_dir = match inputs.profile {
-        Profile::Debug => "debug",
-        Profile::Release => "release",
-    };
-    let artifacts = triple.map_or_else(
-        || inputs.target_dir.to_path_buf(),
-        |triple| inputs.target_dir.join(triple),
+    let executable = executable_path(
+        inputs.target_dir,
+        triple.as_deref(),
+        inputs.profile,
+        inputs.binary_name,
     );
-    let executable = artifacts.join(profile_dir).join(inputs.binary_name);
     if !executable.is_file() {
         bail!(
             "macOS Host executable missing after cargo build: {}",
@@ -111,10 +105,52 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
     let bundle = inputs
         .target_dir
         .join("bundles")
-        .join(profile_dir)
+        .join(profile_dir(inputs.profile))
         .join(format!("{}.app", inputs.app_name));
     assemble_bundle(inputs.project_dir, &executable, &bundle)?;
     Ok(bundle)
+}
+
+/// Unbundled Host executable that [`build_app`] compiles for `project_dir`.
+/// Hot patching reads the running Host's symbols from this file.
+pub fn host_executable(
+    project_dir: &Path,
+    target_dir: &Path,
+    profile: Profile,
+    binary_name: &str,
+) -> Result<PathBuf> {
+    let triple = cargo_target(project_dir)?;
+    Ok(executable_path(
+        target_dir,
+        triple.as_deref(),
+        profile,
+        binary_name,
+    ))
+}
+
+fn cargo_target(project_dir: &Path) -> Result<Option<String>> {
+    Ok(whisker_cng::CargoSelection::load_project(project_dir)?
+        .and_then(|selection| selection.target))
+}
+
+fn executable_path(
+    target_dir: &Path,
+    triple: Option<&str>,
+    profile: Profile,
+    binary_name: &str,
+) -> PathBuf {
+    let artifacts = triple.map_or_else(
+        || target_dir.to_path_buf(),
+        |triple| target_dir.join(triple),
+    );
+    artifacts.join(profile_dir(profile)).join(binary_name)
+}
+
+fn profile_dir(profile: Profile) -> &'static str {
+    match profile {
+        Profile::Debug => "debug",
+        Profile::Release => "release",
+    }
 }
 
 /// Stage and validate every input, then build/sign a replacement before removing
@@ -288,5 +324,37 @@ fn main() {
         std::fs::remove_file(project.join("input.txt")).unwrap();
         assert!(assemble_bundle(&project, &target.join("debug/fixture"), &bundle).is_err());
         assert!(bundle.join("Contents/Resources/data/message.txt").is_file());
+    }
+}
+
+#[cfg(test)]
+mod host_executable_tests {
+    use super::*;
+
+    #[test]
+    fn host_executable_follows_the_generated_cargo_target() {
+        let project = std::env::temp_dir().join(format!(
+            "whisker-macos-host-executable-{}",
+            std::process::id()
+        ));
+        let target = Path::new("/target");
+        std::fs::create_dir_all(project.join(".whisker")).unwrap();
+
+        assert_eq!(
+            host_executable(&project, target, Profile::Debug, "host").unwrap(),
+            Path::new("/target/debug/host"),
+        );
+
+        std::fs::write(
+            project.join(".whisker/cargo-selection.json"),
+            r#"{"target":"aarch64-apple-darwin"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            host_executable(&project, target, Profile::Debug, "host").unwrap(),
+            Path::new("/target/aarch64-apple-darwin/debug/host"),
+        );
+
+        std::fs::remove_dir_all(project).unwrap();
     }
 }
