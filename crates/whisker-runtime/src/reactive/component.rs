@@ -126,7 +126,7 @@ pub fn owners_for_fn(fn_ptr: *const ()) -> Vec<Owner> {
 //
 // With no wrapper to serve as a stable placeholder, each mount's
 // `(parent, previous_sibling)` is captured lazily: the mount stashes
-// its `MountId` + body_root in `PENDING_MOUNT`, and `view::append_child`
+// its `MountId` + body_root in `PENDING_MOUNTS`, and `view::append_child`
 // calls back through [`on_component_root_attached`] once that root is
 // attached.
 //
@@ -139,24 +139,37 @@ pub fn owners_for_fn(fn_ptr: *const ()) -> Vec<Owner> {
 // - Props must implement `Clone` so the body closure can hand user code
 //   fresh owned values on each invocation.
 
-use std::cell::Cell;
+use std::cell::RefCell;
+
+pub(crate) type PendingMounts = Vec<(MountId, Element)>;
 
 thread_local! {
-    /// Set immediately before `mount_component_remountable` returns
-    /// its body_root. Consumed by `view::append_child` on the next
-    /// matching attach. The TLS is single-slot (last-writer-wins):
-    /// nested component mounts handle themselves because the body's
-    /// inner `view::append_child` calls drain the inner pending
-    /// mounts before this function's own value is stashed.
-    static PENDING_MOUNT: Cell<Option<(MountId, Element)>> = const { Cell::new(None) };
+    /// Mounts whose body_root has not been attached yet, consumed by the
+    /// matching `view::append_child`. Several are pending at once because
+    /// `render!` builds every sibling before attaching any of them.
+    static PENDING_MOUNTS: RefCell<PendingMounts> = const { RefCell::new(Vec::new()) };
 }
 
-pub(crate) fn swap_pending_mount(pending: &mut Option<(MountId, Element)>) {
-    PENDING_MOUNT.with(|active| {
-        let current = active.take();
-        active.set(pending.take());
-        *pending = current;
-    });
+pub(crate) fn swap_pending_mounts(pending: &mut PendingMounts) {
+    PENDING_MOUNTS.with_borrow_mut(|active| std::mem::swap(active, pending));
+}
+
+/// Drops pending mounts that will never be attached, such as the
+/// application root installed through `view::set_root`.
+pub(crate) fn discard_pending_mounts() {
+    PENDING_MOUNTS.with_borrow_mut(Vec::clear);
+}
+
+#[cfg(test)]
+pub(crate) fn pending_mount_count() -> usize {
+    PENDING_MOUNTS.with_borrow(Vec::len)
+}
+
+pub(crate) fn forget_pending_mounts(ids: &[MountId]) {
+    if ids.is_empty() {
+        return;
+    }
+    PENDING_MOUNTS.with_borrow_mut(|pending| pending.retain(|(id, _)| !ids.contains(id)));
 }
 
 /// Stable identifier for a remountable mount site. Generationless on
@@ -164,6 +177,8 @@ pub(crate) fn swap_pending_mount(pending: &mut Option<(MountId, Element)>) {
 /// monotonic counter never collides for live entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MountId(pub(crate) u64);
+
+type SourceHashFn = Rc<dyn Fn() -> u64 + 'static>;
 
 /// One live remountable component mount.
 pub(crate) struct MountSite {
@@ -203,6 +218,11 @@ pub(crate) struct MountSite {
     /// across mismatched layouts (garbage props / UB), so the site
     /// must not be remounted in place.
     pub props_hash: u64,
+    /// Reads the component's source hash through subsecond dispatch, so
+    /// after a patch it returns the hash compiled into the newest code.
+    pub body_hash_fn: SourceHashFn,
+    /// Source hash of the code this site's current subtree was built from.
+    pub body_hash: u64,
 }
 
 /// Called by `view::append_child` after every successful attach.
@@ -210,20 +230,14 @@ pub(crate) struct MountSite {
 /// just-attached `child`, finalise its MountSite by recording the
 /// parent + previous-sibling anchor.
 ///
-/// No-op if no mount is pending or the pending body_root doesn't
-/// match — in that case the pending entry is restored so a later
-/// matching attach can still claim it.
+/// No-op if no pending mount's body_root matches `child`.
 pub fn on_component_root_attached(parent: Element, child: Element) {
-    let pending = PENDING_MOUNT.with(|cell| cell.take());
-    let Some((mount_id, root)) = pending else {
+    let Some(mount_id) = PENDING_MOUNTS.with_borrow_mut(|pending| {
+        let index = pending.iter().rposition(|(_, root)| *root == child)?;
+        Some(pending.remove(index).0)
+    }) else {
         return;
     };
-    if root != child {
-        // Some other element; put the entry back so the body_root's
-        // eventual `append_child` can still claim it.
-        PENDING_MOUNT.with(|cell| cell.set(Some((mount_id, root))));
-        return;
-    }
     let anchor = crate::view::previous_sibling(parent, child);
     super::with_runtime(|rt| {
         if let Some(site) = rt.mount_sites.get_mut(&mount_id) {
@@ -237,7 +251,7 @@ pub fn on_component_root_attached(parent: Element, child: Element) {
 /// scenarios that share a thread.
 #[doc(hidden)]
 pub fn __reset_pending_mount_for_tests() {
-    PENDING_MOUNT.with(|cell| cell.set(None));
+    discard_pending_mounts();
 }
 
 /// Mount a component with full remount support — wrapper-less.
@@ -263,12 +277,15 @@ pub fn __reset_pending_mount_for_tests() {
 /// `props_hash_fn` reads the component's props-layout hash through
 /// subsecond dispatch (through the internal `MountSite::props_hash_fn`); the value
 /// it returns *now* is recorded as the layout this site's `body`
-/// closure was built against. Non-hot-reload callers (tests) can
-/// pass `Box::new(|| 0)`.
+/// closure was built against. `body_hash_fn` reads the component's
+/// source hash the same way; [`remount_changed_components`] remounts the
+/// site when it moves. Non-hot-reload callers (tests) can pass
+/// `Box::new(|| 0)` for both.
 pub fn mount_component_remountable<F>(
     fn_ptr: *const (),
     body: F,
     props_hash_fn: Box<dyn Fn() -> u64 + 'static>,
+    body_hash_fn: Box<dyn Fn() -> u64 + 'static>,
 ) -> Element
 where
     F: Fn() -> Element + 'static,
@@ -276,6 +293,8 @@ where
     let body: Rc<dyn Fn() -> Element + 'static> = Rc::new(body);
     let props_hash_fn: Rc<dyn Fn() -> u64 + 'static> = Rc::from(props_hash_fn);
     let props_hash = props_hash_fn();
+    let body_hash_fn: SourceHashFn = Rc::from(body_hash_fn);
+    let body_hash = body_hash_fn();
 
     let body_for_first = body.clone();
     let owner = Owner::new(None);
@@ -305,6 +324,8 @@ where
                 anchor: None,
                 props_hash_fn,
                 props_hash,
+                body_hash_fn,
+                body_hash,
             },
         );
         rt.fn_ptr_mounts.entry(fn_ptr).or_default().push(id);
@@ -312,17 +333,14 @@ where
     });
 
     // The caller's `view::append_child(parent, body_root)` consumes
-    // this and binds parent + anchor. An unconsumed predecessor (a body
-    // whose root was never attached) is dropped here; its MountSite
-    // stays parentless in the registry and remount lookups skip it.
-    PENDING_MOUNT.with(|cell| cell.set(Some((mount_id, body_root))));
+    // this and binds parent + anchor.
+    PENDING_MOUNTS.with_borrow_mut(|pending| pending.push((mount_id, body_root)));
 
     body_root
 }
 
 /// Re-mount every remountable site whose `fn_ptr` is in the given
-/// list. Called by the bootstrap's tick callback after a successful
-/// subsecond patch.
+/// list.
 ///
 /// The whole list is remounted as one batch: every old body root is
 /// detached first, then each site's owner is disposed and its body
@@ -379,7 +397,66 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
             })
             .collect()
     });
+    remount_sites(ids)
+}
 
+/// Re-mount every remountable site whose component source changed since
+/// its subtree was built. Called by the hot-reload integrations after a
+/// successful subsecond patch.
+///
+/// A patch rebuilds the whole crate, so the patched-function list names
+/// every component in it; comparing each site's source hash is what
+/// narrows the remount to the components the edit actually touched. A
+/// changed site whose ancestor also changed is covered by the ancestor's
+/// remount. `remounted == 0` means the edit reached no component body
+/// (e.g. a helper function) and the caller must fall back to a root
+/// remount.
+pub fn remount_changed_components() -> RemountStats {
+    // Collected under the borrow, evaluated outside it: the hash getter
+    // re-enters subsecond dispatch.
+    let sites: Vec<(MountId, SourceHashFn, u64)> = with_runtime(|rt| {
+        rt.mount_sites
+            .iter()
+            .filter(|(_, site)| site.owner.is_some())
+            .map(|(id, site)| (*id, site.body_hash_fn.clone(), site.body_hash))
+            .collect()
+    });
+    let changed: Vec<MountId> = sites
+        .into_iter()
+        .filter(|(_, body_hash_fn, body_hash)| body_hash_fn() != *body_hash)
+        .map(|(id, _, _)| id)
+        .collect();
+    if changed.is_empty() {
+        return RemountStats::default();
+    }
+
+    let mut ids: Vec<MountId> = with_runtime(|rt| {
+        let changed_owners: std::collections::HashSet<Owner> = changed
+            .iter()
+            .filter_map(|id| rt.mount_sites.get(id).and_then(|site| site.owner))
+            .collect();
+        changed
+            .into_iter()
+            .filter(|mount_id| {
+                let Some(mut cursor) = rt.mount_sites.get(mount_id).and_then(|site| site.owner)
+                else {
+                    return false;
+                };
+                while let Some(parent) = rt.owners.get(cursor).and_then(|o| o.parent) {
+                    if changed_owners.contains(&parent) {
+                        return false;
+                    }
+                    cursor = parent;
+                }
+                true
+            })
+            .collect()
+    });
+    ids.sort_by_key(|id| id.0);
+    remount_sites(ids)
+}
+
+fn remount_sites(ids: Vec<MountId>) -> RemountStats {
     if ids.is_empty() {
         return RemountStats::default();
     }
@@ -398,6 +475,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         fn_ptr: *const (),
         props_hash_fn: Rc<dyn Fn() -> u64 + 'static>,
         props_hash: u64,
+        body_hash_fn: SourceHashFn,
     }
 
     let infos: Vec<RemountInfo> = with_runtime(|rt| {
@@ -412,6 +490,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
                     fn_ptr: site.fn_ptr,
                     props_hash_fn: site.props_hash_fn.clone(),
                     props_hash: site.props_hash,
+                    body_hash_fn: site.body_hash_fn.clone(),
                 })
             })
             .collect()
@@ -459,7 +538,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
             .push((info.old_body_root, None));
     }
 
-    let mut results: Vec<(MountId, Element, Element, Element, Owner)> =
+    let mut results: Vec<(MountId, Element, Element, Element, Owner, u64)> =
         Vec::with_capacity(infos.len());
     for info in infos {
         let old_owner = with_runtime(|rt| {
@@ -489,11 +568,6 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         // nested `effect`/`computed`s, not against whatever scheduler
         // context was active when the tick called into us.
         let new_body_root = untrack(|| new_owner.with(|| (*info.body)()));
-        // The body's own `mount_component_remountable` calls leave a
-        // PENDING_MOUNT entry behind, and nothing will consume it — the
-        // batched path attaches roots via `insert_child_at`, not the
-        // caller's `append_child`.
-        PENDING_MOUNT.with(|cell| cell.set(None));
 
         if let Some(list) = by_parent.get_mut(&info.parent)
             && let Some(entry) = list
@@ -509,6 +583,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
             info.old_body_root,
             new_body_root,
             new_owner,
+            (info.body_hash_fn)(),
         ));
     }
 
@@ -537,11 +612,12 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         }
     }
 
-    for (mount_id, _, _, new_root, new_owner) in &results {
+    for (mount_id, _, _, new_root, new_owner, body_hash) in &results {
         with_runtime(|rt| {
             if let Some(site) = rt.mount_sites.get_mut(mount_id) {
                 site.owner = Some(*new_owner);
                 site.body_root = Some(*new_root);
+                site.body_hash = *body_hash;
             }
         });
     }
@@ -549,7 +625,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
     // Refresh anchors from the now-final child order, or a future solo
     // patch of one of these siblings inherits a stale anchor and falls
     // back to index 0.
-    for (mount_id, parent, _, new_root, _) in &results {
+    for (mount_id, parent, _, new_root, _, _) in &results {
         let new_anchor = crate::view::previous_sibling(*parent, *new_root);
         with_runtime(|rt| {
             if let Some(site) = rt.mount_sites.get_mut(mount_id) {

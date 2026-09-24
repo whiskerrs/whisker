@@ -54,7 +54,8 @@ pub use callback::Callback;
 pub use component::__reset_pending_mount_for_tests;
 pub use component::{
     MountId, RemountStats, flush_mounts, mount_component, mount_component_remountable,
-    on_component_root_attached, on_mount, owners_for_fn, remount_components_for, unmount_component,
+    on_component_root_attached, on_mount, owners_for_fn, remount_changed_components,
+    remount_components_for, unmount_component,
 };
 pub use computed::computed;
 pub use context::{provide_context, use_context, with_context};

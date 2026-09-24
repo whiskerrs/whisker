@@ -233,6 +233,7 @@ pub use subsecond_types::JumpTable;
 
 use std::{
     backtrace,
+    collections::HashMap,
     mem::transmute,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex, atomic::AtomicPtr},
@@ -305,7 +306,29 @@ pub unsafe fn get_jump_table() -> Option<&'static JumpTable> {
 
     Some(unsafe { &*ptr })
 }
-unsafe fn commit_patch(table: JumpTable) {
+// Whisker fork: every function address a previous patch introduced, mapped
+// back to the original function it replaced. Each table only maps original
+// addresses, but code built from an earlier patch (a component mounted after
+// that patch) still hands its own addresses to `call`.
+static PATCH_ORIGINS: Mutex<Option<HashMap<u64, u64>>> = Mutex::new(None);
+
+/// Extends `table` so addresses from earlier patches also resolve to the
+/// newest version of their original function, then records `table`'s own
+/// new addresses for the next patch.
+fn forward_earlier_patches(table: &mut JumpTable) {
+    let mut origins = PATCH_ORIGINS.lock().unwrap();
+    let origins = origins.get_or_insert_with(HashMap::new);
+    let introduced: Vec<(u64, u64)> = table.map.iter().map(|(old, new)| (*new, *old)).collect();
+    for (earlier, original) in origins.iter() {
+        if let Some(newest) = table.map.get(original).copied() {
+            table.map.insert(*earlier, newest);
+        }
+    }
+    origins.extend(introduced);
+}
+
+unsafe fn commit_patch(mut table: JumpTable) {
+    forward_earlier_patches(&mut table);
     APP_JUMP_TABLE.store(
         Box::into_raw(Box::new(table)),
         std::sync::atomic::Ordering::Relaxed,
@@ -1098,3 +1121,35 @@ impl_hot_function!(
     (Fn8Marker, A, B, C, D, E, F, G, H),
     (Fn9Marker, A, B, C, D, E, F, G, H, I)
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table(entries: &[(u64, u64)]) -> JumpTable {
+        JumpTable {
+            lib: std::path::PathBuf::new(),
+            map: entries.iter().copied().collect(),
+            aslr_reference: 0,
+            new_base_address: 0,
+            ifunc_count: 0,
+        }
+    }
+
+    #[test]
+    fn earlier_patch_addresses_resolve_to_the_newest_version() {
+        let mut first = table(&[(0x10, 0x100)]);
+        forward_earlier_patches(&mut first);
+        assert_eq!(first.map.get(&0x10), Some(&0x100));
+
+        let mut second = table(&[(0x10, 0x200)]);
+        forward_earlier_patches(&mut second);
+        assert_eq!(second.map.get(&0x10), Some(&0x200));
+        assert_eq!(second.map.get(&0x100), Some(&0x200));
+
+        let mut third = table(&[(0x10, 0x300)]);
+        forward_earlier_patches(&mut third);
+        assert_eq!(third.map.get(&0x100), Some(&0x300));
+        assert_eq!(third.map.get(&0x200), Some(&0x300));
+    }
+}

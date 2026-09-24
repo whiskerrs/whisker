@@ -194,15 +194,38 @@ At the beginning of the next Host-driven runtime transaction,
 `NativeHotReload::apply` polls that runtime's subscription. The coordinator
 serialises `subsecond::apply_patch`, so the process-wide function table is
 updated once even when an app owns multiple runtime instances. Each runtime
-then independently calls `RuntimeInstance::remount_components` with the
-patched host function pointers. Structural edits (new elements, new signals)
-therefore reflect in every mounted tree. State local to a remounted component
-is lost; state above the remount point survives.
+then independently calls `RuntimeInstance::remount_changed_components`, which
+remounts only the components whose source changed (see below). Structural
+edits (new elements, new signals) therefore reflect in every mounted tree.
+State local to a remounted component is lost; state above the remount point
+and in unchanged components survives.
 
 Android and iOS call this safe point from `MobileRuntime::tick`; desktop calls
 it at the start of `DesktopApplication::drive_frame`. Both use the same
 `NativeHotReload` adapter. The receiver thread never enters a runtime and
 never applies code while a `subsecond::call` frame is active.
+
+### Selecting what to remount
+
+A patch recompiles the whole user crate, so its jump table maps *every*
+function in it — the patched-function list cannot tell which component the
+edit touched. Instead, `#[component]` bakes `fnv1a64` of the component fn's
+tokens into a generated `__whisker_body_hash`, read through subsecond
+dispatch like the props hash below. Each mount site records the value it was
+built from; after a patch, `remount_changed_components` re-reads it for every
+live site and remounts the ones whose value moved. A changed site whose
+ancestor also changed is left to the ancestor's remount.
+
+Two supporting pieces make the selection hold across patches:
+
+- **Parent recording.** A site learns its parent and anchor when its body root
+  is attached. `render!` builds all siblings before attaching any of them, so
+  pending mounts are a list keyed by body root, not a single slot.
+- **Forwarding earlier patches.** Components mounted after a patch run code
+  from that patch dylib, and their stored hash getters and body closures hold
+  that dylib's addresses. Each jump table only maps original addresses, so the
+  fork's `commit_patch` also maps every address an earlier patch introduced to
+  the newest version of the same original function.
 
 ### Full remount — Hot Reload's escalation path
 
@@ -216,18 +239,20 @@ Per-component remount re-runs `#[component]` bodies, never `app()`
 itself (outside the root fallback, `app_fn` runs only at initial mount). Two patch shapes therefore
 used to apply without rendering: an edit to the `app()` body (top-level
 `provide_context` values, which root component is mounted), and a patch
-in an app with no top-level `#[component]` at all (nothing registered
-in `fn_ptr_mounts`). `NativeHotReload::apply` escalates
+in an app with no top-level `#[component]` at all (no mount site to
+remount). `NativeHotReload::apply` escalates
 those to a full re-run:
 
 - `#[whisker::main]` bakes an FNV-1a hash of the app fn's tokens into
   a generated `__whisker_app_body_hash` fn, read through the same
   subsecond dispatch as the app body (`call_app_hash`). After a patch,
   a changed value means the user edited `app()` itself.
-- `remount_components_for` returns `RemountStats`; `remounted == 0`
-  with a non-empty patch means nothing on screen could reflect it,
-  and `layout_changed > 0` means the props-layout gate below refused
-  one or more sites.
+- `remount_changed_components` returns `RemountStats`; `remounted == 0`
+  means no mounted component can reflect the patch — the edit touched
+  no component body (a helper function, a type, a constant), or only
+  the application's root component, which has no parent to remount
+  into — and `layout_changed > 0` means the props-layout gate below
+  refused one or more sites.
 
 ### The props-layout gate
 
@@ -247,7 +272,7 @@ the capture layout didn't move. Two guards make it sound:
   type's `size_of`/`align_of` at runtime (so a change to a prop
   type's *definition* — struct fields behind an unchanged signature —
   also shifts the patch's value). The mount records the value; after
-  a patch, `remount_components_for` re-reads it through dispatch and
+  a patch, the remount re-reads it through dispatch and
   **refuses** any site whose value moved, reporting it in
   `RemountStats::layout_changed`. The native adapter escalates those to a
   full remount, where fresh patched code rebuilds all props from
@@ -266,8 +291,9 @@ but the process, Host surface, and dev-session WebSocket survive, so it is
 still sub-second rather than a Full Reload reinstall.
 
 The vendored `whisker-subsecond` (`[lib] name = "subsecond"`,
-`crates/whisker-subsecond/`) is a fork of Dioxus's subsecond 0.7.9. The
-one change: upstream anchors its ASLR-slide lookup on
+`crates/whisker-subsecond/`) is a fork of Dioxus's subsecond 0.7.9. It
+forwards earlier patches' addresses (see "Selecting what to remount"),
+and upstream anchors its ASLR-slide lookup on
 `dlsym(RTLD_DEFAULT, "main")`, which is ambiguous in Whisker's
 dylib-based Android runtime (multiple `main` symbols can coexist in one
 linker namespace). The fork anchors on the unique `whisker_aslr_anchor`
@@ -345,6 +371,10 @@ the next save anyway.
 - **Multi-crate change batches** can't be expressed as a single patch
   (one crate per patch), so they prompt for a Full Reload.
 - **Per-component remount loses local state.** A patch that changes a
-  component's structure re-mounts it; signals owned by that component
+  component's source re-mounts it; signals owned by that component
   reset. State held above the remount point (context, parent signals)
-  survives.
+  and in unchanged components survives.
+- **Edits outside component bodies remount the root.** Changing a helper
+  function, type, or constant leaves every component hash unchanged, and
+  editing the application's root component has no parent to remount into;
+  both fall back to a full remount, which resets all state.

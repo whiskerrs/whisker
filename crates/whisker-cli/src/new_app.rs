@@ -202,8 +202,8 @@ use whisker::runtime::view::Element;
 //
 // Splitting your UI into `#[component]`s (rather than writing everything
 // here) is what lets `whisker run` hot-reload your edits in well under a
-// second: edit `Root` below, hit save, and the running app updates live
-// with its state preserved.
+// second: save an edit and only the components you changed are rebuilt,
+// so state owned by the rest of the tree is kept.
 #[whisker::main]
 fn app() -> Element {{
     render! {{
