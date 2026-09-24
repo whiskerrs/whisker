@@ -931,6 +931,7 @@ fn mount_component_remountable_body_runs_with_no_tracker_when_invoked_inside_eff
                 create_phantom_element()
             },
             Box::new(|| 0),
+            Box::new(|| 0),
         );
     });
     assert_eq!(
@@ -961,7 +962,12 @@ fn remount_components_for_reports_zero_when_nothing_can_reflect() {
     // Orphans aren't layout_changed either — their stored closures
     // never re-run, so there is nothing to protect.
     let fn_ptr = 0x3456_789a as *const ();
-    let _root = mount_component_remountable(fn_ptr, create_phantom_element, Box::new(|| 0));
+    let _root = mount_component_remountable(
+        fn_ptr,
+        create_phantom_element,
+        Box::new(|| 0),
+        Box::new(|| 0),
+    );
     assert_eq!(remount_components_for(&[fn_ptr]), RemountStats::default());
 }
 
@@ -996,6 +1002,7 @@ fn remount_components_for_refuses_sites_whose_props_layout_changed() {
             create_phantom_element()
         },
         Box::new(|| CURRENT_LAYOUT.with(|c| c.get())),
+        Box::new(|| 0),
     );
     assert_eq!(runs.get(), 1, "initial mount runs the body once");
 
@@ -1054,6 +1061,7 @@ fn remounted_component_still_resolves_root_context() {
                 create_phantom_element()
             },
             Box::new(|| 0),
+            Box::new(|| 0),
         )
     });
     let parent = create_phantom_element();
@@ -1076,6 +1084,144 @@ fn remounted_component_still_resolves_root_context() {
         remount_components_for(&[fn_ptr]),
         super::component::RemountStats::default(),
     );
+}
+
+#[test]
+fn remount_changed_components_rebuilds_only_sites_whose_source_changed() {
+    // A patch rebuilds the whole crate, so every component function counts
+    // as patched; only the site whose source hash moved may lose its state.
+    use super::component::{RemountStats, mount_component_remountable, remount_changed_components};
+    use crate::view::{append_child, create_phantom_element};
+    use std::cell::Cell;
+    fresh();
+
+    thread_local! {
+        static EDITED_HASH: Cell<u64> = const { Cell::new(1) };
+    }
+    EDITED_HASH.with(|hash| hash.set(1));
+
+    let edited_runs = Rc::new(Cell::new(0_usize));
+    let untouched_runs = Rc::new(Cell::new(0_usize));
+    let edited_body_runs = edited_runs.clone();
+    let untouched_body_runs = untouched_runs.clone();
+    // Both siblings are built before either is attached, as `render!` does.
+    let edited = mount_component_remountable(
+        0x6789_abcd as *const (),
+        move || {
+            edited_body_runs.set(edited_body_runs.get() + 1);
+            create_phantom_element()
+        },
+        Box::new(|| 0),
+        Box::new(|| EDITED_HASH.with(Cell::get)),
+    );
+    let untouched = mount_component_remountable(
+        0x789a_bcde as *const (),
+        move || {
+            untouched_body_runs.set(untouched_body_runs.get() + 1);
+            create_phantom_element()
+        },
+        Box::new(|| 0),
+        Box::new(|| 7),
+    );
+    let parent = create_phantom_element();
+    append_child(parent, edited);
+    append_child(parent, untouched);
+
+    assert_eq!(remount_changed_components(), RemountStats::default());
+
+    EDITED_HASH.with(|hash| hash.set(2));
+    assert_eq!(
+        remount_changed_components(),
+        RemountStats {
+            remounted: 1,
+            layout_changed: 0,
+        },
+    );
+    assert_eq!(edited_runs.get(), 2);
+    assert_eq!(
+        untouched_runs.get(),
+        1,
+        "the unchanged sibling keeps its state"
+    );
+
+    assert_eq!(
+        remount_changed_components(),
+        RemountStats::default(),
+        "the stored hash follows the rebuilt subtree"
+    );
+}
+
+#[test]
+fn remount_changed_components_leaves_changed_descendants_to_their_ancestor() {
+    use super::component::{RemountStats, mount_component_remountable, remount_changed_components};
+    use crate::view::{append_child, create_phantom_element};
+    use std::cell::Cell;
+    fresh();
+
+    thread_local! {
+        static VERSION: Cell<u64> = const { Cell::new(1) };
+    }
+    VERSION.with(|version| version.set(1));
+
+    let inner_runs = Rc::new(Cell::new(0_usize));
+    let outer_body_runs = inner_runs.clone();
+    let outer = mount_component_remountable(
+        0x89ab_cdef as *const (),
+        move || {
+            let view = create_phantom_element();
+            let runs = outer_body_runs.clone();
+            let inner = mount_component_remountable(
+                0x9abc_def0 as *const (),
+                move || {
+                    runs.set(runs.get() + 1);
+                    create_phantom_element()
+                },
+                Box::new(|| 0),
+                Box::new(|| VERSION.with(Cell::get)),
+            );
+            append_child(view, inner);
+            view
+        },
+        Box::new(|| 0),
+        Box::new(|| VERSION.with(Cell::get)),
+    );
+    let parent = create_phantom_element();
+    append_child(parent, outer);
+
+    VERSION.with(|version| version.set(2));
+    assert_eq!(
+        remount_changed_components(),
+        RemountStats {
+            remounted: 1,
+            layout_changed: 0,
+        },
+    );
+    assert_eq!(
+        inner_runs.get(),
+        2,
+        "the inner body re-runs once, inside the outer remount"
+    );
+}
+
+#[test]
+fn disposing_an_unattached_component_forgets_its_pending_mount() {
+    use super::component::{mount_component_remountable, pending_mount_count};
+    use crate::view::create_phantom_element;
+    fresh();
+
+    let owner = Owner::new(None);
+    owner.with(|| {
+        mount_component_remountable(
+            0xabcd_ef01 as *const (),
+            create_phantom_element,
+            Box::new(|| 0),
+            Box::new(|| 0),
+        )
+    });
+    assert_eq!(pending_mount_count(), 1);
+
+    owner.dispose();
+    assert_eq!(pending_mount_count(), 0);
 }
 
 // `remount_components_for`'s body invocation reuses the same

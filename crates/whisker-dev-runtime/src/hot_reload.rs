@@ -115,13 +115,8 @@ impl NativeHotReload {
         let current_hash = (self.application_hash)();
         let mut remount_root = update.requires_root_remount || current_hash != self.mounted_hash;
         if !remount_root {
-            let patched_functions = update
-                .patched_functions
-                .iter()
-                .map(|address| *address as *const ())
-                .collect::<Vec<_>>();
             let stats = runtime
-                .remount_components(&patched_functions)
+                .remount_changed_components()
                 .map_err(|error| error.to_string())?;
             remount_root = stats.remounted == 0 || stats.layout_changed > 0;
         }
