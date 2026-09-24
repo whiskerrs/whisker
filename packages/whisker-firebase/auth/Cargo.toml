@@ -1,0 +1,24 @@
+[package]
+name = "whisker-firebase-auth"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Firebase Authentication for Whisker"
+include = ["Cargo.toml", "src/**", "Package.swift", "build.gradle.kts", "android/**/*.kt", "ios/**/*.swift"]
+
+[lib]
+crate-type = ["rlib"]
+
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { manifest = "Package.swift" }
+
+[dependencies]
+whisker = { workspace = true }
+whisker-firebase-core = { path = "../core", version = "0.1.0" }

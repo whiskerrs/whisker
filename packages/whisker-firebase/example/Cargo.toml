@@ -1,0 +1,28 @@
+[package]
+name = "whisker-firebase-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+default = []
+firestore = ["whisker-firebase/firestore"]
+auth = ["whisker-firebase/auth"]
+storage = ["whisker-firebase/storage"]
+whisker-config = ["whisker-cng/generate"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-cng = { path = "../../../crates/whisker-cng", default-features = false }
+whisker-firebase = { path = ".." }
+serde = { workspace = true }

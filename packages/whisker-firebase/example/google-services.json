@@ -1,0 +1,23 @@
+{
+  "project_info": {
+    "project_number": "1234567890",
+    "project_id": "demo-whisker-firebase",
+    "storage_bucket": "demo-whisker-firebase.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1234567890:android:0123456789abcdef0123456789abcdef",
+        "android_client_info": {
+          "package_name": "rs.whisker.firebaseexample"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "AIzaSyDEMO_KEY_NOT_FOR_PRODUCTION_1234567"
+        }
+      ]
+    }
+  ],
+  "configuration_version": "1"
+}
