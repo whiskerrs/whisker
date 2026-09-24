@@ -1,10 +1,10 @@
 # whisker-firebase
 
-Firebase for Whisker on **Android and iOS**: Cloud Firestore, Authentication, and Cloud Storage for the default Firebase app.
+Firebase for Whisker on **Android and iOS**: Cloud Firestore, Authentication, Cloud Storage, and Cloud Messaging for the default Firebase app.
 
 ```toml
 [dependencies]
-whisker-firebase = { version = "0.1", features = ["firestore", "auth", "storage"] }
+whisker-firebase = { version = "0.1", features = ["firestore", "auth", "storage", "messaging"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -14,6 +14,7 @@ serde = { version = "1", features = ["derive"] }
 | `firestore` | `whisker-firebase-firestore` | Cloud Firestore |
 | `auth` | `whisker-firebase-auth` | Firebase Authentication |
 | `storage` | `whisker-firebase-storage` | Cloud Storage for Firebase |
+| `messaging` | `whisker-firebase-messaging` | Firebase Cloud Messaging |
 
 No service is enabled by default. Each feature activates an optional crate that ships its own Kotlin/Swift sources and SDK dependency, and CNG links only the selected ones. These are ordinary Cargo packages; adding them to this repository does not publish them to crates.io.
 
@@ -38,11 +39,11 @@ fn main() {
 
 The CNG plugin validates the configuration and application identity, stages the Android JSON in the application module, applies the Google Services Gradle plugin, and copies the Apple plist into the main app bundle. Only the selected platform's file is required. Android's Firebase SDK minimum is enforced without lowering a higher application minimum; current Whisker apps require Android API 24 or later. The native Swift modules require iOS 15 or later. Firebase Apple SDK 12.19.2 requires Xcode 26.2 or later.
 
-Android initializes Firebase from generated resources. On iOS, `FirebaseApp::initialize()` configures the default app on the main thread; every service's `instance()` calls it for you. No AppDelegate replacement or method swizzling is installed by this package.
+Android initializes Firebase from generated resources. On iOS, `FirebaseApp::initialize()` configures the default app on the main thread; every service's `instance()` calls it for you. No AppDelegate replacement is installed; only `messaging` relies on Firebase's AppDelegate proxy (see [Cloud Messaging](#cloud-messaging)).
 
 ## Errors
 
-Every operation returns `whisker_firebase::Result<T>`. `FirebaseError` has a `service` (`app`, `firestore`, `auth`, `storage`) and a `code` using the JavaScript SDK's names, and displays as `firestore/permission-denied: …`:
+Every operation returns `whisker_firebase::Result<T>`. `FirebaseError` has a `service` (`app`, `firestore`, `auth`, `storage`, `messaging`) and a `code` using the JavaScript SDK's names, and displays as `firestore/permission-denied: …`:
 
 ```rust,ignore
 match doc.get().await {
@@ -157,9 +158,45 @@ avatar.delete().await?;
 
 `put_file`/`write_to_file` stream between the bucket and an absolute local path. `metadata`, `update_metadata`, and paged `list` are also available. Uploads and downloads resolve on completion; progress reporting, pausing, and cancellation are not exposed yet.
 
+## Cloud Messaging
+
+```rust,ignore
+use whisker_firebase::messaging::{Messaging, PermissionOptions};
+
+let messaging = Messaging::instance()?;
+let settings = messaging.request_permission(PermissionOptions::default()).await?;
+if settings.is_allowed() {
+    let token = messaging.token().await?; // send to your server
+}
+let _refresh = messaging.on_token_refresh(|token| { /* re-upload */ })?;
+messaging.subscribe_to_topic("news").await?;
+
+// Foreground messages, and taps on notifications.
+let _message = messaging.on_message(|message| { /* message.notification, message.data */ })?;
+let _opened = messaging.on_message_opened_app(|message| { /* navigate */ })?;
+if let Some(message) = messaging.initial_message().await? { /* the tap that launched the app */ }
+```
+
+Enabling `messaging` also runs its CNG plugin, which adds the `aps-environment` entitlement (`development` by default) and the `remote-notification` background mode on iOS. Android needs no project changes: the module's manifest declares the messaging service and `POST_NOTIFICATIONS`.
+
+```rust,ignore
+app.project_plugin::<whisker_firebase::messaging::WhiskerFirebaseMessaging>(|messaging| {
+    messaging.aps_environment = "production".into();
+});
+```
+
+To receive messages, upload an APNs authentication key in the Firebase console (iOS) and use a real Firebase project; the FCM backend is not part of the Emulator Suite.
+
+- **Permission.** `request_permission` shows the system prompt on iOS and Android 13+. Android reports only `Authorized` or `Denied`.
+- **Foreground.** On iOS, notifications are presented according to `set_foreground_presentation` (all by default) and delivered to `on_message`. Android shows nothing for foreground messages; handle them in `on_message`, which also receives data-only messages.
+- **Taps.** `initial_message` returns the tap that launched the app; `on_message_opened_app` reports taps while the app keeps running. On Android, a tap recreates Whisker's activity (and the Rust app with it), so it is also reported through `initial_message`.
+- **Background.** Notification messages are displayed by the system. Background data messages and iOS silent notifications are not delivered to Rust yet, because the Whisker runtime may not be running.
+- **iOS integration.** The module becomes the `UNUserNotificationCenter` delegate at launch and relies on Firebase's default AppDelegate proxy for the APNs token, so keep `FirebaseAppDelegateProxyEnabled` enabled. Code that replaces the notification center delegate stops these callbacks.
+- **Tokens.** `token`, `delete_token`, `on_token_refresh`, `set_auto_init_enabled`, and `apns_token` (iOS) are available. Firebase's installation-ID registration mode is not supported.
+
 ## Not yet supported
 
-Transactions, OR/composite filters, snapshot cursors, aggregate `sum`/`average`, persistence settings, named apps/databases/buckets, phone and multi-factor auth, provider sign-in UI, upload progress, and other Firebase services (Messaging, Analytics, Remote Config, Functions, Realtime Database, Crashlytics). Desktop and Web calls return `unsupported-platform`.
+Transactions, OR/composite filters, snapshot cursors, aggregate `sum`/`average`, persistence settings, named apps/databases/buckets, phone and multi-factor auth, provider sign-in UI, upload progress, background message handlers, and other Firebase services (Analytics, Remote Config, Functions, Realtime Database, Crashlytics). Desktop and Web calls return `unsupported-platform`.
 
 ## Local smoke test
 
@@ -171,17 +208,22 @@ firebase emulators:start --only auth,firestore,storage --project demo-whisker-fi
   --config packages/whisker-firebase/example/firebase.json
 
 cargo run -p whisker-cli --bin whisker -- --no-tui run ios \
-  --manifest-path packages/whisker-firebase/example/Cargo.toml --features firestore,auth,storage
+  --manifest-path packages/whisker-firebase/example/Cargo.toml --features firestore,auth,storage,messaging
 # Or replace ios with android, using the Android Emulator.
 ```
 
-The example reaches the emulators at `127.0.0.1` on iOS Simulator and `10.0.2.2` on Android Emulator. It exercises typed documents, transforms, queries, batches, listeners and snapshot signals, security rules, anonymous and email sign-in, account linking, uploads, downloads, metadata, and listing. Success appears as `FIREBASE_SMOKE_OK` with the list of services that passed; any subset of the features can be enabled.
+The example reaches the emulators at `127.0.0.1` on iOS Simulator and `10.0.2.2` on Android Emulator. It exercises typed documents, transforms, queries, batches, listeners and snapshot signals, security rules, anonymous and email sign-in, account linking, uploads, downloads, metadata, and listing. Success appears as `FIREBASE_SMOKE_OK` with the list of services that passed; any subset of the features can be enabled. With the demo configuration, FCM token requests fail with a Messaging error, which the smoke test reports. The app also requests notification permission and shows received messages; on iOS Simulator, send one with:
+
+```sh
+echo '{"aps": {"alert": {"title": "Hello", "body": "From simctl"}}, "gcm.message_id": "1", "kind": "smoke"}' \
+  | xcrun simctl push booted rs.whisker.firebaseexample -
+```
 
 When executing a configuration binary directly, pass app feature selection **after** `--`:
 
 ```sh
 cargo run -p whisker-firebase-example --bin whisker-config \
-  --features whisker-config -- ios android --features firestore,auth,storage
+  --features whisker-config -- ios android --features firestore,auth,storage,messaging
 ```
 
 The Cargo flags before `--` compile the generator; the flags after it select the application dependency graph used by CNG and the native build.

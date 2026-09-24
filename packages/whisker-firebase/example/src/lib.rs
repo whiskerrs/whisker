@@ -1,4 +1,9 @@
 //! Emulator-only Firebase smoke test. The demo project has no production resources.
+// Helpers shared by the service smoke tests are unused in builds without every service.
+#![cfg_attr(
+    not(all(feature = "firestore", feature = "auth", feature = "storage")),
+    allow(dead_code)
+)]
 use std::cell::RefCell;
 use std::future::poll_fn;
 use std::rc::Rc;
@@ -24,6 +29,7 @@ pub fn app() -> Element {
     let status = RwSignal::new("Initializing Firebase…".to_string());
     let live = live_view();
     let live_text = live.text;
+    let push_text = push_view();
     on_mount(move || {
         spawn_local(async move {
             let message = match smoke_test(status, live.clone()).await {
@@ -41,6 +47,7 @@ pub fn app() -> Element {
         View(style: Css::new().padding_top(px(80)).padding_left(px(20)).padding_right(px(20))) {
             Text(value: computed(move || status.get()))
             Text(value: computed(move || live_text.get()))
+            Text(value: computed(move || push_text.get()))
         }
     }
 }
@@ -91,6 +98,53 @@ fn live_view() -> Live {
     }
 }
 
+/// Permission prompts and received pushes need a person or `simctl push`, so they are
+/// shown on screen rather than awaited by the smoke test.
+#[cfg(feature = "messaging")]
+fn push_view() -> Signal<String> {
+    use whisker_firebase::messaging::{ForegroundPresentation, Messaging, PermissionOptions};
+    let permission = RwSignal::new("permission: requesting".to_string());
+    let push = RwSignal::new("push: none".to_string());
+    if let Ok(messaging) = Messaging::instance() {
+        let _ = messaging.set_foreground_presentation(ForegroundPresentation::all());
+        let describe = |kind: &str, message: whisker_firebase::messaging::RemoteMessage| {
+            let title = message
+                .notification
+                .and_then(|n| n.title)
+                .unwrap_or_default();
+            format!("{kind}: {title} {:?}", message.data)
+        };
+        if let Ok(registration) = messaging.on_message(move |m| push.set(describe("push", m))) {
+            on_cleanup(move || drop(registration));
+        }
+        if let Ok(registration) =
+            messaging.on_message_opened_app(move |m| push.set(describe("opened", m)))
+        {
+            on_cleanup(move || drop(registration));
+        }
+        spawn_local(async move {
+            if let Ok(Some(message)) = messaging.initial_message().await {
+                push.set(describe("launched by", message));
+            }
+            permission.set(
+                match messaging
+                    .request_permission(PermissionOptions::default())
+                    .await
+                {
+                    Ok(settings) => format!("permission: {:?}", settings.authorization_status),
+                    Err(error) => format!("permission: {error}"),
+                },
+            );
+        });
+    }
+    computed(move || format!("{} / {}", permission.get(), push.get())).into()
+}
+
+#[cfg(not(feature = "messaging"))]
+fn push_view() -> Signal<String> {
+    Signal::from(RwSignal::new(String::new()))
+}
+
 /// Wakes a waiting task whenever a listener fires.
 #[derive(Clone, Default)]
 struct Notify(Rc<RefCell<Option<Waker>>>);
@@ -134,23 +188,28 @@ async fn smoke_test(status: RwSignal<String>, live: Live) -> SmokeResult<String>
     let step = |name: &str| status.set(format!("running: {name}"));
     step("core");
     let app = whisker_firebase::FirebaseApp::initialize()?;
-    let mut passed = vec!["core"];
+    let mut passed = vec!["core".to_string()];
     #[cfg(feature = "firestore")]
     {
         firestore_smoke(&step, &live).await?;
-        passed.push("firestore");
+        passed.push("firestore".into());
     }
     #[cfg(feature = "auth")]
     {
         auth_smoke(&step).await?;
-        passed.push("auth");
+        passed.push("auth".into());
     }
     #[cfg(feature = "storage")]
     {
         storage_smoke(&step).await?;
-        passed.push("storage");
+        passed.push("storage".into());
     }
-    let _ = live;
+    #[cfg(feature = "messaging")]
+    {
+        let token = messaging_smoke(&step).await?;
+        passed.push(format!("messaging ({token})"));
+    }
+    let _ = (&live, &mut passed);
     Ok(format!("{}: {} passed", app.project_id, passed.join(", ")))
 }
 
@@ -565,4 +624,44 @@ async fn storage_smoke(step: &dyn Fn(&str)) -> SmokeResult {
     )?;
     ensure(denied.code == "unauthorized", "storage rules")?;
     Ok(())
+}
+
+/// Token and topic calls need a real Firebase project and push credentials; with the
+/// demo configuration they must fail with a Messaging error rather than crash.
+#[cfg(feature = "messaging")]
+async fn messaging_smoke(step: &dyn Fn(&str)) -> SmokeResult<String> {
+    use whisker_firebase::messaging::Messaging;
+
+    let messaging = Messaging::instance()?;
+    step("messaging settings");
+    messaging.notification_settings().await?;
+    let auto_init = messaging.is_auto_init_enabled()?;
+    messaging.set_auto_init_enabled(!auto_init)?;
+    ensure(
+        messaging.is_auto_init_enabled()? == !auto_init,
+        "auto-init toggle",
+    )?;
+    messaging.set_auto_init_enabled(auto_init)?;
+
+    messaging.apns_token()?;
+
+    step("messaging validation");
+    let invalid = failure(
+        messaging.subscribe_to_topic("not a topic").await,
+        "invalid topic",
+    )?;
+    ensure(invalid.code == "invalid-argument", "topic validation")?;
+
+    step("messaging token");
+    let token = match messaging.token().await {
+        Ok(token) => format!("token received ({} chars)", token.len()),
+        Err(error) => {
+            ensure(
+                error.service == "messaging" && error.code != "bridge-error",
+                "token error",
+            )?;
+            format!("token unavailable: {error}")
+        }
+    };
+    Ok(token)
 }

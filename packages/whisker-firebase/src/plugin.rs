@@ -47,15 +47,23 @@ impl ProjectPlugin for WhiskerFirebase {
                     .application_id
                     .as_deref()
                     .context("Firebase requires an application ID")?;
-                ensure!(
-                    json["client"]
-                        .as_array()
-                        .is_some_and(|clients| clients.iter().any(|client| client["client_info"]
-                            ["android_client_info"]["package_name"]
-                            .as_str()
-                            == Some(id))),
-                    "google-services.json has no client for Android application ID `{id}`"
-                );
+                let client = json["client"]
+                    .as_array()
+                    .and_then(|clients| {
+                        clients.iter().find(|client| {
+                            client["client_info"]["android_client_info"]["package_name"].as_str()
+                                == Some(id)
+                        })
+                    })
+                    .with_context(|| {
+                        format!(
+                            "google-services.json has no client for Android application ID `{id}`"
+                        )
+                    })?;
+                validate_api_key(
+                    client["api_key"][0]["current_key"].as_str(),
+                    "google-services.json",
+                )?;
                 ensure!(
                     json["project_info"]["project_id"]
                         .as_str()
@@ -109,6 +117,10 @@ impl ProjectPlugin for WhiskerFirebase {
                         "GoogleService-Info.plist is missing `{key}`"
                     );
                 }
+                validate_api_key(
+                    values.get("API_KEY").and_then(plist::Value::as_string),
+                    "GoogleService-Info.plist",
+                )?;
                 let target = ios
                     .apple
                     .targets
@@ -149,6 +161,20 @@ impl ProjectPlugin for WhiskerFirebase {
             reason: "Configure the main Firebase app and enforce the Android SDK minimum".into(),
         })
     }
+}
+
+/// Firebase Installations (used by Messaging and others) aborts at launch on a malformed key.
+fn validate_api_key(key: Option<&str>, file: &str) -> Result<()> {
+    let key = key.with_context(|| format!("{file} has no API key"))?;
+    ensure!(
+        key.len() == 39
+            && key.starts_with('A')
+            && key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+        "{file} has a malformed API key; download the file again from the Firebase console"
+    );
+    Ok(())
 }
 
 fn input(context: &ProjectContext, source: &ProjectPath) -> Result<Vec<u8>> {

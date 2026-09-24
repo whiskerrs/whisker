@@ -6919,6 +6919,7 @@ dependencies = [
  "whisker-firebase-auth",
  "whisker-firebase-core",
  "whisker-firebase-firestore",
+ "whisker-firebase-messaging",
  "whisker-firebase-storage",
  "whisker-plugin",
 ]
@@ -6956,6 +6957,18 @@ dependencies = [
  "serde",
  "whisker",
  "whisker-firebase-core",
+]
+
+[[package]]
+name = "whisker-firebase-messaging"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "whisker",
+ "whisker-cng",
+ "whisker-firebase-core",
+ "whisker-plugin",
 ]
 
 [[package]]

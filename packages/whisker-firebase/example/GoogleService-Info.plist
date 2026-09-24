@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>API_KEY</key>
-	<string>AIzaSyDEMO_KEY_NOT_FOR_PRODUCTION_1234567</string>
+	<string>AIzaSyDEMO_KEY_NOT_FOR_PRODUCTION_12345</string>
 	<key>BUNDLE_ID</key>
 	<string>rs.whisker.firebaseexample</string>
 	<key>GCM_SENDER_ID</key>

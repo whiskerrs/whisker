@@ -15,7 +15,7 @@ pub use timestamp::Timestamp;
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::listener::{Listeners, listen, signal_from_listener};
+    pub use crate::listener::{Listeners, listen, listen_event, signal_from_listener};
     pub use crate::timestamp::TIMESTAMP_NAME;
     pub use crate::{string_field, unwrap_response};
 }

@@ -19,6 +19,7 @@ default = []
 firestore = ["whisker-firebase/firestore"]
 auth = ["whisker-firebase/auth"]
 storage = ["whisker-firebase/storage"]
+messaging = ["whisker-firebase/messaging"]
 whisker-config = ["whisker-cng/generate"]
 
 [dependencies]

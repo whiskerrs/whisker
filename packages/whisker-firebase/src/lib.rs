@@ -10,5 +10,7 @@ pub use whisker_firebase_core::{
 };
 #[cfg(feature = "firestore")]
 pub use whisker_firebase_firestore as firestore;
+#[cfg(feature = "messaging")]
+pub use whisker_firebase_messaging as messaging;
 #[cfg(feature = "storage")]
 pub use whisker_firebase_storage as storage;

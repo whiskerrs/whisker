@@ -82,12 +82,35 @@ pub fn listen(
         .borrow_mut()
         .insert(id, Rc::new(callback));
     let registration = ListenerRegistration {
-        id,
-        listeners: Rc::downgrade(listeners),
-        remove,
+        _inner: Registration::Native {
+            id,
+            listeners: Rc::downgrade(listeners),
+            remove,
+        },
     };
     start(id)?; // Dropping `registration` on failure removes the callback.
     Ok(registration)
+}
+
+/// Subscribe to a module event broadcast to every listener, such as an incoming message.
+/// The payload is the `{value}` / `{error}` envelope.
+pub fn listen_event(
+    module: &PlatformModule,
+    service: &'static str,
+    event: &str,
+    callback: impl Fn(Result<WhiskerValue>) + 'static,
+) -> Result<ListenerRegistration> {
+    let subscription = module.on_event(event, move |payload| {
+        callback(unwrap_response(service, payload))
+    });
+    if let Some(error) = subscription.error() {
+        return Err(crate::FirebaseError::new(service, "bridge-error", error));
+    }
+    Ok(ListenerRegistration {
+        _inner: Registration::Event {
+            _subscription: subscription,
+        },
+    })
 }
 
 /// Expose a listener as a reactive signal owned by the current component.
@@ -116,9 +139,18 @@ pub fn signal_from_listener<T: Clone + 'static>(
 /// unsubscribe functions. Keep it alive for as long as you need updates.
 #[must_use = "the listener is removed as soon as the registration is dropped"]
 pub struct ListenerRegistration {
-    id: i64,
-    listeners: Weak<Listeners>,
-    remove: &'static str,
+    _inner: Registration,
+}
+
+enum Registration {
+    Native {
+        id: i64,
+        listeners: Weak<Listeners>,
+        remove: &'static str,
+    },
+    Event {
+        _subscription: ModuleSubscription,
+    },
 }
 
 impl ListenerRegistration {
@@ -129,18 +161,23 @@ impl ListenerRegistration {
 impl std::fmt::Debug for ListenerRegistration {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ListenerRegistration")
-            .field("id", &self.id)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
-impl Drop for ListenerRegistration {
+impl Drop for Registration {
     fn drop(&mut self) {
-        if let Some(listeners) = self.listeners.upgrade() {
-            listeners.callbacks.borrow_mut().remove(&self.id);
+        if let Registration::Native {
+            id,
+            listeners,
+            remove,
+        } = self
+            && let Some(listeners) = listeners.upgrade()
+        {
+            listeners.callbacks.borrow_mut().remove(id);
             let _ = listeners
                 .module
-                .invoke(self.remove, vec![WhiskerValue::Int(self.id)]);
+                .invoke(remove, vec![WhiskerValue::Int(*id)]);
         }
     }
 }

@@ -145,14 +145,35 @@ fn missing_malformed_and_mismatched_configuration_fail_before_generation() {
         .replace("rs.whisker.firebaseexample", "com.other.app");
     std::fs::write(file, wrong).unwrap();
     assert!(format!("{:#}", app.compose("ios", &app.config()).unwrap_err()).contains("BUNDLE_ID"));
+    let app = App::new();
+    for name in ["google-services.json", "GoogleService-Info.plist"] {
+        let file = app.0.join(name);
+        let long_key = std::fs::read_to_string(&file)
+            .unwrap()
+            .replace("_12345", "_1234567");
+        std::fs::write(file, long_key).unwrap();
+    }
+    for platform in ["android", "ios"] {
+        assert!(
+            format!("{:#}", app.compose(platform, &app.config()).unwrap_err())
+                .contains("malformed API key"),
+            "{platform}"
+        );
+    }
 }
 
 #[test]
 fn service_features_control_the_actual_native_module_graph() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("example/Cargo.toml");
-    let services = ["firestore", "auth", "storage"];
+    let services = ["firestore", "auth", "storage", "messaging"];
     for target in ["aarch64-apple-ios", "aarch64-linux-android"] {
-        for enabled in [&[][..], &["firestore"], &["auth", "storage"], &services] {
+        for enabled in [
+            &[][..],
+            &["firestore"],
+            &["auth", "storage"],
+            &["messaging"],
+            &services,
+        ] {
             let graph = ProjectDependencyGraph::resolve_with_selection(
                 &manifest,
                 "whisker-firebase-example",
@@ -172,11 +193,11 @@ fn service_features_control_the_actual_native_module_graph() {
                     "{target} {enabled:?} {service}"
                 );
             }
-            assert!(
-                graph
-                    .cng_plugins
-                    .iter()
-                    .any(|p| p.name == "whisker-firebase")
+            let plugin = |name: &str| graph.cng_plugins.iter().any(|p| p.name == name);
+            assert!(plugin("whisker-firebase"));
+            assert_eq!(
+                plugin("whisker-firebase-messaging"),
+                enabled.contains(&"messaging")
             );
         }
     }
