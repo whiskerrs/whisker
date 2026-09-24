@@ -199,11 +199,6 @@ use whisker::runtime::view::Element;
 // `#[whisker::main]` is the app entry point. Keep it thin — it just
 // mounts the root component. Whisker provides the root `page` element
 // for you, so `app()` (and your components) just return an `Element`.
-//
-// Splitting your UI into `#[component]`s (rather than writing everything
-// here) is what lets `whisker run` hot-reload your edits in well under a
-// second: save an edit and only the components you changed are rebuilt,
-// so state owned by the rest of the tree is kept.
 #[whisker::main]
 fn app() -> Element {{
     render! {{
@@ -211,16 +206,10 @@ fn app() -> Element {{
     }}
 }}
 
-/// The root of your app — put your state and layout here. Whisker wraps
-/// whatever `Root` returns in the full-screen root `page`, so this `view`
-/// just needs `flex_grow: 1.0` to fill it. Editing `Root` hot-reloads.
+/// The full-screen background. Whisker wraps whatever `Root` returns in
+/// the root `page`, so this `View` just needs `flex_grow: 1.0` to fill it.
 #[component]
 fn root() -> Element {{
-    // `signal` returns a reactive handle holding state. Anything that
-    // reads it (like the `computed` below) re-runs and repaints when it
-    // changes.
-    let count = signal(0);
-
     render! {{
         // Styles use the typed `css!` macro: field names map to CSS
         // properties and values are checked at compile time.
@@ -233,63 +222,85 @@ fn root() -> Element {{
             padding: px(24),
             background_color: Color::hex(0x0b0b0f),
         )) {{
-            // A card: column layout, padding, rounded corners, plus a
-            // gap and a typed linear-gradient background.
+            Counter
+        }}
+    }}
+}}
+
+/// Owns the count. `whisker run` hot-reloads only the components you edit
+/// and rebuilds them from scratch, so state lives above the components you
+/// iterate on: edit `Card` and the count survives.
+#[component]
+fn counter() -> Element {{
+    // `signal` returns a reactive handle holding state. Anything that
+    // reads it (like the `computed` in `Card`) re-runs and repaints when
+    // it changes.
+    let count = signal(0);
+
+    render! {{
+        Card(count: count)
+    }}
+}}
+
+/// The card you see on screen — edit it and save.
+#[component]
+fn card(count: RwSignal<i32>) -> Element {{
+    render! {{
+        // A card: column layout, padding, rounded corners, plus a gap and
+        // a typed linear-gradient background.
+        View(style: css!(
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            padding: px(32),
+            border_radius: px(20),
+            gap: px(6),
+            background_image: Gradient::Linear {{
+                direction: LinearDirection::Angle(135.deg().into()),
+                stops: vec![
+                    ColorStop::at(Color::hex(0x7c5cff), percent(0)),
+                    ColorStop::at(Color::hex(0x4e9bff), percent(100)),
+                ],
+            }},
+        )) {{
+            Text(
+                value: "{display}",
+                style: css!(
+                    color: Color::hex(0xffffff),
+                    font_size: px(22),
+                    font_weight: FontWeight::Bold,
+                    letter_spacing: px(0.5),
+                ),
+            )
+            Text(
+                value: "Tap +1, then edit `Card` and save. The count survives hot reload.",
+                style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(13)),
+            )
+            Text(
+                value: computed(move || format!("{{}}", count.get())),
+                style: css!(
+                    color: Color::hex(0xffffff),
+                    font_size: px(56),
+                    font_weight: FontWeight::Numeric(800),
+                    margin_top: px(12),
+                ),
+            )
+            // A horizontal row; `gap` separates the two buttons.
             View(style: css!(
                 display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                padding: px(32),
-                border_radius: px(20),
-                gap: px(6),
-                background_image: Gradient::Linear {{
-                    direction: LinearDirection::Angle(135.deg().into()),
-                    stops: vec![
-                        ColorStop::at(Color::hex(0x7c5cff), percent(0)),
-                        ColorStop::at(Color::hex(0x4e9bff), percent(100)),
-                    ],
-                }},
+                flex_direction: FlexDirection::Row,
+                margin_top: px(16),
+                gap: px(12),
             )) {{
-                Text(
-                    value: "{display}",
-                    style: css!(
-                        color: Color::hex(0xffffff),
-                        font_size: px(22),
-                        font_weight: FontWeight::Bold,
-                        letter_spacing: px(0.5),
-                    ),
-                )
-                Text(
-                    value: "Edit `Root` and save — hot reload in under a second",
-                    style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(13)),
-                )
-                Text(
-                    value: computed(move || format!("{{}}", count.get())),
-                    style: css!(
-                        color: Color::hex(0xffffff),
-                        font_size: px(56),
-                        font_weight: FontWeight::Numeric(800),
-                        margin_top: px(12),
-                    ),
-                )
-                // A horizontal row; `gap` separates the two buttons.
-                View(style: css!(
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    margin_top: px(16),
-                    gap: px(12),
-                )) {{
-                    Button(label: "-1", delta: -1, count: count)
-                    Button(label: "+1", delta: 1, count: count)
-                }}
+                Button(label: "-1", delta: -1, count: count)
+                Button(label: "+1", delta: 1, count: count)
             }}
         }}
     }}
 }}
 
 /// A small reusable button. Passing the `count` signal in as a prop lets
-/// it update state owned by `Root`, and keeps `Root` readable. Each
-/// `#[component]` also hot-reloads on its own.
+/// it update state owned by `Counter`.
 #[component]
 fn button(label: &'static str, delta: i32, count: RwSignal<i32>) -> Element {{
     render! {{
@@ -422,8 +433,10 @@ target.
 ## Edit
 
 The UI lives in [`src/lib.rs`](src/lib.rs). Save any change and
-`whisker run` hot-patches the running app in under a second — no
-restart, no state loss.
+`whisker run` hot-patches the running app in under a second, without a
+restart. Only the components you edited are rebuilt, so state owned by
+the rest of the tree is kept. Edits outside components (a helper
+function, a type) or to `Root` rebuild the whole UI.
 
 App-level metadata (bundle id, app name, Android / iOS deployment
 settings) lives in [`whisker.rs`](whisker.rs). Edits there require
