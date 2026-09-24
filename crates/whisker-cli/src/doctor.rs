@@ -256,12 +256,12 @@ fn check_rust() -> Vec<Check> {
 
     let installed = run_capture("rustup", &["target", "list", "--installed"]).unwrap_or_default();
     let installed: Vec<&str> = installed.lines().map(str::trim).collect();
-    for triple in &[
-        "aarch64-linux-android",
-        "aarch64-apple-ios",
-        "aarch64-apple-ios-sim",
-        "x86_64-apple-ios",
-    ] {
+    let ios_simulator = if cfg!(target_arch = "x86_64") {
+        "x86_64-apple-ios"
+    } else {
+        "aarch64-apple-ios-sim"
+    };
+    for triple in &["aarch64-linux-android", "aarch64-apple-ios", ios_simulator] {
         if installed.iter().any(|t| t == triple) {
             out.push(Check::ok(format!("rustup target {triple}"), "installed"));
         } else {

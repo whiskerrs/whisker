@@ -534,6 +534,11 @@ async fn ios_install_and_launch(
         // Whisker's codegen plugin and compiler macros have separate trust prompts that headless builds cannot answer.
         .arg("-skipPackagePluginValidation")
         .arg("-skipMacroValidation")
+        // The generic destination otherwise requests every Simulator slice, forcing an extra Rust target install.
+        .arg(format!(
+            "ARCHS={}",
+            whisker_build::ios::host_simulator_arch()
+        ))
         .args(["-quiet", "build"]);
     // No `WHISKER_IOS_RUNTIME` / `WHISKER_IOS_MACROS` injection:
     // WhiskerRuntime and the codegen plugin resolve from the remote
