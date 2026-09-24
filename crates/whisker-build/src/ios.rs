@@ -338,6 +338,15 @@ pub fn build_framework_for_xcode_run_script(
     Ok(published_fw)
 }
 
+/// Xcode `ARCHS` value for the Simulator slice this host runs natively.
+pub fn host_simulator_arch() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else {
+        "arm64"
+    }
+}
+
 /// Translate Xcode's `(PLATFORM_NAME, ARCH)` pair into the matching
 /// Rust target triple. Pairs that can't appear in a real Xcode
 /// build (`iphoneos` + `x86_64`, the long-deprecated armv7 device
