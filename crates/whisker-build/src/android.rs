@@ -191,11 +191,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     let triple_env = triple.replace('-', "_");
     let triple_upper = triple_env.to_uppercase();
 
-    let crate_type = if b.capture.is_some() {
-        "dylib"
-    } else {
-        "cdylib"
-    };
+    let crate_type = crate_type_for(b.capture.is_some(), b.features);
     let mut cmd = Command::new("cargo");
     if b.profile == Profile::Debug {
         configure_development_profile(&mut cmd, b.package);
@@ -300,6 +296,22 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         ));
     }
     Ok(so_path)
+}
+
+/// A hot-reload build must be a `dylib` even when Gradle's `build-android`
+/// runs it without a capture envelope, because that build is the `.so` the
+/// APK ships: a `cdylib` garbage-collects upstream generic instances that a
+/// patch may reference, and its `dlopen` then fails on the missing symbol.
+fn crate_type_for(capture: bool, features: &[String]) -> &'static str {
+    if capture
+        || features
+            .iter()
+            .any(|feature| feature.contains("hot-reload"))
+    {
+        "dylib"
+    } else {
+        "cdylib"
+    }
 }
 
 /// Keep the app crate quick to compile and hot-patch while running framework
@@ -734,6 +746,14 @@ mod tests {
             "/Users/dev/Applications/Android Studio.app/Contents/jbr/Contents/Home"
         )));
         assert!(jdks.contains(&PathBuf::from("/Users/dev/android-studio/jbr")));
+    }
+
+    #[test]
+    fn hot_reload_builds_are_dylibs_with_or_without_capture() {
+        let hot_reload = ["whisker/hot-reload".to_string()];
+        assert_eq!(crate_type_for(true, &[]), "dylib");
+        assert_eq!(crate_type_for(false, &hot_reload), "dylib");
+        assert_eq!(crate_type_for(false, &[]), "cdylib");
     }
 
     #[test]
