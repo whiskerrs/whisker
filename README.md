@@ -79,20 +79,11 @@ whisker run ios          # also: android, web, desktop
 ```
 
 `whisker run` watches your source and hot-patches the running app in under
-a second — no restart, no state loss.
+a second, without a restart. Components you didn't edit keep their state.
 
-App metadata and platform settings live in `whisker.rs`. Its `main` calls
-`whisker_cng::run` to generate platform projects. Cargo registration provides
-rust-analyzer completion without extra editor configuration; the
-`whisker-config` feature enables generation while keeping its engine out of
-normal app builds. Add plugins with `cargo add` and configure them in that file.
-
-```sh
-cargo run --bin whisker-config --features whisker-config -- ios
-```
-
-Omit `ios` to generate Android, iOS, macOS, and Web projects. `whisker run` and
-`whisker build` execute the same generator before building and launching.
+App metadata and platform settings live in `whisker.rs`. `whisker run` and
+`whisker build` generate the native projects from it under `gen/`, so there is
+nothing else to run. Add plugins with `cargo add` and configure them there.
 
 ## Documentation
 
