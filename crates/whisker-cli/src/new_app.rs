@@ -439,21 +439,23 @@ the rest of the tree is kept. Edits outside components (a helper
 function, a type) or to `Root` rebuild the whole UI.
 
 App-level metadata (bundle id, app name, Android / iOS deployment
-settings) lives in [`whisker.rs`](whisker.rs). Edits there require
-a full `whisker run` restart since they shape the generated native
-project. Cargo registers this file as the `whisker-config` binary, so
-rust-analyzer provides completion and navigation without extra editor settings.
-The `whisker-config` feature enables the generator and keeps its engine out of
-default builds. To generate an Xcode project:
+settings) lives in [`whisker.rs`](whisker.rs). `whisker run` and
+`whisker build` generate the native projects under `gen/` from it, so
+there is nothing else to run. Edits there need a `whisker run` restart
+since they reshape the generated project. Add plugin crates with
+`cargo add`, then configure them in `whisker.rs`.
+
+### Opening the native project in Xcode or Android Studio
+
+To generate `gen/` without building or launching the app, for example to
+open `gen/ios` in Xcode before the first `whisker run`:
 
 ```sh
 cargo run --bin whisker-config --features whisker-config -- ios
 ```
 
-Pass `android`, `desktop`, or `web` to generate another platform, or omit the
-platform to generate all four. Generation does not build or launch the app.
-`whisker run` and `whisker build` execute the same generator automatically.
-Add plugin crates with `cargo add`, then configure them in `whisker.rs`.
+Pass `android`, `desktop`, or `web` instead, or omit the platform to
+generate all four.
 
 ## Build for release
 
