@@ -230,19 +230,31 @@ pub(crate) struct MountSite {
 /// just-attached `child`, finalise its MountSite by recording the
 /// parent + previous-sibling anchor.
 ///
-/// No-op if no pending mount's body_root matches `child`.
+/// Every pending mount whose body_root is `child` is finalised: a
+/// component whose body is exactly another component shares its root.
+/// No-op if none match.
 pub fn on_component_root_attached(parent: Element, child: Element) {
-    let Some(mount_id) = PENDING_MOUNTS.with_borrow_mut(|pending| {
-        let index = pending.iter().rposition(|(_, root)| *root == child)?;
-        Some(pending.remove(index).0)
-    }) else {
+    let mount_ids: Vec<MountId> = PENDING_MOUNTS.with_borrow_mut(|pending| {
+        let mut attached = Vec::new();
+        pending.retain(|(mount_id, root)| {
+            let matches = *root == child;
+            if matches {
+                attached.push(*mount_id);
+            }
+            !matches
+        });
+        attached
+    });
+    if mount_ids.is_empty() {
         return;
-    };
+    }
     let anchor = crate::view::previous_sibling(parent, child);
     super::with_runtime(|rt| {
-        if let Some(site) = rt.mount_sites.get_mut(&mount_id) {
-            site.parent = Some(parent);
-            site.anchor = anchor;
+        for mount_id in &mount_ids {
+            if let Some(site) = rt.mount_sites.get_mut(mount_id) {
+                site.parent = Some(parent);
+                site.anchor = anchor;
+            }
         }
     });
 }
@@ -612,8 +624,14 @@ fn remount_sites(ids: Vec<MountId>) -> RemountStats {
         }
     }
 
-    for (mount_id, _, _, new_root, new_owner, body_hash) in &results {
+    for (mount_id, _, old_root, new_root, new_owner, body_hash) in &results {
         with_runtime(|rt| {
+            // Enclosing components that render this one directly share its root.
+            for site in rt.mount_sites.values_mut() {
+                if site.body_root == Some(*old_root) {
+                    site.body_root = Some(*new_root);
+                }
+            }
             if let Some(site) = rt.mount_sites.get_mut(mount_id) {
                 site.owner = Some(*new_owner);
                 site.body_root = Some(*new_root);

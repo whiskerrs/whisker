@@ -1204,6 +1204,65 @@ fn remount_changed_components_leaves_changed_descendants_to_their_ancestor() {
 }
 
 #[test]
+fn a_component_rendered_directly_by_another_remounts_on_its_own() {
+    // `Outer`'s body is just `Inner`, so both sites share one body root.
+    use super::component::{RemountStats, mount_component_remountable, remount_changed_components};
+    use crate::view::{append_child, create_phantom_element};
+    use std::cell::Cell;
+    fresh();
+
+    thread_local! {
+        static INNER_HASH: Cell<u64> = const { Cell::new(1) };
+    }
+    INNER_HASH.with(|hash| hash.set(1));
+
+    let outer_runs = Rc::new(Cell::new(0_usize));
+    let outer_body_runs = outer_runs.clone();
+    let outer = mount_component_remountable(
+        0x1234_0001 as *const (),
+        move || {
+            outer_body_runs.set(outer_body_runs.get() + 1);
+            mount_component_remountable(
+                0x1234_0002 as *const (),
+                create_phantom_element,
+                Box::new(|| 0),
+                Box::new(|| INNER_HASH.with(Cell::get)),
+            )
+        },
+        Box::new(|| 0),
+        Box::new(|| 7),
+    );
+    let parent = create_phantom_element();
+    append_child(parent, outer);
+
+    INNER_HASH.with(|hash| hash.set(2));
+    assert_eq!(
+        remount_changed_components(),
+        RemountStats {
+            remounted: 1,
+            layout_changed: 0,
+        },
+    );
+    assert_eq!(
+        outer_runs.get(),
+        1,
+        "the unchanged outer component keeps its state"
+    );
+    assert_eq!(crate::view::children_of(parent).len(), 1);
+
+    INNER_HASH.with(|hash| hash.set(3));
+    assert_eq!(
+        remount_changed_components(),
+        RemountStats {
+            remounted: 1,
+            layout_changed: 0,
+        },
+        "the inner site still knows where it is attached after its first remount"
+    );
+    assert_eq!(crate::view::children_of(parent).len(), 1);
+}
+
+#[test]
 fn disposing_an_unattached_component_forgets_its_pending_mount() {
     use super::component::{mount_component_remountable, pending_mount_count};
     use crate::view::create_phantom_element;

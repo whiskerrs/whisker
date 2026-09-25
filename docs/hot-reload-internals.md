@@ -220,7 +220,10 @@ Two supporting pieces make the selection hold across patches:
 
 - **Parent recording.** A site learns its parent and anchor when its body root
   is attached. `render!` builds all siblings before attaching any of them, so
-  pending mounts are a list keyed by body root, not a single slot.
+  pending mounts are a list keyed by body root, not a single slot. A component
+  whose body is exactly another component shares that component's root, so one
+  attach finalises both sites, and remounting the inner one moves the outer
+  site to the new root.
 - **Forwarding earlier patches.** Components mounted after a patch run code
   from that patch dylib, and their stored hash getters and body closures hold
   that dylib's addresses. Each jump table only maps original addresses, so the
