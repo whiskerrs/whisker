@@ -74,9 +74,16 @@ fn counter() -> Element {
 
 ```sh
 cargo install whisker-cli
+rustup target add aarch64-apple-ios-sim   # iOS Simulator on Apple silicon
 whisker new my-app && cd my-app
 whisker run ios          # also: android, web, desktop
 ```
+
+Each platform needs its Rust target: `aarch64-linux-android` for Android (plus
+the Android SDK, NDK, and a JDK), `wasm32-unknown-unknown` for Web, and
+`x86_64-apple-ios` instead for the iOS Simulator on an Intel Mac. Run
+`whisker doctor` to see what is missing, or follow
+[Installation](https://whisker.rs/docs/installation).
 
 `whisker run` watches your source and hot-patches the running app in under
 a second, without a restart. Components you didn't edit keep their state.
