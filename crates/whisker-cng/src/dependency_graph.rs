@@ -97,9 +97,19 @@ pub(crate) fn selected_metadata(
     selection: &crate::CargoSelection,
 ) -> Result<cargo_metadata::Metadata> {
     use std::collections::HashSet;
+    // Selected dependency features (e.g. `whisker/hot-reload`) can pull in
+    // packages that none of the application's own features reach, and the
+    // tree below lists them, so metadata must resolve with them too.
     let mut metadata = MetadataCommand::new()
         .manifest_path(manifest)
         .features(cargo_metadata::CargoOpt::AllFeatures)
+        .other_options(
+            selection
+                .features
+                .iter()
+                .flat_map(|feature| ["--features".to_owned(), feature.clone()])
+                .collect::<Vec<_>>(),
+        )
         .exec()
         .context("resolve package declarations")?;
     let mut command =
@@ -283,6 +293,58 @@ mod selection_tests {
             .map(|m| m.package)
             .collect()
         }
+    }
+
+    #[test]
+    fn dependency_features_can_reach_packages_outside_the_application_features() {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = Fixture(std::env::temp_dir().join(format!(
+            "cng-dependency-feature-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        )));
+        let package = |name: &str, manifest: &str| {
+            let dir = root.0.join(name);
+            std::fs::create_dir_all(dir.join("src")).unwrap();
+            std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+            std::fs::write(
+                dir.join("Cargo.toml"),
+                format!(
+                    "[package]\nname = '{name}'\nversion = '0.1.0'\nedition = '2021'\n{manifest}"
+                ),
+            )
+            .unwrap();
+        };
+        package(
+            "extra",
+            "[package.metadata.whisker.module.platforms]\nios = { kind = 'common' }\n",
+        );
+        package(
+            "runtime",
+            "[features]\ndev = ['dep:extra']\n[dependencies]\nextra = { path = '../extra', optional = true }\n",
+        );
+        // A standalone app workspace, as `whisker new` generates, so `extra`
+        // is not a workspace member that metadata would list regardless.
+        package(
+            "app",
+            "[workspace]\n[dependencies]\nruntime = { path = '../runtime' }\n",
+        );
+
+        let modules = ProjectDependencyGraph::resolve_with_selection(
+            &root.0.join("app/Cargo.toml"),
+            "app",
+            &CargoSelection {
+                features: vec!["runtime/dev".into()],
+                no_default_features: false,
+                target: Some("aarch64-apple-ios".into()),
+            },
+        )
+        .unwrap()
+        .modules;
+        assert_eq!(
+            modules.into_iter().map(|m| m.package).collect::<Vec<_>>(),
+            ["extra"]
+        );
     }
 
     #[test]
