@@ -261,7 +261,12 @@ fn check_rust() -> Vec<Check> {
     } else {
         "aarch64-apple-ios-sim"
     };
-    for triple in &["aarch64-linux-android", "aarch64-apple-ios", ios_simulator] {
+    for triple in &[
+        "aarch64-linux-android",
+        "aarch64-apple-ios",
+        ios_simulator,
+        "wasm32-unknown-unknown",
+    ] {
         if installed.iter().any(|t| t == triple) {
             out.push(Check::ok(format!("rustup target {triple}"), "installed"));
         } else {
@@ -289,25 +294,16 @@ fn parse_rustc_version(s: &str) -> Option<(u32, u32)> {
 fn check_android() -> Vec<Check> {
     let mut out = Vec::new();
 
-    let android_home = std::env::var_os("ANDROID_HOME")
-        .or_else(|| std::env::var_os("ANDROID_SDK_ROOT"))
-        .map(PathBuf::from);
-    let android_home = match android_home {
-        Some(p) if p.is_dir() => {
-            out.push(Check::ok("ANDROID_HOME", p.display().to_string()));
+    // The same lookup builds use, so doctor never rejects a setup that builds.
+    let android_home = match whisker_build::android::android_home() {
+        Ok(p) => {
+            out.push(Check::ok("Android SDK", p.display().to_string()));
             p
         }
-        Some(p) => {
+        Err(_) => {
             out.push(Check::err(
-                "ANDROID_HOME",
-                format!("{} does not exist", p.display()),
-            ));
-            return out;
-        }
-        None => {
-            out.push(Check::err(
-                "ANDROID_HOME",
-                "not set (`export ANDROID_HOME=$HOME/Library/Android/sdk`)",
+                "Android SDK",
+                "not found — install it with Android Studio, or set ANDROID_HOME",
             ));
             return out;
         }
@@ -337,6 +333,11 @@ fn check_android() -> Vec<Check> {
             "adb",
             "not on PATH (add $ANDROID_HOME/platform-tools)",
         )),
+    }
+
+    match whisker_build::android::resolve_java_home() {
+        Ok(p) => out.push(Check::ok("JDK", p.display().to_string())),
+        Err(error) => out.push(Check::err("JDK", error.to_string())),
     }
 
     out

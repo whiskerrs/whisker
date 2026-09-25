@@ -78,11 +78,15 @@ pub fn resolve_toolchain(abi: &str, api: u32) -> Result<AndroidToolchain> {
     })
 }
 
-fn android_home() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("ANDROID_HOME").map(PathBuf::from)
-        && p.is_dir()
-    {
-        return Ok(p);
+/// Android SDK root: `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then the
+/// location Android Studio installs to on macOS.
+pub fn android_home() -> Result<PathBuf> {
+    for var in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
+        if let Some(p) = std::env::var_os(var).map(PathBuf::from)
+            && p.is_dir()
+        {
+            return Ok(p);
+        }
     }
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
         let cand = home.join("Library/Android/sdk");
@@ -544,6 +548,10 @@ fn gradle_command(gen_android: &Path, task: &str) -> Result<Command> {
             "WHISKER_CLI",
             std::env::current_exe().context("resolve current Whisker CLI executable")?,
         );
+    // Gradle only reads `ANDROID_HOME` / `local.properties`, not the default install location.
+    if let Ok(sdk) = android_home() {
+        cmd.env("ANDROID_HOME", sdk);
+    }
     if crate::ui::is_verbose() {
         cmd.env("WHISKER_VERBOSE", "1");
     }
@@ -657,7 +665,8 @@ fn ensure_release_artifact_signed(artifact: ReleaseArtifact, path: &Path) -> Res
 }
 
 /// Java 17 home for AGP 8.x. Looks at JAVA_HOME first; otherwise tries
-/// `/usr/libexec/java_home -v 17` on macOS.
+/// `/usr/libexec/java_home -v 17` on macOS, then the JDK bundled with
+/// Android Studio, which is what Android Studio itself runs Gradle with.
 ///
 /// Public because the CLI's `whisker credential android` reuses it to
 /// locate `keytool` (`<java_home>/bin/keytool`) for upload-keystore
@@ -682,14 +691,50 @@ pub fn resolve_java_home() -> Result<PathBuf> {
             }
         }
     }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(jbr) = android_studio_jdks(home.as_deref())
+        .into_iter()
+        .find(|path| path.join("bin/java").is_file())
+    {
+        return Ok(jbr);
+    }
     Err(anyhow!(
-        "JAVA_HOME unset and could not auto-detect a Java 17 JDK",
+        "JAVA_HOME unset and no JDK 17 found (checked `/usr/libexec/java_home -v 17` \
+         and Android Studio's bundled JDK); install JDK 17 or set JAVA_HOME",
     ))
+}
+
+fn android_studio_jdks(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut apps = vec![PathBuf::from("/Applications")];
+    if let Some(home) = home {
+        apps.push(home.join("Applications"));
+    }
+    let mut jdks: Vec<PathBuf> = apps
+        .into_iter()
+        .map(|dir| dir.join("Android Studio.app/Contents/jbr/Contents/Home"))
+        .collect();
+    jdks.push(PathBuf::from("/opt/android-studio/jbr"));
+    if let Some(home) = home {
+        jdks.push(home.join("android-studio/jbr"));
+    }
+    jdks
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn android_studio_jdks_cover_system_and_user_installs() {
+        let jdks = android_studio_jdks(Some(Path::new("/Users/dev")));
+        assert!(jdks.contains(&PathBuf::from(
+            "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+        )));
+        assert!(jdks.contains(&PathBuf::from(
+            "/Users/dev/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+        )));
+        assert!(jdks.contains(&PathBuf::from("/Users/dev/android-studio/jbr")));
+    }
 
     #[test]
     fn development_profile_optimizes_dependencies_but_not_the_app_crate() {
@@ -729,6 +774,13 @@ mod tests {
             configured,
             Some(std::env::current_exe().unwrap().as_os_str())
         );
+        if let Ok(sdk) = android_home() {
+            let passed = command
+                .get_envs()
+                .find_map(|(key, value)| (key == "ANDROID_HOME").then_some(value))
+                .flatten();
+            assert_eq!(passed, Some(sdk.as_os_str()));
+        }
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
