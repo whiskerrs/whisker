@@ -13,7 +13,7 @@
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
-    id("com.google.devtools.ksp") version "2.0.21-1.0.27"
+    id("com.google.devtools.ksp") version "2.3.12"
 }
 
 android {
@@ -28,9 +28,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     // Source set redirection so AGP only scans the `android/` subtree;
     // Rust's `src/` next to this file stays out of the Kotlin
@@ -39,6 +36,12 @@ android {
         getByName("main") {
             kotlin.srcDirs("android/src/main/kotlin")
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 

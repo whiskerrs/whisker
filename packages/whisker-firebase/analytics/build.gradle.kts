@@ -1,7 +1,7 @@
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
-    id("com.google.devtools.ksp") version "2.0.21-1.0.27"
+    id("com.google.devtools.ksp") version "2.3.12"
 }
 
 android {
@@ -12,12 +12,15 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-        // play-services-measurement 23.x ships Kotlin 2.2 metadata; Whisker apps compile with Kotlin 2.0.
-        freeCompilerArgs += "-Xskip-metadata-version-check"
-    }
     sourceSets.getByName("main").kotlin.srcDirs("android/src/main/kotlin")
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        // play-services-measurement 23.x ships Kotlin 2.2 metadata; Whisker apps compile with Kotlin 2.0.
+        freeCompilerArgs.add("-Xskip-metadata-version-check")
+    }
 }
 
 ksp {
