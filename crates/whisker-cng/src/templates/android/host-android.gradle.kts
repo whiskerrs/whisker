@@ -2,9 +2,6 @@
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     val whiskerKeystore = System.getenv("WHISKER_ANDROID_KEYSTORE")
     if (whiskerKeystore != null) {
         signingConfigs {

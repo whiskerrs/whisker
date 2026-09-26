@@ -164,6 +164,9 @@ pub(super) fn declarations(inputs: &AndroidInputs) -> Result<AndroidProjectIr> {
     for entry in &inputs.extra_gradle_plugins {
         add_plugin(&mut module.build, entry);
     }
+    module.build.statements.push(
+        "kotlin {\n    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }\n}".into(),
+    );
     module.build.statements.push(format!("dependencies {{\n    if (rootProject.findProject(\":whisker-runtime\") != null) {{\n        implementation(project(\":whisker-runtime\"))\n    }} else {{\n        implementation({})\n    }}\n{}\n}}", super::project_render::quote(&format!("rs.whisker:whisker-runtime-android:{}", inputs.whisker_sdk_version)), render_extra_gradle_dependencies(&inputs.extra_gradle_dependencies)));
     let mut project = AndroidProjectIr {
         application: ":app".into(),
@@ -202,7 +205,7 @@ pub(super) fn declarations(inputs: &AndroidInputs) -> Result<AndroidProjectIr> {
             plugins: vec![
                 plugin("com.android.application", Some("8.10.1"), false),
                 plugin("com.android.library", Some("8.10.1"), false),
-                plugin("org.jetbrains.kotlin.android", Some("2.0.21"), false),
+                plugin("org.jetbrains.kotlin.android", Some("2.4.20"), false),
             ],
             statements: vec![include_str!("../templates/android/host-root.gradle.kts").into()],
             ..Default::default()
