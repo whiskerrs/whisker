@@ -18,8 +18,6 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        // firebase-auth 24.x ships Kotlin 2.3 metadata; Whisker apps compile with Kotlin 2.0.
-        freeCompilerArgs.add("-Xskip-metadata-version-check")
     }
 }
 
