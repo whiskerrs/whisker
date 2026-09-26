@@ -6908,6 +6908,106 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-firebase"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "plist",
+ "serde",
+ "serde_json",
+ "whisker-cng",
+ "whisker-firebase-analytics",
+ "whisker-firebase-auth",
+ "whisker-firebase-core",
+ "whisker-firebase-crashlytics",
+ "whisker-firebase-firestore",
+ "whisker-firebase-messaging",
+ "whisker-firebase-storage",
+ "whisker-plugin",
+]
+
+[[package]]
+name = "whisker-firebase-analytics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "whisker",
+ "whisker-cng",
+ "whisker-firebase-core",
+ "whisker-plugin",
+]
+
+[[package]]
+name = "whisker-firebase-auth"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-firebase-core",
+]
+
+[[package]]
+name = "whisker-firebase-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "whisker",
+ "whisker-plugin",
+]
+
+[[package]]
+name = "whisker-firebase-crashlytics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "whisker",
+ "whisker-cng",
+ "whisker-firebase-core",
+ "whisker-plugin",
+]
+
+[[package]]
+name = "whisker-firebase-example"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "whisker",
+ "whisker-cng",
+ "whisker-firebase",
+]
+
+[[package]]
+name = "whisker-firebase-firestore"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "whisker",
+ "whisker-firebase-core",
+]
+
+[[package]]
+name = "whisker-firebase-messaging"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "whisker",
+ "whisker-cng",
+ "whisker-firebase-core",
+ "whisker-plugin",
+]
+
+[[package]]
+name = "whisker-firebase-storage"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-firebase-core",
+]
+
+[[package]]
 name = "whisker-fmt"
 version = "0.15.1"
 dependencies = [
