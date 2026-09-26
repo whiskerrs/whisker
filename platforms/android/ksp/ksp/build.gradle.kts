@@ -26,10 +26,8 @@ kotlin {
 }
 
 dependencies {
-    // KSP API the processor runs against. Major version must match
-    // the Kotlin compiler version the user app is compiled with —
-    // KSP 2.0.21-1.0.27 pairs with Kotlin 2.0.21.
-    implementation("com.google.devtools.ksp:symbol-processing-api:2.0.21-1.0.27")
+    // KSP2 versions independently of Kotlin; keep it in step with the modules' KSP plugin.
+    implementation("com.google.devtools.ksp:symbol-processing-api:2.3.12")
 }
 
 java {
