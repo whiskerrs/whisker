@@ -17,7 +17,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     // KSP version pinned to the same `<kotlin>-<abi>` pair the
     // user app uses. Bump in lockstep with Kotlin.
-    id("com.google.devtools.ksp") version "2.0.21-1.0.27"
+    id("com.google.devtools.ksp") version "2.3.11"
 }
 
 android {
@@ -32,9 +32,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     // build.gradle.kts sits at the package root (alongside
     // Cargo.toml). Point the Kotlin source set at `android/src/main/
@@ -48,6 +45,12 @@ android {
 
 // Pass the module name + crate name to KSP so the processor emits
 // a uniquely-named `WhiskerRouterBehaviors.kt` registration helper.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 ksp {
     arg("whisker.moduleName", "WhiskerRouter")
     arg("whisker.crateName", "whisker-router")
