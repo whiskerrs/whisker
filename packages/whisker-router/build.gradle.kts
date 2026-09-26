@@ -17,7 +17,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     // KSP version pinned to the same `<kotlin>-<abi>` pair the
     // user app uses. Bump in lockstep with Kotlin.
-    id("com.google.devtools.ksp") version "2.3.12"
+    id("com.google.devtools.ksp") version "2.3.11"
 }
 
 android {

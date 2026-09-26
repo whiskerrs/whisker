@@ -27,7 +27,7 @@ kotlin {
 
 dependencies {
     // KSP2 versions independently of Kotlin; keep it in step with the modules' KSP plugin.
-    implementation("com.google.devtools.ksp:symbol-processing-api:2.3.12")
+    implementation("com.google.devtools.ksp:symbol-processing-api:2.3.11")
 }
 
 java {

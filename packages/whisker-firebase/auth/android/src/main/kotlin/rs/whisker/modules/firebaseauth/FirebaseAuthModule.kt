@@ -67,11 +67,11 @@ class FirebaseAuthModule : Module() {
             try {
                 val id = requireNotNull(args.getOrNull(0)?.asInt())
                 if (args.getOrNull(1)?.asString() == "id_token") {
-                    val listener = FirebaseAuth.IdTokenListener { emit(id, it.currentUser) }
+                    val listener = FirebaseAuth.IdTokenListener { firebaseAuth: FirebaseAuth -> emit(id, firebaseAuth.currentUser) }
                     tokenListeners[id] = listener
                     auth.addIdTokenListener(listener)
                 } else {
-                    val listener = FirebaseAuth.AuthStateListener { emit(id, it.currentUser) }
+                    val listener = FirebaseAuth.AuthStateListener { firebaseAuth: FirebaseAuth -> emit(id, firebaseAuth.currentUser) }
                     authListeners[id] = listener
                     auth.addAuthStateListener(listener)
                 }
