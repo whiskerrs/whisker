@@ -81,6 +81,9 @@ pub fn generate_with_selection(
     } else {
         None
     };
+    if let Some(cng) = cng {
+        ensure_generator_matches_cli(&cng.version, env!("CARGO_PKG_VERSION"))?;
+    }
     let config = cng.and_then(|cng| direct_dependency(&metadata, cng, "whisker-config"));
     let cng_spec = dependency_spec(cng, Path::new(env!("CARGO_MANIFEST_DIR")), true);
     let config_spec = dependency_spec(
@@ -201,6 +204,22 @@ pub fn generate_with_selection(
     Ok(generated)
 }
 
+/// The CLI and the application's generator exchange arguments and a report
+/// whose shape is only guaranteed within one release.
+fn ensure_generator_matches_cli(
+    application: &cargo_metadata::semver::Version,
+    cli: &str,
+) -> Result<()> {
+    ensure!(
+        application.to_string() == cli,
+        "this app resolves whisker-cng {application}, but this whisker CLI is {cli}; they must be the same version.\n\
+         Update the app: set `whisker` and `whisker-cng` to \"{cli}\" in Cargo.toml, or run \
+         `cargo update -p whisker -p whisker-cng` if its version requirements already allow {cli}.\n\
+         Or install the matching CLI: `cargo install whisker-cli --version {application} --locked`"
+    );
+    Ok(())
+}
+
 struct ReportFile(PathBuf);
 impl Drop for ReportFile {
     fn drop(&mut self) {
@@ -303,6 +322,27 @@ fn workspace_patches(workspace: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generator_version_must_match_the_cli() {
+        let cli = env!("CARGO_PKG_VERSION");
+        let same: cargo_metadata::semver::Version = cli.parse().unwrap();
+        assert!(ensure_generator_matches_cli(&same, cli).is_ok());
+
+        let older: cargo_metadata::semver::Version = "0.0.1".parse().unwrap();
+        let message = ensure_generator_matches_cli(&older, cli)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("whisker-cng 0.0.1"), "{message}");
+        assert!(
+            message.contains(&format!("whisker CLI is {cli}")),
+            "{message}"
+        );
+        assert!(
+            message.contains("cargo install whisker-cli --version 0.0.1 --locked"),
+            "{message}"
+        );
+    }
 
     #[test]
     fn registry_dependencies_keep_their_source_identity_and_resolved_version() {

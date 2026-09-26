@@ -126,8 +126,8 @@ pub fn apply_hot_patch(
     table.lib = object_url.clone().into();
 
     unsafe {
-        subsecond::apply_patch_with_callback(table, move |patched_functions| {
-            let result = reflect_hot_patch(&patched_functions, application, application_hash);
+        subsecond::apply_patch_with_callback(table, move |_| {
+            let result = reflect_hot_patch(application, application_hash);
             if let Err(error) = result {
                 web_sys::console::error_1(&format!("Whisker Hot Reload: {error}").into());
             }
@@ -140,7 +140,6 @@ pub fn apply_hot_patch(
 
 #[cfg(feature = "hot-reload")]
 fn reflect_hot_patch(
-    patched_functions: &[*const ()],
     application: fn() -> Element,
     application_hash: fn() -> u64,
 ) -> Result<(), WebError> {
@@ -155,7 +154,7 @@ fn reflect_hot_patch(
             if !remount_root {
                 let stats = host
                     .runtime
-                    .remount_components(patched_functions)
+                    .remount_changed_components()
                     .map_err(|error| WebError(error.to_string()))?;
                 remount_root = stats.remounted == 0 || stats.layout_changed > 0;
             }

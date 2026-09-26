@@ -803,6 +803,7 @@ impl RuntimeInstance {
                 let owner = Owner::new(None);
                 let root = owner.with(application);
                 view::set_root(root);
+                reactive::component::discard_pending_mounts();
                 reactive::flush();
                 reactive::flush_mounts();
                 if let Err(error) = surface.finish_mutation_batch() {
@@ -900,6 +901,7 @@ impl RuntimeInstance {
                 let owner = Owner::new(None);
                 let root = owner.with(application);
                 view::set_root(root);
+                reactive::component::discard_pending_mounts();
                 reactive::flush();
                 reactive::flush_mounts();
                 surface
@@ -927,6 +929,15 @@ impl RuntimeInstance {
         }
     }
 
+    /// Rebuilds mounted component sites whose component source changed
+    /// since they were built; see [`reactive::remount_changed_components`].
+    pub fn remount_changed_components(&self) -> Result<reactive::RemountStats, RuntimeEventError> {
+        self.remount_with(
+            "remount changed components",
+            reactive::remount_changed_components,
+        )
+    }
+
     /// Rebuilds mounted component sites whose body function appears in
     /// `patched_functions`.
     ///
@@ -937,13 +948,23 @@ impl RuntimeInstance {
         &self,
         patched_functions: &[*const ()],
     ) -> Result<reactive::RemountStats, RuntimeEventError> {
-        self.require(RuntimeLifecycle::Running, "remount updated components")
+        self.remount_with("remount updated components", || {
+            reactive::remount_components_for(patched_functions)
+        })
+    }
+
+    fn remount_with(
+        &self,
+        operation: &'static str,
+        remount: impl FnOnce() -> reactive::RemountStats,
+    ) -> Result<reactive::RemountStats, RuntimeEventError> {
+        self.require(RuntimeLifecycle::Running, operation)
             .map_err(RuntimeEventError::Lifecycle)?;
         let surface = self.surface.clone();
         self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
                 surface.begin_mutation_batch();
-                let stats = reactive::remount_components_for(patched_functions);
+                let stats = remount();
                 reactive::flush();
                 reactive::flush_mounts();
                 surface
