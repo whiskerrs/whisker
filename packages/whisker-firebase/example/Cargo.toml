@@ -20,6 +20,8 @@ firestore = ["whisker-firebase/firestore"]
 auth = ["whisker-firebase/auth"]
 storage = ["whisker-firebase/storage"]
 messaging = ["whisker-firebase/messaging"]
+analytics = ["whisker-firebase/analytics"]
+crashlytics = ["whisker-firebase/crashlytics"]
 whisker-config = ["whisker-cng/generate"]
 
 [dependencies]

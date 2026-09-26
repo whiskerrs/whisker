@@ -32,6 +32,14 @@ impl App {
         config
     }
     fn compose(&self, platform: &str, config: &Config) -> anyhow::Result<ProjectIr> {
+        self.compose_with(platform, config, false)
+    }
+    fn compose_with(
+        &self,
+        platform: &str,
+        config: &Config,
+        crashlytics: bool,
+    ) -> anyhow::Result<ProjectIr> {
         let (engine, empty) = if platform == "android" {
             (
                 ProjectEngine::with_android_application(android::inputs_from_with_engine(
@@ -59,6 +67,9 @@ impl App {
             )
         };
         let mut engine = engine.with_app_crate_dir(&self.0);
+        if crashlytics {
+            engine.register(whisker_firebase_crashlytics::WhiskerFirebaseCrashlytics);
+        }
         engine.register(WhiskerFirebase);
         Ok(engine.compose(config, &empty)?.project)
     }
@@ -165,13 +176,21 @@ fn missing_malformed_and_mismatched_configuration_fail_before_generation() {
 #[test]
 fn service_features_control_the_actual_native_module_graph() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("example/Cargo.toml");
-    let services = ["firestore", "auth", "storage", "messaging"];
+    let services = [
+        "firestore",
+        "auth",
+        "storage",
+        "messaging",
+        "analytics",
+        "crashlytics",
+    ];
     for target in ["aarch64-apple-ios", "aarch64-linux-android"] {
         for enabled in [
             &[][..],
             &["firestore"],
             &["auth", "storage"],
             &["messaging"],
+            &["analytics", "crashlytics"],
             &services,
         ] {
             let graph = ProjectDependencyGraph::resolve_with_selection(
@@ -195,10 +214,38 @@ fn service_features_control_the_actual_native_module_graph() {
             }
             let plugin = |name: &str| graph.cng_plugins.iter().any(|p| p.name == name);
             assert!(plugin("whisker-firebase"));
-            assert_eq!(
-                plugin("whisker-firebase-messaging"),
-                enabled.contains(&"messaging")
-            );
+            for service in ["messaging", "analytics", "crashlytics"] {
+                assert_eq!(
+                    plugin(&format!("whisker-firebase-{service}")),
+                    enabled.contains(&service),
+                    "{target} {enabled:?} {service} plugin"
+                );
+            }
         }
     }
+}
+
+#[test]
+fn crashlytics_gradle_plugin_is_applied_after_google_services() {
+    let app = App::new();
+    let ProjectIr::Android(android) = app.compose_with("android", &app.config(), true).unwrap()
+    else {
+        panic!()
+    };
+    let files = android::render_project(&android::AndroidProjectInputs {
+        project: *android,
+        app_crate_dir: Some(app.0.clone()),
+        cargo_selection: Default::default(),
+        template_version: 1,
+    })
+    .unwrap();
+    let build = String::from_utf8(
+        files[&ProjectPath::new("app/build.gradle.kts").unwrap()]
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
+    let services = build.find("com.google.gms.google-services").unwrap();
+    let crashlytics = build.find("com.google.firebase.crashlytics").unwrap();
+    assert!(services < crashlytics, "{build}");
 }

@@ -26,6 +26,8 @@ members = [
     "packages/whisker-firebase/auth",
     "packages/whisker-firebase/storage",
     "packages/whisker-firebase/messaging",
+    "packages/whisker-firebase/analytics",
+    "packages/whisker-firebase/crashlytics",
     "packages/whisker-firebase/example",
     "packages/whisker-asset-macros",
     "crates/whisker-css",

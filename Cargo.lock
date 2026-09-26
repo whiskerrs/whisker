@@ -6916,11 +6916,25 @@ dependencies = [
  "serde",
  "serde_json",
  "whisker-cng",
+ "whisker-firebase-analytics",
  "whisker-firebase-auth",
  "whisker-firebase-core",
+ "whisker-firebase-crashlytics",
  "whisker-firebase-firestore",
  "whisker-firebase-messaging",
  "whisker-firebase-storage",
+ "whisker-plugin",
+]
+
+[[package]]
+name = "whisker-firebase-analytics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "whisker",
+ "whisker-cng",
+ "whisker-firebase-core",
  "whisker-plugin",
 ]
 
@@ -6936,8 +6950,22 @@ dependencies = [
 name = "whisker-firebase-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
  "whisker",
+ "whisker-plugin",
+]
+
+[[package]]
+name = "whisker-firebase-crashlytics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "whisker",
+ "whisker-cng",
+ "whisker-firebase-core",
+ "whisker-plugin",
 ]
 
 [[package]]

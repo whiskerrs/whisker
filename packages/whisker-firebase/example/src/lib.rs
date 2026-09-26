@@ -30,6 +30,7 @@ pub fn app() -> Element {
     let live = live_view();
     let live_text = live.text;
     let push_text = push_view();
+    let crash_text = crash_view();
     on_mount(move || {
         spawn_local(async move {
             let message = match smoke_test(status, live.clone()).await {
@@ -44,10 +45,13 @@ pub fn app() -> Element {
         });
     });
     render! {
-        View(style: Css::new().padding_top(px(80)).padding_left(px(20)).padding_right(px(20))) {
+        View(style: Css::new().flex_direction(FlexDirection::Column).gap(px(12)).padding_top(px(80)).padding_left(px(20)).padding_right(px(20))) {
             Text(value: computed(move || status.get()))
             Text(value: computed(move || live_text.get()))
             Text(value: computed(move || push_text.get()))
+            Text(value: computed(move || crash_text.get()))
+            View(on_tap: move |_| crash_now(), style: Css::new().padding(px(12)).background_color(Color::hex(0xf0d0d0))) { Text(value: "CRASH") }
+            View(on_tap: move |_| panic_now(), style: Css::new().padding(px(12)).background_color(Color::hex(0xf0e0c0))) { Text(value: "PANIC") }
         }
     }
 }
@@ -145,6 +149,42 @@ fn push_view() -> Signal<String> {
     Signal::from(RwSignal::new(String::new()))
 }
 
+/// Crashes end the app, so they are triggered by hand and checked on the next launch.
+#[cfg(feature = "crashlytics")]
+fn crash_view() -> Signal<String> {
+    use whisker_firebase::crashlytics::Crashlytics;
+    let Ok(crashlytics) = Crashlytics::instance() else {
+        return Signal::from(RwSignal::new("crashlytics: unavailable".to_string()));
+    };
+    crashlytics.record_panics();
+    let text = RwSignal::new(format!(
+        "crashlytics: crashed last run = {:?}",
+        crashlytics.did_crash_on_previous_execution()
+    ));
+    spawn_local(async move {
+        let unsent = crashlytics.check_for_unsent_reports().await;
+        text.update(|text| text.push_str(&format!(", unsent reports = {unsent:?}")));
+    });
+    text.into()
+}
+
+#[cfg(not(feature = "crashlytics"))]
+fn crash_view() -> Signal<String> {
+    Signal::from(RwSignal::new(String::new()))
+}
+
+fn crash_now() {
+    #[cfg(feature = "crashlytics")]
+    if let Ok(crashlytics) = whisker_firebase::crashlytics::Crashlytics::instance() {
+        crashlytics.crash();
+    }
+}
+
+fn panic_now() {
+    #[cfg(feature = "crashlytics")]
+    panic!("smoke test panic");
+}
+
 /// Wakes a waiting task whenever a listener fires.
 #[derive(Clone, Default)]
 struct Notify(Rc<RefCell<Option<Waker>>>);
@@ -203,6 +243,16 @@ async fn smoke_test(status: RwSignal<String>, live: Live) -> SmokeResult<String>
     {
         storage_smoke(&step).await?;
         passed.push("storage".into());
+    }
+    #[cfg(feature = "analytics")]
+    {
+        analytics_smoke(&step).await?;
+        passed.push("analytics".into());
+    }
+    #[cfg(feature = "crashlytics")]
+    {
+        crashlytics_smoke(&step)?;
+        passed.push("crashlytics".into());
     }
     #[cfg(feature = "messaging")]
     {
@@ -664,4 +714,56 @@ async fn messaging_smoke(step: &dyn Fn(&str)) -> SmokeResult<String> {
         }
     };
     Ok(token)
+}
+
+#[cfg(feature = "analytics")]
+async fn analytics_smoke(step: &dyn Fn(&str)) -> SmokeResult {
+    use whisker_firebase::analytics::{Analytics, Consent, Param, params};
+
+    let analytics = Analytics::instance()?;
+    step("analytics events");
+    analytics.set_consent(Consent::new().analytics_storage(true))?;
+    analytics.set_user_property("smoke_platform", Some(PLATFORM))?;
+    analytics.set_default_event_parameters(params! { "smoke" => true })?;
+    analytics.log_event(
+        "whisker_smoke",
+        params! { "platform" => PLATFORM, "count" => 3, "ratio" => 0.5 },
+    )?;
+    let item = params! { "item_id" => "sku-1", "price" => 1200 };
+    analytics.log_event(
+        "purchase",
+        vec![
+            ("currency".to_string(), Param::from("JPY")),
+            ("value".to_string(), Param::from(1200)),
+            ("items".to_string(), Param::Items(vec![item])),
+        ],
+    )?;
+    analytics.log_screen_view("Smoke", Some("SmokeView"))?;
+    analytics.set_session_timeout(std::time::Duration::from_secs(1800))?;
+    step("analytics validation");
+    let invalid = failure(
+        analytics.log_event("firebase_reserved", params! {}),
+        "reserved name",
+    )?;
+    ensure(invalid.code == "invalid-argument", "event name validation")?;
+    analytics.app_instance_id().await?;
+    Ok(())
+}
+
+#[cfg(feature = "crashlytics")]
+fn crashlytics_smoke(step: &dyn Fn(&str)) -> SmokeResult {
+    use whisker_firebase::crashlytics::Crashlytics;
+
+    let crashlytics = Crashlytics::instance()?;
+    step("crashlytics reports");
+    crashlytics.set_collection_enabled(true)?;
+    ensure(crashlytics.is_collection_enabled()?, "collection toggle")?;
+    crashlytics.set_user_id("smoke-user")?;
+    crashlytics.set_custom_key("platform", PLATFORM)?;
+    crashlytics.set_custom_key("attempt", 1)?;
+    crashlytics.set_custom_key("healthy", true)?;
+    crashlytics.log("smoke test breadcrumb")?;
+    let error = std::io::Error::other("smoke non-fatal");
+    crashlytics.record_error(&error)?;
+    Ok(())
 }

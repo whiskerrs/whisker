@@ -1,10 +1,10 @@
 # whisker-firebase
 
-Firebase for Whisker on **Android and iOS**: Cloud Firestore, Authentication, Cloud Storage, and Cloud Messaging for the default Firebase app.
+Firebase for Whisker on **Android and iOS**: Cloud Firestore, Authentication, Cloud Storage, Cloud Messaging, Analytics, and Crashlytics for the default Firebase app.
 
 ```toml
 [dependencies]
-whisker-firebase = { version = "0.1", features = ["firestore", "auth", "storage", "messaging"] }
+whisker-firebase = { version = "0.1", features = ["firestore", "auth", "storage", "messaging", "analytics", "crashlytics"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -15,6 +15,8 @@ serde = { version = "1", features = ["derive"] }
 | `auth` | `whisker-firebase-auth` | Firebase Authentication |
 | `storage` | `whisker-firebase-storage` | Cloud Storage for Firebase |
 | `messaging` | `whisker-firebase-messaging` | Firebase Cloud Messaging |
+| `analytics` | `whisker-firebase-analytics` | Google Analytics for Firebase |
+| `crashlytics` | `whisker-firebase-crashlytics` | Firebase Crashlytics |
 
 No service is enabled by default. Each feature activates an optional crate that ships its own Kotlin/Swift sources and SDK dependency, and CNG links only the selected ones. These are ordinary Cargo packages; adding them to this repository does not publish them to crates.io.
 
@@ -43,7 +45,7 @@ Android initializes Firebase from generated resources. On iOS, `FirebaseApp::ini
 
 ## Errors
 
-Every operation returns `whisker_firebase::Result<T>`. `FirebaseError` has a `service` (`app`, `firestore`, `auth`, `storage`, `messaging`) and a `code` using the JavaScript SDK's names, and displays as `firestore/permission-denied: …`:
+Every operation returns `whisker_firebase::Result<T>`. `FirebaseError` has a `service` (`app`, `firestore`, `auth`, `storage`, `messaging`, `analytics`, `crashlytics`) and a `code` using the JavaScript SDK's names, and displays as `firestore/permission-denied: …`:
 
 ```rust,ignore
 match doc.get().await {
@@ -194,9 +196,55 @@ To receive messages, upload an APNs authentication key in the Firebase console (
 - **iOS integration.** The module becomes the `UNUserNotificationCenter` delegate at launch and relies on Firebase's default AppDelegate proxy for the APNs token, so keep `FirebaseAppDelegateProxyEnabled` enabled. Code that replaces the notification center delegate stops these callbacks.
 - **Tokens.** `token`, `delete_token`, `on_token_refresh`, `set_auto_init_enabled`, and `apns_token` (iOS) are available. Firebase's installation-ID registration mode is not supported.
 
+## Analytics
+
+```rust,ignore
+use whisker_firebase::analytics::{Analytics, Consent, params};
+
+let analytics = Analytics::instance()?;
+analytics.log_event("select_content", params! { "content_type" => "image", "item_id" => 42 })?;
+analytics.log_screen_view("Settings", None)?; // call from your router
+analytics.set_user_id(Some("user-42"))?;
+analytics.set_user_property("favorite_food", Some("pizza"))?;
+analytics.set_consent(Consent::new().analytics_storage(true).ad_storage(false))?;
+let instance_id = analytics.app_instance_id().await?;
+```
+
+Parameter values are strings, integers, doubles (booleans become 0/1), or `Param::Items` for the ecommerce `items` list. Firebase's limits are checked before logging, because the SDKs drop invalid events silently: names use up to 40 letters, digits, and underscores and cannot start with `firebase_`, `google_`, or `ga_`; events carry up to 25 parameters; string values are limited to 100 characters; user properties are limited to 24-character names and 36-character values. Whisker has no native screens, so screen views are only logged when you call `log_screen_view`.
+
+Enabling `analytics` runs its CNG plugin, which adds `-ObjC` to the iOS app's linker flags (required by the Analytics binary SDK). To collect nothing until the user consents, start with collection disabled and enable it at runtime with `set_collection_enabled(true)`:
+
+```rust,ignore
+app.project_plugin::<whisker_firebase::analytics::WhiskerFirebaseAnalytics>(|analytics| {
+    analytics.collection_enabled = Some(false);
+});
+```
+
+## Crashlytics
+
+```rust,ignore
+use whisker_firebase::crashlytics::Crashlytics;
+
+let crashlytics = Crashlytics::instance()?;
+crashlytics.record_panics(); // report Rust panics as crashes with their message
+crashlytics.set_user_id("user-42")?;
+crashlytics.set_custom_key("plan", "pro")?;
+crashlytics.log("opened settings")?;
+if let Err(error) = sync().await {
+    crashlytics.record_error(&error)?; // non-fatal with the error's source chain
+}
+if crashlytics.did_crash_on_previous_execution()? { /* offer feedback */ }
+```
+
+Native crashes are reported on the next launch, including the abort that ends a Rust panic. Enabling `crashlytics` runs its CNG plugin, which applies the Crashlytics Gradle plugin (3.0.8) after Google Services and links `firebase-crashlytics-ndk` on Android, so native crashes are captured, and adds a Release-only build phase that uploads the iOS app's dSYMs (`upload_symbols = false` removes it). `collection_enabled = Some(false)` keeps crash reports on the device until the app calls `set_collection_enabled(true)` or `send_unsent_reports()`; while collection is disabled, the iOS SDK does not record logs, custom keys, or non-fatal errors.
+
+- **Panics.** Without `record_panics`, a panic appears as an anonymous native abort. With it, the crash is reported as `RustPanic` with the panic message and location (plus the Rust backtrace when the library keeps debug info), written synchronously through the SDK's crash handler (the regular non-fatal API is asynchronous and would not survive the abort).
+- **Symbols.** Rust code lives in the WhiskerDriver framework on iOS and in the app's native library on Android. Upload their symbols (Crashlytics `upload-symbols` for the Rust dSYM on iOS, the Gradle plugin's native symbol upload on Android) to symbolicate Rust frames in native crashes.
+- **Testing.** `crash()` crashes from native code. On iOS, Crashlytics does not capture crashes while the debugger is attached.
+
 ## Not yet supported
 
-Transactions, OR/composite filters, snapshot cursors, aggregate `sum`/`average`, persistence settings, named apps/databases/buckets, phone and multi-factor auth, provider sign-in UI, upload progress, background message handlers, and other Firebase services (Analytics, Remote Config, Functions, Realtime Database, Crashlytics). Desktop and Web calls return `unsupported-platform`.
+Transactions, OR/composite filters, snapshot cursors, aggregate `sum`/`average`, persistence settings, named apps/databases/buckets, phone and multi-factor auth, provider sign-in UI, upload progress, background message handlers, Analytics ecommerce helpers beyond `items`, and other Firebase services (Remote Config, Functions, Realtime Database, App Check, Performance Monitoring). Desktop and Web calls return `unsupported-platform`.
 
 ## Local smoke test
 
@@ -208,7 +256,7 @@ firebase emulators:start --only auth,firestore,storage --project demo-whisker-fi
   --config packages/whisker-firebase/example/firebase.json
 
 cargo run -p whisker-cli --bin whisker -- --no-tui run ios \
-  --manifest-path packages/whisker-firebase/example/Cargo.toml --features firestore,auth,storage,messaging
+  --manifest-path packages/whisker-firebase/example/Cargo.toml --features firestore,auth,storage,messaging,analytics,crashlytics
 # Or replace ios with android, using the Android Emulator.
 ```
 
@@ -223,7 +271,7 @@ When executing a configuration binary directly, pass app feature selection **aft
 
 ```sh
 cargo run -p whisker-firebase-example --bin whisker-config \
-  --features whisker-config -- ios android --features firestore,auth,storage,messaging
+  --features whisker-config -- ios android --features firestore,auth,storage,messaging,analytics,crashlytics
 ```
 
 The Cargo flags before `--` compile the generator; the flags after it select the application dependency graph used by CNG and the native build.

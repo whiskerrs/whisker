@@ -18,7 +18,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct FirebaseError {
-    /// `app`, `firestore`, `auth`, `storage`, or `messaging`.
+    /// `app`, `firestore`, `auth`, `storage`, `messaging`, `analytics`, or `crashlytics`.
     pub service: &'static str,
     /// The service-specific error code, e.g. `not-found` or `email-already-in-use`.
     pub code: String,

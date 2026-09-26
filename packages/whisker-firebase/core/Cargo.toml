@@ -22,3 +22,5 @@ ios = { manifest = "Package.swift" }
 [dependencies]
 whisker = { workspace = true }
 serde = { workspace = true }
+whisker-plugin = { workspace = true }
+anyhow = { workspace = true }

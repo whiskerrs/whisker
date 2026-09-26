@@ -21,6 +21,8 @@ firestore = ["dep:whisker-firebase-firestore"]
 auth = ["dep:whisker-firebase-auth"]
 storage = ["dep:whisker-firebase-storage"]
 messaging = ["dep:whisker-firebase-messaging"]
+analytics = ["dep:whisker-firebase-analytics"]
+crashlytics = ["dep:whisker-firebase-crashlytics"]
 
 [package.metadata.whisker.plugins.whisker-firebase]
 bin = "whisker-firebase-plugin"
@@ -38,6 +40,8 @@ whisker-firebase-firestore = { path = "firestore", version = "0.1.0", optional =
 whisker-firebase-auth = { path = "auth", version = "0.1.0", optional = true }
 whisker-firebase-storage = { path = "storage", version = "0.1.0", optional = true }
 whisker-firebase-messaging = { path = "messaging", version = "0.1.0", optional = true }
+whisker-firebase-analytics = { path = "analytics", version = "0.1.0", optional = true }
+whisker-firebase-crashlytics = { path = "crashlytics", version = "0.1.0", optional = true }
 whisker-plugin = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -46,3 +50,4 @@ plist = { version = "1.8", default-features = false }
 
 [dev-dependencies]
 whisker-cng = { workspace = true }
+whisker-firebase-crashlytics = { path = "crashlytics" }
