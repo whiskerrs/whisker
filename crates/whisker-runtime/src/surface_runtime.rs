@@ -22,7 +22,7 @@ use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     Accessibility, BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior,
     HostPresentationUpdate, InputEvent, InputEventError, MeasurementReady, NodeId, PaintColor,
-    ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
+    PointerInput, ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
 };
 #[cfg(test)]
 use whisker_engine::whisker_style::ComputedTransformFunction;
@@ -431,6 +431,7 @@ impl SurfaceRuntime {
                 background_resources: BackgroundResourceManager::default(),
                 mutation_batch: None,
                 list_layout_requested: false,
+                active_pointers: Vec::new(),
                 #[cfg(test)]
                 surface_snapshot_count: 0,
                 #[cfg(test)]
@@ -546,6 +547,12 @@ impl SurfaceRuntime {
         })
     }
 
+    /// Forgets every pointer that is down. Hosts end no pointer stream when
+    /// the surface stops receiving input, so the owner calls this instead.
+    pub(crate) fn clear_active_pointers(&self) {
+        self.state.borrow_mut().active_pointers.clear();
+    }
+
     /// Hit-tests and routes one Host-normalized event through Rust listeners.
     pub fn dispatch_input(&self, event: &InputEvent) -> Result<InputDispatch, RuntimeInputError> {
         self.dispatch_input_with_presentation(event, &[])
@@ -574,6 +581,7 @@ impl SurfaceRuntime {
                     return Err(RuntimeInputError::InvalidPresentation);
                 }
             }
+            track_active_pointer(&mut state.active_pointers, event);
             for update in presentation {
                 match *update {
                     HostPresentationUpdate::ScrollOffset { node, offset } => {
@@ -691,7 +699,11 @@ impl SurfaceRuntime {
             (
                 target,
                 firings,
-                input_body(event, state.element_target_value(logical)),
+                input_body(
+                    event,
+                    &state.active_pointers,
+                    state.element_target_value(logical),
+                ),
             )
         };
 
@@ -1185,6 +1197,9 @@ struct BindingState {
     background_resources: BackgroundResourceManager,
     mutation_batch: Option<MutationBatch>,
     list_layout_requested: bool,
+    // Down order is what `touches` exposes, so a hash map would reshuffle
+    // fingers between the events of one gesture.
+    active_pointers: Vec<PointerInput>,
     #[cfg(test)]
     surface_snapshot_count: usize,
     #[cfg(test)]

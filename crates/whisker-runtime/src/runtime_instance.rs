@@ -824,6 +824,7 @@ impl RuntimeInstance {
         self.require(RuntimeLifecycle::Running, "pause")?;
         self.wake_enabled.store(false, Ordering::Release);
         self.activations.borrow_mut().clear();
+        self.surface.clear_active_pointers();
         self.pending_host_events.borrow_mut().clear();
         let owner = self.owner.expect("a running runtime has a root owner");
         let surface = self.surface.clone();
@@ -870,6 +871,7 @@ impl RuntimeInstance {
         });
         self.pending_host_events.borrow_mut().clear();
         self.activations.borrow_mut().clear();
+        self.surface.clear_active_pointers();
         self.context.shutdown();
         self.lifecycle = RuntimeLifecycle::Unmounted;
         Ok(())
@@ -889,6 +891,7 @@ impl RuntimeInstance {
         self.require(RuntimeLifecycle::Running, "remount the application root")
             .map_err(RuntimeEventError::Lifecycle)?;
         self.activations.borrow_mut().clear();
+        self.surface.clear_active_pointers();
         let previous = self
             .owner
             .take()

@@ -1790,6 +1790,188 @@ fn touch_stream_stays_routed_to_its_pointer_down_target() {
     );
 }
 
+type TouchRecord = (String, Vec<(i64, f64)>, Vec<i64>);
+
+struct TouchSurface {
+    runtime: RuntimeInstance,
+    surface: SurfaceRuntime,
+    log: Rc<RefCell<Vec<TouchRecord>>>,
+}
+
+impl TouchSurface {
+    fn mount(id: u64) -> Self {
+        let surface = surface(id);
+        let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let record = {
+            let log = Rc::clone(&log);
+            move |event: whisker::event::TouchEvent| {
+                log.borrow_mut().push((
+                    event.kind,
+                    event
+                        .touches
+                        .iter()
+                        .map(|touch| (touch.identifier, touch.page_x))
+                        .collect(),
+                    event
+                        .changed_touches
+                        .iter()
+                        .map(|touch| touch.identifier)
+                        .collect(),
+                ));
+            }
+        };
+        let (start, moved, end, cancel, tap) = (
+            record.clone(),
+            record.clone(),
+            record.clone(),
+            record.clone(),
+            record,
+        );
+        runtime
+            .mount(move || {
+                render! {
+                    View(
+                        style: css!(width: px(100), height: px(50)),
+                        on_touchstart: start,
+                        on_touchmove: moved,
+                        on_touchend: end,
+                        on_touchcancel: cancel,
+                        on_tap: tap,
+                    )
+                }
+            })
+            .unwrap();
+        let mut measurements = NoMeasurement;
+        let mut sink = RecordingRenderer::new(surface.surface());
+        runtime
+            .drive_frame(
+                1.0,
+                StyleEnvironment::new(100.0, 50.0, 1.0, 14.0),
+                1,
+                1,
+                &mut measurements,
+                &mut sink,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+        Self {
+            runtime,
+            surface,
+            log,
+        }
+    }
+
+    fn touch(&self, timestamp_ms: f64, kind: InputEventKind, id: u64, x: f32) {
+        let lifted = matches!(
+            kind,
+            InputEventKind::PointerUp | InputEventKind::PointerCancel
+        );
+        self.runtime
+            .dispatch_input(&InputEvent {
+                presentation_revision: None,
+                surface: self.surface.surface(),
+                timestamp_ms,
+                kind,
+                pointer: Some(PointerInput {
+                    id: PointerId::new(id).unwrap(),
+                    kind: PointerKind::Touch,
+                    position: InputPoint { x, y: 25.0 },
+                    buttons: u32::from(!lifted),
+                    changed_button: -1,
+                }),
+                target: None,
+                detail: WhiskerValue::Null,
+            })
+            .unwrap();
+    }
+
+    fn take(&self) -> Vec<TouchRecord> {
+        std::mem::take(&mut *self.log.borrow_mut())
+    }
+}
+
+fn touch_record(kind: &str, touches: &[(i64, f64)], changed: &[i64]) -> TouchRecord {
+    (kind.to_owned(), touches.to_vec(), changed.to_vec())
+}
+
+#[test]
+fn touches_lists_every_finger_down_in_touchstart_order() {
+    let surface = TouchSurface::mount(91);
+
+    surface.touch(2.0, InputEventKind::PointerDown, 4, 20.0);
+    surface.touch(3.0, InputEventKind::PointerDown, 5, 60.0);
+    surface.touch(4.0, InputEventKind::PointerMove, 5, 80.0);
+    surface.touch(5.0, InputEventKind::PointerMove, 4, 10.0);
+
+    assert_eq!(
+        surface.take(),
+        [
+            touch_record("touchstart", &[(4, 20.0)], &[4]),
+            touch_record("touchstart", &[(4, 20.0), (5, 60.0)], &[5]),
+            touch_record("touchmove", &[(4, 20.0), (5, 80.0)], &[5]),
+            touch_record("touchmove", &[(4, 10.0), (5, 80.0)], &[4]),
+        ]
+    );
+}
+
+#[test]
+fn touches_keeps_only_the_fingers_still_down_after_one_ends() {
+    let surface = TouchSurface::mount(92);
+
+    surface.touch(2.0, InputEventKind::PointerDown, 4, 20.0);
+    surface.touch(3.0, InputEventKind::PointerDown, 5, 60.0);
+    surface.touch(4.0, InputEventKind::PointerDown, 6, 90.0);
+    surface.take();
+    surface.touch(5.0, InputEventKind::PointerUp, 4, 20.0);
+    surface.touch(6.0, InputEventKind::PointerCancel, 6, 90.0);
+    surface.touch(7.0, InputEventKind::PointerMove, 5, 70.0);
+    surface.touch(8.0, InputEventKind::PointerUp, 5, 70.0);
+
+    assert_eq!(
+        surface.take(),
+        [
+            touch_record("touchend", &[(5, 60.0), (6, 90.0)], &[4]),
+            touch_record("touchcancel", &[(5, 60.0)], &[6]),
+            touch_record("touchmove", &[(5, 70.0)], &[5]),
+            touch_record("touchend", &[], &[5]),
+        ]
+    );
+}
+
+#[test]
+fn tap_reports_the_lifted_finger_as_its_touch() {
+    let surface = TouchSurface::mount(93);
+
+    surface.touch(2.0, InputEventKind::PointerDown, 4, 20.0);
+    surface.touch(3.0, InputEventKind::PointerUp, 4, 20.0);
+
+    assert_eq!(
+        surface.take(),
+        [
+            touch_record("touchstart", &[(4, 20.0)], &[4]),
+            touch_record("touchend", &[], &[4]),
+            touch_record("tap", &[(4, 20.0)], &[4]),
+        ]
+    );
+}
+
+#[test]
+fn touches_forgets_fingers_whose_end_was_lost_to_a_pause() {
+    let mut surface = TouchSurface::mount(94);
+
+    surface.touch(2.0, InputEventKind::PointerDown, 4, 20.0);
+    surface.runtime.pause().unwrap();
+    surface.runtime.resume().unwrap();
+    surface.take();
+    surface.touch(3.0, InputEventKind::PointerDown, 5, 60.0);
+
+    assert_eq!(
+        surface.take(),
+        [touch_record("touchstart", &[(5, 60.0)], &[5])]
+    );
+}
+
 #[test]
 fn raw_mouse_stream_synthesizes_cross_host_tap_and_mouse_click() {
     let surface = surface(37);
