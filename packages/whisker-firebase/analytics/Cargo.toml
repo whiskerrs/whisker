@@ -31,11 +31,11 @@ android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 
 [dependencies]
-whisker = { workspace = true }
+whisker = { path = "../../../crates/whisker", version = "0.15.2" }
 whisker-firebase-core = { path = "../core", version = "0.1.0" }
-whisker-plugin = { workspace = true }
+whisker-plugin = { path = "../../../crates/whisker-plugin", version = "0.15.2" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 
 [dev-dependencies]
-whisker-cng = { workspace = true }
+whisker-cng = { path = "../../../crates/whisker-cng", version = "0.15.2" }
