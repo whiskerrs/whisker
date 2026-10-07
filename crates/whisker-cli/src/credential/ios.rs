@@ -1,7 +1,7 @@
 //! `whisker credential ios` — acquire and store the App Store
 //! Connect **Team** API key that powers the whole iOS pipeline
 //! (automatic signing, cloud-managed distribution certificates,
-//! bundle-id auto-registration, and later build upload).
+//! bundle-id auto-registration, and build upload).
 //!
 //! The ceremony this wizard compresses: create one key in the ASC
 //! web UI, then hand whisker three values. Two of the three are
@@ -76,7 +76,7 @@ pub(crate) fn acquire_and_store(store: &whisker_credentials::Store, rel: &str) -
     println!("     (Admin is required for cloud-managed distribution certificates)");
     println!("   - Generate, then **Download API Key**");
     prompt::line("Press Enter to open the page in your browser…")?;
-    open_in_browser(KEYS_URL);
+    prompt::open_in_browser(KEYS_URL);
 
     let p8_path = wait_for_p8()?;
     let key_id = key_id_from(&p8_path)
@@ -169,14 +169,7 @@ fn wait_for_p8() -> Result<PathBuf> {
 }
 
 fn prompt_p8_path() -> Result<PathBuf> {
-    let raw = prompt::line("Path to the downloaded .p8 file (drag & drop works):")?;
-    // Terminal drag & drop escapes spaces; undo the common cases.
-    let cleaned = raw.trim().replace("\\ ", " ");
-    let path = PathBuf::from(cleaned.trim_matches('\'').trim_matches('"'));
-    if !path.is_file() {
-        bail!("{} is not a file", path.display());
-    }
-    Ok(path)
+    prompt::file_path("Path to the downloaded .p8 file (drag & drop works):")
 }
 
 /// Scan for `AuthKey_*.p8` files modified after `cutoff`; newest wins.
@@ -216,15 +209,6 @@ fn looks_like_uuid(s: &str) -> bool {
             .iter()
             .zip(&parts)
             .all(|(len, part)| part.len() == *len && part.chars().all(|c| c.is_ascii_hexdigit()))
-}
-
-/// Best-effort: failure to open a browser is not an error — the URL
-/// is already on screen.
-fn open_in_browser(url: &str) {
-    #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg(url).status();
-    #[cfg(target_os = "linux")]
-    let _ = std::process::Command::new("xdg-open").arg(url).status();
 }
 
 #[cfg(test)]

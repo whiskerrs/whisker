@@ -61,6 +61,7 @@ pub enum OperationKind {
     HotReload,
     Package,
     Open,
+    Upload,
 }
 
 impl OperationKind {
@@ -76,6 +77,7 @@ impl OperationKind {
             Self::HotReload => "hot reload",
             Self::Package => "package",
             Self::Open => "open",
+            Self::Upload => "upload",
         }
     }
 }

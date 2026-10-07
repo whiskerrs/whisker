@@ -116,7 +116,7 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
     build_ui.complete(&ipa);
     match method {
         ExportMethod::AppStoreConnect => {
-            ui::info("upload via Transporter.app, or keep it for `whisker submit` (planned)");
+            ui::info("upload it with `whisker submit ios`");
         }
         ExportMethod::AdHoc => {
             ui::info(

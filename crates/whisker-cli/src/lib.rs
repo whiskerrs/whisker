@@ -15,6 +15,8 @@
 //!   with signing material from the age-encrypted `credentials/`
 //!   store.
 //! - `credential` — wizards that populate that store.
+//! - `submit` — upload a built `.ipa` / `.aab` to App Store Connect /
+//!   Google Play over their REST APIs.
 //! - `fmt` — rustfmt drop-in that also formats `render!` / `css!`.
 //!
 //! ## Internal binaries
@@ -45,6 +47,7 @@ pub mod new_module;
 pub mod platforms;
 pub mod run;
 pub mod rustc_shim;
+pub mod submit;
 pub mod tui;
 
 #[derive(Parser, Debug)]
@@ -103,6 +106,12 @@ enum Command {
     /// directly to rotate or import.
     Credential(credential::CredentialArgs),
 
+    /// Upload a built release artifact to its store — `ios` (.ipa →
+    /// App Store Connect) and `android` (.aab → Google Play). Uses
+    /// the artifact the last `whisker build` produced and the same
+    /// `credentials/` store.
+    Submit(submit::SubmitArgs),
+
     /// Format Rust source — a rustfmt drop-in that ALSO formats
     /// Whisker's `render!` / `css!` macro bodies (which rustfmt leaves
     /// untouched). Respects `rustfmt.toml` only; no whisker-specific
@@ -149,6 +158,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Command::New(a) => new_app::run(a),
         Command::Build(a) => build::run(a, cli.no_tui),
         Command::Credential(a) => credential::run(a),
+        Command::Submit(a) => submit::run(a),
         Command::Fmt(a) => fmt::run(a),
         Command::BuildIos(a) => build_dispatch::run_ios(a),
         Command::BuildAndroid(a) => build_dispatch::run_android(a),
@@ -214,6 +224,18 @@ mod tests {
             Command::Run(args) => assert_eq!(args.target, run::CliTarget::Web),
             other => panic!("expected Run, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_submit_targets() {
+        let cli = parse(["whisker", "submit", "ios", "--no-wait"]).unwrap();
+        assert!(matches!(cli.command, Command::Submit(_)));
+        let cli = parse([
+            "whisker", "submit", "android", "--track", "beta", "--draft", "--path", "a.aab",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Command::Submit(_)));
+        assert!(parse(["whisker", "submit"]).is_err());
     }
 
     #[test]

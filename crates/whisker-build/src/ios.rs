@@ -545,6 +545,23 @@ pub struct IosReleaseInputs<'a> {
     pub signing: ReleaseSigning<'a>,
 }
 
+fn release_out_root(workspace_root: &Path, package: &str) -> PathBuf {
+    workspace_root
+        .join("target/whisker/ios-release")
+        .join(package)
+}
+
+/// The `.ipa` the last [`archive_and_export`] for `package` left on
+/// disk. Export names it after the app's product name, so this scans
+/// rather than guesses.
+pub fn exported_ipa(workspace_root: &Path, package: &str) -> Option<PathBuf> {
+    std::fs::read_dir(release_out_root(workspace_root, package).join("export"))
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|e| e == "ipa"))
+}
+
 /// `xcodebuild archive` → `xcodebuild -exportArchive` → `.ipa`.
 ///
 /// Signing setup is passed as command-line build settings
@@ -574,9 +591,7 @@ pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
             xcode_project.display(),
         ));
     }
-    let out_root = workspace_root
-        .join("target/whisker/ios-release")
-        .join(package);
+    let out_root = release_out_root(workspace_root, package);
     std::fs::create_dir_all(&out_root).with_context(|| format!("mkdir {}", out_root.display()))?;
     let archive_path = out_root.join(format!("{scheme}.xcarchive"));
 
@@ -657,19 +672,12 @@ pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
     }
     export_step.done("");
 
-    // Export names the ipa after the app's product name; scan rather
-    // than guess.
-    let ipa = std::fs::read_dir(&export_dir)
-        .with_context(|| format!("read {}", export_dir.display()))?
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| p.extension().is_some_and(|e| e == "ipa"))
-        .ok_or_else(|| {
-            anyhow!(
-                "export succeeded but no .ipa found under {}",
-                export_dir.display(),
-            )
-        })?;
+    let ipa = exported_ipa(workspace_root, package).ok_or_else(|| {
+        anyhow!(
+            "export succeeded but no .ipa found under {}",
+            export_dir.display(),
+        )
+    })?;
     Ok(ipa)
 }
 
