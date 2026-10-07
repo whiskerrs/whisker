@@ -68,6 +68,23 @@ enum Body<'a> {
     File(&'a Path),
 }
 
+fn send(req: ureq::Request, body: Body) -> Result<Result<ureq::Response, ureq::Error>> {
+    Ok(match body {
+        // Google answers a bodyless POST that carries no Content-Length
+        // with 411, so an explicit empty body is sent instead.
+        Body::None => req.send_bytes(&[]),
+        Body::Json(json) => req.send_json(json),
+        Body::File(path) => {
+            let file =
+                std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+            let len = file.metadata()?.len();
+            req.set("Content-Type", "application/octet-stream")
+                .set("Content-Length", &len.to_string())
+                .send(file)
+        }
+    })
+}
+
 impl<'a> Client<'a> {
     /// Exchange the service-account key for an access token. Proves
     /// the key itself works; says nothing about Play Console access.
@@ -106,18 +123,7 @@ impl<'a> Client<'a> {
         let url = format!("{API}{path}");
         let req =
             ureq::request(method, &url).set("Authorization", &format!("Bearer {}", self.token));
-        let result = match body {
-            Body::None => req.call(),
-            Body::Json(json) => req.send_json(json),
-            Body::File(path) => {
-                let file = std::fs::File::open(path)
-                    .with_context(|| format!("open {}", path.display()))?;
-                let len = file.metadata()?.len();
-                req.set("Content-Type", "application/octet-stream")
-                    .set("Content-Length", &len.to_string())
-                    .send(file)
-            }
-        };
+        let result = send(req, body)?;
         match result {
             Ok(resp) => {
                 let text = resp.into_string().context("read Play API response")?;
@@ -313,6 +319,40 @@ mod tests {
             &URL_SAFE_NO_PAD.decode(parts[2]).unwrap(),
         )
         .expect("signature verifies");
+    }
+
+    #[test]
+    fn a_bodyless_post_declares_an_empty_body() {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut headers = Vec::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                headers.push(line.trim().to_ascii_lowercase());
+            }
+            reader
+                .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            headers
+        });
+
+        send(ureq::post(&format!("http://{addr}/edits")), Body::None)
+            .unwrap()
+            .unwrap();
+        let headers = server.join().unwrap();
+        assert!(
+            headers.iter().any(|h| h == "content-length: 0"),
+            "{headers:?}"
+        );
     }
 
     #[test]
