@@ -4023,6 +4023,7 @@ dependencies = [
  "base64 0.23.1",
  "indexmap 2.14.2",
  "quick-xml 0.42.0",
+ "serde",
  "time",
 ]
 
@@ -6748,11 +6749,14 @@ dependencies = [
  "indicatif",
  "libc",
  "p256",
+ "plist",
  "rand 0.8.8",
  "ratatui",
+ "ring",
  "rpassword",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "toml 0.8.23",
  "ureq",
@@ -6762,6 +6766,7 @@ dependencies = [
  "whisker-credentials",
  "whisker-dev-server",
  "whisker-fmt",
+ "zip",
 ]
 
 [[package]]

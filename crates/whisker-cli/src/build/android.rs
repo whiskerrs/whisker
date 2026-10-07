@@ -92,7 +92,10 @@ pub fn run(artifact: ReleaseArtifact, args: Args, no_tui: bool) -> Result<()> {
     build_ui.complete(&artifact_path);
     match artifact {
         ReleaseArtifact::AppBundle => {
-            ui::info("upload to Play Console (first release: create the app there manually)");
+            ui::info(
+                "upload it with `whisker submit android` (first release: create the app \
+                 and upload in Play Console manually)",
+            );
         }
         ReleaseArtifact::Apk => {
             ui::info("ready for direct distribution (Firebase App Distribution, sideload, …)");

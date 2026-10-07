@@ -1,8 +1,7 @@
-//! Minimal App Store Connect API client — exactly enough for the
-//! `whisker credential ios` wizard to validate a freshly created key
-//! and resolve its team id. Deliberately not a general client:
-//! builds authenticate through xcodebuild's own `-authenticationKey*`
-//! flags, so the only REST consumer today is the wizard.
+//! App Store Connect API client for the calls whisker makes itself:
+//! key validation in the `whisker credential ios` wizard and build
+//! upload in `whisker submit ios`. Builds authenticate through
+//! xcodebuild's own `-authenticationKey*` flags instead.
 
 use anyhow::{Context, Result, anyhow};
 use base64::Engine;
@@ -50,22 +49,39 @@ fn bearer_token(auth: &KeyAuth) -> Result<String> {
     ))
 }
 
-/// One authenticated GET against the ASC API, with the wizard's
-/// error translation.
-fn get(auth: &KeyAuth, path: &str) -> Result<serde_json::Value> {
+/// One authenticated ASC API call. The token is minted per call so a
+/// long upload between two calls can't outlive its 10-minute expiry.
+fn request(
+    auth: &KeyAuth,
+    method: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value> {
     let token = bearer_token(auth)?;
     let url = format!("https://api.appstoreconnect.apple.com{path}");
-    match ureq::get(&url)
-        .set("Authorization", &format!("Bearer {token}"))
-        .call()
-    {
-        Ok(resp) => resp.into_json().context("parse ASC API response JSON"),
+    let req = ureq::request(method, &url).set("Authorization", &format!("Bearer {token}"));
+    let result = match body {
+        Some(body) => req.send_json(body),
+        None => req.call(),
+    };
+    match result {
+        Ok(resp) => {
+            let text = resp.into_string().context("read ASC API response")?;
+            if text.trim().is_empty() {
+                return Ok(serde_json::Value::Null);
+            }
+            serde_json::from_str(&text).context("parse ASC API response JSON")
+        }
         Err(ureq::Error::Status(code, resp)) => {
             let body = resp.into_string().unwrap_or_default();
             Err(translate_api_error(code, &body))
         }
-        Err(e) => Err(e).with_context(|| format!("GET {url}")),
+        Err(e) => Err(e).with_context(|| format!("{method} {url}")),
     }
+}
+
+fn get(auth: &KeyAuth, path: &str) -> Result<serde_json::Value> {
+    request(auth, "GET", path, None)
 }
 
 /// Turn an ASC error response into an actionable message. The body's
@@ -125,6 +141,181 @@ pub fn resolve_team_id(auth: &KeyAuth) -> Result<Option<String>> {
         .pointer("/data/0/attributes/seedId")
         .and_then(|v| v.as_str())
         .map(str::to_string))
+}
+
+/// App Store Connect's id for the app record with this bundle id.
+/// `None` = no record yet; the API cannot create one.
+pub fn find_app_id(auth: &KeyAuth, bundle_id: &str) -> Result<Option<String>> {
+    let json = get(
+        auth,
+        &format!("/v1/apps?filter[bundleId]={bundle_id}&fields[apps]=bundleId"),
+    )?;
+    Ok(app_id_in(&json, bundle_id))
+}
+
+// `filter[bundleId]` can return other apps too, so match exactly.
+fn app_id_in(json: &serde_json::Value, bundle_id: &str) -> Option<String> {
+    json.get("data")?
+        .as_array()?
+        .iter()
+        .find(|app| {
+            app.pointer("/attributes/bundleId").and_then(|v| v.as_str()) == Some(bundle_id)
+        })?
+        .get("id")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// One part of a reserved file upload: send `length` bytes starting
+/// at `offset` to `url` with exactly these headers.
+#[derive(serde::Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadOperation {
+    pub method: String,
+    pub url: String,
+    pub offset: Option<u64>,
+    pub length: Option<u64>,
+    #[serde(default)]
+    pub request_headers: Vec<HttpHeader>,
+}
+
+#[derive(serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct HttpHeader {
+    pub name: String,
+    pub value: String,
+}
+
+fn resource_id(json: &serde_json::Value, what: &str) -> Result<String> {
+    json.pointer("/data/id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("App Store Connect returned no id for the new {what}"))
+}
+
+pub fn create_build_upload(
+    auth: &KeyAuth,
+    app_id: &str,
+    short_version: &str,
+    bundle_version: &str,
+) -> Result<String> {
+    let json = request(
+        auth,
+        "POST",
+        "/v1/buildUploads",
+        Some(serde_json::json!({
+            "data": {
+                "type": "buildUploads",
+                "attributes": {
+                    "cfBundleShortVersionString": short_version,
+                    "cfBundleVersion": bundle_version,
+                    "platform": "IOS",
+                },
+                "relationships": {
+                    "app": { "data": { "type": "apps", "id": app_id } },
+                },
+            },
+        })),
+    )?;
+    resource_id(&json, "build upload")
+}
+
+/// Declare the ipa and receive where to send its bytes.
+pub fn reserve_build_upload_file(
+    auth: &KeyAuth,
+    upload_id: &str,
+    file_name: &str,
+    file_size: u64,
+) -> Result<(String, Vec<UploadOperation>)> {
+    let json = request(
+        auth,
+        "POST",
+        "/v1/buildUploadFiles",
+        Some(serde_json::json!({
+            "data": {
+                "type": "buildUploadFiles",
+                "attributes": {
+                    "assetType": "ASSET",
+                    "fileName": file_name,
+                    "fileSize": file_size,
+                    "uti": "com.apple.ipa",
+                },
+                "relationships": {
+                    "buildUpload": { "data": { "type": "buildUploads", "id": upload_id } },
+                },
+            },
+        })),
+    )?;
+    let operations = json
+        .pointer("/data/attributes/uploadOperations")
+        .cloned()
+        .map(serde_json::from_value::<Vec<UploadOperation>>)
+        .transpose()
+        .context("parse uploadOperations")?
+        .unwrap_or_default();
+    if operations.is_empty() {
+        return Err(anyhow!("App Store Connect returned no upload operations"));
+    }
+    Ok((resource_id(&json, "build upload file")?, operations))
+}
+
+pub fn commit_build_upload_file(auth: &KeyAuth, file_id: &str) -> Result<()> {
+    request(
+        auth,
+        "PATCH",
+        &format!("/v1/buildUploadFiles/{file_id}"),
+        Some(serde_json::json!({
+            "data": {
+                "type": "buildUploadFiles",
+                "id": file_id,
+                "attributes": { "uploaded": true },
+            },
+        })),
+    )
+    .map(|_| ())
+}
+
+/// Apple's processing verdict for one build upload.
+#[derive(Debug, PartialEq)]
+pub struct BuildUploadStatus {
+    /// `AWAITING_UPLOAD` | `PROCESSING` | `FAILED` | `COMPLETE`.
+    pub state: String,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+pub fn build_upload_status(auth: &KeyAuth, upload_id: &str) -> Result<BuildUploadStatus> {
+    let json = get(auth, &format!("/v1/buildUploads/{upload_id}"))?;
+    Ok(status_in(&json))
+}
+
+fn status_in(json: &serde_json::Value) -> BuildUploadStatus {
+    let state = json.pointer("/data/attributes/state");
+    let details = |key: &str| -> Vec<String> {
+        state
+            .and_then(|s| s.get(key))
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|d| {
+                        let field = |k: &str| d.get(k).and_then(|v| v.as_str()).unwrap_or("");
+                        format!("{} {}", field("code"), field("description"))
+                            .trim()
+                            .to_string()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    BuildUploadStatus {
+        state: state
+            .and_then(|s| s.get("state"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        errors: details("errors"),
+        warnings: details("warnings"),
+    }
 }
 
 #[cfg(test)]
@@ -210,5 +401,47 @@ mod tests {
         };
         let err = bearer_token(&auth).unwrap_err();
         assert!(err.to_string().contains("PKCS#8"));
+    }
+
+    #[test]
+    fn app_lookup_requires_an_exact_bundle_id_match() {
+        let json = serde_json::json!({ "data": [
+            { "id": "111", "attributes": { "bundleId": "com.example.app.dev" } },
+            { "id": "222", "attributes": { "bundleId": "com.example.app" } },
+        ]});
+        assert_eq!(app_id_in(&json, "com.example.app").as_deref(), Some("222"));
+        assert_eq!(app_id_in(&json, "com.example"), None);
+    }
+
+    #[test]
+    fn upload_operations_parse_from_apples_shape() {
+        let ops: Vec<UploadOperation> = serde_json::from_value(serde_json::json!([{
+            "method": "PUT",
+            "url": "https://example.invalid/part1",
+            "length": 10,
+            "offset": 0,
+            "partNumber": 1,
+            "requestHeaders": [{ "name": "Content-Type", "value": "application/octet-stream" }],
+        }]))
+        .unwrap();
+        assert_eq!(ops[0].length, Some(10));
+        assert_eq!(ops[0].request_headers[0].name, "Content-Type");
+    }
+
+    #[test]
+    fn status_collects_state_details() {
+        let json = serde_json::json!({ "data": { "attributes": { "state": {
+            "state": "FAILED",
+            "errors": [{ "code": "90208", "description": "Invalid bundle." }],
+            "warnings": [],
+        }}}});
+        assert_eq!(
+            status_in(&json),
+            BuildUploadStatus {
+                state: "FAILED".into(),
+                errors: vec!["90208 Invalid bundle.".into()],
+                warnings: vec![],
+            }
+        );
     }
 }

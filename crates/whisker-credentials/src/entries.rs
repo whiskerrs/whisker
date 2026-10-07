@@ -11,7 +11,7 @@ use crate::store::{Identity, Store};
 
 /// App Store Connect **Team** API key (Admin role). One entry powers
 /// everything iOS: automatic signing, cloud-managed distribution,
-/// bundle-id auto-registration, and (later) build upload.
+/// bundle-id auto-registration, and build upload.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AscKey {
     /// The `AuthKey_<key_id>.p8` contents (PKCS#8 PEM).
@@ -32,6 +32,16 @@ pub struct KeystoreMeta {
     pub key_alias: String,
 }
 
+/// Google Cloud service-account key authorized in Play Console. Field
+/// names are Google's own: the entry is the downloaded JSON verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PlaystoreServiceAccount {
+    pub client_email: String,
+    /// PKCS#8 PEM (RSA).
+    pub private_key: String,
+    pub token_uri: String,
+}
+
 /// `ios/<bundle_id or "default">/asc.json`
 pub fn ios_asc_rel(bundle_id: Option<&str>) -> String {
     format!("ios/{}/asc.json", bundle_id.unwrap_or("default"))
@@ -45,6 +55,14 @@ pub fn android_keystore_rel(application_id: &str) -> String {
 /// `android/<application_id>/keystore.json`
 pub fn android_meta_rel(application_id: &str) -> String {
     format!("android/{application_id}/keystore.json")
+}
+
+/// `android/<application_id or "default">/playstore.json`
+pub fn android_playstore_rel(application_id: Option<&str>) -> String {
+    format!(
+        "android/{}/playstore.json",
+        application_id.unwrap_or("default")
+    )
 }
 
 /// Decrypted, on-disk iOS signing inputs for one build. Paths live
@@ -80,6 +98,18 @@ impl Store {
         self.has(&default).then_some(default)
     }
 
+    /// Decrypt the App Store Connect key an iOS build or upload for
+    /// `bundle_id` uses. `Ok(None)` = no entry.
+    pub fn asc_key(&self, bundle_id: &str, identity: &Identity) -> Result<Option<AscKey>> {
+        let Some(rel) = self.resolve_ios_rel(bundle_id) else {
+            return Ok(None);
+        };
+        let json = self.get(&rel, identity)?;
+        serde_json::from_slice(&json)
+            .with_context(|| format!("parse decrypted {rel} as AscKey JSON"))
+            .map(Some)
+    }
+
     /// Decrypt + stage the iOS signing inputs for `bundle_id`.
     /// `Ok(None)` = no entry (caller runs the wizard or errors with
     /// the exact `whisker credential ios` invocation to run).
@@ -89,12 +119,9 @@ impl Store {
         identity: &Identity,
         dir: &MaterializedDir,
     ) -> Result<Option<IosSigning>> {
-        let Some(rel) = self.resolve_ios_rel(bundle_id) else {
+        let Some(key) = self.asc_key(bundle_id, identity)? else {
             return Ok(None);
         };
-        let json = self.get(&rel, identity)?;
-        let key: AscKey = serde_json::from_slice(&json)
-            .with_context(|| format!("parse decrypted {rel} as AscKey JSON"))?;
         let key_path = dir.write(&format!("AuthKey_{}.p8", key.key_id), key.p8_pem.as_bytes())?;
         Ok(Some(IosSigning {
             key_path,
@@ -102,6 +129,34 @@ impl Store {
             issuer_id: key.issuer_id,
             team_id: key.team_id,
         }))
+    }
+
+    /// Which Play service-account entry would a submit for
+    /// `application_id` use, if any? Same exact → `default` fallback
+    /// as iOS: one service account serves a whole developer account.
+    pub fn resolve_playstore_rel(&self, application_id: &str) -> Option<String> {
+        let exact = android_playstore_rel(Some(application_id));
+        if self.has(&exact) {
+            return Some(exact);
+        }
+        let default = android_playstore_rel(None);
+        self.has(&default).then_some(default)
+    }
+
+    /// Decrypt the Play service account for `application_id`.
+    /// `Ok(None)` = no entry.
+    pub fn playstore_service_account(
+        &self,
+        application_id: &str,
+        identity: &Identity,
+    ) -> Result<Option<PlaystoreServiceAccount>> {
+        let Some(rel) = self.resolve_playstore_rel(application_id) else {
+            return Ok(None);
+        };
+        let json = self.get(&rel, identity)?;
+        serde_json::from_slice(&json)
+            .with_context(|| format!("parse decrypted {rel} as a service-account key"))
+            .map(Some)
     }
 
     /// Decrypt + stage the Android signing inputs for
@@ -189,6 +244,31 @@ mod tests {
             key.p8_pem
         );
         assert_eq!(signing.team_id, "ABCDE12345");
+    }
+
+    #[test]
+    fn playstore_resolution_falls_back_to_default_and_ignores_extra_fields() {
+        let (_root, store, identity) = store();
+        assert!(store.resolve_playstore_rel("com.example.app").is_none());
+        let downloaded = br#"{"type":"service_account","project_id":"p","client_email":"a@p.iam.gserviceaccount.com","private_key":"PEM","token_uri":"https://oauth2.googleapis.com/token"}"#;
+        store.put(&android_playstore_rel(None), downloaded).unwrap();
+        assert_eq!(
+            store.resolve_playstore_rel("com.example.app"),
+            Some("android/default/playstore.json".to_string())
+        );
+        let account = store
+            .playstore_service_account("com.example.app", &identity)
+            .unwrap()
+            .expect("entry present");
+        assert_eq!(account.client_email, "a@p.iam.gserviceaccount.com");
+
+        store
+            .put(&android_playstore_rel(Some("com.example.app")), downloaded)
+            .unwrap();
+        assert_eq!(
+            store.resolve_playstore_rel("com.example.app"),
+            Some("android/com.example.app/playstore.json".to_string())
+        );
     }
 
     #[test]

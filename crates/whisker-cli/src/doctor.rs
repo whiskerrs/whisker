@@ -393,7 +393,7 @@ fn check_credentials() -> Vec<Check> {
     if !Store::exists(&m.crate_dir) {
         out.push(Check::warn(
             "credentials store",
-            "none yet — created by the first `whisker credential ios|android`",
+            "none yet — created by the first `whisker credential ios|android|playstore`",
         ));
         return out;
     }
@@ -457,6 +457,14 @@ fn check_credentials() -> Vec<Check> {
                 format!("android {application_id}"),
                 "no upload keystore — run `whisker credential android`",
             ));
+        }
+        match store.resolve_playstore_rel(&application_id) {
+            Some(rel) => out.push(Check::ok(format!("playstore {application_id}"), rel)),
+            None => out.push(Check::warn(
+                format!("playstore {application_id}"),
+                "no Play service-account key — run `whisker credential playstore` to use \
+                 `whisker submit android`",
+            )),
         }
     }
     out

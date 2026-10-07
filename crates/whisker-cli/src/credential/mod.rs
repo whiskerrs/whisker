@@ -12,7 +12,7 @@
 //! ## Bootstrap is implicit
 //!
 //! There is deliberately no `init` subcommand: the first
-//! `whisker credential ios` / `android` bootstraps the store
+//! `whisker credential ios` / `android` / `playstore` bootstraps the store
 //! (generates the age key pair, writes `credentials/recipients.txt`)
 //! idempotently before running its wizard. The secret key is shown
 //! exactly once and never persisted — afterwards it arrives via
@@ -21,14 +21,18 @@
 //! ADD credentials without ever holding the secret key.
 
 mod android;
-mod asc;
+pub(crate) mod asc;
+pub(crate) mod google;
 mod ios;
+mod playstore;
 mod prompt;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Subcommand};
 use std::path::Path;
-use whisker_credentials::{AndroidSigning, Identity, MaterializedDir, Store};
+use whisker_credentials::{
+    AndroidSigning, AscKey, Identity, MaterializedDir, PlaystoreServiceAccount, Store,
+};
 
 pub use android::AndroidArgs;
 
@@ -48,12 +52,18 @@ enum Cmd {
     /// app's applicationId and store it encrypted under
     /// `credentials/`. First run also bootstraps the store.
     Android(android::AndroidArgs),
+    /// Walk through creating the Google Cloud service-account key
+    /// that `whisker submit android` uploads with and store it
+    /// encrypted under `credentials/`. First run also bootstraps the
+    /// store.
+    Playstore(playstore::PlaystoreArgs),
 }
 
 pub fn run(args: CredentialArgs) -> Result<()> {
     match args.cmd {
         Cmd::Ios(a) => ios::run(a),
         Cmd::Android(a) => android::run(a),
+        Cmd::Playstore(a) => playstore::run(a),
     }
 }
 
@@ -70,8 +80,8 @@ pub(crate) fn open_or_bootstrap(project_root: &Path) -> Result<Store> {
     }
     if !prompt::is_interactive() {
         bail!(
-            "credentials store not found at {} — run `whisker credential ios` or \
-             `whisker credential android` locally first, then commit the credentials/ directory",
+            "credentials store not found at {} — run a `whisker credential` wizard \
+             locally first, then commit the credentials/ directory",
             Store::dir_for(project_root).display()
         );
     }
@@ -150,14 +160,10 @@ pub(crate) fn obtain_identity(store: &Store) -> Result<Identity> {
     bail!("no valid credential key after 3 attempts")
 }
 
-/// Build pre-step for `whisker build ipa`: staged iOS signing
-/// inputs, with the same two invariants as the Android variant
-/// (CI never creates credentials; keep the guard alive through
-/// xcodebuild).
-pub(crate) fn require_ios_signing(
-    project_root: &Path,
-    bundle_id: &str,
-) -> Result<(MaterializedDir, whisker_credentials::IosSigning)> {
+/// The store an iOS build or upload for `bundle_id` reads its App
+/// Store Connect key from, running the wizard inline when a human is
+/// present and the key is missing. CI never creates credentials.
+fn store_with_asc_key(project_root: &Path, bundle_id: &str) -> Result<Store> {
     let store = if Store::exists(project_root) {
         Store::open(project_root)?
     } else {
@@ -169,7 +175,7 @@ pub(crate) fn require_ios_signing(
                 whisker_credentials::IDENTITY_ENV,
             );
         }
-        println!("iOS release signing isn't set up for this app yet.");
+        println!("iOS credentials aren't set up for this app yet.");
         open_or_bootstrap(project_root)?
     };
 
@@ -183,7 +189,17 @@ pub(crate) fn require_ios_signing(
         println!("No App Store Connect API key stored yet — starting the setup wizard.");
         ios::acquire_and_store(&store, &whisker_credentials::ios_asc_rel(None))?;
     }
+    Ok(store)
+}
 
+/// Build pre-step for `whisker build ipa`: staged iOS signing
+/// inputs. Keep the returned [`MaterializedDir`] alive through
+/// xcodebuild; the key path points into it.
+pub(crate) fn require_ios_signing(
+    project_root: &Path,
+    bundle_id: &str,
+) -> Result<(MaterializedDir, whisker_credentials::IosSigning)> {
+    let store = store_with_asc_key(project_root, bundle_id)?;
     let identity = obtain_identity(&store)?;
     let staging = MaterializedDir::new()?;
     let signing = store
@@ -192,6 +208,62 @@ pub(crate) fn require_ios_signing(
             anyhow!("App Store Connect key entry vanished — re-run `whisker credential ios`")
         })?;
     Ok((staging, signing))
+}
+
+/// Pre-step for `whisker submit ios`: the decrypted App Store
+/// Connect key, held in memory only.
+pub(crate) fn require_asc_key(project_root: &Path, bundle_id: &str) -> Result<AscKey> {
+    let store = store_with_asc_key(project_root, bundle_id)?;
+    let identity = obtain_identity(&store)?;
+    store.asc_key(bundle_id, &identity)?.ok_or_else(|| {
+        anyhow!("App Store Connect key entry vanished — re-run `whisker credential ios`")
+    })
+}
+
+/// Pre-step for `whisker submit android`: the decrypted Play service
+/// account, running the wizard inline when a human is present and
+/// the key is missing. CI never creates credentials.
+pub(crate) fn require_playstore_service_account(
+    project_root: &Path,
+    application_id: &str,
+) -> Result<PlaystoreServiceAccount> {
+    let store = if Store::exists(project_root) {
+        Store::open(project_root)?
+    } else {
+        if !prompt::is_interactive() {
+            bail!(
+                "no credentials store at {} — run `whisker credential playstore` locally, \
+                 commit the credentials/ directory, and set ${} in CI",
+                Store::dir_for(project_root).display(),
+                whisker_credentials::IDENTITY_ENV,
+            );
+        }
+        println!("Play upload credentials aren't set up for this app yet.");
+        open_or_bootstrap(project_root)?
+    };
+
+    if store.resolve_playstore_rel(application_id).is_none() {
+        if !prompt::is_interactive() {
+            bail!(
+                "no Play service-account key in credentials/ — run `whisker credential playstore` \
+                 locally and commit"
+            );
+        }
+        println!("No Play service-account key stored yet — starting the setup wizard.");
+        playstore::acquire_and_store(
+            &store,
+            &whisker_credentials::android_playstore_rel(None),
+            Some(application_id),
+            None,
+        )?;
+    }
+
+    let identity = obtain_identity(&store)?;
+    store
+        .playstore_service_account(application_id, &identity)?
+        .ok_or_else(|| {
+            anyhow!("Play service-account entry vanished — re-run `whisker credential playstore`")
+        })
 }
 
 /// Build pre-step for `whisker build appbundle|apk`: produce staged

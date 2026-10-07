@@ -25,13 +25,16 @@
 //!   ios/<bundle_id>/asc.json.age                    (per-bundle override)
 //!   android/<application_id>/keystore.jks.age       (upload keystore)
 //!   android/<application_id>/keystore.json.age      (passwords + alias)
+//!   android/default/playstore.json.age                   (Play service account)
+//!   android/<application_id>/playstore.json.age          (per-app override)
 //! ```
 //!
 //! iOS resolution falls back `<bundle_id>` → `default` because an
 //! ASC key is team-scoped (one key signs every bundle id in the
 //! team); the per-bundle entry exists for the rare "dev builds ship
-//! under a different Apple team" setup. Android is exact-match only:
-//! an upload keystore is a per-app asset.
+//! under a different Apple team" setup. The Play service account
+//! falls back the same way (it is developer-account-scoped). Upload
+//! keystores are exact-match only: a keystore is a per-app asset.
 //!
 //! ## Boundary
 //!
@@ -46,8 +49,8 @@ mod materialize;
 mod store;
 
 pub use entries::{
-    AndroidSigning, AscKey, IosSigning, KeystoreMeta, android_keystore_rel, android_meta_rel,
-    ios_asc_rel,
+    AndroidSigning, AscKey, IosSigning, KeystoreMeta, PlaystoreServiceAccount,
+    android_keystore_rel, android_meta_rel, android_playstore_rel, ios_asc_rel,
 };
 pub use materialize::MaterializedDir;
 pub use store::{Identity, Store};

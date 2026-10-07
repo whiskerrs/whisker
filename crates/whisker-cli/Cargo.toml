@@ -69,13 +69,18 @@ rand = "0.8"
 # Hidden-input prompts (age secret key at build time, keystore
 # passwords on `whisker credential android --import`).
 rpassword = "7"
-# `whisker credential ios` validates the pasted App Store Connect API
-# key with one real request before storing it. ES256 JWT is built by
-# hand (header.payload signed with the .p8) — p256 is the pure-Rust
-# signer, ureq the tiny blocking HTTP client. No ring/openssl.
+# App Store Connect and Google Play API access for `whisker
+# credential` (key validation) and `whisker submit` (upload). Both
+# JWTs are built by hand: p256 signs Apple's ES256, ring (already in
+# the tree as ureq's TLS backend) signs Google's RS256.
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+ring = "0.17"
 ureq = { version = "2", features = ["json"] }
 base64 = { workspace = true }
+# `whisker submit ios` reads the bundle id and version numbers out of
+# the ipa's own Info.plist (a binary plist inside a zip).
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+plist = "1"
 # Inline TUI for `whisker run` — anchored status bar at the bottom of
 # the terminal, scrollback above for sections/steps/device logs.
 ratatui = { workspace = true }
@@ -89,3 +94,6 @@ ctrlc = "3"
 # `whisker_build::ui` and child subprocesses flows into the Logs
 # pane instead of corrupting the alternate-screen viewport).
 libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

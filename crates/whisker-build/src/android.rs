@@ -580,6 +580,16 @@ pub enum ReleaseArtifact {
     Apk,
 }
 
+const RELEASE_BUNDLE_DIR: &str = "app/build/outputs/bundle/release";
+const RELEASE_BUNDLE_NAME: &str = "app-release.aab";
+
+/// Where [`run_gradle_release`] leaves the `.aab` inside the gen tree.
+pub fn release_bundle_path(gen_android: &Path) -> PathBuf {
+    gen_android
+        .join(RELEASE_BUNDLE_DIR)
+        .join(RELEASE_BUNDLE_NAME)
+}
+
 /// Run the release gradle task for `artifact`, with signing material
 /// injected through `signing_env` (the `WHISKER_ANDROID_*` variables
 /// the generated `app/build.gradle.kts` reads — see the template).
@@ -594,8 +604,8 @@ pub fn run_gradle_release(
     let (task, out_dir, candidates): (&str, &str, &[&str]) = match artifact {
         ReleaseArtifact::AppBundle => (
             ":app:bundleRelease",
-            "app/build/outputs/bundle/release",
-            &["app-release.aab"],
+            RELEASE_BUNDLE_DIR,
+            &[RELEASE_BUNDLE_NAME],
         ),
         ReleaseArtifact::Apk => (
             ":app:assembleRelease",
