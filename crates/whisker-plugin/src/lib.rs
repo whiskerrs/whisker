@@ -85,10 +85,14 @@
 //!      files dropped into `gen/`, path-validated against `..`
 //!      traversal)
 //!
-//! Adding a new typed field is a non-breaking change when the
-//! field is `#[serde(default)]`: older plugin binaries simply
-//! don't touch it, the engine sees the default. Adding a *required*
-//! field is a wire-format break.
+//! `#[serde(default)]` lets newer readers accept a missing field. It does not
+//! preserve new fields through an older plugin that returns the whole context.
+//! Subprocess compatibility requires more than adding defaults to fields.
+//!
+//! [`project`] defines declarative models for all six platforms, a project
+//! plugin contract, and a versioned subprocess protocol.
+//! Android, iOS, macOS, Windows, Linux, and Web generation consume the project model. [`GenerateContext`] remains
+//! the legacy mobile plugin contract; other renderers are not migrated.
 //!
 //! ## Mutation journal
 //!
@@ -116,6 +120,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+
+pub mod project;
 
 // ----------------------------------------------------------------------------
 // PluginConfig trait
@@ -200,10 +206,10 @@ pub trait Plugin {
         &[]
     }
 
-    /// Reject obviously-broken config before any side effects fire.
-    /// The engine runs this on every plugin before scheduling the
-    /// `apply` pass, so a validation failure aborts cleanly without
-    /// leaving a half-mutated IR behind.
+    /// Check this plugin's config immediately before its apply call.
+    /// Plugins are validated and applied one at a time in dependency order.
+    /// An error prevents the engine from returning a completed context; it
+    /// does not roll back external side effects of plugins that already ran.
     ///
     /// Default: accept everything.
     fn validate(&self, _config: &Self::Config) -> anyhow::Result<()> {
@@ -774,10 +780,10 @@ pub struct PluginRequest {
     pub context: GenerateContext,
 }
 
-/// Stdout envelope. The subprocess returns the mutated context;
-/// the engine diffs the journal to confirm the subprocess didn't
-/// forge sequence indices, then merges the new context back into
-/// the running pipeline state.
+/// Stdout envelope containing the mutated context.
+/// The current engine replaces its context with this response and later checks
+/// the returned journal for conflicts. It does not independently reconstruct
+/// mutations or validate the journal's continuity across the subprocess.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginResponse {
     pub context: GenerateContext,

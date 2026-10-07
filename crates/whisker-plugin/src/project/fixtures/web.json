@@ -1,0 +1,104 @@
+{
+  "platform": "web",
+  "project": {
+    "wasm": {
+      "manifest": "Host/Cargo.toml",
+      "package": "example-web",
+      "target": "example_web",
+      "kind": "cdylib",
+      "default_features": false
+    },
+    "title": "Example",
+    "lang": "ja",
+    "base_path": "/example/",
+    "head": [
+      {
+        "id": "head-0",
+        "element": {
+          "name": "meta",
+          "attributes": {
+            "name": "theme-color",
+            "content": "#112233"
+          }
+        }
+      },
+      {
+        "id": "head-1",
+        "element": {
+          "name": "script",
+          "attributes": {
+            "defer": null,
+            "src": "/example/extra.js"
+          }
+        }
+      },
+      {
+        "id": "head-2",
+        "element": {
+          "name": "style",
+          "children": [
+            {
+              "kind": "text",
+              "value": "body { margin: 0; }"
+            }
+          ]
+        }
+      }
+    ],
+    "resources": [
+      {
+        "source": "static/sw.js",
+        "destination": "sw.js",
+        "kind": "file"
+      },
+      {
+        "source": "static/extra.js",
+        "destination": "extra.js",
+        "kind": "file"
+      }
+    ],
+    "manifest": {
+      "path": "manifest.webmanifest",
+      "properties": {
+        "name": "Example",
+        "start_url": "./",
+        "display": "standalone",
+        "share_target": {
+          "action": "share",
+          "method": "POST",
+          "enctype": "multipart/form-data",
+          "params": {
+            "files": [
+              {
+                "name": "photos",
+                "accept": [
+                  "image/*"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "files": {
+      "static/sw.js": {
+        "kind": "generated",
+        "entry": {
+          "contents": "self.addEventListener('fetch', () => {});"
+        }
+      }
+    },
+    "document": "index.html",
+    "generated_artifacts": {
+      "wasm": "pkg/app_bg.wasm",
+      "js": "pkg/app.js"
+    },
+    "service_workers": {
+      "main": {
+        "script": "sw.js",
+        "scope": "/example/",
+        "kind": "module"
+      }
+    }
+  }
+}

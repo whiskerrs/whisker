@@ -6,7 +6,7 @@ use image::imageops::FilterType;
 use whisker_config::{AppIconConfig, Config};
 use whisker_plugin::{Plugin, PluginConfig};
 
-pub(super) fn source(config: &Config, app_dir: &Path) -> Result<Option<Vec<u8>>> {
+pub(crate) fn source(config: &Config, app_dir: &Path) -> Result<Option<Vec<u8>>> {
     let Some(config) = config.plugins.get(AppIconConfig::NAME) else {
         return Ok(None);
     };

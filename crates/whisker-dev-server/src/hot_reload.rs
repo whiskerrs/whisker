@@ -412,7 +412,12 @@ pub(super) fn original_binary_path(config: &Config) -> Result<PathBuf> {
                 .macos
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("target=Macos but Config.macos is None"))?;
-            let executable = macos.target_dir.join("debug").join(&macos.binary_name);
+            let executable = whisker_build::macos::host_executable(
+                &macos.project_dir,
+                &macos.target_dir,
+                whisker_build::Profile::Debug,
+                &macos.binary_name,
+            )?;
             if !executable.is_file() {
                 anyhow::bail!(
                     "no macOS Host executable at {} — the initial Cargo build did not produce it",

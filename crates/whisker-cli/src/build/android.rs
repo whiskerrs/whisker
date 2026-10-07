@@ -14,6 +14,8 @@ use crate::{credential, manifest};
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
+    #[command(flatten)]
+    cargo: manifest::FeatureArgs,
     /// Explicit path to the app's Cargo.toml. Defaults to walking up
     /// from the current directory.
     #[arg(long)]
@@ -21,7 +23,11 @@ pub struct Args {
 }
 
 pub fn run(artifact: ReleaseArtifact, args: Args, no_tui: bool) -> Result<()> {
-    let m = manifest::resolve_for_target(args.manifest_path.as_deref(), Target::Android)?;
+    let m = manifest::resolve_with_selection(
+        args.manifest_path.as_deref(),
+        whisker_cng::GenerationTarget::Android,
+        &args.cargo.selection(),
+    )?;
     let application_id = manifest::android_application_id(&m.config).ok_or_else(|| {
         anyhow!(
             "whisker.rs: app.android(|a| a.application_id(\"…\")) (or app.bundle_id) \

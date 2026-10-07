@@ -26,6 +26,7 @@
 pub mod android;
 pub mod capture;
 pub mod child_guard;
+pub mod desktop;
 pub mod ios;
 pub mod macos;
 pub mod modules;

@@ -1,0 +1,158 @@
+{
+  "platform": "ios",
+  "project": {
+    "apple": {
+      "application": "app",
+      "targets": {
+        "app": {
+          "product_name": "Example",
+          "product_type": "com.apple.product-type.application",
+          "sources": [
+            {
+              "path": "App/AppDelegate.swift"
+            }
+          ],
+          "info_plist": {
+            "CFBundleIdentifier": {
+              "type": "string",
+              "value": "com.example.app"
+            }
+          },
+          "entitlements": {
+            "com.apple.security.application-groups": {
+              "type": "array",
+              "value": [
+                {
+                  "type": "string",
+                  "value": "group.com.example.app"
+                }
+              ]
+            }
+          },
+          "configurations": {
+            "Debug": {},
+            "Release": {}
+          },
+          "dependencies": [
+            {
+              "kind": "swift_product",
+              "package": "native",
+              "product": "ExampleNative"
+            }
+          ],
+          "embeds": [
+            {
+              "destination": "PlugIns",
+              "code_sign_on_copy": true,
+              "source": {
+                "kind": "target",
+                "target": "share"
+              }
+            }
+          ]
+        },
+        "share": {
+          "product_name": "Share",
+          "product_type": "com.apple.product-type.app-extension",
+          "sources": [
+            {
+              "path": "Share/ShareViewController.swift",
+              "compiler_flags": [
+                "-D",
+                "SHARE_EXTENSION"
+              ]
+            }
+          ],
+          "info_plist": {
+            "CFBundleIdentifier": {
+              "type": "string",
+              "value": "com.example.app.share"
+            },
+            "NSExtension": {
+              "type": "dict",
+              "value": {
+                "NSExtensionPointIdentifier": {
+                  "type": "string",
+                  "value": "com.apple.share-services"
+                },
+                "NSExtensionPrincipalClass": {
+                  "type": "string",
+                  "value": "$(PRODUCT_MODULE_NAME).ShareViewController"
+                },
+                "NSExtensionAttributes": {
+                  "type": "dict",
+                  "value": {
+                    "NSExtensionActivationRule": {
+                      "type": "dict",
+                      "value": {
+                        "NSExtensionActivationSupportsImageWithMaxCount": {
+                          "type": "integer",
+                          "value": 10
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "entitlements": {
+            "com.apple.security.application-groups": {
+              "type": "array",
+              "value": [
+                {
+                  "type": "string",
+                  "value": "group.com.example.app"
+                }
+              ]
+            }
+          },
+          "build_settings": {
+            "APPLICATION_EXTENSION_API_ONLY": "YES",
+            "IPHONEOS_DEPLOYMENT_TARGET": "16.0"
+          },
+          "configurations": {
+            "Debug": {},
+            "Release": {}
+          },
+          "resources": [
+            {
+              "kind": "process",
+              "path": "Share/Assets.xcassets"
+            }
+          ]
+        }
+      },
+      "swift_packages": {
+        "native": {
+          "kind": "local",
+          "path": "Native"
+        }
+      },
+      "schemes": {
+        "Example": {
+          "build_targets": [
+            "app"
+          ],
+          "run_target": "app",
+          "run_configuration": "Debug",
+          "archive_configuration": "Release"
+        }
+      },
+      "files": {
+        "App": {
+          "kind": "app_directory",
+          "source": "native/App"
+        },
+        "Share": {
+          "kind": "app_directory",
+          "source": "native/Share"
+        },
+        "Native": {
+          "kind": "app_directory",
+          "source": "native/Package"
+        }
+      }
+    }
+  }
+}

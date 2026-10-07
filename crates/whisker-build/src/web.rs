@@ -67,6 +67,11 @@ pub fn build(config: &WebBuild) -> Result<WebArtifacts> {
 /// Compile the generated composition crate without transforming the result.
 /// Hot Reload preprocesses this artifact before calling [`bindgen`].
 pub fn compile(config: &WebBuild) -> Result<PathBuf> {
+    let plan = whisker_cng::web::load_build_plan(&config.project_dir)?;
+    anyhow::ensure!(
+        plan.wasm.package == config.package,
+        "Web package differs from CNG build plan; regenerate gen/web"
+    );
     std::fs::create_dir_all(&config.target_dir)
         .with_context(|| format!("create {}", config.target_dir.display()))?;
     std::fs::create_dir_all(&config.dist_dir)
@@ -76,18 +81,25 @@ pub fn compile(config: &WebBuild) -> Result<PathBuf> {
     command
         .arg("build")
         .arg("--manifest-path")
-        .arg(config.project_dir.join("Cargo.toml"))
+        .arg(config.project_dir.join(plan.wasm.manifest.as_str()))
         .args(["--target", TARGET])
         .arg("--target-dir")
         .arg(&config.target_dir)
         .arg("--package")
-        .arg(&config.package)
+        .arg(&plan.wasm.package)
+        .arg("--lib")
         .current_dir(&config.project_dir);
     if let Some(flag) = config.profile.cargo_flag() {
         command.arg(flag);
     }
-    if !config.features.is_empty() {
-        command.arg("--features").arg(config.features.join(","));
+    if !plan.wasm.default_features {
+        command.arg("--no-default-features");
+    }
+    let features: Vec<_> = plan.wasm.features.iter().chain(&config.features).collect();
+    if !features.is_empty() {
+        command
+            .arg("--features")
+            .arg(features.into_iter().cloned().collect::<Vec<_>>().join(","));
     }
     if let Some(capture) = &config.capture {
         std::fs::create_dir_all(&capture.rustc_cache_dir).with_context(|| {
@@ -114,7 +126,7 @@ pub fn compile(config: &WebBuild) -> Result<PathBuf> {
     }
     compile_step.done("");
 
-    let crate_stem = config.package.replace('-', "_");
+    let crate_stem = &plan.wasm.target;
     let raw_wasm = config
         .target_dir
         .join(TARGET)
@@ -146,6 +158,16 @@ pub fn bindgen(config: &WebBuild, raw_wasm: &Path) -> Result<WebArtifacts> {
 }
 
 fn bindgen_inner(config: &WebBuild, raw_wasm: &Path) -> Result<WebArtifacts> {
+    let plan = whisker_cng::web::load_build_plan(&config.project_dir)?;
+    let mut files = whisker_cng::web::distribution_files(&config.project_dir, &plan)?;
+    let document = files
+        .remove(&plan.document)
+        .context("Web document missing from distribution")?;
+    let html = String::from_utf8(document.to_bytes()?)?;
+    anyhow::ensure!(
+        html.contains(DEVELOPMENT_MARKER),
+        "Web document is missing the Whisker development marker; regenerate gen/web"
+    );
     if config.dist_dir.exists() {
         std::fs::remove_dir_all(&config.dist_dir)
             .with_context(|| format!("clean {}", config.dist_dir.display()))?;
@@ -177,15 +199,22 @@ fn bindgen_inner(config: &WebBuild, raw_wasm: &Path) -> Result<WebArtifacts> {
         .generate(&config.dist_dir)
         .context("run wasm-bindgen for Web Host")?;
 
-    let index_html = config.dist_dir.join("index.html");
-    let source_index = config.project_dir.join("index.html");
-    let html = std::fs::read_to_string(&source_index)
-        .with_context(|| format!("read {}", source_index.display()))?;
-    anyhow::ensure!(
-        html.contains(DEVELOPMENT_MARKER),
-        "{} is missing the Whisker development marker; regenerate gen/web",
-        source_index.display()
-    );
+    for (path, entry) in files {
+        let path = config.dist_dir.join(path.as_str());
+        anyhow::ensure!(
+            !path.exists(),
+            "static resource collides with wasm-bindgen output: {}",
+            path.display()
+        );
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        std::fs::write(&path, entry.to_bytes()?)?;
+        #[cfg(unix)]
+        if let Some(mode) = entry.mode {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))?;
+        }
+    }
+    let index_html = config.dist_dir.join(plan.document.as_str());
     let bootstrap = if config.development {
         DEVELOPMENT_BOOTSTRAP
     } else {
@@ -220,5 +249,69 @@ mod tests {
                 .replace(DEVELOPMENT_MARKER, DEVELOPMENT_BOOTSTRAP)
                 .contains("WebSocket")
         );
+    }
+
+    #[test]
+    fn bindgen_publishes_declared_resources_and_keeps_development_code_out_of_release() {
+        let root =
+            std::env::temp_dir().join(format!("whisker-web-distribution-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".whisker")).unwrap();
+        let plan = r#"{
+            "version":1,
+            "wasm":{"manifest":"Cargo.toml","package":"fixture","target":"fixture","kind":"cdylib","features":[],"default_features":true},
+            "document":"index.html", "base_path":"/app/",
+            "generated_artifacts":{"js":"whisker_app.js","wasm":"whisker_app_bg.wasm"},
+            "distribution":{"index.html":"index.html","data/nested.txt":"input.txt","sw.js":"sw.js"}
+        }"#;
+        std::fs::write(root.join(".whisker/web-build.json"), plan).unwrap();
+        std::fs::write(
+            root.join("index.html"),
+            format!("<script>{DEVELOPMENT_MARKER}</script>"),
+        )
+        .unwrap();
+        std::fs::write(root.join("input.txt"), "published").unwrap();
+        std::fs::write(root.join("sw.js"), "// worker").unwrap();
+        std::fs::write(root.join("private.txt"), "not distributed").unwrap();
+        let wasm = root.join("input.wasm");
+        std::fs::write(&wasm, b"\0asm\x01\0\0\0").unwrap();
+        let mut config = WebBuild {
+            project_dir: root.clone(),
+            target_dir: root.join("target"),
+            dist_dir: root.join("dist"),
+            package: "fixture".into(),
+            profile: Profile::Debug,
+            features: vec![],
+            capture: None,
+            development: false,
+        };
+        let artifacts = bindgen(&config, &wasm).unwrap();
+        assert!(artifacts.javascript.is_file() && artifacts.wasm.is_file());
+        assert_eq!(
+            std::fs::read_to_string(config.dist_dir.join("data/nested.txt")).unwrap(),
+            "published"
+        );
+        assert!(config.dist_dir.join("sw.js").is_file());
+        assert!(!config.dist_dir.join("private.txt").exists());
+        assert!(
+            !std::fs::read_to_string(&artifacts.index_html)
+                .unwrap()
+                .contains("WebSocket")
+        );
+        std::fs::write(config.dist_dir.join("stale.txt"), "old").unwrap();
+        config.development = true;
+        bindgen(&config, &wasm).unwrap();
+        assert!(!config.dist_dir.join("stale.txt").exists());
+        assert!(
+            std::fs::read_to_string(&artifacts.index_html)
+                .unwrap()
+                .contains("WebSocket")
+        );
+        std::fs::remove_file(root.join("input.txt")).unwrap();
+        assert!(bindgen(&config, &wasm).is_err());
+        assert!(
+            artifacts.index_html.is_file(),
+            "preflight must preserve the old dist on missing input"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

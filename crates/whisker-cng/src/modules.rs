@@ -30,7 +30,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use cargo_metadata::{Metadata, MetadataCommand};
+use cargo_metadata::Metadata;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -127,16 +127,7 @@ impl ResolvedModule {
 /// - A declared manifest that is absent or has the wrong kind/package name
 ///   errors eagerly rather than silently dropping a Host implementation.
 pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedModule>> {
-    let metadata = MetadataCommand::new()
-        .manifest_path(manifest_path)
-        .exec()
-        .with_context(|| {
-            format!(
-                "cargo metadata failed for {} (package: {app_package})",
-                manifest_path.display(),
-            )
-        })?;
-    discover_from_metadata(&metadata, app_package)
+    Ok(crate::ProjectDependencyGraph::resolve(manifest_path, app_package)?.modules)
 }
 
 pub(crate) fn discover_from_metadata(
@@ -144,8 +135,7 @@ pub(crate) fn discover_from_metadata(
     app_package: &str,
 ) -> Result<Vec<ResolvedModule>> {
     // Walk the resolution graph rather than `metadata.packages`: it
-    // encodes activated features / platform deps, so only deps that
-    // would really be linked into the app show up.
+    // has already been restricted by Cargo's package-scoped runtime tree.
     let resolve = metadata
         .resolve
         .as_ref()
@@ -389,9 +379,11 @@ pub struct IosModuleReport {
 #[derive(Debug, Clone, Serialize)]
 pub struct ModulesReport {
     /// Hex SHA-256 of the workspace's `Cargo.lock`. Consumers (the
-    /// Gradle Settings Plugin) key their disk cache on this — Sync
-    /// reuses the cached JSON when the lock file hasn't changed.
+    /// published Gradle Settings Plugin) still expect this field. Generated
+    /// settings refresh the report before that plugin reads its cache.
     pub cargo_lock_sha256: String,
+    /// Cargo inputs used for this discovery pass.
+    pub selection: crate::CargoSelection,
     /// The user app crate the discovery resolved against. Echoed
     /// back so consumers can sanity-check their `whisker { userPackage = ... }`
     /// declaration matches.
@@ -415,8 +407,17 @@ pub struct ModulesReport {
 /// current whatever its version. Both filenames are written — the
 /// shared legacy name (plugin ≤0.4.1) and the per-package one.
 pub fn refresh_gradle_module_cache(workspace_root: &Path, user_package: &str) -> Result<()> {
-    let resolved = discover(&workspace_root.join("Cargo.toml"), user_package)
-        .with_context(|| format!("discover modules for `{user_package}`"))?;
+    let selection = crate::CargoSelection::load(
+        workspace_root,
+        user_package,
+        crate::GenerationTarget::Android,
+    )?;
+    let resolved = crate::ProjectDependencyGraph::resolve_with_selection(
+        &workspace_root.join("Cargo.toml"),
+        user_package,
+        &selection,
+    )?
+    .modules;
     write_gradle_module_cache(workspace_root, user_package, &resolved)
 }
 
@@ -427,7 +428,12 @@ pub fn write_gradle_module_cache(
     resolved: &[ResolvedModule],
 ) -> Result<()> {
     let report = build_modules_report_from_resolved(workspace_root, user_package, resolved)?;
-    let json = serde_json::to_string_pretty(&report).context("serialize modules report")?;
+    write_gradle_report(workspace_root, &report)
+}
+
+/// Publish a fresh report for both current and legacy Gradle plugins.
+pub fn write_gradle_report(workspace_root: &Path, report: &ModulesReport) -> Result<()> {
+    let user_package = &report.user_package;
     let dir = workspace_root.join("target/whisker");
     std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
     for name in [
@@ -435,7 +441,7 @@ pub fn write_gradle_module_cache(
         "module-info.json".to_string(),
     ] {
         let path = dir.join(name);
-        std::fs::write(&path, &json).with_context(|| format!("write {}", path.display()))?;
+        crate::selection::write_json(&path, report)?;
     }
     Ok(())
 }
@@ -448,14 +454,31 @@ pub fn write_gradle_module_cache(
 /// from directory guessing. Legacy source lists remain reportable during the
 /// package migration.
 pub fn build_modules_report(workspace_root: &Path, user_package: &str) -> Result<ModulesReport> {
-    let manifest_path = workspace_root.join("Cargo.toml");
-    let resolved = discover(&manifest_path, user_package)
-        .with_context(|| format!("discover modules for `{user_package}`"))?;
-
-    build_modules_report_from_resolved(workspace_root, user_package, &resolved)
+    let selection = crate::CargoSelection::load(
+        workspace_root,
+        user_package,
+        crate::GenerationTarget::Android,
+    )?;
+    build_modules_report_with_selection(workspace_root, user_package, &selection)
 }
 
-fn build_modules_report_from_resolved(
+pub fn build_modules_report_with_selection(
+    workspace_root: &Path,
+    user_package: &str,
+    selection: &crate::CargoSelection,
+) -> Result<ModulesReport> {
+    let resolved = crate::ProjectDependencyGraph::resolve_with_selection(
+        &workspace_root.join("Cargo.toml"),
+        user_package,
+        selection,
+    )?
+    .modules;
+    let mut report = build_modules_report_from_resolved(workspace_root, user_package, &resolved)?;
+    report.selection = selection.clone();
+    Ok(report)
+}
+
+pub(crate) fn build_modules_report_from_resolved(
     workspace_root: &Path,
     user_package: &str,
     resolved: &[ResolvedModule],
@@ -505,6 +528,11 @@ fn build_modules_report_from_resolved(
 
     Ok(ModulesReport {
         cargo_lock_sha256,
+        selection: crate::CargoSelection::load(
+            workspace_root,
+            user_package,
+            crate::GenerationTarget::Android,
+        )?,
         user_package: user_package.to_string(),
         modules,
     })

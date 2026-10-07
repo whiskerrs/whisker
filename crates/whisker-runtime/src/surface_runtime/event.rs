@@ -16,7 +16,46 @@ pub(super) fn event_mask(kind: &BoundElementKind, name: &str) -> u64 {
         .unwrap_or_else(|| event_class_mask(name))
 }
 
-pub(super) fn input_body(event: &InputEvent, target: WhiskerValue) -> WhiskerValue {
+pub(super) fn track_active_pointer(active: &mut Vec<PointerInput>, event: &InputEvent) {
+    use whisker_engine::whisker_protocol::InputEventKind;
+
+    let Some(pointer) = event.pointer else {
+        return;
+    };
+    let tracked = active.iter().position(|entry| entry.id == pointer.id);
+    match (&event.kind, tracked) {
+        (InputEventKind::PointerDown, None) => active.push(pointer),
+        // A move without a preceding down is hover, which never ends with an
+        // up that would remove it again.
+        (InputEventKind::PointerDown | InputEventKind::PointerMove, Some(index)) => {
+            active[index] = pointer;
+        }
+        (InputEventKind::PointerUp | InputEventKind::PointerCancel, Some(index)) => {
+            active.remove(index);
+        }
+        _ => {}
+    }
+}
+
+fn touch_value(pointer: &PointerInput) -> WhiskerValue {
+    let x = WhiskerValue::Float(f64::from(pointer.position.x));
+    let y = WhiskerValue::Float(f64::from(pointer.position.y));
+    WhiskerValue::map([
+        ("identifier", WhiskerValue::Int(pointer.id.get() as i64)),
+        ("x", x.clone()),
+        ("y", y.clone()),
+        ("pageX", x.clone()),
+        ("pageY", y.clone()),
+        ("clientX", x),
+        ("clientY", y),
+    ])
+}
+
+pub(super) fn input_body(
+    event: &InputEvent,
+    active_pointers: &[PointerInput],
+    target: WhiskerValue,
+) -> WhiskerValue {
     let pointer_kind = event.pointer.map(|pointer| match pointer.kind {
         whisker_engine::whisker_protocol::PointerKind::Mouse => "mouse",
         whisker_engine::whisker_protocol::PointerKind::Touch => "touch",
@@ -47,30 +86,16 @@ pub(super) fn input_body(event: &InputEvent, target: WhiskerValue) -> WhiskerVal
         ("detail", detail),
     ];
     if let Some(pointer) = event.pointer {
-        let touch = WhiskerValue::map([
-            ("identifier", WhiskerValue::Int(pointer.id.get() as i64)),
-            ("x", WhiskerValue::Float(f64::from(pointer.position.x))),
-            ("y", WhiskerValue::Float(f64::from(pointer.position.y))),
-            ("pageX", WhiskerValue::Float(f64::from(pointer.position.x))),
-            ("pageY", WhiskerValue::Float(f64::from(pointer.position.y))),
-            (
-                "clientX",
-                WhiskerValue::Float(f64::from(pointer.position.x)),
-            ),
-            (
-                "clientY",
-                WhiskerValue::Float(f64::from(pointer.position.y)),
-            ),
-        ]);
-        let active_touches = if matches!(
+        let touch = touch_value(&pointer);
+        let mut active_touches = active_pointers.iter().map(touch_value).collect::<Vec<_>>();
+        let ended = matches!(
             event.kind,
             whisker_engine::whisker_protocol::InputEventKind::PointerUp
                 | whisker_engine::whisker_protocol::InputEventKind::PointerCancel
-        ) {
-            Vec::new()
-        } else {
-            vec![touch.clone()]
-        };
+        );
+        if !ended && active_pointers.iter().all(|entry| entry.id != pointer.id) {
+            active_touches.push(touch.clone());
+        }
         entries.extend([
             ("pointerId", WhiskerValue::Int(pointer.id.get() as i64)),
             (

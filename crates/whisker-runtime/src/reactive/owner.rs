@@ -194,7 +194,7 @@ impl Owner {
             // `site.owner` is `None` *during* a remount (the
             // take-then-reinstall window in `remount_one`), so this
             // scan can't evict a site that is mid-flight.
-            with_runtime(|rt| {
+            let stale = with_runtime(|rt| {
                 let stale: Vec<super::component::MountId> = rt
                     .mount_sites
                     .iter()
@@ -206,16 +206,19 @@ impl Owner {
                         }
                     })
                     .collect();
-                for id in stale {
-                    rt.mount_sites.remove(&id);
+                for id in &stale {
+                    rt.mount_sites.remove(id);
                     if let Some(list) = rt.fn_ptr_mounts.get_mut(&fp) {
-                        list.retain(|m| *m != id);
+                        list.retain(|m| m != id);
                         if list.is_empty() {
                             rt.fn_ptr_mounts.remove(&fp);
                         }
                     }
                 }
+                stale
             });
+            // Element ids are reused, so a pending entry must not outlive its site.
+            super::component::forget_pending_mounts(&stale);
         }
 
         if let Some(p) = parent {

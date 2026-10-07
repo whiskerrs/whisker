@@ -147,6 +147,11 @@ jobs:
         env:
           RUSTFLAGS: ""
 
+      - name: Build generated app with embedded Share Extension
+        run: cargo test -p whisker-cng --test ios_project xcode_builds_app_and_embedded_share_extension -- --ignored
+      - name: Build and verify generated macOS bundle
+        run: cargo test -p whisker-build --lib macos
+
   msrv:
     name: MSRV (rust 1.88)
     runs-on: ubuntu-latest

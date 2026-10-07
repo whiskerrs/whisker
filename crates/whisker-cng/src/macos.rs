@@ -5,19 +5,23 @@
 //! both `whisker run desktop` and `whisker build macos`: it owns the Cargo
 //! composition root, bundle metadata, entitlements, and resources.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use whisker_config::Config;
 
 use crate::fingerprint;
 use crate::render::render;
 
-mod icon;
+pub mod application;
+pub(crate) mod icon;
+mod project_render;
+pub use project_render::{
+    MacosBuildPlan, MacosIcon, MacosProjectInputs, bundle_files, icon_files, load_build_plan,
+    render_project, signing_entitlements, sync_project,
+};
 
 const CARGO_TOML: &str = include_str!("templates/macos/Cargo.toml.template");
 const MAIN_RS: &str = include_str!("templates/macos/src/main.rs");
-const INFO_PLIST: &str = include_str!("templates/macos/Info.plist");
-const ENTITLEMENTS: &str = include_str!("templates/macos/Entitlements.plist");
 
 /// Fully resolved inputs for one generated macOS project.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -50,50 +54,28 @@ pub struct MacosInputs {
     pub app_icon_png: Option<Vec<u8>>,
     /// Bumped whenever the generated project shape changes.
     pub template_version: u32,
+    /// Application Cargo inputs included in the generation fingerprint.
+    pub cargo_selection: crate::CargoSelection,
 }
 
 /// Generates or reuses the complete `gen/macos` project.
 pub fn sync(out_dir: &Path, inputs: &MacosInputs) -> Result<bool> {
-    validate(inputs)?;
-    let bytes = serde_json::to_vec(inputs).context("serialize MacosInputs for fingerprint")?;
-    let new_fingerprint = fingerprint::fingerprint(&bytes);
-    let fingerprint_path = out_dir.join(".whisker-fingerprint");
-    if std::fs::read_to_string(&fingerprint_path).is_ok_and(|value| value.trim() == new_fingerprint)
-    {
-        return Ok(false);
-    }
-
-    let icon_images = inputs
-        .app_icon_png
-        .as_deref()
-        .map(icon::render)
-        .transpose()?;
-    clean_managed_tree(out_dir)?;
-    let vars = template_vars(inputs);
-    write_text(
-        &out_dir.join("Cargo.toml"),
-        &render(CARGO_TOML, &vars).context("render macOS Cargo.toml")?,
+    let result = crate::ProjectEngine::with_macos_application(inputs.clone()).compose(
+        &Config::default(),
+        &whisker_plugin::project::ProjectIr::Macos(Default::default()),
     )?;
-    write_text(
-        &out_dir.join("src/main.rs"),
-        &render(MAIN_RS, &vars).context("render macOS main.rs")?,
-    )?;
-    write_text(
-        &out_dir.join("Info.plist"),
-        &render(INFO_PLIST, &vars).context("render macOS Info.plist")?,
-    )?;
-    write_text(&out_dir.join("Entitlements.plist"), ENTITLEMENTS)?;
-    std::fs::create_dir_all(out_dir.join("Resources"))
-        .with_context(|| format!("create {}/Resources", out_dir.display()))?;
-    if let Some(images) = icon_images {
-        let iconset = out_dir.join("AppIcon.iconset");
-        std::fs::create_dir_all(&iconset)?;
-        for (name, png) in images {
-            std::fs::write(iconset.join(name), png).context("write macOS icon image")?;
-        }
-    }
-    write_text(&fingerprint_path, &new_fingerprint)?;
-    Ok(true)
+    let whisker_plugin::project::ProjectIr::Macos(project) = result.project else {
+        unreachable!()
+    };
+    sync_project(
+        out_dir,
+        &MacosProjectInputs {
+            project,
+            app_crate_dir: Some(inputs.user_crate_path.clone()),
+            cargo_selection: inputs.cargo_selection.clone(),
+            template_version: inputs.template_version,
+        },
+    )
 }
 
 /// Resolves macOS fields from the declarative application config.
@@ -103,19 +85,13 @@ pub fn inputs_from(
     user_crate_path: PathBuf,
     whisker_macos_dependency: String,
 ) -> Result<MacosInputs> {
-    let app_name = app_config
-        .name
-        .clone()
-        .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required for macOS"))?;
-    let bundle_id = app_config
-        .bundle_id
-        .clone()
-        .ok_or_else(|| anyhow!("whisker.rs: app.bundle_id(\"…\") is required for macOS"))?;
-    let version = app_config
-        .version
-        .clone()
-        .unwrap_or_else(|| "0.1.0".to_string());
-    let build_number = app_config.build_number.unwrap_or(1);
+    let crate::plugins::application::MacosApplication {
+        app_name,
+        bundle_id,
+        version,
+        build_number,
+        minimum_system_version,
+    } = crate::plugins::application::macos(app_config)?;
     let background = crate::background::AppBackground::resolve(app_config)?;
     let generated_package = format!("{user_package}-whisker-macos");
     let app_icon_png = icon::source(app_config, &user_crate_path)?;
@@ -131,9 +107,10 @@ pub fn inputs_from(
         whisker_macos_dependency,
         whisker_desktop_dependency: format!("{:?}", env!("CARGO_PKG_VERSION")),
         element_modules: Vec::new(),
-        minimum_system_version: "12.0".to_string(),
+        minimum_system_version,
         app_icon_png,
-        template_version: 10,
+        template_version: 12,
+        cargo_selection: crate::CargoSelection::default(),
     })
 }
 
@@ -154,7 +131,6 @@ fn validate(inputs: &MacosInputs) -> Result<()> {
 
 fn template_vars(inputs: &MacosInputs) -> std::collections::HashMap<&'static str, String> {
     let mut vars = std::collections::HashMap::new();
-    vars.insert("app_name", xml_escape(&inputs.app_name));
     vars.insert("app_title_rust", rust_string(&inputs.app_name));
     let background = crate::background::AppBackground::parse(&inputs.background)
         .expect("MacosInputs background is validated when it is resolved");
@@ -162,19 +138,11 @@ fn template_vars(inputs: &MacosInputs) -> std::collections::HashMap<&'static str
     vars.insert("background_red", red.to_string());
     vars.insert("background_green", green.to_string());
     vars.insert("background_blue", blue.to_string());
-    vars.insert("bundle_id", xml_escape(&inputs.bundle_id));
-    vars.insert("version", xml_escape(&inputs.version));
-    vars.insert("build_number", inputs.build_number.to_string());
-    vars.insert(
-        "app_icon_plist",
-        if inputs.app_icon_png.is_some() {
-            "    <key>CFBundleIconFile</key>\n    <string>AppIcon.icns</string>"
-        } else {
-            ""
-        }
-        .to_string(),
-    );
     vars.insert("generated_package", inputs.generated_package.clone());
+    vars.insert(
+        "user_cargo_options",
+        inputs.cargo_selection.dependency_options(),
+    );
     vars.insert("user_package_toml", toml_string(&inputs.user_package));
     vars.insert(
         "user_crate_path_toml",
@@ -196,10 +164,6 @@ fn template_vars(inputs: &MacosInputs) -> std::collections::HashMap<&'static str
         "element_module_config",
         crate::rust_element_module_config(&inputs.element_modules),
     );
-    vars.insert(
-        "minimum_system_version",
-        xml_escape(&inputs.minimum_system_version),
-    );
     vars
 }
 
@@ -211,15 +175,6 @@ fn rust_string(value: &str) -> String {
     format!("{value:?}")
 }
 
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 fn clean_managed_tree(out_dir: &Path) -> Result<()> {
     if !out_dir.exists() {
         return Ok(());
@@ -228,7 +183,10 @@ fn clean_managed_tree(out_dir: &Path) -> Result<()> {
         std::fs::read_dir(out_dir).with_context(|| format!("read {}", out_dir.display()))?
     {
         let path = entry?.path();
-        if path.is_dir() {
+        if path.file_name().is_some_and(|name| name == "target") {
+            continue;
+        }
+        if path.is_dir() && !path.is_symlink() {
             std::fs::remove_dir_all(&path)
                 .with_context(|| format!("remove generated directory {}", path.display()))?;
         } else {
@@ -277,8 +235,43 @@ mod tests {
             element_modules: Vec::new(),
             minimum_system_version: "12.0".into(),
             app_icon_png: None,
-            template_version: 10,
+            template_version: 12,
+            cargo_selection: crate::CargoSelection::default(),
         }
+    }
+
+    #[test]
+    fn feature_selection_updates_the_application_dependency_and_fingerprint() {
+        let root = tempdir();
+        let mut inputs = sample();
+        assert!(sync(&root, &inputs).unwrap());
+        inputs.cargo_selection.features = vec!["auth".into()];
+        inputs.cargo_selection.no_default_features = true;
+        assert!(sync(&root, &inputs).unwrap());
+        let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let app = &manifest["dependencies"]["whisker-app"];
+        assert_eq!(app["default-features"].as_bool(), Some(false));
+        assert_eq!(
+            app["features"].as_array().unwrap(),
+            &[toml::Value::String("auth".into())]
+        );
+        assert!(!sync(&root, &inputs).unwrap());
+        inputs.cargo_selection.features.clear();
+        assert!(sync(&root, &inputs).unwrap());
+        let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            manifest["dependencies"]["whisker-app"]["features"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -360,7 +353,8 @@ mod tests {
             assert!(!sync(&out, &inputs).unwrap());
             let plist = std::fs::read_to_string(out.join("Info.plist")).unwrap();
             assert!(
-                plist.contains("<key>CFBundleIconFile</key>\n    <string>AppIcon.icns</string>")
+                plist.contains("<key>CFBundleIconFile</key>")
+                    && plist.contains("<string>AppIcon.icns</string>")
             );
             assert_eq!(
                 std::fs::read_dir(out.join("AppIcon.iconset"))

@@ -192,10 +192,7 @@ impl Builder {
                     workspace_root: &workspace_root,
                     package: &package,
                     platform: "iphonesimulator",
-                    // The generated Xcode project uses a generic simulator
-                    // destination, which asks for both slices even on an
-                    // Apple Silicon development machine.
-                    archs: &["arm64", "x86_64"],
+                    archs: &[whisker_build::ios::host_simulator_arch()],
                     features: &features,
                 },
                 &built_products,

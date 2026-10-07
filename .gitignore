@@ -71,3 +71,8 @@ examples/**/Cargo.lock
 
 # Playwright MCP debug output
 .playwright-mcp/
+
+# Firebase Emulator Suite logs (e.g. the whisker-firebase example smoke test).
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

@@ -12,6 +12,7 @@
 //! left unattended.
 
 mod android;
+mod desktop;
 mod ios;
 mod macos;
 mod web;
@@ -40,6 +41,10 @@ enum Cmd {
     Ipa(ios::Args),
     /// Native macOS `.app` bundle built from the CNG-generated Cargo project.
     Macos(macos::Args),
+    /// Windows executable and resources (unpackaged, unsigned).
+    Windows(desktop::Args),
+    /// Linux installation tree (bin/ and share/).
+    Linux(desktop::Args),
     /// Static browser bundle (`index.html`, JavaScript glue, and WebAssembly).
     Web(web::Args),
 }
@@ -49,6 +54,8 @@ pub fn run(args: BuildArgs, no_tui: bool) -> Result<()> {
         Cmd::Appbundle(a) => android::run(ReleaseArtifact::AppBundle, a, no_tui),
         Cmd::Apk(a) => android::run(ReleaseArtifact::Apk, a, no_tui),
         Cmd::Ipa(a) => ios::run(a, no_tui),
+        Cmd::Windows(a) => desktop::run(a, no_tui, whisker_cng::GenerationTarget::Windows),
+        Cmd::Linux(a) => desktop::run(a, no_tui, whisker_cng::GenerationTarget::Linux),
         Cmd::Macos(a) => macos::run(a, no_tui),
         Cmd::Web(a) => web::run(a, no_tui),
     }

@@ -425,14 +425,19 @@ on_tap: move |_| {
 
 ## Hot reload — per-component remount
 
-When subsecond patches functions, the runtime:
+When subsecond applies a patch, the runtime:
 
-1. Receives the patched fn pointers from `subsecond::apply_patch`.
-2. For each ptr, finds matching live owners via `component_owners`
-   (populated by `mount_component`, which records `mount_fn`).
-3. For each match: **dispose** the previous component owner (cascading
-   cleanup + node freeing), **re-invoke** the body closure under a fresh
-   owner, and **re-attach** the new body root in place.
+1. Re-reads every live mount site's component source hash through
+   subsecond dispatch (`#[component]` generates `__whisker_body_hash`) and
+   selects the sites whose hash moved. A patch recompiles the whole crate,
+   so the patched fn pointers themselves name every component.
+2. Skips a selected site whose ancestor component was also selected.
+3. For each remaining site: **dispose** the previous component owner
+   (cascading cleanup + node freeing), **re-invoke** the body closure under
+   a fresh owner, and **re-attach** the new body root in place.
+
+See [hot-reload-internals.md](hot-reload-internals.md) for the full-remount
+fallback and the props-layout gate.
 
 `#[component]` wraps the user body in a re-callable closure
 (`mount_component_remountable`), capturing props by move into a factory
@@ -451,10 +456,8 @@ should survive hot-reload belongs in a higher owner — typically an
 
 | Edit | Outcome |
 |---|---|
-| Body of an existing `effect` / `computed` / event handler | New code runs next time; state preserved |
-| Body of an existing dynamic `{expr}` in `render!` | Updates next time deps change; state preserved |
-| Adding an element / `signal` / `effect` in a `#[component]` body | Component remounted; local state lost; parent attachment + sibling order preserved |
-| Editing static styles / attributes | Component remounted; local state lost |
-| Edit to a non-`#[component]` helper invoked via `{helper()}` | Effect re-fires with the patched body; state preserved |
-| Edit to top-level `app()` (`#[whisker::main]`) | Needs a manual restart |
+| Anything inside a `#[component]` fn (elements, styles, `signal`s, `effect` / `computed` / event-handler bodies) | That component remounted; its local state lost; other components' state, parent attachment, and sibling order preserved |
+| The application's root component (the one `app()` renders) | Full remount; all state lost |
+| A non-`#[component]` helper, type, or constant | Full remount; all state lost |
+| Top-level `app()` (`#[whisker::main]`) | Full remount; all state lost |
 </content>

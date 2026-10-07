@@ -1,29 +1,11 @@
 //! Render the iOS host project under `gen/ios/` from an
 //! [`Config`].
 //!
-//! The output is a complete Xcode project — `.pbxproj` is rendered
-//! directly from a template, no `xcodegen` step:
-//!
-//! ```text
-//! gen/ios/
-//! ├── <scheme>.xcodeproj/
-//! │   ├── project.pbxproj
-//! │   ├── project.xcworkspace/
-//! │   │   └── contents.xcworkspacedata
-//! │   └── xcshareddata/xcschemes/
-//! │       └── <scheme>.xcscheme
-//! ├── Info.plist
-//! └── Sources/AppDelegate.swift
-//! ```
-//!
-//! Rendering the pbxproj directly (rather than shelling out to
-//! `xcodegen`) keeps `xcodegen` off the user's machine, at the cost of
-//! owning the pbxproj's compatibility with future Xcode versions:
-//! `objectVersion = 77` is the Xcode 15+ format, and if a later Xcode
-//! demands a new one, regenerate the template via xcodegen once and
-//! re-templatize.
+//! Application and feature plugins compose a declarative target graph. The
+//! renderer serializes that graph into PBX objects, schemes, and staged files;
+//! no external project generator is needed. Legacy inputs use the same pipeline.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_config::Config;
@@ -34,12 +16,12 @@ use crate::fingerprint;
 use crate::modules::ResolvedModule;
 use crate::render::{escape_xml, render};
 
-const PBXPROJ: &str = include_str!("templates/ios/Project.xcodeproj/project.pbxproj");
+pub mod application;
+pub(crate) mod builtins;
+mod project_render;
+pub use project_render::{IosProjectInputs, render_project, sync_project};
 const XCWORKSPACEDATA: &str =
     include_str!("templates/ios/Project.xcodeproj/project.xcworkspace/contents.xcworkspacedata");
-const XCSCHEME: &str =
-    include_str!("templates/ios/Project.xcodeproj/xcshareddata/xcschemes/scheme.xcscheme");
-const INFO_PLIST: &str = include_str!("templates/ios/Info.plist");
 const APP_DELEGATE_SWIFT: &str = include_str!("templates/ios/Sources/AppDelegate.swift");
 const LAUNCH_SCREEN_STORYBOARD: &str =
     include_str!("templates/ios/Resources/LaunchScreen.storyboard");
@@ -58,7 +40,8 @@ pub struct IosInputs {
     pub scheme: String,
     pub bundle_id: String,
     pub deployment_target: String,
-    /// Path to the CNG-generated `WhiskerModules` SwiftPM package.
+    /// Legacy input retained for compatibility. The application plugin stages
+    /// and references the package at the canonical `whisker_modules` path.
     pub whisker_modules_path: PathBuf,
     /// Absolute path to the cargo workspace root holding the user app
     /// crate's `[workspace]` `Cargo.toml`. Embedded into the pbxproj's
@@ -72,11 +55,8 @@ pub struct IosInputs {
     /// aggregator as part of this CNG transaction.
     #[serde(default)]
     pub modules: Vec<ResolvedModule>,
-    /// Plugin-supplied `Info.plist` entries from the engine's
-    /// post-pipeline IR (`ctx.ios.info_plist`), emitted just before the
-    /// closing `</dict>` by the private `render_extra_info_plist` helper. Every
-    /// `PlistValue` variant renders recursively except a mixed-type
-    /// array, which the hand-rolled XML renderer drops.
+    /// Legacy plugin plist entries merged into the application declaration.
+    /// Nested dictionaries and mixed arrays are preserved by the plist serializer.
     #[serde(default)]
     pub extra_info_plist: BTreeMap<String, PlistValue>,
     /// Plugin-supplied additional files dropped into `gen/ios/`.
@@ -85,44 +65,38 @@ pub struct IosInputs {
     /// [`FileEntry`]s — UTF-8 contents + optional POSIX mode.
     #[serde(default)]
     pub extra_files: BTreeMap<PathBuf, FileEntry>,
-    /// Plugin-supplied structural mutations against the Xcode
-    /// `project.pbxproj`; see [`PbxprojOp`] for the supported ops and
-    /// the private `render_pbxproj_op_placeholders` helper for how each renders.
-    /// Deterministic UUIDs (FNV-1a over each op's content) keep the
-    /// rendered file byte-identical across rebuilds.
+    /// Legacy operations translated into the main target's declarations by the
+    /// application plugin. PBX IDs are assigned by the renderer from stable IDs.
     #[serde(default)]
     pub pbxproj_ops: Vec<PbxprojOp>,
     pub template_version: u32,
+    /// Application Cargo inputs included in the generation fingerprint.
+    pub cargo_selection: crate::CargoSelection,
 }
 
 /// Render the iOS project into `out_dir`. Returns whether files were
 /// rewritten. See [`crate::android::sync`] for the fast-path / drift
 /// rationale — same approach.
 pub fn sync(out_dir: &Path, inputs: &IosInputs) -> Result<bool> {
-    crate::background::AppBackground::parse(&inputs.background)
-        .context("validate iOS application background")?;
-    let new_fp = fingerprint::fingerprint(
-        serde_json::to_vec(inputs)
-            .context("serialize IosInputs for fingerprint")?
-            .as_slice(),
-    );
-    let fp_path = out_dir.join(".whisker-fingerprint");
-    if let Ok(existing) = std::fs::read_to_string(&fp_path)
-        && existing.trim() == new_fp
-    {
-        return Ok(false);
-    }
-
-    write_files(out_dir, inputs).context("write iOS project files")?;
-    crate::ios_modules::stage_module_swift_sources(
+    let composition =
+        crate::ProjectEngine::with_initializer(application::ApplicationPlugin::new(inputs.clone()))
+            .compose(
+                &Config::default(),
+                &whisker_plugin::project::ProjectIr::Ios(Default::default()),
+            )?;
+    let whisker_plugin::project::ProjectIr::Ios(project) = composition.project else {
+        unreachable!()
+    };
+    sync_project(
         out_dir,
-        &inputs.modules,
-        &inputs.workspace_root,
+        &IosProjectInputs {
+            project,
+            project_name: inputs.scheme.clone(),
+            app_crate_dir: None,
+            cargo_selection: inputs.cargo_selection.clone(),
+            template_version: inputs.template_version,
+        },
     )
-    .context("write iOS module aggregator")?;
-    std::fs::write(&fp_path, &new_fp)
-        .with_context(|| format!("write fingerprint {}", fp_path.display()))?;
-    Ok(true)
 }
 
 pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String> {
@@ -148,208 +122,11 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
         inputs.workspace_root.display().to_string(),
     );
     v.insert("whisker_user_package", inputs.user_package.clone());
-    // A generated storyboard keeps the launch background available on the
-    // crate's iOS 13 deployment target (`UILaunchScreen` starts at iOS 14).
-    let mut info_plist = inputs.extra_info_plist.clone();
-    info_plist.remove("UILaunchScreen");
-    info_plist.insert(
-        "UILaunchStoryboardName".to_string(),
-        PlistValue::String("LaunchScreen".to_string()),
-    );
-    v.insert("extra_info_plist_kvs", render_extra_info_plist(&info_plist));
-    let pbx = render_pbxproj_op_placeholders(&inputs.pbxproj_ops);
-    v.insert("extra_pbxproj_build_file_entries", pbx.build_file_entries);
-    v.insert(
-        "extra_pbxproj_file_reference_entries",
-        pbx.file_reference_entries,
-    );
-    v.insert("extra_pbxproj_sources_phase_files", pbx.sources_phase_files);
-    v.insert(
-        "extra_pbxproj_resources_phase_files",
-        pbx.resources_phase_files,
-    );
-    v.insert(
-        "extra_pbxproj_frameworks_phase_files",
-        pbx.frameworks_phase_files,
-    );
-    v.insert(
-        "extra_pbxproj_plugin_files_group_children",
-        pbx.plugin_files_group_children,
-    );
-    v.insert(
-        "extra_pbxproj_target_build_settings",
-        pbx.target_build_settings,
-    );
     v
 }
 
 fn color_component(value: u8) -> String {
     format!("{:.6}", f32::from(value) / 255.0)
-}
-
-/// Bundled output of [`render_pbxproj_op_placeholders`] — one field
-/// per pbxproj-template placeholder.
-struct PbxprojRendered {
-    build_file_entries: String,
-    file_reference_entries: String,
-    sources_phase_files: String,
-    resources_phase_files: String,
-    frameworks_phase_files: String,
-    plugin_files_group_children: String,
-    target_build_settings: String,
-}
-
-/// Translate the engine's `Vec<PbxprojOp>` into the seven
-/// pbxproj-template placeholder strings the renderer needs. Empty
-/// inputs → empty strings for every placeholder so the template stays
-/// valid pbxproj even with no plugin contributions.
-///
-/// UUIDs are deterministic per `(op variant, payload)` ([`pbxproj_uuid`]),
-/// which is what keeps the rendered file byte-identical across rebuilds
-/// and lets the fingerprint fast path fire.
-fn render_pbxproj_op_placeholders(ops: &[PbxprojOp]) -> PbxprojRendered {
-    let mut build_file_entries = String::new();
-    let mut file_reference_entries = String::new();
-    let mut sources_phase_files = String::new();
-    let mut resources_phase_files = String::new();
-    let mut frameworks_phase_files = String::new();
-    let mut plugin_files_group_children = String::new();
-    let mut target_build_settings = String::new();
-
-    for op in ops {
-        match op {
-            PbxprojOp::AddResource { path } => {
-                let path_str = path.display().to_string();
-                let fileref_uuid = pbxproj_uuid(&format!("PBXFileReference:{path_str}"));
-                let buildfile_uuid = pbxproj_uuid(&format!("PBXBuildFile:Resources:{path_str}"));
-                let file_type = last_known_file_type(path);
-                build_file_entries.push_str(&format!(
-                    "\t\t{buildfile_uuid} /* {path_str} in Resources */ = \
-                     {{isa = PBXBuildFile; fileRef = {fileref_uuid} /* {path_str} */; }};\n",
-                ));
-                file_reference_entries.push_str(&format!(
-                    "\t\t{fileref_uuid} /* {path_str} */ = \
-                     {{isa = PBXFileReference; lastKnownFileType = {file_type}; \
-                     path = \"{path_str}\"; sourceTree = \"<group>\"; }};\n",
-                ));
-                resources_phase_files.push_str(&format!(
-                    "\t\t\t\t{buildfile_uuid} /* {path_str} in Resources */,\n",
-                ));
-                plugin_files_group_children
-                    .push_str(&format!("\t\t\t\t{fileref_uuid} /* {path_str} */,\n",));
-            }
-            PbxprojOp::AddResourceFolder { path } => {
-                // `lastKnownFileType = folder` makes this an Xcode
-                // "blue folder", whose resources-phase copy preserves
-                // subdirectories — required for the iOS asset resolver
-                // to find `<bundle>/whisker_assets/<rel>`.
-                let path_str = path.display().to_string();
-                let fileref_uuid = pbxproj_uuid(&format!("PBXFileReference:Folder:{path_str}"));
-                let buildfile_uuid =
-                    pbxproj_uuid(&format!("PBXBuildFile:ResourcesFolder:{path_str}"));
-                build_file_entries.push_str(&format!(
-                    "\t\t{buildfile_uuid} /* {path_str} in Resources */ = \
-                     {{isa = PBXBuildFile; fileRef = {fileref_uuid} /* {path_str} */; }};\n",
-                ));
-                file_reference_entries.push_str(&format!(
-                    "\t\t{fileref_uuid} /* {path_str} */ = \
-                     {{isa = PBXFileReference; lastKnownFileType = folder; \
-                     path = \"{path_str}\"; sourceTree = \"<group>\"; }};\n",
-                ));
-                resources_phase_files.push_str(&format!(
-                    "\t\t\t\t{buildfile_uuid} /* {path_str} in Resources */,\n",
-                ));
-                plugin_files_group_children
-                    .push_str(&format!("\t\t\t\t{fileref_uuid} /* {path_str} */,\n",));
-            }
-            PbxprojOp::AddSource { path } => {
-                let path_str = path.display().to_string();
-                let fileref_uuid = pbxproj_uuid(&format!("PBXFileReference:{path_str}"));
-                let buildfile_uuid = pbxproj_uuid(&format!("PBXBuildFile:Sources:{path_str}"));
-                let file_type = last_known_file_type(path);
-                build_file_entries.push_str(&format!(
-                    "\t\t{buildfile_uuid} /* {path_str} in Sources */ = \
-                     {{isa = PBXBuildFile; fileRef = {fileref_uuid} /* {path_str} */; }};\n",
-                ));
-                file_reference_entries.push_str(&format!(
-                    "\t\t{fileref_uuid} /* {path_str} */ = \
-                     {{isa = PBXFileReference; lastKnownFileType = {file_type}; \
-                     path = \"{path_str}\"; sourceTree = \"<group>\"; }};\n",
-                ));
-                sources_phase_files.push_str(&format!(
-                    "\t\t\t\t{buildfile_uuid} /* {path_str} in Sources */,\n",
-                ));
-                plugin_files_group_children
-                    .push_str(&format!("\t\t\t\t{fileref_uuid} /* {path_str} */,\n",));
-            }
-            PbxprojOp::LinkSystemFramework { name } => {
-                let fileref_uuid = pbxproj_uuid(&format!("PBXFileReference:Framework:{name}"));
-                let buildfile_uuid = pbxproj_uuid(&format!("PBXBuildFile:Frameworks:{name}"));
-                build_file_entries.push_str(&format!(
-                    "\t\t{buildfile_uuid} /* {name} in Frameworks */ = \
-                     {{isa = PBXBuildFile; fileRef = {fileref_uuid} /* {name} */; }};\n",
-                ));
-                file_reference_entries.push_str(&format!(
-                    "\t\t{fileref_uuid} /* {name} */ = \
-                     {{isa = PBXFileReference; lastKnownFileType = wrapper.framework; \
-                     name = \"{name}\"; path = \"System/Library/Frameworks/{name}\"; \
-                     sourceTree = SDKROOT; }};\n",
-                ));
-                frameworks_phase_files.push_str(&format!(
-                    "\t\t\t\t{buildfile_uuid} /* {name} in Frameworks */,\n",
-                ));
-                plugin_files_group_children
-                    .push_str(&format!("\t\t\t\t{fileref_uuid} /* {name} */,\n",));
-            }
-            PbxprojOp::SetBuildSetting { key, value } => {
-                target_build_settings.push_str(&format!(
-                    "\t\t\t\t\t{key} = \"{}\";\n",
-                    escape_pbxproj_string(value),
-                ));
-            }
-        }
-    }
-
-    // Trim trailing newlines so the surrounding template's own
-    // newlines aren't doubled up. Empty strings stay empty.
-    fn trim(s: &mut String) {
-        if s.ends_with('\n') {
-            s.pop();
-        }
-    }
-    trim(&mut build_file_entries);
-    trim(&mut file_reference_entries);
-    trim(&mut sources_phase_files);
-    trim(&mut resources_phase_files);
-    trim(&mut frameworks_phase_files);
-    trim(&mut plugin_files_group_children);
-    trim(&mut target_build_settings);
-
-    PbxprojRendered {
-        build_file_entries,
-        file_reference_entries,
-        sources_phase_files,
-        resources_phase_files,
-        frameworks_phase_files,
-        plugin_files_group_children,
-        target_build_settings,
-    }
-}
-
-/// Escape a string for inclusion inside a pbxproj double-quoted
-/// literal. The pbxproj "OpenStep plist" lexer treats `"` and `\`
-/// as the only chars that need backslash-escape inside `"…"`;
-/// everything else (whitespace, `$`, `(`, `)`, etc.) is fine.
-fn escape_pbxproj_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 /// Pick a `lastKnownFileType` for a file path, by extension. Falls
@@ -386,154 +163,6 @@ fn pbxproj_uuid(seed: &str) -> String {
     let a = crate::fingerprint::fingerprint(seed.as_bytes());
     let b = crate::fingerprint::fingerprint(format!("{seed}-salt").as_bytes());
     format!("{a}{}", &b[..8]).to_uppercase()
-}
-
-/// Render the engine-supplied plist entries as XML rows ready to drop
-/// straight into the Info.plist template just before `</dict>`. Empty
-/// map → empty string (no whitespace) so the template still parses
-/// cleanly.
-///
-/// Every `PlistValue` variant renders, `Dict` / `Array` recursively.
-/// A mixed-type array is the one exception: the hand-rolled XML
-/// renderer has no mapping for it, so [`push_plist_kv`] drops the
-/// whole key.
-fn render_extra_info_plist(entries: &BTreeMap<String, PlistValue>) -> String {
-    if entries.is_empty() {
-        return String::new();
-    }
-    let mut out = String::new();
-    for (key, value) in entries {
-        push_plist_kv(&mut out, key, value, 1);
-    }
-    // Strip the trailing newline so the template's own newline
-    // before `</dict>` isn't doubled up.
-    if out.ends_with('\n') {
-        out.pop();
-    }
-    out
-}
-
-/// Push a `<key>…</key>` + its rendered value at `level` tabs of indent.
-fn push_plist_kv(out: &mut String, key: &str, value: &PlistValue, level: usize) {
-    // Arrays/dicts we can't render (a mixed-type array) drop the whole
-    // key rather than emit a dangling `<key>`.
-    if let PlistValue::Array(items) = value
-        && !items.iter().all(|v| matches!(v, PlistValue::String(_)))
-    {
-        return;
-    }
-    let ind = "\t".repeat(level);
-    out.push_str(&format!("{ind}<key>{}</key>\n", escape_xml(key)));
-    push_plist_value(out, value, level);
-}
-
-/// Render a `PlistValue` at `level` tabs of indent, mirroring the plist
-/// XML the CoreFoundation serializer accepts.
-fn push_plist_value(out: &mut String, value: &PlistValue, level: usize) {
-    let ind = "\t".repeat(level);
-    match value {
-        PlistValue::String(s) => {
-            out.push_str(&format!("{ind}<string>{}</string>\n", escape_xml(s)));
-        }
-        PlistValue::Boolean(b) => {
-            out.push_str(&format!("{ind}<{}/>\n", if *b { "true" } else { "false" }));
-        }
-        PlistValue::Integer(i) => {
-            out.push_str(&format!("{ind}<integer>{i}</integer>\n"));
-        }
-        PlistValue::Real(r) => {
-            out.push_str(&format!("{ind}<real>{r}</real>\n"));
-        }
-        PlistValue::Array(items) => {
-            out.push_str(&format!("{ind}<array>\n"));
-            for item in items {
-                push_plist_value(out, item, level + 1);
-            }
-            out.push_str(&format!("{ind}</array>\n"));
-        }
-        PlistValue::Dict(map) => {
-            if map.is_empty() {
-                out.push_str(&format!("{ind}<dict/>\n"));
-            } else {
-                out.push_str(&format!("{ind}<dict>\n"));
-                for (k, v) in map {
-                    push_plist_kv(out, k, v, level + 1);
-                }
-                out.push_str(&format!("{ind}</dict>\n"));
-            }
-        }
-    }
-}
-
-fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
-    let vars = template_vars(inputs);
-
-    // Wipe the previous tree but keep the per-build output dir —
-    // expensive to recreate and re-derivable by re-running xcodebuild.
-    clean_managed_tree(out_dir, &inputs.scheme).context("clean previous iOS gen tree")?;
-
-    let text_files: &[(PathBuf, &str)] = &[
-        (out_dir.join("Info.plist"), INFO_PLIST),
-        (
-            out_dir.join("Sources/AppDelegate.swift"),
-            APP_DELEGATE_SWIFT,
-        ),
-        (
-            out_dir.join("Resources/LaunchScreen.storyboard"),
-            LAUNCH_SCREEN_STORYBOARD,
-        ),
-        (
-            out_dir.join("Resources/Assets.xcassets/Contents.json"),
-            ASSET_CATALOG,
-        ),
-        (
-            out_dir.join("Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json"),
-            BACKGROUND_COLORSET,
-        ),
-    ];
-    for (path, template) in text_files {
-        let rendered =
-            render(template, &vars).with_context(|| format!("render {}", path.display()))?;
-        write_file(path, rendered.as_bytes())?;
-    }
-
-    let xcodeproj = out_dir.join(format!("{}.xcodeproj", inputs.scheme));
-    let pbxproj = render(PBXPROJ, &vars).context("render project.pbxproj")?;
-    write_file(&xcodeproj.join("project.pbxproj"), pbxproj.as_bytes())?;
-    write_file(
-        &xcodeproj
-            .join("project.xcworkspace")
-            .join("contents.xcworkspacedata"),
-        XCWORKSPACEDATA.as_bytes(),
-    )?;
-    // Without a shared xcscheme Xcode auto-creates a per-user one on
-    // first open, so each fresh checkout has to re-pick a destination.
-    // The filename must mirror the scheme name — Xcode discovers these
-    // by scanning `xcshareddata/xcschemes/*.xcscheme`.
-    let xcscheme = render(XCSCHEME, &vars).context("render xcscheme")?;
-    write_file(
-        &xcodeproj
-            .join("xcshareddata/xcschemes")
-            .join(format!("{}.xcscheme", inputs.scheme)),
-        xcscheme.as_bytes(),
-    )?;
-
-    for (rel, entry) in &inputs.extra_files {
-        crate::render::validate_extra_file_path(rel).with_context(|| {
-            format!(
-                "extra_files entry `{}` (iOS plugin contribution)",
-                rel.display(),
-            )
-        })?;
-        let abs = out_dir.join(rel);
-        let bytes = entry
-            .to_bytes()
-            .with_context(|| format!("decode extra_files entry `{}` contents", rel.display()))?;
-        write_file(&abs, &bytes)?;
-        apply_mode(&abs, entry.mode)?;
-    }
-
-    Ok(())
 }
 
 #[cfg(unix)]
@@ -641,25 +270,14 @@ pub fn inputs_from_with_engine(
         .as_ref()
         .expect("EnabledTargets::ios_only guarantees Some");
 
-    let app_name = ios_ir
-        .app_name
-        .clone()
-        .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required"))?;
-    let version = ios_ir
-        .version
-        .clone()
-        .unwrap_or_else(|| "0.1.0".to_string());
-    let build_number = ios_ir.build_number.unwrap_or(1);
-    let scheme = ios_ir.scheme.clone().unwrap_or_else(|| app_name.clone());
-    let bundle_id = ios_ir.bundle_id.clone().ok_or_else(|| {
-        anyhow!(
-            "whisker.rs: app.ios(|i| i.bundle_id(\"…\")) (or app.bundle_id) is required for iOS"
-        )
-    })?;
-    let deployment_target = ios_ir
-        .deployment_target
-        .clone()
-        .unwrap_or_else(|| "13.0".to_string());
+    let crate::plugins::application::IosApplication {
+        app_name,
+        version,
+        build_number,
+        scheme,
+        bundle_id,
+        deployment_target,
+    } = crate::plugins::application::ios(ios_ir)?;
     let background = crate::background::AppBackground::resolve(app_config)?;
 
     let extra_info_plist = ios_ir.info_plist.clone();
@@ -684,7 +302,8 @@ pub fn inputs_from_with_engine(
         // Bump on any template or renderer change: it feeds the sync
         // fingerprint, and without it existing `gen/ios/` trees keep
         // their stale output.
-        template_version: 38,
+        template_version: 40,
+        cargo_selection: crate::CargoSelection::default(),
     })
 }
 
@@ -718,7 +337,8 @@ mod tests {
             extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),
-            template_version: 38,
+            template_version: 40,
+            cargo_selection: crate::CargoSelection::default(),
         }
     }
 
@@ -850,36 +470,6 @@ mod tests {
         assert!(out.join("NewScheme.xcodeproj/project.pbxproj").exists());
         assert!(!out.join("HelloWorld.xcodeproj").exists());
         let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn add_resource_folder_emits_folder_file_type() {
-        let rendered = render_pbxproj_op_placeholders(&[PbxprojOp::AddResourceFolder {
-            path: PathBuf::from("whisker_assets"),
-        }]);
-        assert!(
-            rendered
-                .file_reference_entries
-                .contains("lastKnownFileType = folder;"),
-            "folder ref must use lastKnownFileType = folder: {}",
-            rendered.file_reference_entries,
-        );
-        assert!(
-            rendered
-                .file_reference_entries
-                .contains("path = \"whisker_assets\"")
-        );
-        assert!(
-            rendered
-                .resources_phase_files
-                .contains("whisker_assets in Resources")
-        );
-        assert!(rendered.sources_phase_files.is_empty());
-        assert!(
-            rendered
-                .plugin_files_group_children
-                .contains("whisker_assets")
-        );
     }
 
     #[test]

@@ -1,15 +1,20 @@
 //! Render the Cargo browser Host project consumed by Whisker's Web builder.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use whisker_config::Config;
 
-use crate::fingerprint;
+use crate::plugins::application::normalize_web_base_path as normalize_base_path;
 use crate::render::render;
 
 const CARGO_TOML: &str = include_str!("templates/web/Cargo.toml.template");
 const LIB_RS: &str = include_str!("templates/web/src/lib.rs");
-const INDEX_HTML: &str = include_str!("templates/web/index.html");
+pub mod application;
+mod project_render;
+pub use project_render::{
+    WebBuildPlan, WebProjectInputs, distribution_files, load_build_plan, render_project,
+    sync_project,
+};
 
 /// Fully resolved inputs for one generated Web project.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -34,6 +39,8 @@ pub struct WebInputs {
     pub element_modules: Vec<crate::RustElementModuleInput>,
     /// Bumped whenever the generated project shape changes.
     pub template_version: u32,
+    /// Application Cargo inputs included in the generation fingerprint.
+    pub cargo_selection: crate::CargoSelection,
 }
 
 /// Resolves browser project fields from application config and Cargo metadata.
@@ -43,39 +50,25 @@ pub fn inputs_from(
     user_crate_path: PathBuf,
     whisker_web_dependency: String,
 ) -> Result<WebInputs> {
-    let app_name = app_config
-        .name
-        .clone()
-        .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required for Web"))?;
+    let crate::plugins::application::WebApplication {
+        app_name,
+        base_path,
+    } = crate::plugins::application::web(app_config)?;
     let background = crate::background::AppBackground::resolve(app_config)?;
     let favicon_data_url = favicon_data_url(app_config, &user_crate_path)?;
     Ok(WebInputs {
         app_name,
         background: background.hex().to_string(),
         favicon_data_url,
-        base_path: normalize_base_path(app_config.web.base_path.as_deref().unwrap_or("/"))?,
+        base_path,
         generated_package: format!("{user_package}-whisker-web"),
         user_package,
         user_crate_path,
         whisker_web_dependency,
         element_modules: Vec::new(),
-        template_version: 14,
+        template_version: 16,
+        cargo_selection: crate::CargoSelection::default(),
     })
-}
-
-fn normalize_base_path(path: &str) -> Result<String> {
-    if !path.starts_with('/')
-        || path.contains("//")
-        || !path
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"/-._~".contains(&b))
-        || path.split('/').any(|part| matches!(part, "." | ".."))
-    {
-        bail!(
-            "Web base path must be an absolute URL path without query, fragment, or dot segments: {path}"
-        );
-    }
-    Ok(format!("{}/", path.trim_end_matches('/')))
 }
 
 fn favicon_data_url(config: &Config, app_dir: &Path) -> Result<Option<String>> {
@@ -104,31 +97,24 @@ fn favicon_data_url(config: &Config, app_dir: &Path) -> Result<Option<String>> {
 
 /// Generates or reuses the complete `gen/web` project.
 pub fn sync(out_dir: &Path, inputs: &WebInputs) -> Result<bool> {
-    validate(inputs)?;
-    let bytes = serde_json::to_vec(inputs).context("serialize WebInputs for fingerprint")?;
-    let new_fingerprint = fingerprint::fingerprint(&bytes);
-    let fingerprint_path = out_dir.join(".whisker-fingerprint");
-    if std::fs::read_to_string(&fingerprint_path).is_ok_and(|value| value.trim() == new_fingerprint)
-    {
-        return Ok(false);
-    }
-
-    clean_managed_tree(out_dir)?;
-    let vars = template_vars(inputs);
-    write_text(
-        &out_dir.join("Cargo.toml"),
-        &render(CARGO_TOML, &vars).context("render Web Cargo.toml")?,
-    )?;
-    write_text(
-        &out_dir.join("src/lib.rs"),
-        &render(LIB_RS, &vars).context("render Web lib.rs")?,
-    )?;
-    write_text(
-        &out_dir.join("index.html"),
-        &render(INDEX_HTML, &vars).context("render Web index.html")?,
-    )?;
-    write_text(&fingerprint_path, &new_fingerprint)?;
-    Ok(true)
+    let composition =
+        crate::ProjectEngine::with_initializer(application::ApplicationPlugin::new(inputs.clone()))
+            .compose(
+                &Config::default(),
+                &whisker_plugin::project::ProjectIr::Web(Box::default()),
+            )?;
+    let whisker_plugin::project::ProjectIr::Web(project) = composition.project else {
+        unreachable!()
+    };
+    sync_project(
+        out_dir,
+        &WebProjectInputs {
+            project: *project,
+            app_crate_dir: Some(inputs.user_crate_path.clone()),
+            cargo_selection: inputs.cargo_selection.clone(),
+            template_version: inputs.template_version,
+        },
+    )
 }
 
 fn validate(inputs: &WebInputs) -> Result<()> {
@@ -149,20 +135,13 @@ fn validate(inputs: &WebInputs) -> Result<()> {
 
 fn template_vars(inputs: &WebInputs) -> std::collections::HashMap<&'static str, String> {
     let mut vars = std::collections::HashMap::new();
-    vars.insert("app_name_html", html_escape(&inputs.app_name));
-    vars.insert("background_css", inputs.background.clone());
     vars.insert("base_path", inputs.base_path.clone());
-    vars.insert(
-        "favicon_html",
-        inputs
-            .favicon_data_url
-            .as_ref()
-            .map_or_else(String::new, |url| {
-                format!("<link rel=\"icon\" href=\"{}\" />", html_escape(url))
-            }),
-    );
     vars.insert("app_title_rust", format!("{:?}", inputs.app_name));
     vars.insert("generated_package", inputs.generated_package.clone());
+    vars.insert(
+        "user_cargo_options",
+        inputs.cargo_selection.dependency_options(),
+    );
     vars.insert("user_package_toml", format!("{:?}", inputs.user_package));
     vars.insert(
         "user_crate_path_toml",
@@ -190,6 +169,7 @@ fn html_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+        .replace('\r', "&#13;")
 }
 
 fn clean_managed_tree(out_dir: &Path) -> Result<()> {
@@ -248,8 +228,43 @@ mod tests {
             user_crate_path: PathBuf::from("/tmp/hello"),
             whisker_web_dependency: "{ path = \"/tmp/whisker/platforms/web\" }".into(),
             element_modules: Vec::new(),
-            template_version: 14,
+            template_version: 16,
+            cargo_selection: crate::CargoSelection::default(),
         }
+    }
+
+    #[test]
+    fn feature_selection_updates_the_application_dependency_and_fingerprint() {
+        let root = tempdir();
+        let mut inputs = sample();
+        assert!(sync(&root, &inputs).unwrap());
+        inputs.cargo_selection.features = vec!["auth".into()];
+        inputs.cargo_selection.no_default_features = true;
+        assert!(sync(&root, &inputs).unwrap());
+        let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let app = &manifest["dependencies"]["whisker-app"];
+        assert_eq!(app["default-features"].as_bool(), Some(false));
+        assert_eq!(
+            app["features"].as_array().unwrap(),
+            &[toml::Value::String("auth".into())]
+        );
+        assert!(!sync(&root, &inputs).unwrap());
+        inputs.cargo_selection.features.clear();
+        assert!(sync(&root, &inputs).unwrap());
+        let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            manifest["dependencies"]["whisker-app"]["features"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -328,7 +343,10 @@ mod tests {
         sync(&root, &inputs).unwrap();
         let html = std::fs::read_to_string(root.join("index.html")).unwrap();
         assert!(html.contains("from \"/examples/chat/whisker_app.js\""));
-        assert!(html.contains("name=\"whisker-base-path\" content=\"/examples/chat/\""));
+        assert!(
+            html.contains("name=\"whisker-base-path\"")
+                && html.contains("content=\"/examples/chat/\"")
+        );
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -356,7 +374,7 @@ mod tests {
         assert!(sync(&out, &original).unwrap());
         assert!(!sync(&out, &inputs()).unwrap());
         let html = std::fs::read_to_string(out.join("index.html")).unwrap();
-        assert!(html.contains("<link rel=\"icon\" href=\"data:image/svg+xml,"));
+        assert!(html.contains("rel=\"icon\"") && html.contains("href=\"data:image/svg+xml,"));
         assert!(!html.contains(first));
         std::fs::write(&icon, first.replace("#fff", "#000")).unwrap();
         assert!(sync(&out, &inputs()).unwrap());

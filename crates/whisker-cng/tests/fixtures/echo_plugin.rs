@@ -24,16 +24,16 @@ struct Echo;
 impl Plugin for Echo {
     type Config = EchoConfig;
     fn apply(&self, ctx: &mut GenerateContext, cfg: &EchoConfig) -> anyhow::Result<()> {
-        if let Some(android) = ctx.android.as_mut() {
-            if !cfg.permission.is_empty() {
-                android.manifest.permissions.push(cfg.permission.clone());
-                ctx.journal.record(
-                    EchoConfig::NAME,
-                    Target::Android,
-                    "manifest.permissions",
-                    Operation::ArrayPush { count: 1 },
-                );
-            }
+        if let Some(android) = ctx.android.as_mut()
+            && !cfg.permission.is_empty()
+        {
+            android.manifest.permissions.push(cfg.permission.clone());
+            ctx.journal.record(
+                EchoConfig::NAME,
+                Target::Android,
+                "manifest.permissions",
+                Operation::ArrayPush { count: 1 },
+            );
         }
         Ok(())
     }

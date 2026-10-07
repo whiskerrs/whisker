@@ -44,27 +44,27 @@ impl Plugin for FlavorSuffix {
         if cfg.suffix.is_empty() {
             return Ok(());
         }
-        if let Some(ios) = ctx.ios.as_mut() {
-            if let Some(b) = ios.bundle_id.as_mut() {
-                b.push_str(&cfg.suffix);
-                ctx.journal.record(
-                    FlavorSuffixConfig::NAME,
-                    Target::Ios,
-                    "bundle_id",
-                    Operation::Override,
-                );
-            }
+        if let Some(ios) = ctx.ios.as_mut()
+            && let Some(b) = ios.bundle_id.as_mut()
+        {
+            b.push_str(&cfg.suffix);
+            ctx.journal.record(
+                FlavorSuffixConfig::NAME,
+                Target::Ios,
+                "bundle_id",
+                Operation::Override,
+            );
         }
-        if let Some(android) = ctx.android.as_mut() {
-            if let Some(a) = android.application_id.as_mut() {
-                a.push_str(&cfg.suffix);
-                ctx.journal.record(
-                    FlavorSuffixConfig::NAME,
-                    Target::Android,
-                    "application_id",
-                    Operation::Override,
-                );
-            }
+        if let Some(android) = ctx.android.as_mut()
+            && let Some(a) = android.application_id.as_mut()
+        {
+            a.push_str(&cfg.suffix);
+            ctx.journal.record(
+                FlavorSuffixConfig::NAME,
+                Target::Android,
+                "application_id",
+                Operation::Override,
+            );
         }
         Ok(())
     }
@@ -221,4 +221,99 @@ fn inputs_from_android_still_produces_correct_manifest_after_ir_refactor() {
         "{gradle}",
     );
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct RewriteApplicationConfig;
+impl PluginConfig for RewriteApplicationConfig {
+    const NAME: &'static str = "rewrite-application";
+}
+struct RewriteApplication;
+impl Plugin for RewriteApplication {
+    type Config = RewriteApplicationConfig;
+    fn apply(&self, ctx: &mut GenerateContext, _: &Self::Config) -> Result<()> {
+        if let Some(ios) = &mut ctx.ios {
+            ios.app_name = Some("PluginApp".into());
+            ios.version = None;
+            ios.build_number = Some(99);
+            ios.scheme = None;
+            ios.deployment_target = Some("17.0".into());
+            for field in [
+                "app_name",
+                "version",
+                "build_number",
+                "scheme",
+                "deployment_target",
+            ] {
+                ctx.journal
+                    .record(Self::Config::NAME, Target::Ios, field, Operation::Override);
+            }
+        }
+        if let Some(android) = &mut ctx.android {
+            android.app_name = Some("PluginApp".into());
+            android.version = None;
+            android.build_number = Some(99);
+            android.min_sdk = None;
+            android.target_sdk = Some(37);
+            for field in [
+                "app_name",
+                "version",
+                "build_number",
+                "min_sdk",
+                "target_sdk",
+            ] {
+                ctx.journal.record(
+                    Self::Config::NAME,
+                    Target::Android,
+                    field,
+                    Operation::Override,
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn application_resolution_uses_plugin_result_including_cleared_values() {
+    let mut app = base_app();
+    app.version("9.8.7")
+        .build_number(42)
+        .ios(|ios| {
+            ios.scheme("OriginalScheme").deployment_target("16.0");
+        })
+        .android(|android| {
+            android.min_sdk(29).target_sdk(35);
+        });
+    let mut engine = Engine::with_builtins();
+    engine.register(RewriteApplication);
+    let ios = whisker_cng::ios::inputs_from_with_engine(
+        &engine,
+        &app,
+        PathBuf::from("/abs/gen/ios/whisker_modules"),
+        PathBuf::from("/abs/workspace"),
+        "hello-world".into(),
+    )
+    .unwrap();
+    assert_eq!(ios.app_name, "PluginApp");
+    assert_eq!(ios.scheme, "PluginApp");
+    assert_eq!(ios.version, "0.1.0");
+    assert_eq!(ios.build_number, 99);
+    assert_eq!(ios.deployment_target, "17.0");
+    let android = whisker_cng::android::inputs_from_with_engine(
+        &engine,
+        &app,
+        "hello_world".into(),
+        PathBuf::from("../.."),
+        "hello-world".into(),
+        "0.1.0".into(),
+        "0.1.0".into(),
+        "https://whiskerrs.github.io/whisker/maven".into(),
+    )
+    .unwrap();
+    assert_eq!(android.app_name, "PluginApp");
+    assert_eq!(android.version, "0.1.0");
+    assert_eq!(android.build_number, 99);
+    assert_eq!(android.min_sdk, 24);
+    assert_eq!(android.target_sdk, 37);
 }

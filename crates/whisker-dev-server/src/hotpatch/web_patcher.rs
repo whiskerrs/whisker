@@ -81,9 +81,14 @@ impl WebPatcher {
         let args = side_module_args(&linker_args.args, &object, &patch);
         std::fs::create_dir_all(&self.patch_out_dir)
             .with_context(|| format!("create {}", self.patch_out_dir.display()))?;
-        let output = tokio::process::Command::new(&self.linker_path)
-            .args(&args)
-            .current_dir(&self.cwd)
+        let mut link = tokio::process::Command::new(&self.linker_path);
+        link.args(&args).current_dir(&self.cwd);
+        if let Some(search_path) =
+            toolchain_library_search_path(&self.linker_path, std::env::var_os(LIBRARY_PATH_VAR))
+        {
+            link.env(LIBRARY_PATH_VAR, search_path);
+        }
+        let output = link
             .output()
             .await
             .with_context(|| format!("spawn {}", self.linker_path.display()))?;
@@ -140,6 +145,29 @@ fn side_module_args(original: &[String], object: &Path, output: &Path) -> Vec<St
     args
 }
 
+const LIBRARY_PATH_VAR: &str = if cfg!(target_os = "macos") {
+    "DYLD_FALLBACK_LIBRARY_PATH"
+} else if cfg!(windows) {
+    "PATH"
+} else {
+    "LD_LIBRARY_PATH"
+};
+
+/// Rust 1.98+ ships `rust-lld` linked against the toolchain's shared `libLLVM`, which its rpath
+/// cannot reach when spawned outside rustc, so `<sysroot>/lib` must be on the loader search path.
+fn toolchain_library_search_path(
+    linker: &Path,
+    existing: Option<std::ffi::OsString>,
+) -> Option<std::ffi::OsString> {
+    // `<sysroot>/lib/rustlib/<host>/bin/rust-lld`
+    let toolchain_lib = linker.ancestors().nth(4)?;
+    let mut paths = vec![toolchain_lib.to_path_buf()];
+    if let Some(existing) = existing {
+        paths.extend(std::env::split_paths(&existing));
+    }
+    std::env::join_paths(paths).ok()
+}
+
 fn current_rustc() -> PathBuf {
     std::env::var_os("RUSTC")
         .map(PathBuf::from)
@@ -162,5 +190,17 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "--no-gc-sections"));
         assert!(!args.iter().any(|arg| arg == "-pie"));
         assert!(args.iter().any(|arg| arg == "--pie"));
+    }
+
+    #[test]
+    fn linker_search_path_prepends_the_toolchain_lib_dir() {
+        let linker = Path::new("/rust/lib/rustlib/aarch64-apple-darwin/bin/rust-lld");
+        let search_path =
+            toolchain_library_search_path(linker, Some(std::ffi::OsString::from("/existing")))
+                .unwrap();
+        assert_eq!(
+            std::env::split_paths(&search_path).collect::<Vec<_>>(),
+            [PathBuf::from("/rust/lib"), PathBuf::from("/existing")],
+        );
     }
 }

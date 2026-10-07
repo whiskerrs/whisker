@@ -68,6 +68,22 @@ pub fn stage_module_swift_sources(
     std::fs::create_dir_all(&sources_root)
         .with_context(|| format!("mkdir -p {}", sources_root.display()))?;
 
+    let files = module_files(modules, workspace_root);
+    for (path, entry) in files {
+        let path = gen_ios.join(path.as_str());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, entry.to_bytes()?)?;
+    }
+    Ok(())
+}
+
+/// Declare the aggregator files without writing to the native project.
+pub(crate) fn module_files(
+    modules: &[ResolvedModule],
+    workspace_root: &Path,
+) -> std::collections::BTreeMap<whisker_plugin::project::ProjectPath, whisker_plugin::FileEntry> {
     // The module manifest is authoritative; unsupported and common-only iOS
     // implementations do not enter SwiftPM's graph.
     let ios_modules: Vec<&ResolvedModule> = modules
@@ -88,17 +104,21 @@ pub fn stage_module_swift_sources(
         .is_dir()
         .then_some(workspace_root);
 
-    let package_path = root.join("Package.swift");
-    std::fs::write(
-        &package_path,
-        render_modules_package_swift(local_whisker_package, &ios_modules),
-    )
-    .with_context(|| format!("write {}", package_path.display()))?;
-
-    let register_all_path = sources_root.join("RegisterAll.swift");
-    std::fs::write(&register_all_path, render_register_all_swift(&ios_modules))
-        .with_context(|| format!("write {}", register_all_path.display()))?;
-    Ok(())
+    use whisker_plugin::{FileEntry, project::ProjectPath};
+    [
+        (
+            ProjectPath::new("whisker_modules/Package.swift").unwrap(),
+            FileEntry::text(render_modules_package_swift(
+                local_whisker_package,
+                &ios_modules,
+            )),
+        ),
+        (
+            ProjectPath::new("whisker_modules/Sources/WhiskerModules/RegisterAll.swift").unwrap(),
+            FileEntry::text(render_register_all_swift(&ios_modules)),
+        ),
+    ]
+    .into()
 }
 
 /// Convention: SwiftPM library product / target name is the

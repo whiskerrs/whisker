@@ -16,7 +16,7 @@ struct ContextState {
     view: ViewRuntimeState,
     tasks: TaskState,
     animation: AnimationState,
-    pending_mount: Option<(crate::reactive::MountId, crate::view::Element)>,
+    pending_mounts: reactive::component::PendingMounts,
     wake: Option<RuntimeWakeHandle>,
     dispatcher: Option<RuntimeDispatcher>,
     runtime_local: RuntimeLocalState,
@@ -30,7 +30,7 @@ impl ContextState {
             view: ViewRuntimeState::new(),
             tasks: TaskState::new(),
             animation: AnimationState::new(),
-            pending_mount: None,
+            pending_mounts: Vec::new(),
             wake: Some(wake),
             dispatcher: Some(dispatcher),
             runtime_local: RuntimeLocalState::new(),
@@ -40,7 +40,7 @@ impl ContextState {
     fn swap_active(&mut self) {
         reactive::swap_runtime(&mut self.reactive);
         view::renderer::swap_runtime_state(&mut self.view);
-        reactive::component::swap_pending_mount(&mut self.pending_mount);
+        reactive::component::swap_pending_mounts(&mut self.pending_mounts);
         tasks::swap_state(&mut self.tasks);
         anim_hook::swap_state(&mut self.animation);
         runtime_wake::swap_active_wake(&mut self.wake);
@@ -145,7 +145,7 @@ impl RuntimeContext {
         state.animation = AnimationState::new();
         state.runtime_local = RuntimeLocalState::new();
         state.reactive = ReactiveRuntime::new();
-        state.pending_mount = None;
+        state.pending_mounts = Vec::new();
     }
 }
 

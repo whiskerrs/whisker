@@ -10,6 +10,8 @@ use crate::manifest;
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
+    #[command(flatten)]
+    cargo: manifest::FeatureArgs,
     /// Explicit path to the app's Cargo.toml. Defaults to walking up
     /// from the current directory.
     #[arg(long)]
@@ -17,7 +19,11 @@ pub struct Args {
 }
 
 pub fn run(args: Args, no_tui: bool) -> Result<()> {
-    let manifest = manifest::resolve_for_target(args.manifest_path.as_deref(), Target::Web)?;
+    let manifest = manifest::resolve_with_selection(
+        args.manifest_path.as_deref(),
+        whisker_cng::GenerationTarget::Web,
+        &args.cargo.selection(),
+    )?;
     let workspace_root = manifest.workspace_root.clone();
     let build_ui = super::BuildUi::start(no_tui, "Web", &manifest.package);
     let sync = manifest.project(Target::Web)?;

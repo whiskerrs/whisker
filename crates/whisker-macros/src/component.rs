@@ -194,6 +194,7 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         .collect::<Vec<_>>()
         .join(", ");
     let props_hash = crate::fnv1a64(&props_sig);
+    let body_hash = crate::fnv1a64(&quote!(#input).to_string());
     let prop_tys: Vec<syn::Type> = props.iter().map(|p| p.ty.clone()).collect();
     let props_hash_fn_expr = if ty_generics_for_turbofish.is_empty() {
         quote! { __whisker_props_hash }
@@ -443,6 +444,13 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
                 __h
             }
 
+            // Read through `__hot::call_hash` so a just-applied patch
+            // answers with the source hash it was compiled from.
+            #[doc(hidden)]
+            pub fn __whisker_body_hash() -> u64 {
+                #body_hash
+            }
+
             #[doc(hidden)]
             #(#attrs)*
             pub fn #fn_name #impl_generics (
@@ -470,6 +478,7 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
                     ::std::boxed::Box::new(|| {
                         ::whisker::__hot::call_hash(#props_hash_fn_expr)
                     }),
+                    ::std::boxed::Box::new(|| ::whisker::__hot::call_hash(__whisker_body_hash)),
                 )
             }
         }

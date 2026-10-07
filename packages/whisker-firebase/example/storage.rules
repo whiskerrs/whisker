@@ -1,0 +1,7 @@
+// Emulator-only demo project. Do not deploy these permissive test rules.
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /smoke/{allPaths=**} { allow read, write: if true; }
+  }
+}

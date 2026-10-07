@@ -36,6 +36,8 @@ impl From<Method> for ExportMethod {
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
+    #[command(flatten)]
+    cargo: manifest::FeatureArgs,
     /// Distribution method for the export step.
     #[arg(long, value_enum, default_value = "app-store-connect")]
     method: Method,
@@ -47,7 +49,11 @@ pub struct Args {
 }
 
 pub fn run(args: Args, no_tui: bool) -> Result<()> {
-    let m = manifest::resolve_for_target(args.manifest_path.as_deref(), Target::IosSimulator)?;
+    let m = manifest::resolve_with_selection(
+        args.manifest_path.as_deref(),
+        whisker_cng::GenerationTarget::Ios,
+        &args.cargo.selection(),
+    )?;
     // Same resolution `whisker run ios` uses (run.rs::ios_params_from).
     let bundle_id = m
         .config

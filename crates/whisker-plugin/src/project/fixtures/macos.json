@@ -1,0 +1,114 @@
+{
+  "platform": "macos",
+  "project": {
+    "apple": {
+      "application": "app",
+      "targets": {
+        "app": {
+          "product_name": "Example",
+          "product_type": "com.apple.product-type.application",
+          "rust": {
+            "manifest": "Host/Cargo.toml",
+            "package": "example-host",
+            "target": "example-host",
+            "kind": "bin",
+            "features": [
+              "desktop"
+            ],
+            "default_features": false
+          },
+          "info_plist": {
+            "CFBundleIdentifier": {
+              "type": "string",
+              "value": "com.example.app"
+            },
+            "CFBundleURLTypes": {
+              "type": "array",
+              "value": [
+                {
+                  "type": "dict",
+                  "value": {
+                    "CFBundleURLSchemes": {
+                      "type": "array",
+                      "value": [
+                        {
+                          "type": "string",
+                          "value": "example"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "entitlements": {
+            "com.apple.security.app-sandbox": {
+              "type": "boolean",
+              "value": true
+            }
+          },
+          "build_settings": {
+            "MACOSX_DEPLOYMENT_TARGET": "13.0"
+          },
+          "dependencies": [
+            {
+              "kind": "system_framework",
+              "name": "AppKit.framework",
+              "weak": false
+            }
+          ],
+          "resources": [
+            {
+              "kind": "copy",
+              "resource": {
+                "source": "assets/icon.icns",
+                "destination": "icon.icns",
+                "kind": "file"
+              }
+            }
+          ],
+          "embeds": [
+            {
+              "destination": "Contents/XPCServices",
+              "code_sign_on_copy": true,
+              "source": {
+                "kind": "target",
+                "target": "worker"
+              }
+            }
+          ]
+        },
+        "worker": {
+          "product_name": "Worker",
+          "product_type": "com.apple.product-type.xpc-service",
+          "sources": [
+            {
+              "path": "Worker/main.swift"
+            }
+          ],
+          "info_plist": {
+            "CFBundleIdentifier": {
+              "type": "string",
+              "value": "com.example.app.worker"
+            }
+          },
+          "scripts": [
+            {
+              "name": "prepare",
+              "position": "before_sources",
+              "shell": "/bin/sh",
+              "script": "echo prepare"
+            }
+          ]
+        }
+      },
+      "files": {
+        "Host": {
+          "kind": "app_directory",
+          "source": "host"
+        }
+      }
+    }
+  }
+}

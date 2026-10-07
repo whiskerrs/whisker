@@ -110,6 +110,14 @@ fn cargo_build_ios_dylib(
             .env("CARGO_PROFILE_RELEASE_STRIP", "symbols")
             .env("CARGO_PROFILE_RELEASE_PANIC", "abort");
     }
+    let selection = whisker_cng::ProjectDependencyGraph::native_build_selection(
+        workspace_root,
+        package,
+        whisker_cng::GenerationTarget::Ios,
+        triple,
+        features,
+    )?;
+    selection.apply(&mut cmd);
     for feat in features {
         cmd.args(["--features", feat]);
     }
@@ -328,6 +336,15 @@ pub fn build_framework_for_xcode_run_script(
         published_fw.display(),
     ));
     Ok(published_fw)
+}
+
+/// Xcode `ARCHS` value for the Simulator slice this host runs natively.
+pub fn host_simulator_arch() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else {
+        "arm64"
+    }
 }
 
 /// Translate Xcode's `(PLATFORM_NAME, ARCH)` pair into the matching

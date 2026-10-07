@@ -19,11 +19,25 @@ use crate::{GenerationReport, GenerationTarget};
 /// executable. Registered binaries use the application's resolved CNG dependency;
 /// legacy files use this CNG implementation's generation entry point.
 pub fn generate(manifest_path: &Path, targets: &[GenerationTarget]) -> Result<GenerationReport> {
+    generate_with_selection(manifest_path, targets, &crate::CargoSelection::default())
+}
+
+/// Generate projects with explicit application Cargo features and target.
+pub fn generate_with_selection(
+    manifest_path: &Path,
+    targets: &[GenerationTarget],
+    selection: &crate::CargoSelection,
+) -> Result<GenerationReport> {
+    anyhow::ensure!(
+        selection.target.is_none() || targets.len() == 1,
+        "--cargo-target requires exactly one generation platform"
+    );
     let manifest = manifest_path
         .canonicalize()
         .context("resolve application manifest")?;
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(&manifest)
+        .features(cargo_metadata::CargoOpt::AllFeatures)
         .exec()
         .context("resolve generator dependencies")?;
     let package = metadata
@@ -43,12 +57,33 @@ pub fn generate(manifest_path: &Path, targets: &[GenerationTarget]) -> Result<Ge
         target.kind.iter().any(|kind| kind == "bin")
             && target.src_path.as_std_path().canonicalize().ok().as_ref() == Some(&canonical_source)
     });
-    let plugins = crate::discovery::discover_plugins_from_metadata(&metadata, &package.name)?;
+    // Config types are host dependencies. Discover their declarations from
+    // each requested runtime graph, but build the generator with its own
+    // host features (application features must not enable host SDKs here).
+    let mut plugins = Vec::new();
+    let platforms = if targets.is_empty() {
+        &GenerationTarget::ALL[..]
+    } else {
+        targets
+    };
+    for &platform in platforms {
+        plugins.extend(
+            crate::ProjectDependencyGraph::resolve_with_selection(
+                &manifest,
+                &package.name,
+                &selection.for_platform(platform),
+            )?
+            .cng_plugins,
+        );
+    }
     let cng = if has_main {
         direct_dependency(&metadata, package, "whisker-cng")
     } else {
         None
     };
+    if let Some(cng) = cng {
+        ensure_generator_matches_cli(&cng.version, env!("CARGO_PKG_VERSION"))?;
+    }
     let config = cng.and_then(|cng| direct_dependency(&metadata, cng, "whisker-config"));
     let cng_spec = dependency_spec(cng, Path::new(env!("CARGO_MANIFEST_DIR")), true);
     let config_spec = dependency_spec(
@@ -124,6 +159,10 @@ pub fn generate(manifest_path: &Path, targets: &[GenerationTarget]) -> Result<Ge
         .arg("--report-path")
         .arg(&report.0)
         .current_dir(crate_dir);
+    selection.apply(&mut command);
+    if let Some(target) = &selection.target {
+        command.arg("--cargo-target").arg(target);
+    }
     for target in targets {
         command.arg("--target").arg(target.as_str());
     }
@@ -144,6 +183,10 @@ pub fn generate(manifest_path: &Path, targets: &[GenerationTarget]) -> Result<Ge
         generated.schema_version
     );
     ensure!(
+        generated.selection == *selection,
+        "generator did not preserve the requested Cargo selection; update the application whisker-cng dependency"
+    );
+    ensure!(
         generated.crate_dir == crate_dir && generated.package == package.name,
         "generator reported a different application"
     );
@@ -159,6 +202,22 @@ pub fn generate(manifest_path: &Path, targets: &[GenerationTarget]) -> Result<Ge
         "generator did not complete every requested platform"
     );
     Ok(generated)
+}
+
+/// The CLI and the application's generator exchange arguments and a report
+/// whose shape is only guaranteed within one release.
+fn ensure_generator_matches_cli(
+    application: &cargo_metadata::semver::Version,
+    cli: &str,
+) -> Result<()> {
+    ensure!(
+        application.to_string() == cli,
+        "this app resolves whisker-cng {application}, but this whisker CLI is {cli}; they must be the same version.\n\
+         Update the app: set `whisker` and `whisker-cng` to \"{cli}\" in Cargo.toml, or run \
+         `cargo update -p whisker -p whisker-cng` if its version requirements already allow {cli}.\n\
+         Or install the matching CLI: `cargo install whisker-cli --version {application} --locked`"
+    );
+    Ok(())
 }
 
 struct ReportFile(PathBuf);
@@ -263,6 +322,27 @@ fn workspace_patches(workspace: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generator_version_must_match_the_cli() {
+        let cli = env!("CARGO_PKG_VERSION");
+        let same: cargo_metadata::semver::Version = cli.parse().unwrap();
+        assert!(ensure_generator_matches_cli(&same, cli).is_ok());
+
+        let older: cargo_metadata::semver::Version = "0.0.1".parse().unwrap();
+        let message = ensure_generator_matches_cli(&older, cli)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("whisker-cng 0.0.1"), "{message}");
+        assert!(
+            message.contains(&format!("whisker CLI is {cli}")),
+            "{message}"
+        );
+        assert!(
+            message.contains("cargo install whisker-cli --version 0.0.1 --locked"),
+            "{message}"
+        );
+    }
 
     #[test]
     fn registry_dependencies_keep_their_source_identity_and_resolved_version() {
