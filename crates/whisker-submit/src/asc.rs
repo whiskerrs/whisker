@@ -3,9 +3,11 @@
 //! upload in `whisker submit ios`. Builds authenticate through
 //! xcodebuild's own `-authenticationKey*` flags instead.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct KeyAuth<'a> {
@@ -274,6 +276,36 @@ pub fn commit_build_upload_file(auth: &KeyAuth, file_id: &str) -> Result<()> {
     .map(|_| ())
 }
 
+/// PUT each reserved byte range of `ipa` to its upload URL.
+pub fn upload_parts(ipa: &Path, size: u64, operations: &[UploadOperation]) -> Result<()> {
+    let mut file = std::fs::File::open(ipa).with_context(|| format!("open {}", ipa.display()))?;
+    for (index, op) in operations.iter().enumerate() {
+        let offset = op.offset.unwrap_or(0);
+        let length = op.length.unwrap_or(size - offset);
+        file.seek(SeekFrom::Start(offset))?;
+        // An explicit Content-Length keeps ureq from switching to
+        // chunked transfer encoding, which the storage backend rejects.
+        let mut req = ureq::request(&op.method, &op.url).set("Content-Length", &length.to_string());
+        for header in &op.request_headers {
+            req = req.set(&header.name, &header.value);
+        }
+        match req.send((&mut file).take(length)) {
+            Ok(_) => {}
+            Err(ureq::Error::Status(code, resp)) => bail!(
+                "uploading part {}/{} failed ({code}): {}",
+                index + 1,
+                operations.len(),
+                resp.into_string().unwrap_or_default(),
+            ),
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("upload part {}/{}", index + 1, operations.len()));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Apple's processing verdict for one build upload.
 #[derive(Debug, PartialEq)]
 pub struct BuildUploadStatus {
@@ -442,6 +474,58 @@ mod tests {
                 errors: vec!["90208 Invalid bundle.".into()],
                 warnings: vec![],
             }
+        );
+    }
+
+    #[test]
+    fn parts_are_sent_as_the_exact_byte_ranges_apple_asked_for() {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut length = None;
+                let mut chunked = false;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    let lower = line.to_ascii_lowercase();
+                    if let Some(v) = lower.strip_prefix("content-length:") {
+                        length = Some(v.trim().parse::<usize>().unwrap());
+                    }
+                    chunked |= lower.starts_with("transfer-encoding:");
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                assert!(!chunked, "parts must not use chunked encoding");
+                let mut body = vec![0u8; length.expect("Content-Length")];
+                reader.read_exact(&mut body).unwrap();
+                bodies.push(body);
+                reader
+                    .get_mut()
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .unwrap();
+            }
+            bodies
+        });
+
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"0123456789").unwrap();
+        let op = |offset, length| UploadOperation {
+            method: "PUT".into(),
+            url: format!("http://{addr}/part"),
+            offset: Some(offset),
+            length: Some(length),
+            request_headers: vec![],
+        };
+        upload_parts(file.path(), 10, &[op(0, 6), op(6, 4)]).unwrap();
+        assert_eq!(
+            server.join().unwrap(),
+            vec![b"012345".to_vec(), b"6789".to_vec()]
         );
     }
 }

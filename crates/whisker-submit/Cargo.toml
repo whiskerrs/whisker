@@ -1,0 +1,32 @@
+[package]
+name = "whisker-submit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["development-tools"]
+description = "Whisker store submission — App Store Connect and Google Play API clients for `whisker submit`."
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+whisker-credentials = { workspace = true }
+# Both stores' JWTs are built by hand: p256 signs Apple's ES256, ring
+# (already in the tree as ureq's TLS backend) signs Google's RS256.
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+ring = "0.17"
+ureq = { version = "2", features = ["json"] }
+base64 = { workspace = true }
+# The ipa's bundle id and version numbers come from its own
+# Info.plist (a binary plist inside a zip).
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+plist = "1"
+
+[dev-dependencies]
+rand = "0.8"
+tempfile = "3"

@@ -11,8 +11,9 @@ use clap::Args as ClapArgs;
 use std::path::PathBuf;
 use whisker_build::ui;
 use whisker_dev_server::Target;
+use whisker_submit::play;
 
-use crate::credential::{self, google};
+use crate::credential;
 use crate::manifest;
 
 #[derive(ClapArgs, Debug)]
@@ -68,7 +69,7 @@ pub fn run(args: Args) -> Result<()> {
         },
     ));
 
-    let client = google::Client::connect(&account, &application_id)?;
+    let client = play::Client::connect(&account, &application_id)?;
     let edit = client.insert_edit()?;
     let step = ui::step(ui::OperationKind::Upload, "app bundle");
     let version_code = match client.upload_bundle(&edit, &aab) {
