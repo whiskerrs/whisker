@@ -232,8 +232,16 @@ pub fn run_store(manifest_path: &Path) -> Result<Option<Vec<u8>>> {
     if let Some(whisker) = whisker {
         ensure_matches_cli("whisker", &whisker.version, env!("CARGO_PKG_VERSION"))?;
     }
+    // A registry `whisker` is replaced by this CLI's own: the same
+    // version once released, but a CLI built from a checkout carries a
+    // `whisker::store` the registry copy of that version may lack.
     let whisker_spec = dependency_spec(
-        whisker,
+        whisker.filter(|package| {
+            !package
+                .source
+                .as_ref()
+                .is_some_and(|source| source.is_crates_io())
+        }),
         &Path::new(env!("CARGO_MANIFEST_DIR")).with_file_name("whisker"),
         true,
     );
