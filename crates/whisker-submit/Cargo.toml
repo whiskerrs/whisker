@@ -16,6 +16,8 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 whisker-credentials = { workspace = true }
+# The `store.rs` config types that `store push` sends.
+whisker-config = { workspace = true }
 # Both stores' JWTs are built by hand: p256 signs Apple's ES256, ring
 # (already in the tree as ureq's TLS backend) signs Google's RS256.
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }

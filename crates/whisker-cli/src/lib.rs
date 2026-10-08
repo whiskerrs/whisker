@@ -17,6 +17,7 @@
 //! - `credential` — wizards that populate that store.
 //! - `submit` — upload a built `.ipa` / `.aab` to App Store Connect /
 //!   Google Play over their REST APIs.
+//! - `store` — push the store page metadata declared in `store.rs`.
 //! - `fmt` — rustfmt drop-in that also formats `render!` / `css!`.
 //!
 //! ## Internal binaries
@@ -47,6 +48,7 @@ pub mod new_module;
 pub mod platforms;
 pub mod run;
 pub mod rustc_shim;
+pub mod store;
 pub mod submit;
 pub mod tui;
 
@@ -112,6 +114,11 @@ enum Command {
     /// `credentials/` store.
     Submit(submit::SubmitArgs),
 
+    /// Manage what the stores hold besides the binary — store page
+    /// text, categories, review contacts — as declared in the app's
+    /// `store.rs`. `store push appstore` / `store push playstore`.
+    Store(store::StoreArgs),
+
     /// Format Rust source — a rustfmt drop-in that ALSO formats
     /// Whisker's `render!` / `css!` macro bodies (which rustfmt leaves
     /// untouched). Respects `rustfmt.toml` only; no whisker-specific
@@ -159,6 +166,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Command::Build(a) => build::run(a, cli.no_tui),
         Command::Credential(a) => credential::run(a),
         Command::Submit(a) => submit::run(a),
+        Command::Store(a) => store::run(a),
         Command::Fmt(a) => fmt::run(a),
         Command::BuildIos(a) => build_dispatch::run_ios(a),
         Command::BuildAndroid(a) => build_dispatch::run_android(a),
@@ -241,6 +249,19 @@ mod tests {
             "--draft has nothing to act on without --track"
         );
         assert!(parse(["whisker", "submit"]).is_err());
+    }
+
+    #[test]
+    fn parses_store_push_targets() {
+        for args in [
+            &["whisker", "store", "push", "playstore", "--dry-run"][..],
+            &["whisker", "store", "push", "appstore", "--create-version"][..],
+        ] {
+            let cli = parse(args.iter().copied()).unwrap();
+            assert!(matches!(cli.command, Command::Store(_)));
+        }
+        assert!(parse(["whisker", "store", "push"]).is_err());
+        assert!(parse(["whisker", "store", "push", "ios"]).is_err());
     }
 
     #[test]

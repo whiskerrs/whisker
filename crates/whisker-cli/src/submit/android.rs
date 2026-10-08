@@ -56,6 +56,15 @@ pub fn run(args: Args) -> Result<()> {
         )),
         "whisker build appbundle",
     )?;
+    let store = crate::store::load(&m.crate_dir)?;
+    let notes = super::release_notes(
+        store
+            .iter()
+            .flat_map(|s| &s.playstore.release.release_notes)
+            .map(|n| (n.language.as_str(), Some(n.text.as_str()))),
+        "Google Play",
+        whisker_submit::playstore::RELEASE_NOTES_LIMIT,
+    )?;
     let account = credential::require_playstore_service_account(&m.crate_dir, &application_id)?;
 
     ui::section("Submit");
@@ -84,10 +93,13 @@ pub fn run(args: Args) -> Result<()> {
     };
     if let Some(track) = &args.track {
         let status = if args.draft { "draft" } else { "completed" };
-        client.set_track_release(&edit, track, version_code, status)?;
+        client.set_track_release(&edit, track, version_code, status, &notes)?;
     }
     client.commit_edit(&edit)?;
 
+    if args.track.is_none() && !notes.is_empty() {
+        ui::warn("store.rs release notes were not sent — they belong to a release; pass `--track`");
+    }
     match &args.track {
         Some(track) if args.draft => ui::info(format!(
             "versionCode {version_code} is a draft on `{track}` — roll it out from Play Console"

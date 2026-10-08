@@ -51,14 +51,16 @@ fn bearer_token(auth: &KeyAuth) -> Result<String> {
     ))
 }
 
-/// One authenticated ASC API call. The token is minted per call so a
-/// long upload between two calls can't outlive its 10-minute expiry.
-fn request(
+/// One authenticated ASC API call; a non-2xx answer comes back as
+/// `Err((status, body))` for the caller to interpret. The token is
+/// minted per call so a long upload between two calls can't outlive
+/// its 10-minute expiry.
+fn send(
     auth: &KeyAuth,
     method: &str,
     path: &str,
     body: Option<serde_json::Value>,
-) -> Result<serde_json::Value> {
+) -> Result<std::result::Result<serde_json::Value, (u16, String)>> {
     let token = bearer_token(auth)?;
     let url = format!("https://api.appstoreconnect.apple.com{path}");
     let req = ureq::request(method, &url).set("Authorization", &format!("Bearer {token}"));
@@ -70,20 +72,39 @@ fn request(
         Ok(resp) => {
             let text = resp.into_string().context("read ASC API response")?;
             if text.trim().is_empty() {
-                return Ok(serde_json::Value::Null);
+                return Ok(Ok(serde_json::Value::Null));
             }
-            serde_json::from_str(&text).context("parse ASC API response JSON")
+            serde_json::from_str(&text)
+                .context("parse ASC API response JSON")
+                .map(Ok)
         }
         Err(ureq::Error::Status(code, resp)) => {
-            let body = resp.into_string().unwrap_or_default();
-            Err(translate_api_error(code, &body))
+            Ok(Err((code, resp.into_string().unwrap_or_default())))
         }
         Err(e) => Err(e).with_context(|| format!("{method} {url}")),
     }
 }
 
+pub(crate) fn request(
+    auth: &KeyAuth,
+    method: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    send(auth, method, path, body)?.map_err(|(code, body)| translate_api_error(code, &body))
+}
+
 fn get(auth: &KeyAuth, path: &str) -> Result<serde_json::Value> {
     request(auth, "GET", path, None)
+}
+
+/// GET where "no such resource" is an expected answer.
+pub(crate) fn get_optional(auth: &KeyAuth, path: &str) -> Result<Option<serde_json::Value>> {
+    match send(auth, "GET", path, None)? {
+        Ok(json) => Ok(Some(json)),
+        Err((404, _)) => Ok(None),
+        Err((code, body)) => Err(translate_api_error(code, &body)),
+    }
 }
 
 /// Turn an ASC error response into an actionable message. The body's
@@ -156,7 +177,7 @@ pub fn find_app_id(auth: &KeyAuth, bundle_id: &str) -> Result<Option<String>> {
 }
 
 // `filter[bundleId]` can return other apps too, so match exactly.
-fn app_id_in(json: &serde_json::Value, bundle_id: &str) -> Option<String> {
+pub(crate) fn app_id_in(json: &serde_json::Value, bundle_id: &str) -> Option<String> {
     json.get("data")?
         .as_array()?
         .iter()
@@ -350,6 +371,74 @@ fn status_in(json: &serde_json::Value) -> BuildUploadStatus {
     }
 }
 
+/// The processed build for one uploaded binary, once App Store
+/// Connect has turned the upload into a build record.
+pub fn find_build_id(
+    auth: &KeyAuth,
+    app_id: &str,
+    short_version: &str,
+    bundle_version: &str,
+) -> Result<Option<String>> {
+    let json = get(
+        auth,
+        &format!(
+            "/v1/builds?filter[app]={app_id}&filter[version]={bundle_version}\
+             &filter[preReleaseVersion.version]={short_version}\
+             &filter[preReleaseVersion.platform]=IOS&limit=1"
+        ),
+    )?;
+    Ok(json
+        .pointer("/data/0/id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string))
+}
+
+/// Set TestFlight's "What to Test" for one locale of a build,
+/// updating the localization if the build already has it.
+pub fn set_beta_whats_new(auth: &KeyAuth, build_id: &str, locale: &str, text: &str) -> Result<()> {
+    let existing = get(
+        auth,
+        &format!("/v1/builds/{build_id}/betaBuildLocalizations?limit=200"),
+    )?;
+    let body = match localization_id_in(&existing, locale) {
+        Some(id) => {
+            return request(
+                auth,
+                "PATCH",
+                &format!("/v1/betaBuildLocalizations/{id}"),
+                Some(serde_json::json!({
+                    "data": {
+                        "type": "betaBuildLocalizations",
+                        "id": id,
+                        "attributes": { "whatsNew": text },
+                    },
+                })),
+            )
+            .map(|_| ());
+        }
+        None => serde_json::json!({
+            "data": {
+                "type": "betaBuildLocalizations",
+                "attributes": { "locale": locale, "whatsNew": text },
+                "relationships": {
+                    "build": { "data": { "type": "builds", "id": build_id } },
+                },
+            },
+        }),
+    };
+    request(auth, "POST", "/v1/betaBuildLocalizations", Some(body)).map(|_| ())
+}
+
+fn localization_id_in(json: &serde_json::Value, locale: &str) -> Option<String> {
+    json.get("data")?
+        .as_array()?
+        .iter()
+        .find(|l| l.pointer("/attributes/locale").and_then(|v| v.as_str()) == Some(locale))?
+        .get("id")?
+        .as_str()
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,6 +532,16 @@ mod tests {
         ]});
         assert_eq!(app_id_in(&json, "com.example.app").as_deref(), Some("222"));
         assert_eq!(app_id_in(&json, "com.example"), None);
+    }
+
+    #[test]
+    fn an_existing_localization_is_found_by_exact_locale() {
+        let json = serde_json::json!({ "data": [
+            { "id": "a", "attributes": { "locale": "en-US" } },
+            { "id": "b", "attributes": { "locale": "ja" } },
+        ]});
+        assert_eq!(localization_id_in(&json, "ja").as_deref(), Some("b"));
+        assert_eq!(localization_id_in(&json, "en"), None);
     }
 
     #[test]

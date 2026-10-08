@@ -56,6 +56,15 @@ pub fn run(args: Args) -> Result<()> {
             ipa_path.display()
         );
     }
+    let store = crate::store::load(&m.crate_dir)?;
+    let notes = super::release_notes(
+        store
+            .iter()
+            .flat_map(|s| &s.appstore.beta_build.localizations)
+            .map(|l| (l.locale.as_str(), l.whats_new.as_deref())),
+        "TestFlight",
+        whisker_submit::appstore::BETA_WHATS_NEW_LIMIT,
+    )?;
     let key = credential::require_asc_key(&m.crate_dir, &info.bundle_id)?;
     let auth = asc::KeyAuth {
         p8_pem: &key.p8_pem,
@@ -99,12 +108,51 @@ pub fn run(args: Args) -> Result<()> {
 
     if args.no_wait {
         ui::info("uploaded — App Store Connect is processing the build");
+        if !notes.is_empty() {
+            ui::warn(
+                "store.rs release notes were not sent — TestFlight only accepts them once \
+                 the build is processed; drop `--no-wait`",
+            );
+        }
         return Ok(());
     }
     wait_for_processing(&auth, &upload_id)?;
     ui::info(format!(
         "{} ({}) is processed — available in TestFlight and for App Store review",
         info.short_version, info.bundle_version
+    ));
+    if !notes.is_empty() {
+        send_whats_new(&auth, &app_id, &info, &notes)?;
+    }
+    Ok(())
+}
+
+fn send_whats_new(
+    auth: &asc::KeyAuth,
+    app_id: &str,
+    info: &ipa::IpaInfo,
+    notes: &[(String, String)],
+) -> Result<()> {
+    let Some(build_id) =
+        asc::find_build_id(auth, app_id, &info.short_version, &info.bundle_version)?
+    else {
+        // The upload itself succeeded, so this must not fail the submit.
+        ui::warn(
+            "store.rs release notes were not sent — App Store Connect does not list the \
+             build yet; add them in TestFlight",
+        );
+        return Ok(());
+    };
+    for (locale, text) in notes {
+        asc::set_beta_whats_new(auth, &build_id, locale, text)?;
+    }
+    ui::info(format!(
+        "TestFlight \"What to Test\" set for {}",
+        notes
+            .iter()
+            .map(|(locale, _)| locale.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     ));
     Ok(())
 }

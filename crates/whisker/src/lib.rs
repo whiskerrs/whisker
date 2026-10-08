@@ -59,6 +59,7 @@
 extern crate self as whisker;
 
 pub use whisker_config as config;
+pub use whisker_config::store;
 pub use whisker_runtime as runtime;
 
 pub use whisker_css as css;
