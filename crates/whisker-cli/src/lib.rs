@@ -116,7 +116,7 @@ enum Command {
 
     /// Manage what the stores hold besides the binary — store page
     /// text, categories, review contacts — as declared in the app's
-    /// `store.rs`. `store push appstore` / `store push playstore`.
+    /// `store.rs`. `store push` writes it, `store pull` prints what a store has.
     Store(store::StoreArgs),
 
     /// Format Rust source — a rustfmt drop-in that ALSO formats
@@ -258,6 +258,10 @@ mod tests {
             &["whisker", "store", "push", "appstore", "--create-version"][..],
         ] {
             let cli = parse(args.iter().copied()).unwrap();
+            assert!(matches!(cli.command, Command::Store(_)));
+        }
+        for store in ["appstore", "playstore"] {
+            let cli = parse(["whisker", "store", "pull", store]).unwrap();
             assert!(matches!(cli.command, Command::Store(_)));
         }
         assert!(parse(["whisker", "store", "push"]).is_err());

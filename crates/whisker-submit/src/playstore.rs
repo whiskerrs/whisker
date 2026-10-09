@@ -193,6 +193,53 @@ pub fn push(client: &Client, config: &PlayStore) -> Result<Vec<String>> {
     result
 }
 
+fn text(value: &Value, name: &str) -> Option<String> {
+    value
+        .get(name)?
+        .as_str()
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn read(edit: &impl Edit) -> Result<PlayStore> {
+    let details = edit.get("details")?;
+    let listings = edit.get("listings")?;
+    Ok(PlayStore {
+        details: PlayDetails {
+            default_language: text(&details, "defaultLanguage"),
+            contact_email: text(&details, "contactEmail"),
+            contact_phone: text(&details, "contactPhone"),
+            contact_website: text(&details, "contactWebsite"),
+        },
+        listings: listings
+            .get("listings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|listing| PlayListing {
+                language: text(listing, "language").unwrap_or_default(),
+                title: text(listing, "title"),
+                short_description: text(listing, "shortDescription"),
+                full_description: text(listing, "fullDescription"),
+                video: text(listing, "video"),
+            })
+            .collect(),
+        ..PlayStore::default()
+    })
+}
+
+/// Read what Play holds for everything `push` writes. An edit is the
+/// only way to read listings; it is discarded, never committed.
+pub fn pull(client: &Client) -> Result<PlayStore> {
+    let id = client.insert_edit()?;
+    let result = read(&LiveEdit {
+        client,
+        id: id.as_str(),
+    });
+    client.delete_edit(&id).ok();
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,8 +252,10 @@ mod tests {
 
     impl Edit for FakeEdit {
         fn get(&self, resource: &str) -> Result<Value> {
-            assert_eq!(resource, "listings");
-            Ok(self.listings.clone())
+            Ok(match resource {
+                "listings" => self.listings.clone(),
+                _ => json!({ "contactEmail": "old@example.com", "contactPhone": "" }),
+            })
         }
 
         fn send(&self, method: &str, resource: &str, body: Value) -> Result<Value> {
@@ -262,6 +311,27 @@ mod tests {
         );
         assert_eq!(done.len(), 3);
         assert!(done[2].contains("fr-FR (created)"));
+    }
+
+    #[test]
+    fn pull_reads_back_the_shape_push_writes_and_drops_empty_values() {
+        let edit = FakeEdit {
+            listings: json!({ "listings": [
+                { "language": "ja-JP", "title": "旧", "fullDescription": "説明", "video": "" },
+            ]}),
+            sent: RefCell::new(Vec::new()),
+        };
+        let pulled = read(&edit).unwrap();
+        let mut expected = PlayStore::default();
+        expected
+            .details(|d| {
+                d.contact_email("old@example.com");
+            })
+            .listing("ja-JP", |l| {
+                l.title("旧").full_description("説明");
+            });
+        assert_eq!(pulled, expected);
+        assert!(edit.sent.borrow().is_empty(), "pull must not write");
     }
 
     #[test]

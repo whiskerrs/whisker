@@ -1,5 +1,6 @@
 //! `whisker store` — keep the stores' own records of the app (store
-//! page text, categories, review contacts) in step with `store.rs`.
+//! page text, categories, review contacts) in step with `store.rs`:
+//! `push` writes what it declares, `pull` prints what the store has.
 //!
 //! Split from `whisker submit` on purpose: submit sends a binary and
 //! what belongs to that one binary; this sends what describes the app
@@ -25,6 +26,24 @@ enum Cmd {
     /// Send what `store.rs` declares to a store. Only what is set is
     /// written; everything else is left as the store has it.
     Push(PushArgs),
+    /// Read what a store currently holds and print it as a
+    /// `store.rs`. Changes nothing, in the store or on disk —
+    /// redirect the output to start a `store.rs` from the live data.
+    Pull(PullArgs),
+}
+
+#[derive(Args, Debug)]
+struct PullArgs {
+    #[command(subcommand)]
+    target: PullTarget,
+}
+
+#[derive(Subcommand, Debug)]
+enum PullTarget {
+    /// App Store Connect — everything `store push appstore` writes.
+    Appstore(appstore::PullArgs),
+    /// Google Play — everything `store push playstore` writes.
+    Playstore(playstore::PullArgs),
 }
 
 #[derive(Args, Debug)]
@@ -48,6 +67,10 @@ pub fn run(args: StoreArgs) -> Result<()> {
         Cmd::Push(push) => match push.target {
             Target::Appstore(a) => appstore::run(a),
             Target::Playstore(a) => playstore::run(a),
+        },
+        Cmd::Pull(pull) => match pull.target {
+            PullTarget::Appstore(a) => appstore::pull(a),
+            PullTarget::Playstore(a) => playstore::pull(a),
         },
     }
 }

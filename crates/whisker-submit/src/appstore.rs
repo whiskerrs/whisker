@@ -9,7 +9,9 @@
 
 use anyhow::{Result, anyhow, bail, ensure};
 use serde_json::{Map, Value, json};
-use whisker_config::store::{AppStore, ReviewDetail};
+use whisker_config::store::{
+    AppInfoLocalization, AppStore, AppStoreVersionLocalization, BetaAppLocalization, ReviewDetail,
+};
 
 use crate::asc::{self, KeyAuth};
 
@@ -650,6 +652,157 @@ pub fn push(
     Ok(done)
 }
 
+fn owned(resource: &Value, name: &str) -> Option<String> {
+    attribute(resource, name)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn review_detail_from(resource: &Value) -> ReviewDetail {
+    ReviewDetail {
+        contact_first_name: owned(resource, "contactFirstName"),
+        contact_last_name: owned(resource, "contactLastName"),
+        contact_phone: owned(resource, "contactPhone"),
+        contact_email: owned(resource, "contactEmail"),
+        demo_account_required: resource
+            .pointer("/attributes/demoAccountRequired")
+            .and_then(Value::as_bool),
+        notes: owned(resource, "notes"),
+    }
+}
+
+/// The resource `pull` should read: the one being edited when there
+/// is one — that is what a later `push` writes to — else the first,
+/// which is the live one.
+fn current<'a>(
+    resources: &'a [Value],
+    state_attributes: &[&str],
+    states: &[&str],
+) -> Option<&'a Value> {
+    editable(resources, state_attributes, states)
+        .and_then(|id| resources.iter().find(|r| id_of(r) == Some(id)))
+        .or(resources.first())
+}
+
+/// Read what App Store Connect holds for everything `push` writes,
+/// plus a note per choice that affects what was read.
+pub fn pull(api: &impl Api, bundle_id: &str) -> Result<(AppStore, Vec<String>)> {
+    let apps = api
+        .get(&format!(
+            "/v1/apps?filter[bundleId]={bundle_id}&fields[apps]=bundleId"
+        ))?
+        .unwrap_or(Value::Null);
+    let app_id = asc::app_id_in(&apps, bundle_id)
+        .ok_or_else(|| anyhow!("no app with bundle id {bundle_id} in App Store Connect"))?;
+    let mut config = AppStore::default();
+    let mut notes = Vec::new();
+
+    if let Some(app) = api.get(&format!("/v1/apps/{app_id}"))? {
+        let app = app.get("data").cloned().unwrap_or(Value::Null);
+        config.app.content_rights_declaration = owned(&app, "contentRightsDeclaration");
+        config.app.primary_locale = owned(&app, "primaryLocale");
+    }
+
+    let infos = list(api, &format!("/v1/apps/{app_id}/appInfos"))?;
+    if let Some(info) = current(&infos, &["state"], &EDITABLE_APP_INFO_STATES) {
+        let info_id = id_of(info).unwrap_or_default();
+        notes.push(format!(
+            "app_info read from the app info in state {}",
+            attribute(info, "state").unwrap_or("?")
+        ));
+        let category = |relationship: &str| -> Result<Option<String>> {
+            Ok(api
+                .get(&format!("/v1/appInfos/{info_id}/{relationship}"))?
+                .and_then(|json| json.pointer("/data/id")?.as_str().map(str::to_string)))
+        };
+        config.app_info.primary_category = category("primaryCategory")?;
+        config.app_info.primary_subcategory_one = category("primarySubcategoryOne")?;
+        config.app_info.primary_subcategory_two = category("primarySubcategoryTwo")?;
+        config.app_info.secondary_category = category("secondaryCategory")?;
+        config.app_info.secondary_subcategory_one = category("secondarySubcategoryOne")?;
+        config.app_info.secondary_subcategory_two = category("secondarySubcategoryTwo")?;
+        config.app_info.localizations = list(
+            api,
+            &format!("/v1/appInfos/{info_id}/appInfoLocalizations?limit=200"),
+        )?
+        .iter()
+        .map(|l| AppInfoLocalization {
+            locale: owned(l, "locale").unwrap_or_default(),
+            name: owned(l, "name"),
+            subtitle: owned(l, "subtitle"),
+            privacy_policy_url: owned(l, "privacyPolicyUrl"),
+            privacy_choices_url: owned(l, "privacyChoicesUrl"),
+            privacy_policy_text: owned(l, "privacyPolicyText"),
+        })
+        .collect();
+    }
+
+    let versions = list(
+        api,
+        &format!("/v1/apps/{app_id}/appStoreVersions?filter[platform]=IOS&limit=200"),
+    )?;
+    let state_attributes = ["appVersionState", "appStoreState"];
+    if let Some(version) = current(&versions, &state_attributes, &EDITABLE_VERSION_STATES) {
+        let version_id = id_of(version).unwrap_or_default();
+        notes.push(format!(
+            "version read from {} ({})",
+            attribute(version, "versionString").unwrap_or("?"),
+            state_attributes
+                .iter()
+                .find_map(|name| attribute(version, name))
+                .unwrap_or("?")
+        ));
+        config.version.copyright = owned(version, "copyright");
+        config.version.release_type = owned(version, "releaseType");
+        config.version.earliest_release_date = owned(version, "earliestReleaseDate");
+        config.version.localizations = list(
+            api,
+            &format!("/v1/appStoreVersions/{version_id}/appStoreVersionLocalizations?limit=200"),
+        )?
+        .iter()
+        .map(|l| AppStoreVersionLocalization {
+            locale: owned(l, "locale").unwrap_or_default(),
+            description: owned(l, "description"),
+            keywords: owned(l, "keywords"),
+            whats_new: owned(l, "whatsNew"),
+            promotional_text: owned(l, "promotionalText"),
+            marketing_url: owned(l, "marketingUrl"),
+            support_url: owned(l, "supportUrl"),
+        })
+        .collect();
+        if let Some(detail) = api
+            .get(&format!(
+                "/v1/appStoreVersions/{version_id}/appStoreReviewDetail"
+            ))?
+            .and_then(|json| json.get("data").cloned())
+        {
+            config.review_detail = review_detail_from(&detail);
+        }
+    }
+
+    config.beta_app.localizations = list(
+        api,
+        &format!("/v1/apps/{app_id}/betaAppLocalizations?limit=200"),
+    )?
+    .iter()
+    .map(|l| BetaAppLocalization {
+        locale: owned(l, "locale").unwrap_or_default(),
+        description: owned(l, "description"),
+        feedback_email: owned(l, "feedbackEmail"),
+        marketing_url: owned(l, "marketingUrl"),
+        privacy_policy_url: owned(l, "privacyPolicyUrl"),
+        tv_os_privacy_policy: owned(l, "tvOsPrivacyPolicy"),
+    })
+    .collect();
+    if let Some(detail) = api
+        .get(&format!("/v1/apps/{app_id}/betaAppReviewDetail"))?
+        .and_then(|json| json.get("data").cloned())
+    {
+        config.beta_app_review_detail = review_detail_from(&detail);
+    }
+    Ok((config, notes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -854,6 +1007,79 @@ mod tests {
             calls[1].2["data"]["attributes"],
             json!({ "demoAccountRequired": false, "notes": "メモ" })
         );
+    }
+
+    #[test]
+    fn pull_prefers_the_version_being_prepared_and_never_writes() {
+        let api = fake(&[
+            (
+                "/v1/apps/1",
+                json!({ "data": { "id": "1", "attributes": { "primaryLocale": "ja" } } }),
+            ),
+            (
+                "/v1/apps/1/appInfos",
+                json!({ "data": [{ "id": "i1", "attributes": { "state": "READY_FOR_DISTRIBUTION" } }] }),
+            ),
+            (
+                "/v1/appInfos/i1/primaryCategory",
+                json!({ "data": { "type": "appCategories", "id": "BOOKS" } }),
+            ),
+            (
+                "/v1/appInfos/i1/appInfoLocalizations?limit=200",
+                json!({ "data": [{ "id": "l1", "attributes": { "locale": "ja", "name": "アプリ", "subtitle": null } }] }),
+            ),
+            (
+                VERSIONS,
+                json!({ "data": [
+                    { "id": "live", "attributes": { "appVersionState": "READY_FOR_DISTRIBUTION", "versionString": "1.0", "copyright": "old" } },
+                    { "id": "next", "attributes": { "appVersionState": "PREPARE_FOR_SUBMISSION", "versionString": "1.1", "copyright": "2026 Example" } },
+                ]}),
+            ),
+            (
+                "/v1/appStoreVersions/next/appStoreVersionLocalizations?limit=200",
+                json!({ "data": [{ "id": "v1", "attributes": { "locale": "ja", "description": "説明", "keywords": "" } }] }),
+            ),
+            (
+                "/v1/appStoreVersions/next/appStoreReviewDetail",
+                json!({ "data": { "id": "r1", "attributes": {
+                    "contactEmail": "review@example.com",
+                    "demoAccountRequired": true,
+                    "demoAccountName": "user",
+                    "demoAccountPassword": "secret",
+                }}}),
+            ),
+        ]);
+        let (pulled, notes) = pull(&api, "com.example.app").unwrap();
+
+        let mut expected = AppStore::default();
+        expected
+            .app(|a| {
+                a.primary_locale("ja");
+            })
+            .app_info(|i| {
+                i.primary_category("BOOKS");
+                i.locale("ja", |l| {
+                    l.name("アプリ");
+                });
+            })
+            .version(|v| {
+                v.copyright("2026 Example");
+                v.locale("ja", |l| {
+                    l.description("説明");
+                });
+            })
+            .review_detail(|r| {
+                r.contact_email("review@example.com")
+                    .demo_account_required(true);
+            });
+        assert_eq!(pulled, expected);
+        assert!(
+            notes.contains(&"version read from 1.1 (PREPARE_FOR_SUBMISSION)".to_string()),
+            "{notes:?}"
+        );
+        assert!(sent(&api).is_empty(), "pull must not write");
+        // The demo account's credentials must not reach store.rs.
+        assert!(!crate::render::appstore(&pulled).contains("secret"));
     }
 
     #[test]

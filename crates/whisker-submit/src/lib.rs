@@ -14,3 +14,4 @@ pub mod asc;
 pub mod ipa;
 pub mod play;
 pub mod playstore;
+pub mod render;
