@@ -77,7 +77,7 @@ pub fn run(args: Args) -> Result<()> {
         (false, _) => None,
     };
     let config = super::require(&m.crate_dir)?.appstore;
-    appstore::validate(&config)?;
+    appstore::validate(&config, &m.crate_dir)?;
     let planned = appstore::describe(&config);
     if planned.is_empty() {
         bail!("store.rs declares nothing `store push appstore` sends");
@@ -99,7 +99,7 @@ pub fn run(args: Args) -> Result<()> {
         issuer_id: &key.issuer_id,
     };
     let options = appstore::PushOptions { create_version };
-    for line in appstore::push(&auth, &bundle_id, &config, &options)? {
+    for line in appstore::push(&auth, &bundle_id, &config, &m.crate_dir, &options)? {
         ui::info(line);
     }
     Ok(())

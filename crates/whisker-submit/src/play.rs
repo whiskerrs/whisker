@@ -65,7 +65,8 @@ pub struct Client<'a> {
 enum Body<'a> {
     None,
     Json(serde_json::Value),
-    File(&'a Path),
+    /// A file and its MIME type.
+    File(&'a Path, &'a str),
 }
 
 fn send(req: ureq::Request, body: Body) -> Result<Result<ureq::Response, ureq::Error>> {
@@ -75,11 +76,11 @@ fn send(req: ureq::Request, body: Body) -> Result<Result<ureq::Response, ureq::E
         Body::None if req.method() == "GET" => req.call(),
         Body::None => req.send_bytes(&[]),
         Body::Json(json) => req.send_json(json),
-        Body::File(path) => {
+        Body::File(path, mime) => {
             let file =
                 std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
             let len = file.metadata()?.len();
-            req.set("Content-Type", "application/octet-stream")
+            req.set("Content-Type", mime)
                 .set("Content-Length", &len.to_string())
                 .send(file)
         }
@@ -170,7 +171,7 @@ impl<'a> Client<'a> {
                 "/upload/androidpublisher/v3/applications/{}/edits/{edit}/bundles?uploadType=media",
                 self.package
             ),
-            Body::File(aab),
+            Body::File(aab, "application/octet-stream"),
         )?;
         json.get("versionCode")
             .and_then(|v| v.as_i64())
@@ -216,6 +217,34 @@ impl<'a> Client<'a> {
             method,
             &format!("{}/{edit}/{resource}", self.edits()),
             Body::Json(body),
+        )
+    }
+
+    pub(crate) fn edit_delete(&self, edit: &str, resource: &str) -> Result<()> {
+        self.call(
+            "DELETE",
+            &format!("{}/{edit}/{resource}", self.edits()),
+            Body::None,
+        )
+        .map(|_| ())
+    }
+
+    /// Upload a file to a resource inside `edit`, e.g.
+    /// `listings/ja-JP/phoneScreenshots`.
+    pub(crate) fn edit_upload(
+        &self,
+        edit: &str,
+        resource: &str,
+        file: &Path,
+        mime: &str,
+    ) -> Result<serde_json::Value> {
+        self.call(
+            "POST",
+            &format!(
+                "/upload/androidpublisher/v3/applications/{}/edits/{edit}/{resource}?uploadType=media",
+                self.package
+            ),
+            Body::File(file, mime),
         )
     }
 

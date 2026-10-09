@@ -71,6 +71,23 @@ macro_rules! text_setters {
     };
 }
 
+/// One `Option<Vec<String>>` setter per ordered file list. Declaring
+/// an empty list means "the store should have none".
+macro_rules! file_list_setters {
+    ($($(#[$doc:meta])* $name:ident),* $(,)?) => {
+        $(
+            $(#[$doc])*
+            pub fn $name<T: Into<String>>(
+                &mut self,
+                files: impl IntoIterator<Item = T>,
+            ) -> &mut Self {
+                self.$name = Some(files.into_iter().map(Into::into).collect());
+                self
+            }
+        )*
+    };
+}
+
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct StoreConfig {
@@ -99,6 +116,7 @@ impl StoreConfig {
 pub struct PlayStore {
     pub details: PlayDetails,
     pub listings: Vec<PlayListing>,
+    pub images: Vec<PlayImages>,
     pub release: PlayRelease,
 }
 
@@ -124,6 +142,24 @@ impl PlayStore {
         };
         f(&mut listing);
         self.listings.push(listing);
+        self
+    }
+
+    /// `edits.images` — the store page images for one language.
+    /// Each image type that is set replaces what Play has for it;
+    /// types left unset are untouched. Paths are relative to the
+    /// app's `Cargo.toml`. Sent by `whisker store push playstore`.
+    pub fn images(
+        &mut self,
+        language: impl Into<String>,
+        f: impl FnOnce(&mut PlayImages),
+    ) -> &mut Self {
+        let mut images = PlayImages {
+            language: language.into(),
+            ..PlayImages::default()
+        };
+        f(&mut images);
+        self.images.push(images);
         self
     }
 
@@ -176,6 +212,34 @@ impl PlayListing {
     );
 }
 
+/// Field names are Play's `AppImageType` values in snake_case.
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct PlayImages {
+    pub language: String,
+    pub icon: Option<String>,
+    pub feature_graphic: Option<String>,
+    pub tv_banner: Option<String>,
+    pub phone_screenshots: Option<Vec<String>>,
+    pub seven_inch_screenshots: Option<Vec<String>>,
+    pub ten_inch_screenshots: Option<Vec<String>>,
+    pub tv_screenshots: Option<Vec<String>>,
+    pub wear_screenshots: Option<Vec<String>>,
+}
+
+impl PlayImages {
+    text_setters!(icon, feature_graphic, tv_banner);
+
+    file_list_setters!(
+        /// In display order.
+        phone_screenshots,
+        seven_inch_screenshots,
+        ten_inch_screenshots,
+        tv_screenshots,
+        wear_screenshots,
+    );
+}
+
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct PlayRelease {
@@ -211,6 +275,7 @@ pub struct LocalizedText {
 pub struct AppStore {
     pub app: App,
     pub app_info: AppInfo,
+    pub asset_library: AssetLibrary,
     pub version: AppStoreVersion,
     pub review_detail: ReviewDetail,
     pub beta_app: BetaApp,
@@ -232,6 +297,14 @@ impl AppStore {
     /// Sent by `whisker store push appstore`.
     pub fn app_info(&mut self, f: impl FnOnce(&mut AppInfo)) -> &mut Self {
         f(&mut self.app_info);
+        self
+    }
+
+    /// `appAssetLibraries` — the app's reusable images. An image is
+    /// uploaded here once and then shown wherever a placement refers
+    /// to it. Sent by `whisker store push appstore`.
+    pub fn asset_library(&mut self, f: impl FnOnce(&mut AssetLibrary)) -> &mut Self {
+        f(&mut self.asset_library);
         self
     }
 
@@ -355,6 +428,50 @@ impl AppInfoLocalization {
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+pub struct AssetLibrary {
+    pub images: Vec<AssetLibraryImage>,
+}
+
+impl AssetLibrary {
+    /// `appAssetLibraryImages` — one image, identified by its
+    /// `referenceName`, which is also how placements refer to it.
+    pub fn image(
+        &mut self,
+        reference_name: impl Into<String>,
+        f: impl FnOnce(&mut AssetLibraryImage),
+    ) -> &mut Self {
+        let mut image = AssetLibraryImage {
+            reference_name: reference_name.into(),
+            ..AssetLibraryImage::default()
+        };
+        f(&mut image);
+        self.images.push(image);
+        self
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct AssetLibraryImage {
+    pub reference_name: String,
+    pub file: Option<String>,
+    pub category: Option<String>,
+}
+
+impl AssetLibraryImage {
+    text_setters!(
+        /// Path relative to the app's `Cargo.toml`. Its dimensions
+        /// must match one of App Store Connect's image specifications
+        /// exactly.
+        file,
+        /// `APP_SCREENSHOTS_AND_PREVIEWS` (the default) or
+        /// `CREATIVE_ASSETS`.
+        category,
+    );
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct AppStoreVersion {
     pub copyright: Option<String>,
     pub release_type: Option<String>,
@@ -398,9 +515,40 @@ pub struct AppStoreVersionLocalization {
     pub promotional_text: Option<String>,
     pub marketing_url: Option<String>,
     pub support_url: Option<String>,
+    pub placements: Vec<Placements>,
+}
+
+/// The ordered `appAssetLibraryPlacements` of one placement type and
+/// group on a localization.
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Placements {
+    pub placement_type: String,
+    pub placement_group: String,
+    pub images: Vec<String>,
 }
 
 impl AppStoreVersionLocalization {
+    /// What this localization shows for one placement type (such as
+    /// `APP_SCREENSHOT`) and group (a device family such as
+    /// `IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE`, as listed by App Store
+    /// Connect's reference data): the asset library images with
+    /// these reference names, in display order. Replaces what the
+    /// group has; groups not declared are untouched.
+    pub fn placements<T: Into<String>>(
+        &mut self,
+        placement_type: impl Into<String>,
+        placement_group: impl Into<String>,
+        images: impl IntoIterator<Item = T>,
+    ) -> &mut Self {
+        self.placements.push(Placements {
+            placement_type: placement_type.into(),
+            placement_group: placement_group.into(),
+            images: images.into_iter().map(Into::into).collect(),
+        });
+        self
+    }
+
     text_setters!(
         /// 4000 characters.
         description,

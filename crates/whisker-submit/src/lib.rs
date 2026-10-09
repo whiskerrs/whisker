@@ -11,6 +11,7 @@
 
 pub mod appstore;
 pub mod asc;
+mod files;
 pub mod ipa;
 pub mod play;
 pub mod playstore;

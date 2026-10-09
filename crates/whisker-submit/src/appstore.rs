@@ -7,13 +7,16 @@
 //! editable version all exist — so a push fails before its first
 //! write rather than half-way through.
 
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde_json::{Map, Value, json};
+use std::path::Path;
 use whisker_config::store::{
-    AppInfoLocalization, AppStore, AppStoreVersionLocalization, BetaAppLocalization, ReviewDetail,
+    AppInfoLocalization, AppStore, AppStoreVersionLocalization, AssetLibraryImage,
+    BetaAppLocalization, Placements, ReviewDetail,
 };
 
-use crate::asc::{self, KeyAuth};
+use crate::asc::{self, KeyAuth, UploadOperation};
+use crate::files;
 
 const NAME_LIMIT: usize = 30;
 const SUBTITLE_LIMIT: usize = 30;
@@ -63,8 +66,19 @@ pub struct PushOptions<'a> {
 pub trait Api {
     /// `None` when the resource does not exist.
     fn get(&self, path: &str) -> Result<Option<Value>>;
+    /// `Value::Null` sends no body.
     fn send(&self, method: &str, path: &str, body: Value) -> Result<Value>;
+    /// Transfer `file` to the URLs a reservation handed back.
+    fn upload(&self, file: &Path, size: u64, operations: &[UploadOperation]) -> Result<()>;
+    /// Wait between two polls of a processing asset.
+    fn pause(&self) {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
 }
+
+/// How many times a processing image is polled before giving up
+/// (about five minutes).
+const PROCESSING_POLLS: usize = 150;
 
 impl Api for KeyAuth<'_> {
     fn get(&self, path: &str) -> Result<Option<Value>> {
@@ -72,8 +86,27 @@ impl Api for KeyAuth<'_> {
     }
 
     fn send(&self, method: &str, path: &str, body: Value) -> Result<Value> {
-        asc::request(self, method, path, Some(body))
+        asc::request(self, method, path, (!body.is_null()).then_some(body))
     }
+
+    fn upload(&self, file: &Path, size: u64, operations: &[UploadOperation]) -> Result<()> {
+        asc::upload_parts(file, size, operations)
+    }
+}
+
+const DEFAULT_IMAGE_CATEGORY: &str = "APP_SCREENSHOTS_AND_PREVIEWS";
+
+fn category(image: &AssetLibraryImage) -> &str {
+    image.category.as_deref().unwrap_or(DEFAULT_IMAGE_CATEGORY)
+}
+
+/// Every placement group `config` declares, with its locale.
+fn placements(config: &AppStore) -> impl Iterator<Item = (&str, &Placements)> {
+    config
+        .version
+        .localizations
+        .iter()
+        .flat_map(|l| l.placements.iter().map(|p| (l.locale.as_str(), p)))
 }
 
 fn set_fields(pairs: &[(&str, &Option<String>)]) -> Map<String, Value> {
@@ -231,6 +264,21 @@ pub fn describe(config: &AppStore) -> Vec<String> {
         resource(&format!("betaAppLocalizations {locale}"), fields);
     }
     resource("betaAppReviewDetails", &plan.beta_app_review_detail);
+    for image in &config.asset_library.images {
+        lines.push(format!(
+            "appAssetLibraryImages {}: {}",
+            image.reference_name,
+            image.file.as_deref().unwrap_or("(no file)")
+        ));
+    }
+    for (locale, group) in placements(config) {
+        lines.push(format!(
+            "appAssetLibraryPlacements {locale} {} {}: {} image(s)",
+            group.placement_type,
+            group.placement_group,
+            group.images.len()
+        ));
+    }
     lines
 }
 
@@ -283,9 +331,60 @@ fn check_locales<'a>(block: &str, locales: impl Iterator<Item = &'a String>) -> 
     Ok(())
 }
 
+fn validate_assets(config: &AppStore, root: &Path) -> Result<()> {
+    let mut declared = std::collections::BTreeSet::new();
+    for image in &config.asset_library.images {
+        let name = image.reference_name.as_str();
+        // The name travels in a `filter[referenceName]` query.
+        ensure!(
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)),
+            "store.rs: appstore asset_library image `{name}`: reference names may only \
+             use letters, digits, `-`, `_` and `.`"
+        );
+        ensure!(
+            declared.insert(name),
+            "store.rs: appstore asset_library image `{name}` is declared twice"
+        );
+        let file = image.file.as_deref().ok_or_else(|| {
+            anyhow!("store.rs: appstore asset_library image `{name}` has no file")
+        })?;
+        files::image(
+            root,
+            file,
+            &format!("appstore asset_library image `{name}`"),
+        )?;
+        check_one_of(
+            &format!("asset_library image `{name}` category"),
+            &image.category,
+            &[DEFAULT_IMAGE_CATEGORY, "CREATIVE_ASSETS"],
+        )?;
+    }
+    let mut groups = std::collections::BTreeSet::new();
+    for (locale, group) in placements(config) {
+        let (placement_type, placement_group) = (&group.placement_type, &group.placement_group);
+        ensure!(
+            groups.insert((locale, placement_type, placement_group)),
+            "store.rs: appstore version `{locale}` declares {placement_type} \
+             {placement_group} placements twice"
+        );
+        for name in &group.images {
+            ensure!(
+                declared.contains(name.as_str()),
+                "store.rs: appstore version `{locale}` places image `{name}`, which \
+                 asset_library does not declare"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Refuse what App Store Connect would reject, before anything is
-/// sent.
-pub fn validate(config: &AppStore) -> Result<()> {
+/// sent. `root` is the directory image paths are relative to.
+pub fn validate(config: &AppStore, root: &Path) -> Result<()> {
+    validate_assets(config, root)?;
     check_one_of(
         "app content_rights_declaration",
         &config.app.content_rights_declaration,
@@ -507,15 +606,212 @@ fn editable_version(
     Ok((id.to_string(), version.to_string()))
 }
 
+/// The library image for `image`, uploading the file unless the
+/// library already holds it under the same reference name.
+///
+/// An image's bytes can't be changed once committed, so a changed
+/// file is uploaded as a new image; the old one stays in the library.
+fn ensure_image(
+    api: &impl Api,
+    done: &mut Vec<String>,
+    library_id: &str,
+    image: &AssetLibraryImage,
+    root: &Path,
+) -> Result<String> {
+    let name = image.reference_name.as_str();
+    let (path, _) = files::image(root, image.file.as_deref().unwrap_or_default(), name)?;
+    let size = path
+        .metadata()
+        .with_context(|| format!("read {}", path.display()))?
+        .len();
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow!("{} has no UTF-8 file name", path.display()))?;
+
+    let existing = list(
+        api,
+        &format!(
+            "/v1/appAssetLibraries/{library_id}/images?filter[referenceName]={name}&limit=200"
+        ),
+    )?;
+    let reusable = existing.iter().find(|candidate| {
+        attribute(candidate, "referenceName") == Some(name)
+            && attribute(candidate, "fileName") == Some(file_name)
+            && candidate
+                .pointer("/attributes/fileSize")
+                .and_then(Value::as_u64)
+                == Some(size)
+            && !["AWAITING_UPLOAD", "FAILED", "ARCHIVED"]
+                .contains(&attribute(candidate, "state").unwrap_or_default())
+    });
+    if let Some(id) = reusable.and_then(id_of) {
+        done.push(format!("appAssetLibraryImages {name}: unchanged"));
+        return Ok(id.to_string());
+    }
+
+    done.push(format!(
+        "appAssetLibraryImages {name}: uploaded {file_name}"
+    ));
+    let reserved = api.send(
+        "POST",
+        "/v1/appAssetLibraryImages",
+        json!({ "data": {
+            "type": "appAssetLibraryImages",
+            "attributes": {
+                "fileName": file_name,
+                "fileSize": size,
+                "category": category(image),
+                "referenceName": name,
+            },
+            "relationships": { "assetLibrary": linkage("appAssetLibraries", library_id) },
+        }}),
+    )?;
+    let id = reserved
+        .pointer("/data/id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("App Store Connect returned no id for image `{name}`"))?
+        .to_string();
+    let operations: Vec<UploadOperation> = reserved
+        .pointer("/data/attributes/uploadOperations")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .context("parse uploadOperations")?
+        .unwrap_or_default();
+    ensure!(
+        !operations.is_empty(),
+        "App Store Connect returned no upload operations for image `{name}`"
+    );
+    api.upload(&path, size, &operations)?;
+    let mut uploaded = Map::new();
+    uploaded.insert("uploaded".into(), json!(true));
+    patch(api, "appAssetLibraryImages", &id, uploaded)?;
+    await_processing(api, &id, name)?;
+    Ok(id)
+}
+
+/// Wait until App Store Connect has matched an uploaded image against
+/// its specifications. A file whose dimensions match none fails here;
+/// placing it anyway would leave a placement that never appears.
+fn await_processing(api: &impl Api, id: &str, name: &str) -> Result<()> {
+    for _ in 0..PROCESSING_POLLS {
+        let image = api
+            .get(&format!("/v1/appAssetLibraryImages/{id}"))?
+            .and_then(|json| json.get("data").cloned())
+            .unwrap_or(Value::Null);
+        match attribute(&image, "state").unwrap_or_default() {
+            "AWAITING_UPLOAD" | "UPLOAD_COMPLETE" | "" => api.pause(),
+            "FAILED" => bail!(
+                "App Store Connect rejected image `{name}`: {}\n\
+                 Fix: its dimensions must match one of App Store Connect's image \
+                 specifications exactly. The failed image stays in the asset library \
+                 until deleted there.",
+                image
+                    .pointer("/attributes/stateDetails")
+                    .filter(|details| !details.is_null())
+                    .map(Value::to_string)
+                    .unwrap_or_else(|| "(no detail given)".to_string())
+            ),
+            _ => return Ok(()),
+        }
+    }
+    bail!("image `{name}` was still processing after five minutes — re-run the push")
+}
+
+/// Make one placement group on a localization show exactly `wanted`
+/// (library image ids), in order. A placement can't be edited, so a
+/// group that differs is deleted and recreated.
+fn sync_placements(
+    api: &impl Api,
+    done: &mut Vec<String>,
+    localization_id: &str,
+    locale: &str,
+    group: &Placements,
+    wanted: &[&str],
+) -> Result<()> {
+    let (placement_type, placement_group) = (&group.placement_type, &group.placement_group);
+    let label = format!("appAssetLibraryPlacements {locale} {placement_type} {placement_group}");
+    let existing = list(
+        api,
+        &format!(
+            "/v1/appStoreVersionLocalizations/{localization_id}/placements\
+             ?filter[placementType]={placement_type}&filter[placementGroup]={placement_group}\
+             &sort=placementGroupPosition&include=image&limit=200"
+        ),
+    )?;
+    let shown: Vec<&str> = existing
+        .iter()
+        .filter_map(|p| p.pointer("/relationships/image/data/id")?.as_str())
+        .collect();
+    if shown == wanted && shown.len() == existing.len() {
+        done.push(format!("{label}: unchanged"));
+        return Ok(());
+    }
+    done.push(format!(
+        "{label}: replaced {} with {}",
+        existing.len(),
+        wanted.len()
+    ));
+    for placement in existing.iter().filter_map(id_of) {
+        api.send(
+            "DELETE",
+            &format!("/v1/appAssetLibraryPlacements/{placement}"),
+            Value::Null,
+        )?;
+    }
+    let localization = linkage("appStoreVersionLocalizations", localization_id);
+    let mut created = Vec::new();
+    for image in wanted {
+        let placement = api.send(
+            "POST",
+            "/v1/appAssetLibraryPlacements",
+            json!({ "data": {
+                "type": "appAssetLibraryPlacements",
+                "attributes": {
+                    "placementType": placement_type,
+                    "placementGroup": placement_group,
+                },
+                "relationships": {
+                    "image": linkage("appAssetLibraryImages", image),
+                    "appStoreVersionLocalization": localization,
+                },
+            }}),
+        )?;
+        let id = placement
+            .pointer("/data/id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("App Store Connect returned no id for a new placement"))?;
+        created.push(json!({ "type": "appAssetLibraryPlacements", "id": id }));
+    }
+    if created.len() > 1 {
+        api.send(
+            "POST",
+            "/v1/appAssetLibraryPlacementOrderingRequests",
+            json!({ "data": {
+                "type": "appAssetLibraryPlacementOrderingRequests",
+                "attributes": { "placementGroup": placement_group },
+                "relationships": {
+                    "orderedPlacements": { "data": created },
+                    "appStoreVersionLocalization": localization,
+                },
+            }}),
+        )?;
+    }
+    Ok(())
+}
+
 /// Send everything `store push` owns in `config`. Returns one line
-/// per resource written.
+/// per resource written. `root` is the directory image paths are
+/// relative to.
 pub fn push(
     api: &impl Api,
     bundle_id: &str,
     config: &AppStore,
+    root: &Path,
     options: &PushOptions,
 ) -> Result<Vec<String>> {
-    validate(config)?;
+    validate(config, root)?;
     let plan = Plan::new(config);
     if describe(config).is_empty() {
         bail!("store.rs declares nothing `store push appstore` sends");
@@ -545,10 +841,20 @@ pub fn push(
     } else {
         None
     };
-    let version = if plan.needs_version() {
+    let has_placements = placements(config).next().is_some();
+    let version = if plan.needs_version() || has_placements {
         Some(editable_version(api, &app_id, options)?)
     } else {
         None
+    };
+    let library_id = if config.asset_library.images.is_empty() {
+        None
+    } else {
+        let id = api
+            .get(&format!("/v1/apps/{app_id}/assetLibrary"))?
+            .and_then(|json| json.pointer("/data/id")?.as_str().map(str::to_string))
+            .ok_or_else(|| anyhow!("App Store Connect has no asset library for this app"))?;
+        Some(id)
     };
 
     let mut done = Vec::new();
@@ -597,6 +903,56 @@ pub fn push(
             ("appStoreVersion", "appStoreVersions", version_id),
             plan.version_localizations,
         )?;
+        let mut images = std::collections::BTreeMap::new();
+        if let Some(library_id) = &library_id {
+            for image in &config.asset_library.images {
+                let id = ensure_image(api, &mut done, library_id, image, root)?;
+                images.insert(image.reference_name.as_str(), id);
+            }
+        }
+        if has_placements {
+            let localizations_path =
+                format!("/v1/appStoreVersions/{version_id}/appStoreVersionLocalizations?limit=200");
+            let mut localizations = list(api, &localizations_path)?;
+            for (locale, group) in placements(config) {
+                let existing = localizations
+                    .iter()
+                    .find(|l| attribute(l, "locale") == Some(locale))
+                    .and_then(id_of)
+                    .map(str::to_string);
+                let localization_id = match existing {
+                    Some(id) => id,
+                    None => {
+                        done.push(format!("appStoreVersionLocalizations {locale} (created)"));
+                        let created = api.send(
+                            "POST",
+                            "/v1/appStoreVersionLocalizations",
+                            json!({ "data": {
+                                "type": "appStoreVersionLocalizations",
+                                "attributes": { "locale": locale },
+                                "relationships": {
+                                    "appStoreVersion": linkage("appStoreVersions", version_id),
+                                },
+                            }}),
+                        )?;
+                        localizations = list(api, &localizations_path)?;
+                        created
+                            .pointer("/data/id")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                anyhow!("App Store Connect returned no id for locale {locale}")
+                            })?
+                            .to_string()
+                    }
+                };
+                let wanted: Vec<&str> = group
+                    .images
+                    .iter()
+                    .filter_map(|name| images.get(name.as_str()).map(String::as_str))
+                    .collect();
+                sync_placements(api, &mut done, &localization_id, locale, group, &wanted)?;
+            }
+        }
         if !plan.review_detail.is_empty() {
             done.push(format!(
                 "appStoreReviewDetails: {}",
@@ -622,6 +978,13 @@ pub fn push(
                         }}),
                     )?;
                 }
+            }
+        }
+    }
+    if version.is_none() {
+        if let Some(library_id) = &library_id {
+            for image in &config.asset_library.images {
+                ensure_image(api, &mut done, library_id, image, root)?;
             }
         }
     }
@@ -768,6 +1131,7 @@ pub fn pull(api: &impl Api, bundle_id: &str) -> Result<(AppStore, Vec<String>)> 
             promotional_text: owned(l, "promotionalText"),
             marketing_url: owned(l, "marketingUrl"),
             support_url: owned(l, "supportUrl"),
+            placements: Vec::new(),
         })
         .collect();
         if let Some(detail) = api
@@ -813,6 +1177,7 @@ mod tests {
     struct Fake {
         responses: BTreeMap<&'static str, Value>,
         sent: RefCell<Vec<(String, String, Value)>>,
+        uploads: RefCell<Vec<String>>,
     }
 
     impl Api for Fake {
@@ -824,7 +1189,23 @@ mod tests {
             self.sent
                 .borrow_mut()
                 .push((method.to_string(), path.to_string(), body));
-            Ok(json!({ "data": { "id": "new" } }))
+            let id = format!("new{}", self.sent.borrow().len());
+            Ok(
+                json!({ "data": { "id": id, "attributes": { "uploadOperations": [
+                    { "method": "PUT", "url": "https://example.invalid/part" },
+                ]}}}),
+            )
+        }
+
+        fn pause(&self) {}
+
+        fn upload(&self, file: &Path, size: u64, operations: &[UploadOperation]) -> Result<()> {
+            assert_eq!(operations.len(), 1);
+            self.uploads.borrow_mut().push(format!(
+                "{} ({size} bytes)",
+                file.file_name().unwrap().to_string_lossy()
+            ));
+            Ok(())
         }
     }
 
@@ -839,7 +1220,7 @@ mod tests {
         all.extend(responses.iter().cloned());
         Fake {
             responses: all,
-            sent: RefCell::new(Vec::new()),
+            ..Fake::default()
         }
     }
 
@@ -880,7 +1261,7 @@ mod tests {
                 json!({ "data": [{ "id": "loc-ja", "attributes": { "locale": "ja" } }] }),
             ),
         ]);
-        let done = push(&api, "com.example.app", &config, &NO_CREATE).unwrap();
+        let done = push(&api, "com.example.app", &config, Path::new("."), &NO_CREATE).unwrap();
 
         assert_eq!(
             sent(&api),
@@ -923,7 +1304,7 @@ mod tests {
         ]});
 
         let api = fake(&[(VERSIONS, live.clone())]);
-        let err = push(&api, "com.example.app", &config, &NO_CREATE)
+        let err = push(&api, "com.example.app", &config, Path::new("."), &NO_CREATE)
             .unwrap_err()
             .to_string();
         assert!(err.contains("--create-version"), "{err}");
@@ -933,11 +1314,11 @@ mod tests {
         let options = PushOptions {
             create_version: Some("1.1"),
         };
-        push(&api, "com.example.app", &config, &options).unwrap();
+        push(&api, "com.example.app", &config, Path::new("."), &options).unwrap();
         let calls = api.sent.borrow();
         assert_eq!(calls[0].1, "/v1/appStoreVersions");
         assert_eq!(calls[0].2["data"]["attributes"]["versionString"], "1.1");
-        assert_eq!(calls[2].1, "/v1/appStoreVersions/new");
+        assert_eq!(calls[2].1, "/v1/appStoreVersions/new1");
     }
 
     #[test]
@@ -954,7 +1335,7 @@ mod tests {
             "/v1/apps/1/appInfos",
             json!({ "data": [{ "id": "i1", "attributes": { "state": "READY_FOR_DISTRIBUTION" } }] }),
         )]);
-        let err = push(&api, "com.example.app", &config, &NO_CREATE)
+        let err = push(&api, "com.example.app", &config, Path::new("."), &NO_CREATE)
             .unwrap_err()
             .to_string();
         assert!(err.contains("not editable"), "{err}");
@@ -967,7 +1348,7 @@ mod tests {
                 { "id": "i2", "attributes": { "state": "PREPARE_FOR_SUBMISSION" } },
             ]}),
         )]);
-        push(&api, "com.example.app", &config, &NO_CREATE).unwrap();
+        push(&api, "com.example.app", &config, Path::new("."), &NO_CREATE).unwrap();
         let calls = api.sent.borrow();
         assert_eq!(calls[0].1, "/v1/appInfos/i2");
         assert_eq!(
@@ -999,7 +1380,7 @@ mod tests {
                 json!({ "data": { "id": "1" } }),
             ),
         ]);
-        push(&api, "com.example.app", &config, &NO_CREATE).unwrap();
+        push(&api, "com.example.app", &config, Path::new("."), &NO_CREATE).unwrap();
         let calls = api.sent.borrow();
         assert_eq!(calls[0].1, "/v1/betaAppLocalizations/b-ja");
         assert_eq!(calls[1].1, "/v1/betaAppReviewDetails/1");
@@ -1091,7 +1472,7 @@ mod tests {
                 l.keywords("あ".repeat(34));
             });
         });
-        let err = validate(&config).unwrap_err().to_string();
+        let err = validate(&config, Path::new(".")).unwrap_err().to_string();
         assert!(err.contains("keywords is 102 bytes"), "{err}");
 
         let mut config = AppStore::default();
@@ -1101,7 +1482,7 @@ mod tests {
             });
         });
         assert!(
-            validate(&config)
+            validate(&config, Path::new("."))
                 .unwrap_err()
                 .to_string()
                 .contains("at least 2")
@@ -1112,7 +1493,7 @@ mod tests {
             v.release_type("LATER");
         });
         assert!(
-            validate(&config)
+            validate(&config, Path::new("."))
                 .unwrap_err()
                 .to_string()
                 .contains("MANUAL, AFTER_APPROVAL, SCHEDULED")
@@ -1127,7 +1508,7 @@ mod tests {
                 l.description("説明");
             });
         });
-        let err = validate(&config).unwrap_err().to_string();
+        let err = validate(&config, Path::new(".")).unwrap_err().to_string();
         assert!(err.contains("`ja-JP` is not an App Store locale"), "{err}");
     }
 
@@ -1150,5 +1531,218 @@ mod tests {
             describe(&config),
             vec!["appStoreVersionLocalizations ja: description"]
         );
+    }
+
+    const LOCALIZATIONS: &str = "/v1/appStoreVersions/next/appStoreVersionLocalizations?limit=200";
+    const PLACEMENTS: &str = "/v1/appStoreVersionLocalizations/loc-ja/placements\
+        ?filter[placementType]=APP_SCREENSHOT&filter[placementGroup]=IPHONE_PROFILE\
+        &sort=placementGroupPosition&include=image&limit=200";
+
+    fn screenshots() -> (tempfile::TempDir, AppStore) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("menu.png"), b"menu").unwrap();
+        std::fs::write(dir.path().join("detail.png"), b"detail!").unwrap();
+        let mut config = AppStore::default();
+        config
+            .asset_library(|lib| {
+                lib.image("menu", |i| {
+                    i.file("menu.png");
+                });
+                lib.image("detail", |i| {
+                    i.file("detail.png");
+                });
+            })
+            .version(|v| {
+                v.locale("ja", |l| {
+                    l.placements("APP_SCREENSHOT", "IPHONE_PROFILE", ["menu", "detail"]);
+                });
+            });
+        (dir, config)
+    }
+
+    fn asset_responses() -> Vec<(&'static str, Value)> {
+        vec![
+            (
+                VERSIONS,
+                json!({ "data": [
+                    { "id": "next", "attributes": { "appVersionState": "PREPARE_FOR_SUBMISSION", "versionString": "1.1" } },
+                ]}),
+            ),
+            (
+                "/v1/apps/1/assetLibrary",
+                json!({ "data": { "id": "lib" } }),
+            ),
+            (
+                LOCALIZATIONS,
+                json!({ "data": [{ "id": "loc-ja", "attributes": { "locale": "ja" } }] }),
+            ),
+        ]
+    }
+
+    #[test]
+    fn new_images_are_uploaded_once_then_placed_in_order() {
+        let (dir, config) = screenshots();
+        let mut responses = asset_responses();
+        // `menu` is already in the library; `detail` is not.
+        responses.push((
+            "/v1/appAssetLibraries/lib/images?filter[referenceName]=menu&limit=200",
+            json!({ "data": [{ "id": "img-menu", "attributes": {
+                "referenceName": "menu", "fileName": "menu.png", "fileSize": 4,
+                "state": "PREPARE_FOR_SUBMISSION",
+            }}]}),
+        ));
+        // The group currently shows one stale placement.
+        responses.push((
+            PLACEMENTS,
+            json!({ "data": [{ "id": "old-placement", "relationships": {
+                "image": { "data": { "type": "appAssetLibraryImages", "id": "img-old" } },
+            }}]}),
+        ));
+        responses.push((
+            "/v1/appAssetLibraryImages/new1",
+            json!({ "data": { "id": "new1", "attributes": { "state": "PREPARE_FOR_SUBMISSION" } } }),
+        ));
+        let api = fake(&responses);
+        let done = push(&api, "com.example.app", &config, dir.path(), &NO_CREATE).unwrap();
+
+        assert_eq!(*api.uploads.borrow(), vec!["detail.png (7 bytes)"]);
+        assert_eq!(
+            sent(&api),
+            [
+                ("POST", "/v1/appAssetLibraryImages"),
+                ("PATCH", "/v1/appAssetLibraryImages/new1"),
+                ("DELETE", "/v1/appAssetLibraryPlacements/old-placement"),
+                ("POST", "/v1/appAssetLibraryPlacements"),
+                ("POST", "/v1/appAssetLibraryPlacements"),
+                ("POST", "/v1/appAssetLibraryPlacementOrderingRequests"),
+            ]
+            .map(|(method, path)| (method.to_string(), path.to_string()))
+        );
+        let calls = api.sent.borrow();
+        assert_eq!(
+            calls[0].2["data"]["attributes"],
+            json!({
+                "fileName": "detail.png",
+                "fileSize": 7,
+                "category": "APP_SCREENSHOTS_AND_PREVIEWS",
+                "referenceName": "detail",
+            })
+        );
+        assert_eq!(
+            calls[1].2["data"]["attributes"],
+            json!({ "uploaded": true })
+        );
+        // First placement shows the reused image, second the new one.
+        assert_eq!(
+            calls[3].2["data"]["relationships"]["image"]["data"]["id"],
+            "img-menu"
+        );
+        assert_eq!(
+            calls[4].2["data"]["relationships"]["image"]["data"]["id"],
+            "new1"
+        );
+        assert_eq!(
+            calls[5].2["data"]["relationships"]["orderedPlacements"]["data"],
+            json!([
+                { "type": "appAssetLibraryPlacements", "id": "new4" },
+                { "type": "appAssetLibraryPlacements", "id": "new5" },
+            ])
+        );
+        assert!(done.contains(&"appAssetLibraryImages menu: unchanged".to_string()));
+    }
+
+    #[test]
+    fn an_image_that_fails_processing_is_not_placed() {
+        let (dir, config) = screenshots();
+        let mut responses = asset_responses();
+        responses.push((
+            "/v1/appAssetLibraryImages/new1",
+            json!({ "data": { "id": "new1", "attributes": {
+                "state": "FAILED",
+                "stateDetails": { "errors": [{ "code": "IMAGE_INCORRECT_DIMENSIONS" }] },
+            }}}),
+        ));
+        let api = fake(&responses);
+        let err = push(&api, "com.example.app", &config, dir.path(), &NO_CREATE)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("rejected image `menu`"), "{err}");
+        assert!(err.contains("IMAGE_INCORRECT_DIMENSIONS"), "{err}");
+        assert!(
+            !sent(&api)
+                .iter()
+                .any(|(_, path)| path.contains("Placements")),
+            "{:?}",
+            sent(&api)
+        );
+    }
+
+    #[test]
+    fn an_unchanged_group_writes_nothing() {
+        let (dir, config) = screenshots();
+        let mut responses = asset_responses();
+        for (path, id, file, size) in [
+            (
+                "/v1/appAssetLibraries/lib/images?filter[referenceName]=menu&limit=200",
+                "img-menu",
+                "menu.png",
+                4,
+            ),
+            (
+                "/v1/appAssetLibraries/lib/images?filter[referenceName]=detail&limit=200",
+                "img-detail",
+                "detail.png",
+                7,
+            ),
+        ] {
+            responses.push((
+                path,
+                json!({ "data": [{ "id": id, "attributes": {
+                    "referenceName": id.trim_start_matches("img-"),
+                    "fileName": file, "fileSize": size, "state": "APPROVED",
+                }}]}),
+            ));
+        }
+        responses.push((
+            PLACEMENTS,
+            json!({ "data": [
+                { "id": "p1", "relationships": { "image": { "data": { "id": "img-menu" } } } },
+                { "id": "p2", "relationships": { "image": { "data": { "id": "img-detail" } } } },
+            ]}),
+        ));
+        let api = fake(&responses);
+        push(&api, "com.example.app", &config, dir.path(), &NO_CREATE).unwrap();
+        assert!(sent(&api).is_empty(), "{:?}", sent(&api));
+        assert!(api.uploads.borrow().is_empty());
+    }
+
+    #[test]
+    fn asset_mistakes_are_caught_before_anything_is_sent() {
+        let (dir, mut config) = screenshots();
+        config.version(|v| {
+            v.locale("en-US", |l| {
+                l.placements("APP_SCREENSHOT", "IPHONE_PROFILE", ["nope"]);
+            });
+        });
+        let err = validate(&config, dir.path()).unwrap_err().to_string();
+        assert!(err.contains("places image `nope`"), "{err}");
+
+        let mut config = AppStore::default();
+        config.asset_library(|lib| {
+            lib.image("menu", |i| {
+                i.file("absent.png");
+            });
+        });
+        let err = validate(&config, dir.path()).unwrap_err().to_string();
+        assert!(err.contains("`absent.png` does not exist"), "{err}");
+
+        let mut config = AppStore::default();
+        config.asset_library(|lib| {
+            lib.image("my menu", |i| {
+                i.file("menu.png");
+            });
+        });
+        let err = validate(&config, dir.path()).unwrap_err().to_string();
+        assert!(err.contains("reference names may only use"), "{err}");
     }
 }

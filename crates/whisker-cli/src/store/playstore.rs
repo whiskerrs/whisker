@@ -57,10 +57,10 @@ pub fn run(args: Args) -> Result<()> {
     let m = manifest::resolve_for_target(args.manifest_path.as_deref(), Target::Android)?;
     let application_id = application_id(&m)?;
     let config = super::require(&m.crate_dir)?.playstore;
-    playstore::validate(&config)?;
+    playstore::validate(&config, &m.crate_dir)?;
     let planned = playstore::describe(&config);
     if planned.is_empty() {
-        bail!("store.rs declares no playstore details or listings — nothing to push");
+        bail!("store.rs declares no playstore details, listings or images — nothing to push");
     }
 
     ui::section("Store");
@@ -74,7 +74,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let account = credential::require_playstore_service_account(&m.crate_dir, &application_id)?;
     let client = play::Client::connect(&account, &application_id)?;
-    for line in playstore::push(&client, &config)? {
+    for line in playstore::push(&client, &config, &m.crate_dir)? {
         ui::info(line);
     }
     ui::info("committed — Google Play reviews listing changes before they go live");
