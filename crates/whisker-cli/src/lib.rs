@@ -235,6 +235,11 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(cli.command, Command::Submit(_)));
+        assert!(parse(["whisker", "submit", "android"]).is_ok());
+        assert!(
+            parse(["whisker", "submit", "android", "--draft"]).is_err(),
+            "--draft has nothing to act on without --track"
+        );
         assert!(parse(["whisker", "submit"]).is_err());
     }
 

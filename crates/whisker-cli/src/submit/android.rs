@@ -1,8 +1,10 @@
 //! `whisker submit android` — upload the `.aab` to Google Play.
 //!
 //! One Play "edit" (a transaction) carries the whole submit: upload
-//! the bundle, put its versionCode on the track, commit. Nothing is
-//! visible in Play Console until the commit succeeds.
+//! the bundle, optionally put its versionCode on a track, commit.
+//! Without `--track` the bundle only lands in Play Console's bundle
+//! library and reaches nobody, mirroring `submit ios`, where
+//! distribution is a separate step too.
 
 use anyhow::{Result, anyhow};
 use clap::Args as ClapArgs;
@@ -20,15 +22,16 @@ pub struct Args {
     #[arg(long, value_name = "AAB")]
     path: Option<PathBuf>,
 
-    /// Play track to release on: `internal`, `alpha` (closed
-    /// testing), `beta` (open testing), `production`, or a custom
-    /// closed-testing track name.
-    #[arg(long, default_value = "internal")]
-    track: String,
+    /// Also release the bundle on this Play track: `internal`,
+    /// `alpha` (closed testing), `beta` (open testing), `production`,
+    /// or a custom closed-testing track name. Without it the bundle
+    /// is only uploaded.
+    #[arg(long)]
+    track: Option<String>,
 
     /// Create the release as a draft to roll out from Play Console.
     /// Required until the app has been published once.
-    #[arg(long)]
+    #[arg(long, requires = "track")]
     draft: bool,
 
     /// Explicit path to the app's Cargo.toml. Defaults to walking up
@@ -56,10 +59,13 @@ pub fn run(args: Args) -> Result<()> {
 
     ui::section("Submit");
     ui::info(format!(
-        "submitting {} ({}) as {application_id} — Play track `{}`",
+        "submitting {} ({}) as {application_id} — {}",
         aab.display(),
         super::megabytes(aab.metadata()?.len()),
-        args.track,
+        match &args.track {
+            Some(track) => format!("Play track `{track}`"),
+            None => "upload only".to_string(),
+        },
     ));
 
     let client = google::Client::connect(&account, &application_id)?;
@@ -75,20 +81,21 @@ pub fn run(args: Args) -> Result<()> {
             return Err(e);
         }
     };
-    let status = if args.draft { "draft" } else { "completed" };
-    client.set_track_release(&edit, &args.track, version_code, status)?;
+    if let Some(track) = &args.track {
+        let status = if args.draft { "draft" } else { "completed" };
+        client.set_track_release(&edit, track, version_code, status)?;
+    }
     client.commit_edit(&edit)?;
 
-    if args.draft {
-        ui::info(format!(
-            "versionCode {version_code} is a draft on `{}` — roll it out from Play Console",
-            args.track
-        ));
-    } else {
-        ui::info(format!(
-            "versionCode {version_code} released on `{}`",
-            args.track
-        ));
+    match &args.track {
+        Some(track) if args.draft => ui::info(format!(
+            "versionCode {version_code} is a draft on `{track}` — roll it out from Play Console"
+        )),
+        Some(track) => ui::info(format!("versionCode {version_code} released on `{track}`")),
+        None => ui::info(format!(
+            "versionCode {version_code} uploaded — release it from Play Console, or re-run \
+             with `--track`"
+        )),
     }
     Ok(())
 }

@@ -27,8 +27,8 @@ enum Cmd {
     /// Store) through the Build Upload API, authenticated with the
     /// stored App Store Connect API key.
     Ios(ios::Args),
-    /// Upload the `.aab` to Google Play and release it on a track,
-    /// authenticated with the stored service-account key.
+    /// Upload the `.aab` to Google Play (and release it with
+    /// `--track`), authenticated with the stored service-account key.
     Android(android::Args),
 }
 
