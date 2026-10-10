@@ -1035,15 +1035,20 @@ fn review_detail_from(resource: &Value) -> ReviewDetail {
 }
 
 /// The resource `pull` should read: the one being edited when there
-/// is one — that is what a later `push` writes to — else the first,
-/// which is the live one.
+/// is one — that is what a later `push` writes to — else the live
+/// one. The list's order is not specified, so "live" is found by
+/// state, not position.
 fn current<'a>(
     resources: &'a [Value],
     state_attributes: &[&str],
     states: &[&str],
 ) -> Option<&'a Value> {
+    let by_id = |id: &str| resources.iter().find(|r| id_of(r) == Some(id));
     editable(resources, state_attributes, states)
-        .and_then(|id| resources.iter().find(|r| id_of(r) == Some(id)))
+        .and_then(by_id)
+        .or_else(|| {
+            editable(resources, state_attributes, &["READY_FOR_DISTRIBUTION"]).and_then(by_id)
+        })
         .or(resources.first())
 }
 
@@ -1461,6 +1466,23 @@ mod tests {
         assert!(sent(&api).is_empty(), "pull must not write");
         // The demo account's credentials must not reach store.rs.
         assert!(!crate::render::appstore(&pulled).contains("secret"));
+    }
+
+    #[test]
+    fn without_a_version_in_preparation_pull_reads_the_live_one_wherever_it_is_listed() {
+        let api = fake(&[(
+            VERSIONS,
+            json!({ "data": [
+                { "id": "old", "attributes": { "appVersionState": "REPLACED_WITH_NEW_VERSION", "versionString": "1.0", "copyright": "old" } },
+                { "id": "live", "attributes": { "appVersionState": "READY_FOR_DISTRIBUTION", "versionString": "1.1", "copyright": "live" } },
+            ]}),
+        )]);
+        let (pulled, notes) = pull(&api, "com.example.app").unwrap();
+        assert_eq!(pulled.version.copyright.as_deref(), Some("live"));
+        assert!(
+            notes.contains(&"version read from 1.1 (READY_FOR_DISTRIBUTION)".to_string()),
+            "{notes:?}"
+        );
     }
 
     #[test]
