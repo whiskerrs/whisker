@@ -6742,31 +6742,25 @@ name = "whisker-cli"
 version = "0.15.2"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "clap",
  "crossterm",
  "ctrlc",
  "indicatif",
  "libc",
- "p256",
- "plist",
  "rand 0.8.8",
  "ratatui",
- "ring",
  "rpassword",
  "serde",
  "serde_json",
- "tempfile",
  "tokio",
  "toml 0.8.23",
- "ureq",
  "whisker-build",
  "whisker-cng",
  "whisker-config",
  "whisker-credentials",
  "whisker-dev-server",
  "whisker-fmt",
- "zip",
+ "whisker-submit",
 ]
 
 [[package]]
@@ -7371,6 +7365,25 @@ dependencies = [
 [[package]]
 name = "whisker-style"
 version = "0.15.2"
+
+[[package]]
+name = "whisker-submit"
+version = "0.15.2"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "p256",
+ "plist",
+ "rand 0.8.8",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ureq",
+ "whisker-config",
+ "whisker-credentials",
+ "zip",
+]
 
 [[package]]
 name = "whisker-subsecond"

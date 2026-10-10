@@ -10,8 +10,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 use std::path::{Path, PathBuf};
 use whisker_credentials::{PlaystoreServiceAccount, Store, android_playstore_rel};
+use whisker_submit::play;
 
-use super::{google, prompt};
+use super::prompt;
 use crate::manifest;
 
 const PLAY_CONSOLE_URL: &str = "https://play.google.com/console/developers";
@@ -101,7 +102,7 @@ pub(crate) fn acquire_and_store(
 
     println!("   Validating against Google…");
     let package = application_id.unwrap_or_default();
-    let client = google::Client::connect(&account, package)?;
+    let client = play::Client::connect(&account, package)?;
     println!("   ✓ key works — {}", account.client_email);
     // Access is checked only when an applicationId is known, and only
     // as a warning: a fresh invite takes a while to apply, and the app

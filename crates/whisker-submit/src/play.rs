@@ -65,20 +65,22 @@ pub struct Client<'a> {
 enum Body<'a> {
     None,
     Json(serde_json::Value),
-    File(&'a Path),
+    /// A file and its MIME type.
+    File(&'a Path, &'a str),
 }
 
 fn send(req: ureq::Request, body: Body) -> Result<Result<ureq::Response, ureq::Error>> {
     Ok(match body {
         // Google answers a bodyless POST that carries no Content-Length
         // with 411, so an explicit empty body is sent instead.
+        Body::None if req.method() == "GET" => req.call(),
         Body::None => req.send_bytes(&[]),
         Body::Json(json) => req.send_json(json),
-        Body::File(path) => {
+        Body::File(path, mime) => {
             let file =
                 std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
             let len = file.metadata()?.len();
-            req.set("Content-Type", "application/octet-stream")
+            req.set("Content-Type", mime)
                 .set("Content-Length", &len.to_string())
                 .send(file)
         }
@@ -169,33 +171,81 @@ impl<'a> Client<'a> {
                 "/upload/androidpublisher/v3/applications/{}/edits/{edit}/bundles?uploadType=media",
                 self.package
             ),
-            Body::File(aab),
+            Body::File(aab, "application/octet-stream"),
         )?;
         json.get("versionCode")
             .and_then(|v| v.as_i64())
             .ok_or_else(|| anyhow!("Play API returned no versionCode for the uploaded bundle"))
     }
 
-    /// Put `version_code` on `track` as its single release.
+    /// Put `version_code` on `track` as its single release. `notes`
+    /// are `(Play locale, text)` pairs.
     pub fn set_track_release(
         &self,
         edit: &str,
         track: &str,
         version_code: i64,
         status: &str,
+        notes: &[(String, String)],
     ) -> Result<()> {
         self.call(
             "PUT",
             &format!("{}/{edit}/tracks/{track}", self.edits()),
-            Body::Json(serde_json::json!({
-                "track": track,
-                "releases": [{
-                    "versionCodes": [version_code.to_string()],
-                    "status": status,
-                }],
-            })),
+            Body::Json(track_body(track, version_code, status, notes)),
         )
         .map(|_| ())
+    }
+
+    /// GET a resource inside `edit`, e.g. `listings`.
+    pub(crate) fn edit_get(&self, edit: &str, resource: &str) -> Result<serde_json::Value> {
+        self.call(
+            "GET",
+            &format!("{}/{edit}/{resource}", self.edits()),
+            Body::None,
+        )
+    }
+
+    /// Write a resource inside `edit`, e.g. `PATCH listings/ja-JP`.
+    pub(crate) fn edit_send(
+        &self,
+        edit: &str,
+        method: &str,
+        resource: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.call(
+            method,
+            &format!("{}/{edit}/{resource}", self.edits()),
+            Body::Json(body),
+        )
+    }
+
+    pub(crate) fn edit_delete(&self, edit: &str, resource: &str) -> Result<()> {
+        self.call(
+            "DELETE",
+            &format!("{}/{edit}/{resource}", self.edits()),
+            Body::None,
+        )
+        .map(|_| ())
+    }
+
+    /// Upload a file to a resource inside `edit`, e.g.
+    /// `listings/ja-JP/phoneScreenshots`.
+    pub(crate) fn edit_upload(
+        &self,
+        edit: &str,
+        resource: &str,
+        file: &Path,
+        mime: &str,
+    ) -> Result<serde_json::Value> {
+        self.call(
+            "POST",
+            &format!(
+                "/upload/androidpublisher/v3/applications/{}/edits/{edit}/{resource}?uploadType=media",
+                self.package
+            ),
+            Body::File(file, mime),
+        )
     }
 
     pub fn commit_edit(&self, edit: &str) -> Result<()> {
@@ -206,6 +256,25 @@ impl<'a> Client<'a> {
         )
         .map(|_| ())
     }
+}
+
+fn track_body(
+    track: &str,
+    version_code: i64,
+    status: &str,
+    notes: &[(String, String)],
+) -> serde_json::Value {
+    let mut release = serde_json::json!({
+        "versionCodes": [version_code.to_string()],
+        "status": status,
+    });
+    if !notes.is_empty() {
+        release["releaseNotes"] = notes
+            .iter()
+            .map(|(language, text)| serde_json::json!({ "language": language, "text": text }))
+            .collect();
+    }
+    serde_json::json!({ "track": track, "releases": [release] })
 }
 
 /// Turn a Play API error into an actionable message. Google's own
@@ -352,6 +421,20 @@ mod tests {
         assert!(
             headers.iter().any(|h| h == "content-length: 0"),
             "{headers:?}"
+        );
+    }
+
+    #[test]
+    fn track_body_carries_notes_only_when_there_are_some() {
+        let bare = track_body("internal", 37, "draft", &[]);
+        assert_eq!(bare["releases"][0]["versionCodes"][0], "37");
+        assert!(bare["releases"][0].get("releaseNotes").is_none());
+
+        let notes = [("ja-JP".to_string(), "修正".to_string())];
+        let body = track_body("internal", 37, "completed", &notes);
+        assert_eq!(
+            body["releases"][0]["releaseNotes"],
+            serde_json::json!([{ "language": "ja-JP", "text": "修正" }])
         );
     }
 

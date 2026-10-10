@@ -4,6 +4,8 @@
 //! This crate contains configuration data; project generation belongs to
 //! `whisker-cng`.
 
+pub mod store;
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;

@@ -204,6 +204,84 @@ pub fn generate_with_selection(
     Ok(generated)
 }
 
+/// Execute the application's `store.rs` and return the report it wrote,
+/// or `None` when the application has no `store.rs`.
+///
+/// The executable links `whisker` alone — none of the generator's
+/// plugins — so it cannot be broken by, or break, project generation.
+pub fn run_store(manifest_path: &Path) -> Result<Option<Vec<u8>>> {
+    let manifest = manifest_path
+        .canonicalize()
+        .context("resolve application manifest")?;
+    let crate_dir = manifest.parent().context("manifest has no parent")?;
+    let source = crate_dir.join("store.rs");
+    if !source.is_file() {
+        return Ok(None);
+    }
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(&manifest)
+        .features(cargo_metadata::CargoOpt::AllFeatures)
+        .exec()
+        .context("resolve store.rs dependencies")?;
+    let package = metadata
+        .packages
+        .iter()
+        .find(|package| package.manifest_path.as_std_path() == manifest)
+        .context("store.rs requires an application package manifest")?;
+    let whisker = direct_dependency(&metadata, package, "whisker");
+    if let Some(whisker) = whisker {
+        ensure_matches_cli("whisker", &whisker.version, env!("CARGO_PKG_VERSION"))?;
+    }
+    // A registry `whisker` is replaced by this CLI's own: the same
+    // version once released, but a CLI built from a checkout carries a
+    // `whisker::store` the registry copy of that version may lack.
+    let whisker_spec = dependency_spec(
+        whisker.filter(|package| {
+            !package
+                .source
+                .as_ref()
+                .is_some_and(|source| source.is_crates_io())
+        }),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).with_file_name("whisker"),
+        true,
+    );
+
+    let program_dir = crate_dir.join("target/.whisker/store");
+    std::fs::create_dir_all(&program_dir)?;
+    let name = format!("__whisker_store_{}", package.name.replace('-', "_"));
+    let patches = workspace_patches(metadata.workspace_root.as_std_path())?;
+    std::fs::write(
+        program_dir.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\nwhisker = {whisker_spec}\n\n[[bin]]\nname = \"{name}\"\npath = {}\n\n[workspace]\n{patches}",
+            toml_path(&source),
+        ),
+    )?;
+
+    let report = ReportFile(crate_dir.join(format!(
+        "target/.whisker/reports/store-{}.json",
+        std::process::id()
+    )));
+    std::fs::create_dir_all(report.0.parent().context("report path has no parent")?)?;
+    let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .args(["run", "--quiet", "--release", "--manifest-path"])
+        .arg(program_dir.join("Cargo.toml"))
+        .arg("--target")
+        .arg(crate::generator::host_target()?)
+        .arg("--target-dir")
+        .arg(metadata.workspace_root.join("target/.whisker/store-build"))
+        .arg("--")
+        .arg("--report-path")
+        .arg(&report.0)
+        .current_dir(crate_dir)
+        .status()
+        .context("execute store.rs")?;
+    ensure!(status.success(), "store.rs failed ({status})");
+    std::fs::read(&report.0)
+        .context("store.rs did not write its report; its main must call whisker::store::run")
+        .map(Some)
+}
+
 /// The CLI and the application's generator exchange arguments and a report
 /// whose shape is only guaranteed within one release.
 fn ensure_generator_matches_cli(
@@ -215,6 +293,20 @@ fn ensure_generator_matches_cli(
         "this app resolves whisker-cng {application}, but this whisker CLI is {cli}; they must be the same version.\n\
          Update the app: set `whisker` and `whisker-cng` to \"{cli}\" in Cargo.toml, or run \
          `cargo update -p whisker -p whisker-cng` if its version requirements already allow {cli}.\n\
+         Or install the matching CLI: `cargo install whisker-cli --version {application} --locked`"
+    );
+    Ok(())
+}
+
+fn ensure_matches_cli(
+    name: &str,
+    application: &cargo_metadata::semver::Version,
+    cli: &str,
+) -> Result<()> {
+    ensure!(
+        application.to_string() == cli,
+        "this app resolves {name} {application}, but this whisker CLI is {cli}; they must be the same version.\n\
+         Update the app: set `{name}` to \"{cli}\" in Cargo.toml.\n\
          Or install the matching CLI: `cargo install whisker-cli --version {application} --locked`"
     );
     Ok(())

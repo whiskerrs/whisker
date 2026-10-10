@@ -16,8 +16,9 @@ use clap::Args;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use whisker_credentials::{AscKey, ios_asc_rel};
+use whisker_submit::asc;
 
-use super::{asc, prompt};
+use super::prompt;
 use crate::manifest;
 
 /// ASC "Integrations" page — where Team Keys are created.

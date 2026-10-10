@@ -36,6 +36,10 @@ Whisker itself**.
 - [`animation-design.md`](animation-design.md) — the continuous,
   signal-based animation engine (`AnimationController` + `Tween`), how it
   backs CSS animation/transition and the router's imperative transitions.
+- [`submit-design.md`](submit-design.md) — `whisker submit` and
+  `whisker store`: what each command owns, why `store.rs` is a separate
+  program that mirrors the store APIs, and how a push stays safe on a
+  store with no transactions.
 - [`ios-spm-distribution.md`](ios-spm-distribution.md) — how iOS apps
   resolve the runtime from the remote SwiftPM package, version lockstep,
   and the monorepo-dev caveat.

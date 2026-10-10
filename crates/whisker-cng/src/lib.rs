@@ -23,7 +23,7 @@ pub use generator::sync_for_target;
 #[cfg(feature = "generate")]
 mod project;
 #[cfg(feature = "generate")]
-pub use project::{generate, generate_with_selection};
+pub use project::{generate, generate_with_selection, run_store};
 
 #[cfg(feature = "generate")]
 pub mod android;
