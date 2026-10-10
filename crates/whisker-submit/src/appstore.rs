@@ -21,10 +21,13 @@ use crate::files;
 const NAME_LIMIT: usize = 30;
 const SUBTITLE_LIMIT: usize = 30;
 const DESCRIPTION_LIMIT: usize = 4000;
-const KEYWORDS_BYTE_LIMIT: usize = 100;
+// Counted in characters although Apple's reference says bytes: App
+// Store Connect holds live 82-character Thai keywords that are 184
+// bytes of UTF-8.
+const KEYWORDS_LIMIT: usize = 100;
 const PROMOTIONAL_TEXT_LIMIT: usize = 170;
 const WHATS_NEW_LIMIT: usize = 4000;
-const REVIEW_NOTES_BYTE_LIMIT: usize = 4000;
+const REVIEW_NOTES_LIMIT: usize = 4000;
 /// For `whisker submit ios`, which sends the build's "What to Test".
 pub const BETA_WHATS_NEW_LIMIT: usize = 4000;
 
@@ -293,17 +296,6 @@ fn check_chars(what: &str, value: &Option<String>, limit: usize) -> Result<()> {
     Ok(())
 }
 
-fn check_bytes(what: &str, value: &Option<String>, limit: usize) -> Result<()> {
-    if let Some(value) = value {
-        let length = value.trim().len();
-        ensure!(
-            length <= limit,
-            "store.rs: appstore {what} is {length} bytes; the limit is {limit}"
-        );
-    }
-    Ok(())
-}
-
 fn check_one_of(what: &str, value: &Option<String>, allowed: &[&str]) -> Result<()> {
     if let Some(value) = value {
         ensure!(
@@ -428,10 +420,10 @@ pub fn validate(config: &AppStore, root: &Path) -> Result<()> {
             &l.description,
             DESCRIPTION_LIMIT,
         )?;
-        check_bytes(
+        check_chars(
             &format!("version `{locale}` keywords"),
             &l.keywords,
-            KEYWORDS_BYTE_LIMIT,
+            KEYWORDS_LIMIT,
         )?;
         check_chars(
             &format!("version `{locale}` whats_new"),
@@ -444,19 +436,19 @@ pub fn validate(config: &AppStore, root: &Path) -> Result<()> {
             PROMOTIONAL_TEXT_LIMIT,
         )?;
     }
-    check_bytes(
+    check_chars(
         "review_detail notes",
         &config.review_detail.notes,
-        REVIEW_NOTES_BYTE_LIMIT,
+        REVIEW_NOTES_LIMIT,
     )?;
     check_locales(
         "beta_app",
         config.beta_app.localizations.iter().map(|l| &l.locale),
     )?;
-    check_bytes(
+    check_chars(
         "beta_app_review_detail notes",
         &config.beta_app_review_detail.notes,
-        REVIEW_NOTES_BYTE_LIMIT,
+        REVIEW_NOTES_LIMIT,
     )?;
     Ok(())
 }
@@ -1486,16 +1478,25 @@ mod tests {
     }
 
     #[test]
-    fn limits_are_checked_in_each_fields_own_unit() {
+    fn limits_count_characters_and_reject_values_outside_an_enum() {
+        // Taken from a live listing: 82 characters, 184 bytes.
+        let thai = "การ์ตูน,PDF,CBZ,ชั้นหนังสือ,เว็บตูน,Dropbox,OneDrive,อีบุ๊ก,ฟรี,เบราว์เซอร์,คอมมิค";
+        let mut config = AppStore::default();
+        config.version(|v| {
+            v.locale("th", |l| {
+                l.keywords(thai);
+            });
+        });
+        validate(&config, Path::new(".")).unwrap();
+
         let mut config = AppStore::default();
         config.version(|v| {
             v.locale("ja", |l| {
-                // 34 characters but 102 bytes.
-                l.keywords("あ".repeat(34));
+                l.keywords("あ".repeat(101));
             });
         });
         let err = validate(&config, Path::new(".")).unwrap_err().to_string();
-        assert!(err.contains("keywords is 102 bytes"), "{err}");
+        assert!(err.contains("keywords is 101 characters"), "{err}");
 
         let mut config = AppStore::default();
         config.app_info(|i| {

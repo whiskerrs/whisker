@@ -552,7 +552,7 @@ impl AppStoreVersionLocalization {
     text_setters!(
         /// 4000 characters.
         description,
-        /// Comma-separated, 100 bytes.
+        /// Comma-separated, 100 characters.
         keywords,
         /// "What's New in This Version" (4000 characters). App Store
         /// Connect rejects it on an app's first version.
@@ -587,7 +587,7 @@ impl ReviewDetail {
         /// International format with a leading `+`.
         contact_phone,
         contact_email,
-        /// 4000 bytes.
+        /// 4000 characters.
         notes,
     );
 
