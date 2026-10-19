@@ -26,7 +26,7 @@ ureq = { version = "2", features = ["json"] }
 base64 = { workspace = true }
 # The ipa's bundle id and version numbers come from its own
 # Info.plist (a binary plist inside a zip).
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 plist = "1"
 
 [dev-dependencies]

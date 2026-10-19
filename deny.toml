@@ -27,6 +27,10 @@ yanked = "deny"
 #     harfrust/skrifa through cosmic-text 0.15, but also requires wgpu 28
 #     (Rust 1.92), beyond the workspace's Rust 1.88 floor. Revisit when a
 #     compatible glyphon/wgpu release lets us remove both exceptions.
+#   RUSTSEC-2026-0370 / 0371 / 0372  zvariant, zbus_names, zvariant_derive
+#     <- zbus 5 <- AccessKit's Linux AT-SPI backend (accesskit_winit, through
+#     whisker-desktop). D-Bus serialization for Linux desktop accessibility;
+#     unmaintained, not vulnerable, and AccessKit has no release off zbus 5.
 #
 # Vulnerability accepted with rationale (no compatible fixed version):
 #   RUSTSEC-2026-0194 / RUSTSEC-2026-0195  quick-xml 0.38.4 <-
@@ -53,6 +57,9 @@ ignore = [
     "RUSTSEC-2026-0195",
     "RUSTSEC-2026-0002",
     "RUSTSEC-2026-0253",
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
 ]
 
 [bans]
