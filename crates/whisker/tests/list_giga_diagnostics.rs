@@ -549,6 +549,53 @@ fn giga_loading_replacement_keeps_header_visible() {
 }
 
 #[test]
+fn inserting_above_the_first_row_keeps_a_visible_header_in_place() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(94).unwrap(),
+        StyleEnvironment::new(390.0, 600.0, 1.0, 14.0),
+    );
+    let rows = owner.with(|| signal(vec![1_u32, 2, 3]));
+    let handle = owner.with(ListHandle::<u32>::new);
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                List(
+                    list_ref: handle.r(),
+                    style: css!(width: percent(100), height: px(600)),
+                    header: || render! { View(style: css!(height: px(300))) },
+                    each: move || rows.get(),
+                    key: |row: &u32| *row,
+                    children: |_row: ReadSignal<u32>| render! {
+                        View(style: css!(height: px(80)))
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    for epoch in 1..=3 {
+        frame(&surface, &mut renderer, epoch);
+    }
+    assert_eq!(handle.snapshot().unwrap().offset, 0.0);
+    with_installed_renderer(surface.renderer(), || {
+        rows.update(|rows| rows.insert(0, 0));
+        whisker::flush();
+    });
+    for epoch in 4..=6 {
+        frame(&surface, &mut renderer, epoch);
+        assert_eq!(
+            handle.snapshot().unwrap().offset,
+            0.0,
+            "a row inserted above the first one must not scroll the header away"
+        );
+    }
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
 fn giga_rtl_initial_page_settles_before_runtime_goes_idle() {
     __reset_for_tests();
     let handle = Rc::new(RefCell::new(None::<ListHandle<u32>>));

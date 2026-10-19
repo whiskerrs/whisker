@@ -411,6 +411,16 @@ where
         Some((key, offset - self.track_start(track)))
     }
 
+    /// The item an items change keeps in place, or `None` while the header
+    /// is on screen: the header then holds its position and the rows below
+    /// it are pushed, as `should_preserve_item_anchor` does for headers.
+    fn item_anchor(&self, offset: f32) -> Option<(K, f32)> {
+        if offset < self.header_extent {
+            return None;
+        }
+        self.anchor(offset)
+    }
+
     fn anchored_offset(&self, key: &K, within_item: f32) -> Option<f32> {
         let index = *self.key_to_index.get(key)?;
         Some(self.item_start(index)? + within_item)
@@ -1102,7 +1112,7 @@ pub fn virtualize<T, K>(
             let current_geometry = *geometry.borrow();
             let corrected_offset = {
                 let mut layout = layout.borrow_mut();
-                let anchor = layout.anchor(current_geometry.offset);
+                let anchor = layout.item_anchor(current_geometry.offset);
                 layout.replace(items, |item| key(item));
                 let initial_offset = resolve_pending_initial_target(
                     &mut pending_initial_scroll.borrow_mut(),
@@ -1891,6 +1901,36 @@ mod tests {
             },
             360.0,
         ));
+    }
+
+    #[test]
+    fn an_item_inserted_above_the_first_row_keeps_a_visible_header_in_place() {
+        let mut index = LayoutIndex::new(1, 0.0);
+        index.replace(vec!["a", "b", "c"], |item| *item);
+        index.update_aux_measurement(AuxContent::Header, 300.0);
+        index.update_measurements([("a", 100.0), ("b", 100.0), ("c", 100.0)]);
+
+        // Header on screen: nothing to anchor, so the offset stays put and
+        // the new row appears under the header.
+        assert_eq!(index.item_anchor(0.0), None);
+        assert_eq!(index.item_anchor(299.0), None);
+
+        // Header scrolled away: the row under the viewport's top edge stays
+        // where it is on screen.
+        let anchor = index.item_anchor(350.0);
+        assert_eq!(anchor, Some(("a", 50.0)));
+        index.replace(vec!["new", "a", "b", "c"], |item| *item);
+        index.update_measurements([("new", 100.0)]);
+        let (key, within_item) = anchor.unwrap();
+        assert_eq!(index.anchored_offset(&key, within_item), Some(450.0));
+    }
+
+    #[test]
+    fn without_a_header_an_items_change_anchors_from_the_first_row() {
+        let mut index = LayoutIndex::new(1, 0.0);
+        index.replace(vec!["a", "b"], |item| *item);
+        index.update_measurements([("a", 100.0), ("b", 100.0)]);
+        assert_eq!(index.item_anchor(0.0), Some(("a", 0.0)));
     }
 
     #[test]
