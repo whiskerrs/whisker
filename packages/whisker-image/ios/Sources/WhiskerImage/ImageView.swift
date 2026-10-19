@@ -20,6 +20,7 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
 
     private var currentSrc: String?
     private var currentHeaders: [String: String] = [:]
+    private var loadScheduled = false
 
     @objc public override func createView() -> UIImageView {
         let v = UIImageView()
@@ -31,17 +32,16 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
         return v
     }
 
-    /// Backing of the `src` prop. Kicks off a Kingfisher fetch on
-    /// the image view itself — Kingfisher tracks the in-flight
-    /// request against the view, so a second `setSrc` cancels the
-    /// first automatically.
+    /// Backing of the `src` prop. Kingfisher tracks the in-flight
+    /// request against the image view, so a later load cancels the
+    /// earlier one automatically.
     public func setSrc(_ value: String) {
         // Kingfisher would short-circuit an unchanged src through its
         // cache anyway, but asking the cache and rebuilding the request
         // still costs something on every benign re-render.
         if currentSrc == value { return }
         currentSrc = value
-        load()
+        scheduleLoad()
     }
 
     /// Backing of the `headers` prop: a JSON object of request
@@ -51,7 +51,20 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
         let parsed = Self.parseHeaders(json)
         if parsed == currentHeaders { return }
         currentHeaders = parsed
-        load()
+        scheduleLoad()
+    }
+
+    /// Props of one update arrive as consecutive setter calls in one
+    /// main-thread turn; loading from each setter would start a headerless
+    /// download when `src` lands first, which the headered retry then joins.
+    private func scheduleLoad() {
+        if loadScheduled { return }
+        loadScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.loadScheduled = false
+            self.load()
+        }
     }
 
     private static func parseHeaders(_ json: String) -> [String: String] {
@@ -134,19 +147,23 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
             // resources: Kingfisher keys its cache by URL alone, so
             // without a composed key a header change hands back the
             // answer to the old one.
-            let resource = KF.ImageResource(downloadURL: url, cacheKey: cacheKey(for: url))
+            let resource = KF.ImageResource(
+                downloadURL: url,
+                cacheKey: Self.cacheKey(for: url, headers: currentHeaders)
+            )
             imageView.kf.setImage(with: resource, options: options, completionHandler: done)
         }
     }
 
-    /// URL plus the headers that shape the answer.
-    private func cacheKey(for url: URL) -> String {
-        guard !currentHeaders.isEmpty else { return url.absoluteString }
-        let headers = currentHeaders
+    /// URL plus the headers that shape the answer. Shared with `prefetch`
+    /// so a prefetched image is found by the view that later shows it.
+    private static func cacheKey(for url: URL, headers: [String: String]) -> String {
+        guard !headers.isEmpty else { return url.absoluteString }
+        let joined = headers
             .sorted { $0.key < $1.key }
             .map { "\($0.key)=\($0.value)" }
             .joined(separator: ";")
-        return "\(url.absoluteString)|\(headers)"
+        return "\(url.absoluteString)|\(joined)"
     }
 
     /// Warms Kingfisher's cache. Static because prefetching belongs to
@@ -165,7 +182,10 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
                 return request
             }))
         }
-        ImagePrefetcher(urls: targets, options: options).start()
+        let resources = targets.map {
+            KF.ImageResource(downloadURL: $0, cacheKey: cacheKey(for: $0, headers: headers))
+        }
+        ImagePrefetcher(resources: resources, options: options).start()
     }
 
     /// Shared with the module's `prefetch`, which has no view to ask.

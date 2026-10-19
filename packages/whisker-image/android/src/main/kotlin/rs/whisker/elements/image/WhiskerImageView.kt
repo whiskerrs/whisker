@@ -92,9 +92,7 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
             // resources: the cache is keyed by URL alone, so without
             // this a header change hands back the answer to the old one.
             if (currentHeaders.isNotEmpty()) {
-                val key = src + "|" + currentHeaders.entries
-                    .sortedBy { it.key }
-                    .joinToString(";") { "${it.key}=${it.value}" }
+                val key = cacheKey(src, currentHeaders)
                 memoryCacheKey(key)
                 diskCacheKey(key)
             }
@@ -128,5 +126,15 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
             memoryCachePolicy(CachePolicy.ENABLED)
             diskCachePolicy(CachePolicy.ENABLED)
         }
+    }
+
+    companion object {
+        /// URL plus the headers that shape the answer. Shared with
+        /// `prefetch` so a prefetched image is found by the view that
+        /// later shows it.
+        fun cacheKey(src: String, headers: Map<String, String>): String =
+            src + "|" + headers.entries
+                .sortedBy { it.key }
+                .joinToString(";") { "${it.key}=${it.value}" }
     }
 }
