@@ -20,4 +20,4 @@ ureq = { version = "2", features = ["json"] }
 whisker-build = { workspace = true }
 whisker-cli = { workspace = true }
 whisker-dev-server = { workspace = true }
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
