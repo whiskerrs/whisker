@@ -42,7 +42,14 @@ class ImageModule : Module() {
                 for (url in urls) {
                     val request = coil.request.ImageRequest.Builder(context)
                         .data(url)
-                        .apply { parsed.forEach { (name, value) -> addHeader(name, value) } }
+                        .apply {
+                            if (parsed.isNotEmpty()) {
+                                val key = WhiskerImageView.cacheKey(url, parsed)
+                                memoryCacheKey(key)
+                                diskCacheKey(key)
+                            }
+                            parsed.forEach { (name, value) -> addHeader(name, value) }
+                        }
                         .build()
                     loader.enqueue(request)
                 }

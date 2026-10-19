@@ -3,6 +3,8 @@
 package rs.whisker.elements.image
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.widget.ImageView
 import coil.dispose
 import coil.load
@@ -17,6 +19,7 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
     private var currentSrc: String? = null
     private var currentHeaders: Map<String, String> = emptyMap()
     private var currentRequest: Disposable? = null
+    private var reloadScheduled = false
     override fun createView(context: Context): ImageView {
         val v = ImageView(context)
         // `CENTER_CROP` matches the module's `aspectFill` default.
@@ -25,9 +28,9 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
     }
 
     /**
-     * Backing of the `src` prop. Kicks off a Coil request bound to the
-     * ImageView; the returned Disposable is cancelled before the next
-     * request is issued, so a second `setSrc` cancels the in-flight one.
+     * Backing of the `src` prop. The request's Disposable is cancelled
+     * before the next one is issued, so a later load cancels the
+     * in-flight one.
      */
     fun setSrc(value: String) {
         // Coil would short-circuit an unchanged src through its memory
@@ -35,7 +38,7 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
         // on every benign re-render.
         if (currentSrc == value) return
         currentSrc = value
-        reload()
+        scheduleReload()
     }
 
     /// Backing of the `headers` prop: a JSON object of request headers.
@@ -45,7 +48,18 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
         val parsed = parseHeaders(json)
         if (parsed == currentHeaders) return
         currentHeaders = parsed
-        reload()
+        scheduleReload()
+    }
+
+    /// Props of one update arrive as consecutive setter calls on the main
+    /// thread; reloading from each would send a headerless request first.
+    private fun scheduleReload() {
+        if (reloadScheduled) return
+        reloadScheduled = true
+        mainHandler.post {
+            reloadScheduled = false
+            reload()
+        }
     }
 
     private fun parseHeaders(json: String): Map<String, String> {
@@ -92,9 +106,7 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
             // resources: the cache is keyed by URL alone, so without
             // this a header change hands back the answer to the old one.
             if (currentHeaders.isNotEmpty()) {
-                val key = src + "|" + currentHeaders.entries
-                    .sortedBy { it.key }
-                    .joinToString(";") { "${it.key}=${it.value}" }
+                val key = cacheKey(src, currentHeaders)
                 memoryCacheKey(key)
                 diskCacheKey(key)
             }
@@ -128,5 +140,17 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
             memoryCachePolicy(CachePolicy.ENABLED)
             diskCachePolicy(CachePolicy.ENABLED)
         }
+    }
+
+    companion object {
+        private val mainHandler = Handler(Looper.getMainLooper())
+
+        /// URL plus the headers that shape the answer. Shared with
+        /// `prefetch` so a prefetched image is found by the view that
+        /// later shows it.
+        fun cacheKey(src: String, headers: Map<String, String>): String =
+            src + "|" + headers.entries
+                .sortedBy { it.key }
+                .joinToString(";") { "${it.key}=${it.value}" }
     }
 }
