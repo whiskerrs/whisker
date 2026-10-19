@@ -24,6 +24,7 @@ pub fn inspect(path: &Path) -> Result<IpaInfo> {
     // nested frameworks' and extensions' files don't match.
     let app_file = |zip: &zip::ZipArchive<std::fs::File>, file: &str| -> Option<String> {
         zip.file_names()
+            .filter_map(|name| name.ok())
             .find(|name| {
                 let parts: Vec<&str> = name.split('/').collect();
                 parts.len() == 3
@@ -31,7 +32,7 @@ pub fn inspect(path: &Path) -> Result<IpaInfo> {
                     && parts[1].ends_with(".app")
                     && parts[2] == file
             })
-            .map(str::to_string)
+            .map(|name| name.into_owned())
     };
     let read = |zip: &mut zip::ZipArchive<std::fs::File>, name: &str| -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
@@ -86,7 +87,7 @@ mod tests {
 
         let file = tempfile::NamedTempFile::new().unwrap();
         let mut zip = zip::ZipWriter::new(file.reopen().unwrap());
-        let options = zip::write::FileOptions::default();
+        let options = zip::write::SimpleFileOptions::default();
         // A nested bundle's Info.plist must not be mistaken for the app's.
         zip.start_file("Payload/App.app/Frameworks/X.framework/Info.plist", options)
             .unwrap();
