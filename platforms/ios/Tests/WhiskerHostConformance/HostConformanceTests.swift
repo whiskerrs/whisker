@@ -739,6 +739,27 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(presentedOffset, CGPoint(x: 0, y: 120))
     }
 
+    func testScrollToBeyondTheContentIsAppliedOnceTheContentCanHoldIt() {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 80))
+        let scroll = WhiskerScrollContainerView(frame: window.bounds)
+        scroll.setScrollOrientation("horizontal")
+        var extent = CGSize.zero
+        scroll.installWhiskerContentExtentSource { extent }
+        window.addSubview(scroll)
+        window.isHidden = false
+
+        // A List's initial scroll arrives before the Host's first layout has
+        // assigned the content size that holds the target.
+        scroll.scrollToLogicalOffset(500, smooth: false)
+        window.layoutIfNeeded()
+        extent = CGSize(width: 1000, height: 80)
+        scroll.invalidateWhiskerContentExtent()
+        window.layoutIfNeeded()
+
+        XCTAssertEqual(scroll.contentSize.width, 1000)
+        XCTAssertEqual(scroll.contentOffset.x, 500)
+    }
+
     func testScrollDragLifecycleAndReleaseVelocityWithoutOffsetChange() {
         let scroll = WhiskerScrollContainerView(frame: CGRect(x: 0, y: 0, width: 100, height: 80))
         var events: [[String: WhiskerValue]] = []

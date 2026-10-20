@@ -30,6 +30,7 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     private var reportingDrag = false
     private var lastScrollOffset = CGPoint.zero
     private var releaseVelocity = CGPoint.zero
+    private var pendingLogicalOffset: (offset: CGFloat, smooth: Bool)?
 
     public override var isScrollEnabled: Bool {
         didSet {
@@ -103,9 +104,24 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     }
 
     public func scrollToLogicalOffset(_ offset: Double, smooth: Bool) {
+        let logical = CGFloat(offset)
+        // An offset beyond the current content is reset to the start by
+        // UIKit's next layout pass, before `layoutSubviews` assigns the
+        // content size that would hold it; re-applied there instead.
+        pendingLogicalOffset = logical > maximumLogicalOffset + 0.5 ? (logical, smooth) : nil
+        applyLogicalOffset(logical, smooth: smooth)
+    }
+
+    private var maximumLogicalOffset: CGFloat {
+        horizontal
+            ? max(0, contentSize.width - bounds.width)
+            : max(0, contentSize.height - bounds.height)
+    }
+
+    private func applyLogicalOffset(_ offset: CGFloat, smooth: Bool) {
         var target = contentOffset
-        if horizontal { target.x = CGFloat(offset) }
-        else { target.y = CGFloat(offset) }
+        if horizontal { target.x = offset }
+        else { target.y = offset }
         setContentOffset(target, animated: smooth)
     }
 
@@ -115,6 +131,7 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     }
 
     public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        pendingLogicalOffset = nil
         scrollSequenceStart = contentOffset
         releaseVelocity = .zero
         reportingDrag = true
@@ -225,6 +242,10 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
         )
         contentSize = size
         contentView.frame = CGRect(origin: .zero, size: size)
+        if let pending = pendingLogicalOffset, pending.offset <= maximumLogicalOffset + 0.5 {
+            pendingLogicalOffset = nil
+            applyLogicalOffset(pending.offset, smooth: pending.smooth)
+        }
     }
 }
 
