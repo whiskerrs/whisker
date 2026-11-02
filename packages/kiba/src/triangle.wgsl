@@ -6,7 +6,14 @@ struct VertexOutput {
 }
 
 @vertex
-fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
+fn vs_main(
+    @builtin(vertex_index) index: u32,
+    @location(0) column0: vec4<f32>,
+    @location(1) column1: vec4<f32>,
+    @location(2) column2: vec4<f32>,
+    @location(3) column3: vec4<f32>,
+) -> VertexOutput {
+    let transform = mat4x4<f32>(column0, column1, column2, column3);
     var positions = array<vec2<f32>, 3>(
         vec2<f32>(0.0, 0.6),
         vec2<f32>(-0.6, -0.6),
@@ -18,7 +25,7 @@ fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
         vec3<f32>(0.25, 0.25, 1.0),
     );
     var output: VertexOutput;
-    output.position = vec4<f32>(positions[index], 0.0, 1.0);
+    output.position = transform * vec4<f32>(positions[index], 0.0, 1.0);
     output.color = colors[index];
     return output;
 }

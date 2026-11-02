@@ -55,7 +55,9 @@ public final class KibaModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("Kiba")
-            View("kiba:Viewport", KibaViewport.self) {}
+            View("kiba:Viewport", KibaViewport.self) {
+                Prop("game") { (_: KibaViewport, _: WhiskerValue) in }
+            }
         }
     }
 }

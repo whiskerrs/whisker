@@ -96,7 +96,11 @@ pub unsafe extern "system" fn Java_rs_whisker_modules_kiba_KibaSurfaceView_nativ
     // SAFETY: the view passes its live handle, and only the main thread calls this.
     let viewport = unsafe { &mut *(handle as *mut AndroidViewport) };
     if let Some(renderer) = &mut viewport.renderer {
-        renderer.render(width.max(0) as u32, height.max(0) as u32);
+        renderer.render(
+            width.max(0) as u32,
+            height.max(0) as u32,
+            &[glam::Mat4::IDENTITY],
+        );
     }
 }
 

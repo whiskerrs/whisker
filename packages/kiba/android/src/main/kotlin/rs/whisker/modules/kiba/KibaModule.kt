@@ -58,6 +58,8 @@ class KibaViewport(context: WhiskerContext) : WhiskerUI<KibaSurfaceView>(context
 class KibaModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Kiba")
-        View("kiba:Viewport", KibaViewport::class.java) {}
+        View("kiba:Viewport", KibaViewport::class.java) {
+            Prop("game") { _: KibaViewport, _ -> }
+        }
     }
 }

@@ -1,9 +1,12 @@
+use glam::Mat4;
+
 const CLEAR_COLOR: [f64; 3] = [0.02, 0.02, 0.04];
 
 /// Encodes the scene into any render target, on a device owned by the caller.
 pub struct SceneRenderer {
     pipeline: wgpu::RenderPipeline,
     clear_color: wgpu::Color,
+    instances: Option<wgpu::Buffer>,
 }
 
 impl SceneRenderer {
@@ -20,7 +23,16 @@ impl SceneRenderer {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[],
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: size_of::<Mat4>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x4,
+                        1 => Float32x4,
+                        2 => Float32x4,
+                        3 => Float32x4,
+                    ],
+                }],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -52,11 +64,33 @@ impl SceneRenderer {
                 b: channel(CLEAR_COLOR[2]),
                 a: 1.0,
             },
+            instances: None,
         }
     }
 
-    /// Draws one frame into `target`.
-    pub fn draw(&self, device: &wgpu::Device, queue: &wgpu::Queue, target: &wgpu::TextureView) {
+    /// Draws one frame into `target`, one triangle per clip-space transform.
+    pub fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        transforms: &[Mat4],
+    ) {
+        let bytes: &[u8] = bytemuck::cast_slice(transforms);
+        if self
+            .instances
+            .as_ref()
+            .is_none_or(|buffer| buffer.size() < bytes.len() as u64)
+        {
+            self.instances = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("kiba instances"),
+                size: (bytes.len() as u64).next_power_of_two().max(256),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        let instances = self.instances.as_ref().expect("allocated above");
+        queue.write_buffer(instances, 0, bytes);
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -74,7 +108,8 @@ impl SceneRenderer {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.draw(0..3, 0..1);
+            pass.set_vertex_buffer(0, instances.slice(..));
+            pass.draw(0..3, 0..transforms.len() as u32);
         }
         queue.submit([encoder.finish()]);
     }
@@ -144,7 +179,7 @@ impl Renderer {
     }
 
     /// Draws at the given physical size, reconfiguring the surface when it changed.
-    pub fn render(&mut self, width: u32, height: u32) {
+    pub fn render(&mut self, width: u32, height: u32, transforms: &[Mat4]) {
         if width == 0 || height == 0 {
             self.config.width = 0;
             self.config.height = 0;
@@ -156,7 +191,7 @@ impl Renderer {
             self.surface.configure(&self.device, &self.config);
         }
         match self.surface.get_current_texture() {
-            Ok(frame) => self.present(frame),
+            Ok(frame) => self.present(frame, transforms),
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 self.surface.configure(&self.device, &self.config);
             }
@@ -164,9 +199,10 @@ impl Renderer {
         }
     }
 
-    fn present(&self, frame: wgpu::SurfaceTexture) {
+    fn present(&mut self, frame: wgpu::SurfaceTexture, transforms: &[Mat4]) {
         let view = frame.texture.create_view(&Default::default());
-        self.scene.draw(&self.device, &self.queue, &view);
+        self.scene
+            .draw(&self.device, &self.queue, &view, transforms);
         frame.present();
     }
 }
@@ -231,7 +267,7 @@ mod tests {
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
-        SceneRenderer::new(device, format).draw(device, queue, &view);
+        SceneRenderer::new(device, format).draw(device, queue, &view, &[Mat4::IDENTITY]);
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,

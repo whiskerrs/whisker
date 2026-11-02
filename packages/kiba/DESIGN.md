@@ -174,8 +174,9 @@ load.
 
 ## Target API
 
-This is what a Whisker app author writes. It is the target shape and does not compile yet. Hook
-names are finalized in P1.
+This is what a Whisker app author writes. It is the target shape: `Game`, `App::on_update`,
+`Game::send`, `Transform`, and `Viewport` exist today, with a `Triangle` marker in place of the
+camera, sun, and model. Hook names are finalized in P1.
 
 ```rust
 use kiba::prelude::*;
@@ -205,7 +206,10 @@ pub fn app() -> Element {
                 }
             }
             angle += speed * time.delta_seconds();
-            world.get_mut::<Transform>(crate_id).rotation = Quat::from_rotation_y(angle);
+            world
+                .get::<&mut Transform>(crate_id)
+                .expect("the crate is never despawned")
+                .rotation = Quat::from_rotation_y(angle);
 
             let completed = (angle / std::f32::consts::TAU) as i32;
             if completed != turns.get_untracked() {
@@ -218,10 +222,10 @@ pub fn app() -> Element {
         View(style: css!(width: percent(100), height: percent(100))) {
             Viewport(game: game, style: css!(width: percent(100), height: percent(100)))
             View(
-                style: css!(position: absolute, left: px(16), top: px(16)),
+                style: css!(position: PositionKind::Absolute, left: px(16), top: px(16)),
                 on_tap: move |_| game.send(Command::Boost),
             ) {
-                Text(value: move || format!("{} turns", turns.get()))
+                Text(value: computed(move || format!("{} turns", turns.get())))
             }
         }
     }
@@ -229,7 +233,8 @@ pub fn app() -> Element {
 ```
 
 `Game` is a `Copy` key, like `VideoHandle` **[verified]**. A thread-local registry in `kiba` holds the
-real object, and `Viewport` passes the key to the Host as a prop. The key passes directly into
+real object, and `Viewport` passes the key to the Host as a string prop, because `module_element`
+props reach the Host stringified whatever their Rust type **[verified]**. The key passes directly into
 closures such as `on_tap`, avoiding the problem of `#[component]` arguments that cannot be moved.
 
 ## Performance budgets
@@ -268,11 +273,12 @@ Each result can change the decisions above. They run at the start of P1.
 
 1. **Android device baseline** [unverified]: Collect WebGPU adapter limits, PBR frame rate, and ASTC
    support on the reference device. Affects D6, D7, and all budgets.
-2. **Frame integration** [unverified]: Whether Kiba's frame callback can call `signal.set`.
-   `spawn_local` requires an entered Runtime **[verified]**, so the same constraint may apply. Whisker
-   requests frames only during `needs_frame` **[verified]**, so check first whether Kiba can ride on
-   that frame driver. If it can, the Web Host's own loop (`run_frame_loop`) is removed. If not, D2
-   and the target API are revisited.
+2. **Frame integration** [verified on Web]: Kiba rides Whisker's frame driver, so `on_update` can
+   call `signal.set`, and the Web Host's own loop is gone. Each frame posts the next one through
+   `RuntimeDispatcher`, which requires a drain to run only what was queued when it started. A drain
+   that also runs newly posted work draws up to 4096 frames without yielding and hangs the page.
+   Dispatches also drain on input, so a frame can occasionally run off the display's cadence.
+   Native Hosts do not run a `Game` yet.
 3. **Tab memory limit** [unverified]: Increase allocation on the reference device and measure where
    context loss and tab discard occur.
 4. **Wasm size** [unverified]: Measure the release-optimized value of the current 1.6 MB (gzipped),
