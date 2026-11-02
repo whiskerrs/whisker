@@ -1,0 +1,15 @@
+[package]
+name = "kiba-web"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web Host implementation for Kiba."
+publish = false
+
+[dependencies]
+kiba = { path = ".." }
+wasm-bindgen-futures = "0.4"
+whisker-web = { path = "../../../platforms/web", version = "0.15.0" }
+web-sys = { version = "0.3", features = ["Element", "HtmlCanvasElement", "HtmlElement", "CssStyleDeclaration", "Window"] }

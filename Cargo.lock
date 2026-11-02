@@ -2890,6 +2890,44 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "kiba"
+version = "0.1.0"
+dependencies = [
+ "pollster",
+ "raw-window-handle",
+ "web-sys",
+ "wgpu",
+ "whisker",
+]
+
+[[package]]
+name = "kiba-desktop"
+version = "0.1.0"
+dependencies = [
+ "kiba",
+ "whisker-desktop",
+]
+
+[[package]]
+name = "kiba-example"
+version = "0.1.0"
+dependencies = [
+ "kiba",
+ "whisker",
+ "whisker-cng",
+]
+
+[[package]]
+name = "kiba-web"
+version = "0.1.0"
+dependencies = [
+ "kiba",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "whisker-web",
+]
+
+[[package]]
 name = "kqueue"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6494,6 +6532,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "js-sys",
  "log",
+ "naga",
  "parking_lot",
  "portable-atomic",
  "profiling",
@@ -6501,6 +6540,7 @@ dependencies = [
  "smallvec",
  "static_assertions",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "wgpu-core",
  "wgpu-hal",
