@@ -516,7 +516,9 @@ time, against 3–4 ms, for 22,843 instances against 20,055, because the third a
 casters. Under a 6x throttle both fall to T0, unlike the P4 run, which stayed at T2; at T0 P6 takes
 17–25 ms against 19 ms and runs at 46–57 fps. The first P6 run was 40% slower at T0, because every instance
 hashed a batch key that now holds textures and pipeline state with SipHash once per pass; FxHash removed
-that. The example shows each feature on the Web with no console errors. Throttling does not slow the GPU,
+that. The soak world, cooked again for version 3, streamed for two minutes under a 6x throttle at T2 with
+about 2 ms of main-thread time and 120–140 draw calls. The example shows each feature on the Web with no
+console errors. Throttling does not slow the GPU,
 so the cost of soft shadows, 16 lights, and the post passes on a phone is unmeasured.
 
 **The exit criterion is met on the stand-in.** Whether the result reads as photorealistic still needs
