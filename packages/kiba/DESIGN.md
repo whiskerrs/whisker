@@ -142,6 +142,11 @@ first fifth of `Sun::shadow_distance`, entities are culled per cascade, and enti
 cast. Each cascade snaps to whole texels so that edges do not crawl, and lookups take four rotated
 hardware-filtered taps.
 
+`Sky` is an analytic gradient, with image-based lighting calculated from it on the GPU: 128 samples per
+texel into a 32-texel radiance cube of five roughness levels and a 16-texel irradiance cube. This
+happens once per change of the sky, so a frame pays only two cube lookups per fragment. The sun is left
+out of the cubes, because surfaces receive it directly.
+
 ### D8. The world is delivered in cells and controlled by memory budgets
 
 The world is split into grid cells, loaded and evicted with LRU by distance and budget. Distant

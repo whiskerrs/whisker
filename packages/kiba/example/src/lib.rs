@@ -76,6 +76,7 @@ pub fn app() -> Element {
             },
         ));
         setup.world.spawn((Sun::default(),));
+        setup.world.spawn((Sky::default(),));
 
         let sphere = Mesh::sphere(0.22);
         for column in 0..5 {

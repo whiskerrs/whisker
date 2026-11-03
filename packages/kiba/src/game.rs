@@ -11,6 +11,7 @@ use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 use crate::controller::run_controllers;
 use crate::input::InputEvent;
 use crate::renderer::{Batch, CASCADES, Frame, Instance, SHADOW_MAP_SIZE, Shadows};
+use crate::sky::Sky;
 use crate::{Input, Material, Mesh, Model, Renderer};
 
 const MAX_DELTA_SECONDS: f32 = 0.1;
@@ -576,6 +577,7 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
             camera_position: Vec3::ZERO,
             exposure: 1.0,
             sun,
+            sky: None,
             shadows: None,
             batches: Vec::new(),
         };
@@ -642,6 +644,7 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
         camera_position: eye.translation,
         exposure: camera.exposure,
         sun,
+        sky: world.query::<&Sky>().iter().next().map(|(_, sky)| *sky),
         shadows: shadows.map(|shadows| Shadows {
             casters: casters.map(|batches| batches.into_values().collect()),
             ..shadows

@@ -48,6 +48,7 @@ mod input;
 mod mesh;
 mod model;
 mod renderer;
+mod sky;
 mod texture;
 
 #[cfg(target_os = "android")]
@@ -71,6 +72,7 @@ pub use model::{LoadState, Model};
 pub use renderer::{Frame, Renderer, SceneRenderer};
 #[doc(hidden)]
 pub use renderer::{log, placeholder_scene};
+pub use sky::Sky;
 pub use texture::Texture;
 #[doc(hidden)]
 pub use wgpu;
@@ -79,7 +81,7 @@ pub use wgpu;
 pub mod prelude {
     pub use crate::{
         Camera, Context, Entity, FlyCamera, FrameStats, Game, GameSetup, Input, Interpolated, Key,
-        LoadState, Material, Mesh, Model, OrbitCamera, Pointer, Quat, Sun, Texture, Time,
+        LoadState, Material, Mesh, Model, OrbitCamera, Pointer, Quat, Sky, Sun, Texture, Time,
         Transform, Vec2, Vec3, Vertex, Viewport, World,
     };
 }

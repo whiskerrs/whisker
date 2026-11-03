@@ -2,6 +2,7 @@ const PI: f32 = 3.14159265;
 const DIELECTRIC_REFLECTANCE: f32 = 0.04;
 // Below this, the highlight of a directional light shrinks under one pixel and flickers.
 const MIN_ROUGHNESS: f32 = 0.045;
+const SKY_LAST_MIP: f32 = 4.0;
 
 struct Frame {
     view_projection: mat4x4<f32>,
@@ -10,13 +11,16 @@ struct Frame {
     sun_color: vec4<f32>,
     ambient: vec4<f32>,
     cascades: array<mat4x4<f32>, 2>,
-    // Split distance, then one when shadows are on.
+    // Split distance, then one when shadows are on, then one when a sky lights the scene.
     shadow_params: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
+@group(0) @binding(3) var sky_radiance: texture_cube<f32>;
+@group(0) @binding(4) var sky_irradiance: texture_cube<f32>;
+@group(0) @binding(5) var sky_sampler: sampler;
 @group(1) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(1) @binding(1) var metallic_roughness_texture: texture_2d<f32>;
 @group(1) @binding(2) var normal_texture: texture_2d<f32>;
@@ -89,7 +93,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Sun.color is the light leaving a white diffuse surface, so diffuse carries no 1/PI and specular gains PI.
     let lit = sun_visibility(input.world_position, input.normal);
     let sun = (diffuse + specular * PI) * frame.sun_color.rgb * n_dot_l * lit;
-    let ambient = (diffuse + ambient_specular(reflectance, roughness, n_dot_v)) * frame.ambient.rgb;
+    var ambient_diffuse = frame.ambient.rgb;
+    var ambient_reflected = frame.ambient.rgb;
+    if frame.shadow_params.z != 0.0 {
+        ambient_diffuse = textureSampleLevel(sky_irradiance, sky_sampler, normal, 0.0).rgb;
+        let mirrored = reflect(-to_camera, normal);
+        ambient_reflected = textureSampleLevel(sky_radiance, sky_sampler, mirrored, roughness * SKY_LAST_MIP).rgb;
+    }
+    let ambient = diffuse * ambient_diffuse + ambient_specular(reflectance, roughness, n_dot_v) * ambient_reflected;
     return vec4<f32>((sun + ambient) * frame.camera_position.w, 1.0);
 }
 

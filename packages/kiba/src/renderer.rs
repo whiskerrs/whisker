@@ -5,6 +5,7 @@ use glam::{Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::mesh::{MeshData, Vertex};
+use crate::sky::{Sky, SkyRenderer};
 use crate::texture::{TextureData, mip_chain};
 use crate::{Material, Mesh, Sun, Texture};
 
@@ -14,8 +15,8 @@ const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     b: 0.04,
     a: 1.0,
 };
-const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub(crate) const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 // Reversed depth (1 at the near plane) keeps floating-point precision over open-world distances.
 const DEPTH_CLEAR: f32 = 0.0;
 const DEPTH_COMPARE: wgpu::CompareFunction = wgpu::CompareFunction::GreaterEqual;
@@ -62,6 +63,7 @@ pub struct Frame {
     pub(crate) camera_position: Vec3,
     pub(crate) exposure: f32,
     pub(crate) sun: Sun,
+    pub(crate) sky: Option<Sky>,
     pub(crate) shadows: Option<Shadows>,
     pub(crate) batches: Vec<Batch>,
 }
@@ -85,6 +87,7 @@ pub fn placeholder_scene() -> Frame {
         camera_position: Vec3::Z,
         exposure: 1.0,
         sun: Sun::UNLIT,
+        sky: None,
         shadows: None,
         batches: vec![Batch {
             mesh: TRIANGLE.clone(),
@@ -122,7 +125,7 @@ impl From<&Frame> for FrameUniform {
             shadow_params: Vec4::new(
                 frame.shadows.as_ref().map_or(0.0, |s| s.split),
                 f32::from(u8::from(frame.shadows.is_some())),
-                0.0,
+                f32::from(u8::from(frame.sky.is_some())),
                 0.0,
             ),
         }
@@ -306,6 +309,7 @@ pub struct SceneRenderer {
     post_layout: wgpu::BindGroupLayout,
     frame_uniform: wgpu::Buffer,
     frame_bindings: wgpu::BindGroup,
+    sky: SkyRenderer,
     shadow_pipeline: wgpu::RenderPipeline,
     shadow_layers: [wgpu::TextureView; CASCADES],
     shadow_uniforms: [wgpu::Buffer; CASCADES],
@@ -505,6 +509,14 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let sky = SkyRenderer::new(device);
+        let sky_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("kiba sky"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         let frame_bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("kiba frame"),
             layout: &pipeline.get_bind_group_layout(0),
@@ -521,11 +533,24 @@ impl SceneRenderer {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&shadow_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&sky.radiance_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&sky.irradiance_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(&sky_sampler),
+                },
             ],
         });
         Self {
             frame_uniform,
             frame_bindings,
+            sky,
             shadow_pipeline,
             shadow_layers,
             shadow_uniforms,
@@ -622,6 +647,8 @@ impl SceneRenderer {
             bytemuck::bytes_of(&FrameUniform::from(frame)),
         );
 
+        self.sky.prepare(device, queue, frame);
+
         let mut encoder = device.create_command_encoder(&Default::default());
         let mut next_instance: u64 = batches.iter().map(|b| b.instances.len() as u64).sum();
         if let Some(shadows) = &frame.shadows {
@@ -706,6 +733,9 @@ impl SceneRenderer {
                 pass.set_vertex_buffer(1, instances.slice(range));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..count as u32);
+            }
+            if frame.sky.is_some() {
+                self.sky.draw(&mut pass);
             }
         }
         {
@@ -1025,6 +1055,7 @@ mod tests {
             camera_position: Vec3::Z * 2.0,
             exposure: 1.0,
             sun,
+            sky: None,
             shadows: None,
             batches,
         }
@@ -1048,6 +1079,11 @@ mod tests {
             shadow_distance: 0.0,
         }
     }
+
+    const DARK_SUN: Sun = Sun {
+        ambient: Vec3::ZERO,
+        ..Sun::UNLIT
+    };
 
     const MATTE: Material = Material {
         base_color: Vec3::ONE,
@@ -1411,6 +1447,71 @@ mod tests {
         let lit = ground_brightness(false);
         let shadowed = ground_brightness(true);
         assert!(lit > shadowed + 32, "lit {lit}, shadowed {shadowed}");
+    }
+
+    #[test]
+    fn a_sky_fills_the_background_and_lights_surfaces_by_its_color() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let red = Sky {
+            zenith: Vec3::new(0.5, 0.0, 0.0),
+            horizon: Vec3::new(0.5, 0.0, 0.0),
+            ground: Vec3::new(0.5, 0.0, 0.0),
+        };
+        let shot = |batches, sky| {
+            let frame = Frame {
+                sky,
+                ..frame(DARK_SUN, batches)
+            };
+            center_of(&device, &queue, &frame)
+        };
+
+        let background = shot(Vec::new(), Some(red));
+        assert!(background[0] > 100 && background[1] == 0, "{background:?}");
+
+        let matte = shot(vec![surface(MATTE)], Some(red));
+        assert!(matte[0] > 100 && matte[1] == 0, "{matte:?}");
+        let mirror = Material {
+            metallic: 1.0,
+            roughness: 0.1,
+            ..MATTE
+        };
+        let reflecting = shot(vec![surface(mirror)], Some(red));
+        assert!(reflecting[0] > 100 && reflecting[1] == 0, "{reflecting:?}");
+
+        assert_eq!(shot(vec![surface(MATTE)], None)[0], 0);
+    }
+
+    #[test]
+    fn a_metal_mirror_shows_the_part_of_the_sky_it_faces() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let sky = Sky {
+            zenith: Vec3::new(0.8, 0.0, 0.0),
+            horizon: Vec3::new(0.8, 0.0, 0.0),
+            ground: Vec3::new(0.0, 0.0, 0.8),
+        };
+        let mirror = Material {
+            metallic: 1.0,
+            roughness: 0.1,
+            ..MATTE
+        };
+        let tilted = |angle: f32| {
+            let mut batch = surface(mirror.clone());
+            batch.instances = vec![Instance::new(Mat4::from_rotation_x(angle), &mirror)];
+            let frame = Frame {
+                sky: Some(sky),
+                ..frame(DARK_SUN, vec![batch])
+            };
+            center_of(&device, &queue, &frame)
+        };
+
+        // The camera looks down -Z at a surface facing +Z, so tilting its face up reflects the sky.
+        let up = tilted(-0.6);
+        let down = tilted(0.6);
+        assert!(up[0] > up[2] && down[2] > down[0], "{up:?} {down:?}");
     }
 
     #[test]
