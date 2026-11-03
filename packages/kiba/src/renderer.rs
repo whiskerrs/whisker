@@ -307,15 +307,21 @@ struct GpuMaterial {
 fn probes_binding(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    view: &wgpu::TextureView,
+    [visibility, bounce]: &[wgpu::TextureView; 2],
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("kiba probes"),
         layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(view),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(visibility),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(bounce),
+            },
+        ],
     })
 }
 
@@ -470,10 +476,10 @@ impl SceneRenderer {
         });
         let probes_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kiba probes"),
-            entries: &[fragment_entry(
-                0,
-                float_texture(wgpu::TextureViewDimension::D3),
-            )],
+            entries: &[
+                fragment_entry(0, float_texture(wgpu::TextureViewDimension::D3)),
+                fragment_entry(1, float_texture(wgpu::TextureViewDimension::D3)),
+            ],
         });
         let pipeline_layout = |label, layouts: &[&wgpu::BindGroupLayout]| {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -714,7 +720,7 @@ impl SceneRenderer {
             probes_bindings: probes_binding(
                 device,
                 &probes_layout,
-                &volume_view(device, queue, UVec3::ONE, &[[255; 4]]),
+                &[[255; 4], [0; 4]].map(|texel| volume_view(device, queue, UVec3::ONE, &[texel])),
             ),
             probes_layout,
             probes_key: 0,
@@ -789,8 +795,8 @@ impl SceneRenderer {
         let joint_offsets = self.upload_joints(device, queue, frame);
         if let Some(volume) = frame.probes.as_ref().filter(|v| v.key() != self.probes_key) {
             let data = volume.data().expect("extraction keeps only loaded volumes");
-            let view = probes::upload(device, queue, data);
-            self.probes_bindings = probes_binding(device, &self.probes_layout, &view);
+            let views = probes::upload(device, queue, data);
+            self.probes_bindings = probes_binding(device, &self.probes_layout, &views);
             self.probes_key = volume.key();
         }
         let quality = frame.effects.quality;
@@ -1889,6 +1895,7 @@ mod tests {
                 origin: center - Vec3::splat(0.5),
                 spacing: 0.5,
                 visibility: vec![[128, 128, 128, 26]; 27],
+                bounce: vec![[0; 4]; 27],
             });
             let frame = Frame {
                 sky: Some(sky),
@@ -1904,6 +1911,33 @@ mod tests {
             u16::from(outside) > u16::from(blocked) * 2,
             "outside {outside}, blocked {blocked}"
         );
+    }
+
+    #[test]
+    fn blocked_sky_light_returns_tinted_by_what_blocks_it() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let shot = |bounce: [u8; 4]| {
+            let volume = ProbeVolume::from_data(probes::ProbeData {
+                dimensions: UVec3::splat(3),
+                origin: Vec3::Z * 0.5 - Vec3::splat(0.5),
+                spacing: 0.5,
+                visibility: vec![[128, 128, 128, 26]; 27],
+                bounce: vec![bounce; 27],
+            });
+            let frame = Frame {
+                sky: Some(Sky::default()),
+                probes: Some(volume),
+                ..frame(DARK_SUN, vec![near_surface(MATTE)])
+            };
+            center_of(&device, &queue, &frame)
+        };
+
+        let without = shot([0; 4]);
+        let red = shot([230, 40, 40, 255]);
+        assert!(red[0] > without[0] + 20, "{red:?} {without:?}");
+        assert!(red[0] > red[1] * 2, "{red:?}");
     }
 
     #[test]

@@ -17,6 +17,8 @@ pub(crate) struct ProbeData {
     pub(crate) spacing: f32,
     /// For each probe, X then Y then Z: the mean as alpha, and the direction of most sky as RGB.
     pub(crate) visibility: Vec<[u8; 4]>,
+    /// For each probe, the square root of the albedo it sees as RGB, and how much of that faces up as alpha.
+    pub(crate) bounce: Vec<[u8; 4]>,
 }
 
 impl ProbeData {
@@ -34,6 +36,7 @@ impl ProbeData {
         out.vec3(self.origin);
         out.f32(self.spacing);
         out.slice(&self.visibility);
+        out.slice(&self.bounce);
         out.0
     }
 
@@ -43,8 +46,9 @@ impl ProbeData {
         let origin = input.vec3()?;
         let spacing = input.f32()?;
         let visibility: Vec<[u8; 4]> = input.slice()?;
+        let bounce: Vec<[u8; 4]> = input.slice()?;
         let count = dimensions.as_u64vec3().element_product();
-        if count == 0 || visibility.len() as u64 != count {
+        if count == 0 || visibility.len() as u64 != count || bounce.len() as u64 != count {
             return Err("the pack's probe count does not match its data".into());
         }
         Ok(Self {
@@ -52,6 +56,7 @@ impl ProbeData {
             origin,
             spacing,
             visibility,
+            bounce,
         })
     }
 
@@ -60,10 +65,12 @@ impl ProbeData {
     }
 }
 
-/// Darkens sky light where geometry blocks it, spawned alone as `(ProbeVolume::load(path),)`.
+/// Darkens sky light where geometry blocks it, and returns light off that geometry in its color,
+/// spawned alone as `(ProbeVolume::load(path),)`.
 ///
-/// Cook it with `kiba-cook`, from models that do not move. It stores what can see the sky rather than
-/// its color, so the [`Sky`](crate::Sky) can change without cooking again. Surfaces outside the box
+/// Cook it with `kiba-cook`, from models that do not move. It stores what can see the sky and the
+/// albedo of what cannot, not light, so the [`Sky`](crate::Sky) and [`Sun`](crate::Sun) can change
+/// without cooking again. Surfaces outside the box
 /// see the whole sky. A frame uses the first volume holding the camera, so volumes apply only near it.
 #[derive(Clone, Debug)]
 pub struct ProbeVolume(Arc<OnceLock<Result<ProbeData, String>>>);
@@ -130,13 +137,14 @@ pub(crate) fn bounds(data: &ProbeData) -> (Vec3, Vec3) {
     )
 }
 
-/// Makes the GPU copy of a volume.
+/// Makes the GPU copies of a volume: sky visibility, then bounce.
 pub(crate) fn upload(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     data: &ProbeData,
-) -> wgpu::TextureView {
-    renderer::volume_view(device, queue, data.dimensions, &data.visibility)
+) -> [wgpu::TextureView; 2] {
+    [&data.visibility, &data.bounce]
+        .map(|texels| renderer::volume_view(device, queue, data.dimensions, texels))
 }
 
 #[cfg(test)]
@@ -149,6 +157,7 @@ mod tests {
             origin: Vec3::new(1.0, 2.0, 3.0),
             spacing: 0.5,
             visibility: vec![[1, 2, 3, 4], [5, 6, 7, 8]],
+            bounce: vec![[9, 10, 11, 12], [13, 14, 15, 16]],
         }
     }
 

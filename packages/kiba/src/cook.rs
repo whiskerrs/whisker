@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use glam::{IVec2, Mat4, UVec3, Vec2, Vec3};
+use glam::{IVec2, Mat4, UVec3, Vec2, Vec3, Vec4};
 
 use crate::model::{Lod, ModelData, ModelPart};
 use crate::pack::{MODEL_SECTION, PROBE_SECTION, WORLD_SECTION, Writer, write_model, write_pack};
@@ -18,11 +18,18 @@ const MOST_PROBES: u64 = 1 << 22;
 #[derive(Clone, Copy)]
 struct Triangle {
     corners: [Vec3; 3],
+    /// Linear RGB of the light the face sends back.
+    albedo: Vec3,
 }
 
 impl Triangle {
     fn center(&self) -> Vec3 {
         (self.corners[0] + self.corners[1] + self.corners[2]) / 3.0
+    }
+
+    fn normal(&self) -> Vec3 {
+        let [a, b, c] = self.corners;
+        (b - a).cross(c - a).normalize_or_zero()
     }
 
     /// The distance along the ray, and whether the ray struck the back face.
@@ -100,11 +107,11 @@ impl Tree {
         at
     }
 
-    /// The nearest thing a ray strikes, and whether it was a back face.
-    fn trace(&self, origin: Vec3, direction: Vec3) -> Option<bool> {
+    /// The nearest triangle a ray strikes, and whether it struck its back face.
+    fn trace(&self, origin: Vec3, direction: Vec3) -> Option<(&Triangle, bool)> {
         let inverse = direction.recip();
         let mut nearest = RAY_LENGTH;
-        let mut back = None;
+        let mut struck = None;
         let mut stack = vec![0usize];
         while let Some(at) = stack.pop() {
             let Some(node) = self.nodes.get(at) else {
@@ -123,11 +130,11 @@ impl Tree {
             for triangle in &self.triangles[node.first..node.first + node.count] {
                 if let Some((distance, is_back)) = triangle.hit(origin, direction, nearest) {
                     nearest = distance;
-                    back = Some(is_back);
+                    struck = Some((triangle, is_back));
                 }
             }
         }
-        back
+        struck
     }
 }
 
@@ -143,7 +150,8 @@ fn sphere_directions() -> Vec<Vec3> {
         .collect()
 }
 
-/// Calculates how much sky each point around `models` can see, one probe every `spacing` units.
+/// Calculates how much sky each point around `models` can see, and the albedo of what hides the rest,
+/// one probe every `spacing` units.
 ///
 /// Models stay at their file's position, because cooking sees only what does not move.
 pub fn bake_probes(models: &[Model], spacing: f32) -> Result<ProbeVolume, String> {
@@ -154,12 +162,23 @@ pub fn bake_probes(models: &[Model], spacing: f32) -> Result<ProbeVolume, String
     for model in models {
         for part in model.parts() {
             let data = part.mesh.data();
+            let tint = part.material.base_color
+                * part
+                    .material
+                    .base_color_texture
+                    .as_ref()
+                    .map_or(Vec3::ONE, mean_color);
             for corner in data.indices.chunks_exact(3) {
+                let vertices = [0, 1, 2].map(|i| data.vertices[corner[i] as usize]);
+                let color = vertices
+                    .iter()
+                    .map(|vertex| Vec3::from(vertex.color))
+                    .sum::<Vec3>()
+                    / 3.0;
                 triangles.push(Triangle {
-                    corners: [0, 1, 2].map(|i| {
-                        part.transform
-                            .transform_point3(data.vertices[corner[i] as usize].position.into())
-                    }),
+                    corners: vertices
+                        .map(|vertex| part.transform.transform_point3(vertex.position.into())),
+                    albedo: tint * color,
                 });
             }
         }
@@ -197,7 +216,36 @@ pub fn bake_probes(models: &[Model], spacing: f32) -> Result<ProbeVolume, String
             .iter()
             .map(|probe| probe.map_or([128, 128, 128, 255], encode))
             .collect(),
+        bounce: probes
+            .iter()
+            .map(|probe| probe.map_or([0; 4], encode_bounce))
+            .collect(),
     }))
+}
+
+/// The linear mean of an sRGB image.
+fn mean_color(texture: &Texture) -> Vec3 {
+    let data = texture.data();
+    let to_linear = |byte: u8| {
+        let value = f32::from(byte) / 255.0;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let pixels = data.pixels.chunks_exact(4);
+    let count = pixels.len().max(1) as f32;
+    pixels
+        .map(|pixel| {
+            Vec3::new(
+                to_linear(pixel[0]),
+                to_linear(pixel[1]),
+                to_linear(pixel[2]),
+            )
+        })
+        .sum::<Vec3>()
+        / count
 }
 
 /// Writes `model` as a cooked pack, in the form a game loads with
@@ -476,19 +524,25 @@ pub fn bake_probes_to_bytes(models: &[Model], spacing: f32) -> Result<Vec<u8>, S
     Ok(volume.data().expect("just baked").to_bytes())
 }
 
-/// The mean sky visibility and the mean direction it comes from, or nothing for a probe inside a wall.
-type Probe = Option<(f32, Vec3)>;
+/// The mean direction toward open sky in XYZ with the mean sky visibility in W, then the mean albedo
+/// of the surfaces the probe sees in XYZ with how much they face up in W, or nothing inside a wall.
+type Probe = Option<(Vec4, Vec4)>;
 
 fn trace_probe(tree: &Tree, position: Vec3, directions: &[Vec3]) -> Probe {
     let (mut open, mut toward_open, mut backs) = (0.0, Vec3::ZERO, 0);
+    let (mut albedo, mut upward, mut fronts) = (Vec3::ZERO, 0.0, 0.0);
     for &direction in directions {
         match tree.trace(position, direction) {
             None => {
                 open += 1.0;
                 toward_open += direction;
             }
-            Some(true) => backs += 1,
-            Some(false) => {}
+            Some((_, true)) => backs += 1,
+            Some((triangle, false)) => {
+                albedo += triangle.albedo;
+                upward += triangle.normal().y.max(0.0);
+                fronts += 1.0;
+            }
         }
     }
     // A probe that sees mostly back faces is inside something, and its darkness must not leak out.
@@ -496,7 +550,11 @@ fn trace_probe(tree: &Tree, position: Vec3, directions: &[Vec3]) -> Probe {
         return None;
     }
     let rays = directions.len() as f32;
-    Some((open / rays, toward_open * 3.0 / rays))
+    let fronts = f32::max(fronts, 1.0);
+    Some((
+        (toward_open * 3.0 / rays).extend(open / rays),
+        (albedo / fronts).extend(upward / fronts),
+    ))
 }
 
 fn fill_buried(probes: &mut [Probe], dimensions: UVec3) {
@@ -508,7 +566,7 @@ fn fill_buried(probes: &mut [Probe], dimensions: UVec3) {
                 if probes[index(x, y, z)].is_some() {
                     continue;
                 }
-                let mut sum = (0.0, Vec3::ZERO);
+                let mut sum = (Vec4::ZERO, Vec4::ZERO);
                 let mut found = 0.0;
                 for (dx, dy, dz) in [
                     (-1, 0, 0),
@@ -526,10 +584,10 @@ fn fill_buried(probes: &mut [Probe], dimensions: UVec3) {
                     {
                         continue;
                     }
-                    if let Some((mean, direction)) =
+                    if let Some((visibility, bounce)) =
                         probes[index(near[0] as u32, near[1] as u32, near[2] as u32)]
                     {
-                        sum = (sum.0 + mean, sum.1 + direction);
+                        sum = (sum.0 + visibility, sum.1 + bounce);
                         found += 1.0;
                     }
                 }
@@ -541,15 +599,24 @@ fn fill_buried(probes: &mut [Probe], dimensions: UVec3) {
     }
 }
 
-fn encode((mean, direction): (f32, Vec3)) -> [u8; 4] {
-    let byte = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
-    let [x, y, z] = direction.to_array();
+fn byte(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn encode((visibility, _): (Vec4, Vec4)) -> [u8; 4] {
+    let [x, y, z, mean] = visibility.to_array();
     [
         byte(x * 0.5 + 0.5),
         byte(y * 0.5 + 0.5),
         byte(z * 0.5 + 0.5),
         byte(mean),
     ]
+}
+
+// Square roots spend the bytes on dark albedo, where the eye sees steps.
+fn encode_bounce((_, bounce): (Vec4, Vec4)) -> [u8; 4] {
+    let [r, g, b, upward] = bounce.to_array();
+    [byte(r.sqrt()), byte(g.sqrt()), byte(b.sqrt()), byte(upward)]
 }
 
 #[cfg(test)]
@@ -581,6 +648,25 @@ mod tests {
         let beside = at(&volume, Vec3::new(4.5, 0.5, 0.0));
         assert!(between[3] < 60, "{between:?}");
         assert!(beside[3] > between[3] * 2, "{beside:?} {between:?}");
+    }
+
+    #[test]
+    fn a_probe_records_the_color_and_facing_of_what_hides_the_sky() {
+        let red = Material {
+            base_color: Vec3::new(0.8, 0.1, 0.1),
+            ..Material::default()
+        };
+        let ground = Model::new([(Mesh::plane(8.0), red, Mat4::IDENTITY)]);
+        let volume = bake_probes(&[ground], 0.5).expect("bakes");
+        let data = volume.data().expect("cooked");
+        let grid = ((Vec3::new(0.0, 0.5, 0.0) - data.origin) / data.spacing)
+            .round()
+            .as_uvec3();
+        let dimensions = data.dimensions;
+        let [r, g, b, upward] = data.bounce
+            [(grid.x + grid.y * dimensions.x + grid.z * dimensions.x * dimensions.y) as usize];
+        assert!(r > 200 && g < 100 && b < 100, "{r} {g} {b}");
+        assert!(upward > 240, "{upward}");
     }
 
     #[test]

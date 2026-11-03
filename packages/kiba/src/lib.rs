@@ -12,7 +12,7 @@
 //! | Fire, sparks, or magic | `(Transform::default(), ParticleEmitter::default())` |
 //! | A shape | `(Transform::default(), Mesh::cube(1.0), Material::default())` |
 //! | A file | `(Transform::default(), Model::load(asset!("crate.glb")))` |
-//! | Sky light blocked by still models | `(ProbeVolume::load(asset!("scene.kiba")),)`, cooked with `kiba-cook` |
+//! | Sky light blocked and bounced by still models | `(ProbeVolume::load(asset!("scene.kiba")),)`, cooked with `kiba-cook` |
 //! | A large world, loaded around the camera | `(WorldStream::load(asset!("world/index.kiba"), StreamSettings::default()),)`, cooked with `kiba-cook` |
 //! | Sound | `Sound::load(asset!("step.ogg"))`, held by a callback, then `.play()` |
 //! | Physics, with the `physics` feature | `(Physics::default(),)` once, then `(Transform::default(), RigidBody::new(BodyKind::Dynamic), Collider::Ball(0.5))` |

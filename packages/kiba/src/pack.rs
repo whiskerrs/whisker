@@ -12,7 +12,7 @@ use crate::model::{Lod, ModelData, ModelPart};
 use crate::{Material, Mesh, Texture, Vertex};
 
 const MAGIC: &[u8; 4] = b"KIBA";
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 pub(crate) const MODEL_SECTION: &[u8; 4] = b"MODL";
 pub(crate) const PROBE_SECTION: &[u8; 4] = b"PROB";
 pub(crate) const WORLD_SECTION: &[u8; 4] = b"WRLD";

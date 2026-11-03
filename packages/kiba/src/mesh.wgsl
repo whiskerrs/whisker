@@ -38,6 +38,7 @@ struct Joints {
 
 @group(2) @binding(0) var<uniform> joints: Joints;
 @group(3) @binding(0) var probes: texture_3d<f32>;
+@group(3) @binding(1) var probe_bounce: texture_3d<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -133,7 +134,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let mirrored = reflect(-to_camera, normal);
         ambient_reflected = textureSampleLevel(sky_radiance, sky_sampler, mirrored, roughness * SKY_LAST_MIP).rgb;
     }
-    let ambient = diffuse * ambient_diffuse * sky_visibility(input.world_position, normal)
+    let ambient = diffuse * (ambient_diffuse * sky_visibility(input.world_position, normal) + bounce_light(input.world_position, normal))
         + ambient_specular(reflectance, roughness, n_dot_v) * ambient_reflected * sky_visibility(input.world_position, reflect(-to_camera, normal));
     let air = 1.0 - exp(-length(frame.camera_position.xyz - input.world_position) * frame.fog.w);
     return vec4<f32>(mix(sun + ambient, frame.fog.rgb, air) * frame.camera_position.w, 1.0);
@@ -177,6 +178,25 @@ fn sky_visibility(position: vec3<f32>, direction: vec3<f32>) -> f32 {
     // Fading out over the outermost probes keeps the edge of the box from showing on surfaces.
     let inward = min(uvw, 1.0 - uvw) / frame.probe_scale.xyz;
     return mix(1.0, visible, saturate(min(inward.x, min(inward.y, inward.z)) * frame.probe_min.w));
+}
+
+// Lights what blocks the sky from above, by the sun and sky, and returns it in that surface's color,
+// so the sun's height can change without a second cook.
+fn bounce_light(position: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+    if frame.probe_scale.w == 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let uvw = (position - frame.probe_min.xyz) * frame.probe_scale.xyz;
+    if any(uvw < vec3<f32>(0.0)) || any(uvw > vec3<f32>(1.0)) {
+        return vec3<f32>(0.0);
+    }
+    let bounce = textureSampleLevel(probe_bounce, sky_sampler, uvw, 0.0);
+    var from_above = frame.ambient.rgb;
+    if frame.shadow_params.z != 0.0 {
+        from_above = textureSampleLevel(sky_irradiance, sky_sampler, vec3<f32>(0.0, 1.0, 0.0), 0.0).rgb;
+    }
+    let arriving = (frame.sun_color.rgb * max(frame.to_sun.y, 0.0) + from_above) * bounce.a;
+    return bounce.rgb * bounce.rgb * arriving * (1.0 - sky_visibility(position, normal));
 }
 
 fn sun_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {
