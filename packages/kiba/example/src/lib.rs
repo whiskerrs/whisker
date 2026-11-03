@@ -12,12 +12,17 @@ enum Command {
 pub fn app() -> Element {
     let turns = signal(0);
 
-    let game = Game::<Command>::new(move |app| {
-        let triangle = app.world.spawn((Transform::default(), Triangle));
+    let game = Game::<Command>::new(move |setup| {
+        setup.world.spawn((
+            Camera::default(),
+            Transform::looking_at(Vec3::new(0.0, 1.0, 2.2), Vec3::ZERO, Vec3::Y),
+        ));
+        let cube = setup.world.spawn((Transform::default(), Mesh::cube(0.8)));
+        let moon = setup.world.spawn((Transform::default(), Mesh::cube(0.25)));
 
         let mut speed = 1.0;
         let mut angle = 0.0;
-        app.on_update(move |world, time, commands| {
+        setup.on_update(move |world, time, commands| {
             for command in commands {
                 match command {
                     Command::Boost => speed *= 2.0,
@@ -25,9 +30,13 @@ pub fn app() -> Element {
             }
             angle += speed * time.delta_seconds();
             world
-                .get::<&mut Transform>(triangle)
-                .expect("the triangle is never despawned")
-                .rotation = Quat::from_rotation_z(angle);
+                .get::<&mut Transform>(cube)
+                .expect("the cube is never despawned")
+                .rotation = Quat::from_rotation_y(angle);
+            world
+                .get::<&mut Transform>(moon)
+                .expect("the moon is never despawned")
+                .translation = Vec3::new(angle.cos(), 0.0, angle.sin()) * 0.8;
 
             let completed = (angle / std::f32::consts::TAU) as i32;
             if completed != turns.get_untracked() {

@@ -35,7 +35,7 @@ pub unsafe extern "C" fn kiba_ios_create(layer: *mut c_void) -> *mut Renderer {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kiba_ios_render(renderer: *mut Renderer, width: u32, height: u32) {
     // SAFETY: the caller guarantees `renderer` is live, and only the main thread calls this.
-    unsafe { &mut *renderer }.render(width, height, &[glam::Mat4::IDENTITY]);
+    unsafe { &mut *renderer }.render(width, height, &crate::placeholder_scene());
 }
 
 /// Destroys a renderer.

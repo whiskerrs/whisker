@@ -2,7 +2,7 @@
 
 use std::sync::Mutex;
 
-use kiba::{Mat4, SceneRenderer};
+use kiba::SceneRenderer;
 use whisker_desktop::{DesktopViewDefinition, ModuleDefinition, WhiskerModule};
 
 const MODULE_NAME: &str = "kiba:Viewport";
@@ -21,7 +21,13 @@ impl WhiskerModule for ViewportModule {
                     let mut scene = scene.lock().expect("scene lock poisoned");
                     scene
                         .get_or_insert_with(|| SceneRenderer::new(frame.device, frame.format))
-                        .draw(frame.device, frame.queue, frame.target, &[Mat4::IDENTITY]);
+                        .draw(
+                            frame.device,
+                            frame.queue,
+                            frame.target,
+                            (frame.width, frame.height),
+                            &kiba::placeholder_scene(),
+                        );
                 }),
         )
     }

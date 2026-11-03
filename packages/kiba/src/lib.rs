@@ -4,6 +4,7 @@
 //! and frame timing to the shared wgpu [`SceneRenderer`].
 
 mod game;
+mod mesh;
 mod renderer;
 
 #[cfg(target_os = "android")]
@@ -11,18 +12,23 @@ mod android;
 #[cfg(target_vendor = "apple")]
 mod ios;
 
-pub use game::{App, Game, Time, Transform, Triangle};
+pub use game::{Camera, Game, GameSetup, Time, Transform};
 #[doc(hidden)]
 pub use game::{attach_renderer, detach_renderer};
 pub use glam::{Mat4, Quat, Vec3};
 pub use hecs::{Entity, World};
-pub use renderer::{Renderer, SceneRenderer};
+pub use mesh::{Mesh, Vertex};
+#[doc(hidden)]
+pub use renderer::placeholder_scene;
+pub use renderer::{Batch, Renderer, SceneRenderer};
 #[doc(hidden)]
 pub use wgpu;
 
 /// Commonly used items.
 pub mod prelude {
-    pub use crate::{App, Entity, Game, Quat, Time, Transform, Triangle, Vec3, Viewport, World};
+    pub use crate::{
+        Camera, Entity, Game, GameSetup, Mesh, Quat, Time, Transform, Vec3, Vertex, Viewport, World,
+    };
 }
 
 /// A surface that shows a [`Game`].

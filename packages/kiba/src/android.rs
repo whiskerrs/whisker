@@ -99,7 +99,7 @@ pub unsafe extern "system" fn Java_rs_whisker_modules_kiba_KibaSurfaceView_nativ
         renderer.render(
             width.max(0) as u32,
             height.max(0) as u32,
-            &[glam::Mat4::IDENTITY],
+            &crate::placeholder_scene(),
         );
     }
 }

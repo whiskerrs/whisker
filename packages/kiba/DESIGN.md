@@ -130,6 +130,8 @@ All tiers use the same assets. T0's image is tuned as the product baseline, not 
 
 The tier is chosen by a benchmark at startup and maintained with dynamic resolution.
 
+Every tier uses reversed `Depth32Float` depth, which keeps precision over open-world distances.
+
 ### D8. The world is delivered in cells and controlled by memory budgets
 
 The world is split into grid cells, loaded and evicted with LRU by distance and budget. Distant
@@ -174,9 +176,9 @@ load.
 
 ## Target API
 
-This is what a Whisker app author writes. It is the target shape: `Game`, `App::on_update`,
-`Game::send`, `Transform`, and `Viewport` exist today, with a `Triangle` marker in place of the
-camera, sun, and model. Hook names are finalized in P1.
+This is what a Whisker app author writes. It is the target shape: `Game`, `GameSetup::on_update`,
+`Game::send`, `Transform`, `Camera`, `Mesh`, and `Viewport` exist today, with vertex colors in place
+of the sun and with `Mesh::cube` in place of a loaded model. Hook names are finalized in P1.
 
 ```rust
 use kiba::prelude::*;
@@ -191,15 +193,18 @@ enum Command {
 pub fn app() -> Element {
     let turns = signal(0);
 
-    let game = Game::<Command>::new(move |app| {
-        let world = &mut app.world;
-        world.spawn(Camera::perspective().looking_at(vec3(0.0, 1.5, 4.0), Vec3::ZERO));
+    let game = Game::<Command>::new(move |setup| {
+        let world = &mut setup.world;
+        world.spawn((
+            Camera::default(),
+            Transform::looking_at(Vec3::new(0.0, 1.5, 4.0), Vec3::ZERO, Vec3::Y),
+        ));
         world.spawn(Sun::default());
         let crate_id = world.spawn(Model::load(asset!("crate.kiba")));
 
         let mut speed = 1.0;
         let mut angle = 0.0;
-        app.on_update(move |world, time, commands| {
+        setup.on_update(move |world, time, commands| {
             for command in commands {
                 match command {
                     Command::Boost => speed *= 2.0,
