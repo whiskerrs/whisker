@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Weak};
 
-use glam::Mat4;
+use glam::{Mat4, Vec4};
 use wgpu::util::DeviceExt;
 
-use crate::Mesh;
 use crate::mesh::{MeshData, Vertex};
+use crate::{Mesh, Sun};
 
 const CLEAR_COLOR: [f64; 3] = [0.02, 0.02, 0.04];
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -13,25 +13,52 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const DEPTH_CLEAR: f32 = 0.0;
 const DEPTH_COMPARE: wgpu::CompareFunction = wgpu::CompareFunction::GreaterEqual;
 
-/// One mesh and the clip-space transforms of its instances.
 #[derive(Clone, Debug)]
-pub struct Batch {
+pub(crate) struct Batch {
     pub(crate) mesh: Mesh,
     pub(crate) transforms: Vec<Mat4>,
 }
 
-impl Batch {
-    /// Draws `mesh` once per transform.
-    pub fn new(mesh: Mesh, transforms: Vec<Mat4>) -> Self {
-        Self { mesh, transforms }
-    }
+/// Everything [`SceneRenderer::draw`] needs to draw one frame.
+#[derive(Clone, Debug)]
+pub struct Frame {
+    pub(crate) view_projection: Mat4,
+    pub(crate) sun: Sun,
+    pub(crate) batches: Vec<Batch>,
 }
 
 /// The fixed scene of Hosts that do not run a [`Game`](crate::Game) yet.
 #[doc(hidden)]
-pub fn placeholder_scene() -> [Batch; 1] {
+pub fn placeholder_scene() -> Frame {
     static TRIANGLE: LazyLock<Mesh> = LazyLock::new(Mesh::triangle);
-    [Batch::new(TRIANGLE.clone(), vec![Mat4::IDENTITY])]
+    Frame {
+        view_projection: Mat4::IDENTITY,
+        sun: Sun::UNLIT,
+        batches: vec![Batch {
+            mesh: TRIANGLE.clone(),
+            transforms: vec![Mat4::IDENTITY],
+        }],
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct FrameUniform {
+    view_projection: Mat4,
+    to_sun: Vec4,
+    sun_color: Vec4,
+    ambient: Vec4,
+}
+
+impl From<&Frame> for FrameUniform {
+    fn from(frame: &Frame) -> Self {
+        Self {
+            view_projection: frame.view_projection,
+            to_sun: (-frame.sun.direction).normalize_or_zero().extend(0.0),
+            sun_color: frame.sun.color.extend(0.0),
+            ambient: frame.sun.ambient.extend(0.0),
+        }
+    }
 }
 
 struct GpuMesh {
@@ -93,6 +120,8 @@ impl DepthTarget {
 pub struct SceneRenderer {
     pipeline: wgpu::RenderPipeline,
     clear_color: wgpu::Color,
+    frame_uniform: wgpu::Buffer,
+    frame_bindings: wgpu::BindGroup,
     meshes: HashMap<usize, GpuMesh>,
     instances: Option<wgpu::Buffer>,
     depth: Option<DepthTarget>,
@@ -119,16 +148,17 @@ impl SceneRenderer {
                         attributes: &wgpu::vertex_attr_array![
                             0 => Float32x3,
                             1 => Float32x3,
+                            2 => Float32x3,
                         ],
                     },
                     wgpu::VertexBufferLayout {
                         array_stride: size_of::<Mat4>() as u64,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &wgpu::vertex_attr_array![
-                            2 => Float32x4,
                             3 => Float32x4,
                             4 => Float32x4,
                             5 => Float32x4,
+                            6 => Float32x4,
                         ],
                     },
                 ],
@@ -157,6 +187,20 @@ impl SceneRenderer {
             multiview: None,
             cache: None,
         });
+        let frame_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("kiba frame"),
+            size: size_of::<FrameUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let frame_bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("kiba frame"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame_uniform.as_entire_binding(),
+            }],
+        });
         let channel = |linear| {
             if encode_srgb {
                 linear_to_srgb(linear)
@@ -172,6 +216,8 @@ impl SceneRenderer {
                 b: channel(CLEAR_COLOR[2]),
                 a: 1.0,
             },
+            frame_uniform,
+            frame_bindings,
             meshes: HashMap::new(),
             instances: None,
             depth: None,
@@ -185,8 +231,9 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         target: &wgpu::TextureView,
         size: (u32, u32),
-        batches: &[Batch],
+        frame: &Frame,
     ) {
+        let batches = &frame.batches;
         self.meshes.retain(|_, mesh| mesh.source.strong_count() > 0);
         for batch in batches {
             self.meshes
@@ -217,6 +264,11 @@ impl SceneRenderer {
         }
         let instances = self.instances.as_ref().expect("allocated above");
         queue.write_buffer(instances, 0, bytes);
+        queue.write_buffer(
+            &self.frame_uniform,
+            0,
+            bytemuck::bytes_of(&FrameUniform::from(frame)),
+        );
 
         let mut encoder = device.create_command_encoder(&Default::default());
         {
@@ -242,6 +294,7 @@ impl SceneRenderer {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.frame_bindings, &[]);
             let mut first = 0;
             for batch in batches {
                 let count = batch.transforms.len() as u64;
@@ -327,7 +380,7 @@ impl Renderer {
     }
 
     /// Draws at the given physical size, reconfiguring the surface when it changed.
-    pub fn render(&mut self, width: u32, height: u32, batches: &[Batch]) {
+    pub fn render(&mut self, width: u32, height: u32, frame: &Frame) {
         if width == 0 || height == 0 {
             self.config.width = 0;
             self.config.height = 0;
@@ -339,7 +392,7 @@ impl Renderer {
             self.surface.configure(&self.device, &self.config);
         }
         match self.surface.get_current_texture() {
-            Ok(frame) => self.present(frame, batches),
+            Ok(texture) => self.present(texture, frame),
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 self.surface.configure(&self.device, &self.config);
             }
@@ -347,12 +400,12 @@ impl Renderer {
         }
     }
 
-    fn present(&mut self, frame: wgpu::SurfaceTexture, batches: &[Batch]) {
-        let view = frame.texture.create_view(&Default::default());
+    fn present(&mut self, texture: wgpu::SurfaceTexture, frame: &Frame) {
+        let view = texture.texture.create_view(&Default::default());
         let size = (self.config.width, self.config.height);
         self.scene
-            .draw(&self.device, &self.queue, &view, size, batches);
-        frame.present();
+            .draw(&self.device, &self.queue, &view, size, frame);
+        texture.present();
     }
 }
 
@@ -392,6 +445,8 @@ pub(crate) fn log(message: &str) {
 
 #[cfg(test)]
 mod tests {
+    use glam::Vec3;
+
     use super::*;
 
     const SIZE: u32 = 64;
@@ -400,7 +455,7 @@ mod tests {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
-        batches: &[Batch],
+        frame: &Frame,
     ) -> Vec<u8> {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -417,7 +472,7 @@ mod tests {
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
-        SceneRenderer::new(device, format).draw(device, queue, &view, (SIZE, SIZE), batches);
+        SceneRenderer::new(device, format).draw(device, queue, &view, (SIZE, SIZE), frame);
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -464,24 +519,129 @@ mod tests {
         [pixels[at], pixels[at + 1], pixels[at + 2]]
     }
 
-    fn solid_quad(color: [f32; 3], depth: f32) -> Batch {
+    fn quad(normal: Vec3, color: [f32; 3], transform: Mat4) -> Batch {
         let vertex = |x, y| Vertex {
             position: [x, y, 0.0],
+            normal: normal.to_array(),
             color,
         };
-        let mesh = Mesh::new(
-            vec![
-                vertex(-1.0, -1.0),
-                vertex(1.0, -1.0),
-                vertex(1.0, 1.0),
-                vertex(-1.0, 1.0),
-            ],
-            vec![0, 1, 2, 0, 2, 3],
-        );
-        Batch::new(
-            mesh,
-            vec![Mat4::from_translation(glam::Vec3::new(0.0, 0.0, depth))],
+        Batch {
+            mesh: Mesh::new(
+                vec![
+                    vertex(-1.0, -1.0),
+                    vertex(1.0, -1.0),
+                    vertex(1.0, 1.0),
+                    vertex(-1.0, 1.0),
+                ],
+                vec![0, 1, 2, 0, 2, 3],
+            ),
+            transforms: vec![transform],
+        }
+    }
+
+    fn solid_quad(color: [f32; 3], depth: f32) -> Batch {
+        quad(
+            Vec3::Z,
+            color,
+            Mat4::from_translation(Vec3::new(0.0, 0.0, depth)),
         )
+    }
+
+    fn frame(sun: Sun, batches: Vec<Batch>) -> Frame {
+        Frame {
+            view_projection: Mat4::IDENTITY,
+            sun,
+            batches,
+        }
+    }
+
+    fn center_of(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> [u8; 3] {
+        center_pixel(&render_to_pixels(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            frame,
+        ))
+    }
+
+    fn encoded(linear: f64) -> u8 {
+        (linear_to_srgb(linear) * 255.0).round() as u8
+    }
+
+    #[test]
+    fn a_surface_is_lit_by_how_directly_it_faces_the_sun() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let white = quad(Vec3::Z, [1.0; 3], Mat4::IDENTITY);
+        let sun = |direction| Sun {
+            direction,
+            color: Vec3::ONE,
+            ambient: Vec3::ZERO,
+        };
+        let center = |sun| center_of(&device, &queue, &frame(sun, vec![white.clone()]))[0];
+
+        assert_eq!(center(sun(Vec3::NEG_Z)), 255);
+        assert!(center(sun(Vec3::new(1.0, 0.0, -1.0))).abs_diff(encoded(0.5f64.sqrt())) <= 1);
+        assert_eq!(center(sun(Vec3::Z)), 0);
+    }
+
+    #[test]
+    fn ambient_light_reaches_surfaces_facing_away_from_the_sun() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let sun = Sun {
+            direction: Vec3::Z,
+            color: Vec3::ONE,
+            ambient: Vec3::splat(0.25),
+        };
+        let white = quad(Vec3::Z, [1.0; 3], Mat4::IDENTITY);
+
+        let center = center_of(&device, &queue, &frame(sun, vec![white]));
+
+        assert!(center[0].abs_diff(encoded(0.25)) <= 1);
+    }
+
+    #[test]
+    fn surface_colors_tint_the_light() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let sun = Sun {
+            direction: Vec3::NEG_Z,
+            color: Vec3::new(1.0, 0.0, 1.0),
+            ambient: Vec3::ZERO,
+        };
+        let yellow = quad(Vec3::Z, [1.0, 1.0, 0.0], Mat4::IDENTITY);
+
+        assert_eq!(
+            center_of(&device, &queue, &frame(sun, vec![yellow])),
+            [255, 0, 0]
+        );
+    }
+
+    #[test]
+    fn normals_stay_perpendicular_under_uneven_scale() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let sun = Sun {
+            direction: Vec3::NEG_X,
+            color: Vec3::ONE,
+            ambient: Vec3::ZERO,
+        };
+        // The inverse transpose of this scale turns the normal (1, 1, 0) toward (1, 1/3, 0).
+        let stretched = quad(
+            Vec3::new(1.0, 1.0, 0.0).normalize(),
+            [1.0; 3],
+            Mat4::from_scale(Vec3::new(1.0, 3.0, 1.0)),
+        );
+        let expected = 1.0 / (1.0f64 + 1.0 / 9.0).sqrt();
+
+        let center = center_of(&device, &queue, &frame(sun, vec![stretched]));
+
+        assert!(center[0].abs_diff(encoded(expected)) <= 1);
     }
 
     #[test]
@@ -492,10 +652,14 @@ mod tests {
         let near = solid_quad([1.0, 0.0, 0.0], 0.75);
         let far = solid_quad([0.0, 1.0, 0.0], 0.25);
 
-        for batches in [[near.clone(), far.clone()], [far.clone(), near.clone()]] {
-            let pixels =
-                render_to_pixels(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &batches);
-            assert_eq!(center_pixel(&pixels), [255, 0, 0]);
+        for batches in [
+            vec![near.clone(), far.clone()],
+            vec![far.clone(), near.clone()],
+        ] {
+            assert_eq!(
+                center_of(&device, &queue, &frame(Sun::UNLIT, batches)),
+                [255, 0, 0]
+            );
         }
     }
 
@@ -505,12 +669,15 @@ mod tests {
             return;
         };
         let turned =
-            Mat4::from_rotation_y(std::f32::consts::PI) * Mat4::from_scale(glam::Vec3::splat(0.5));
-        let batch = Batch::new(Mesh::triangle(), vec![turned]);
+            Mat4::from_rotation_y(std::f32::consts::PI) * Mat4::from_scale(Vec3::splat(0.5));
+        let batch = Batch {
+            mesh: Mesh::triangle(),
+            transforms: vec![turned],
+        };
 
-        let pixels = render_to_pixels(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &[batch]);
+        let center = center_of(&device, &queue, &frame(Sun::UNLIT, vec![batch]));
 
-        assert!(center_pixel(&pixels)[0] < 64);
+        assert!(center[0] < 64);
     }
 
     #[test]
@@ -534,26 +701,26 @@ mod tests {
         });
         let view = texture.create_view(&Default::default());
         let mut scene = SceneRenderer::new(&device, wgpu::TextureFormat::Rgba8Unorm);
-        let batch = Batch::new(Mesh::triangle(), vec![Mat4::IDENTITY]);
+        let drawn = frame(
+            Sun::UNLIT,
+            vec![Batch {
+                mesh: Mesh::triangle(),
+                transforms: vec![Mat4::IDENTITY],
+            }],
+        );
 
-        scene.draw(
-            &device,
-            &queue,
-            &view,
-            (SIZE, SIZE),
-            std::slice::from_ref(&batch),
-        );
-        scene.draw(
-            &device,
-            &queue,
-            &view,
-            (SIZE, SIZE),
-            std::slice::from_ref(&batch),
-        );
+        scene.draw(&device, &queue, &view, (SIZE, SIZE), &drawn);
+        scene.draw(&device, &queue, &view, (SIZE, SIZE), &drawn);
         assert_eq!(scene.meshes.len(), 1);
 
-        drop(batch);
-        scene.draw(&device, &queue, &view, (SIZE, SIZE), &[]);
+        drop(drawn);
+        scene.draw(
+            &device,
+            &queue,
+            &view,
+            (SIZE, SIZE),
+            &frame(Sun::UNLIT, Vec::new()),
+        );
         assert!(scene.meshes.is_empty());
     }
 
@@ -562,15 +729,10 @@ mod tests {
         let Some((device, queue)) = gpu() else {
             return;
         };
-        let batches = placeholder_scene();
+        let scene = placeholder_scene();
 
-        let encoded = render_to_pixels(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &batches);
-        let native = render_to_pixels(
-            &device,
-            &queue,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            &batches,
-        );
+        let encoded = render_to_pixels(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &scene);
+        let native = render_to_pixels(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb, &scene);
         assert!(center_pixel(&encoded)[1] > 64, "the triangle was not drawn");
 
         let stride = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;

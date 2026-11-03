@@ -12,7 +12,7 @@ mod android;
 #[cfg(target_vendor = "apple")]
 mod ios;
 
-pub use game::{Camera, Game, GameSetup, Time, Transform};
+pub use game::{Camera, Game, GameSetup, Sun, Time, Transform};
 #[doc(hidden)]
 pub use game::{attach_renderer, detach_renderer};
 pub use glam::{Mat4, Quat, Vec3};
@@ -20,14 +20,15 @@ pub use hecs::{Entity, World};
 pub use mesh::{Mesh, Vertex};
 #[doc(hidden)]
 pub use renderer::placeholder_scene;
-pub use renderer::{Batch, Renderer, SceneRenderer};
+pub use renderer::{Frame, Renderer, SceneRenderer};
 #[doc(hidden)]
 pub use wgpu;
 
 /// Commonly used items.
 pub mod prelude {
     pub use crate::{
-        Camera, Entity, Game, GameSetup, Mesh, Quat, Time, Transform, Vec3, Vertex, Viewport, World,
+        Camera, Entity, Game, GameSetup, Mesh, Quat, Sun, Time, Transform, Vec3, Vertex, Viewport,
+        World,
     };
 }
 

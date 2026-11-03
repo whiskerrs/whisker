@@ -17,6 +17,7 @@ pub fn app() -> Element {
             Camera::default(),
             Transform::looking_at(Vec3::new(0.0, 1.0, 2.2), Vec3::ZERO, Vec3::Y),
         ));
+        setup.world.spawn((Sun::default(),));
         let cube = setup.world.spawn((Transform::default(), Mesh::cube(0.8)));
         let moon = setup.world.spawn((Transform::default(), Mesh::cube(0.25)));
 

@@ -8,6 +8,8 @@ use glam::Vec3;
 pub struct Vertex {
     /// Position relative to the entity.
     pub position: [f32; 3],
+    /// Unit vector out of the surface, relative to the entity.
+    pub normal: [f32; 3],
     /// Linear RGB color.
     pub color: [f32; 3],
 }
@@ -63,6 +65,7 @@ impl Mesh {
             for corner in [-u - v, u - v, u + v, v - u] {
                 vertices.push(Vertex {
                     position: ((normal + corner) * half).to_array(),
+                    normal: normal.to_array(),
                     color,
                 });
             }
@@ -77,14 +80,17 @@ impl Mesh {
             vec![
                 Vertex {
                     position: [0.0, 0.6, 0.0],
+                    normal: [0.0, 0.0, 1.0],
                     color: [1.0, 0.25, 0.25],
                 },
                 Vertex {
                     position: [-0.6, -0.6, 0.0],
+                    normal: [0.0, 0.0, 1.0],
                     color: [0.25, 1.0, 0.25],
                 },
                 Vertex {
                     position: [0.6, -0.6, 0.0],
+                    normal: [0.0, 0.0, 1.0],
                     color: [0.25, 0.25, 1.0],
                 },
             ],
@@ -123,6 +129,8 @@ mod tests {
                 normal.dot((a + b + c) / 3.0) > 0.0,
                 "{triangle:?} faces inward"
             );
+            let declared = Vec3::from(data.vertices[triangle[0] as usize].normal);
+            assert_eq!(normal.normalize(), declared);
         }
     }
 

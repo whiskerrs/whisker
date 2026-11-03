@@ -177,8 +177,8 @@ load.
 ## Target API
 
 This is what a Whisker app author writes. It is the target shape: `Game`, `GameSetup::on_update`,
-`Game::send`, `Transform`, `Camera`, `Mesh`, and `Viewport` exist today, with vertex colors in place
-of the sun and with `Mesh::cube` in place of a loaded model. Hook names are finalized in P1.
+`Game::send`, `Transform`, `Camera`, `Sun`, `Mesh`, and `Viewport` exist today, with `Mesh::cube` in
+place of a loaded model and a diffuse-only sun in place of PBR. Hook names are finalized in P1.
 
 ```rust
 use kiba::prelude::*;
@@ -199,7 +199,7 @@ pub fn app() -> Element {
             Camera::default(),
             Transform::looking_at(Vec3::new(0.0, 1.5, 4.0), Vec3::ZERO, Vec3::Y),
         ));
-        world.spawn(Sun::default());
+        world.spawn((Sun::default(),));
         let crate_id = world.spawn(Model::load(asset!("crate.kiba")));
 
         let mut speed = 1.0;

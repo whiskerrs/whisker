@@ -8,7 +8,8 @@ use hecs::World;
 use web_time::Instant;
 use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 
-use crate::{Batch, Mesh, Renderer};
+use crate::renderer::{Batch, Frame};
+use crate::{Mesh, Renderer};
 
 const MAX_DELTA_SECONDS: f32 = 0.1;
 
@@ -77,6 +78,44 @@ impl Camera {
         // Swapped planes give the reversed depth the renderer expects.
         Mat4::perspective_rh(2.0 * half_tan.atan(), aspect, self.far, self.near)
     }
+}
+
+/// Lights the scene from one direction, as an entity of its own.
+///
+/// Surfaces are black without a sun, and only one is used if the world has several.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sun {
+    /// Direction the light travels, of any length.
+    pub direction: Vec3,
+    /// Linear RGB light on a surface facing the sun.
+    pub color: Vec3,
+    /// Linear RGB light on every surface, whichever way it faces.
+    pub ambient: Vec3,
+}
+
+impl Default for Sun {
+    fn default() -> Self {
+        Self {
+            direction: Vec3::new(-0.5, -1.0, -0.7),
+            color: Vec3::new(1.0, 0.95, 0.85),
+            ambient: Vec3::new(0.12, 0.14, 0.18),
+        }
+    }
+}
+
+impl Sun {
+    const DARK: Self = Self {
+        direction: Vec3::NEG_Y,
+        color: Vec3::ZERO,
+        ambient: Vec3::ZERO,
+    };
+
+    /// Shows surface colors as they are.
+    pub(crate) const UNLIT: Self = Self {
+        direction: Vec3::NEG_Y,
+        color: Vec3::ZERO,
+        ambient: Vec3::ONE,
+    };
 }
 
 /// Frame timing passed to update callbacks.
@@ -189,8 +228,8 @@ impl<C: 'static> RunningGame for Registered<C> {
         }
 
         let (width, height) = (target.size)();
-        let batches = visible_batches(world, width, height);
-        target.renderer.render(width, height, &batches);
+        let frame = extract_frame(world, width, height);
+        target.renderer.render(width, height, &frame);
         schedule_frame(&state.dispatcher, self.id);
     }
 
@@ -199,13 +238,20 @@ impl<C: 'static> RunningGame for Registered<C> {
     }
 }
 
-fn visible_batches(world: &World, width: u32, height: u32) -> Vec<Batch> {
-    if width == 0 || height == 0 {
-        return Vec::new();
-    }
+fn extract_frame(world: &World, width: u32, height: u32) -> Frame {
+    let sun = world
+        .query::<&Sun>()
+        .iter()
+        .next()
+        .map_or(Sun::DARK, |(_, sun)| *sun);
     let mut cameras = world.query::<(&Transform, &Camera)>();
-    let Some((_, (eye, camera))) = cameras.iter().next() else {
-        return Vec::new();
+    let camera = cameras.iter().next().filter(|_| width > 0 && height > 0);
+    let Some((_, (eye, camera))) = camera else {
+        return Frame {
+            view_projection: Mat4::IDENTITY,
+            sun,
+            batches: Vec::new(),
+        };
     };
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
     let view_projection = camera.projection(width as f32 / height as f32) * view;
@@ -213,11 +259,18 @@ fn visible_batches(world: &World, width: u32, height: u32) -> Vec<Batch> {
     for (_, (transform, mesh)) in world.query::<(&Transform, &Mesh)>().iter() {
         batches
             .entry(mesh.key())
-            .or_insert_with(|| Batch::new(mesh.clone(), Vec::new()))
+            .or_insert_with(|| Batch {
+                mesh: mesh.clone(),
+                transforms: Vec::new(),
+            })
             .transforms
-            .push(view_projection * transform.matrix());
+            .push(transform.matrix());
     }
-    batches.into_values().collect()
+    Frame {
+        view_projection,
+        sun,
+        batches: batches.into_values().collect(),
+    }
 }
 
 /// A running game, shown by passing it to [`Viewport`](crate::Viewport).
@@ -326,14 +379,23 @@ mod tests {
     }
 
     #[test]
+    fn the_frame_carries_the_sun_of_the_world_or_darkness() {
+        let mut world = world_with_camera_at(Vec3::Z);
+        assert_eq!(extract_frame(&world, 100, 100).sun, Sun::DARK);
+
+        world.spawn((Sun::default(),));
+        assert_eq!(extract_frame(&world, 100, 100).sun, Sun::default());
+    }
+
+    #[test]
     fn nothing_is_drawn_without_a_camera_or_a_size() {
         let mut world = World::new();
         world.spawn((Transform::default(), Mesh::triangle()));
-        assert!(visible_batches(&world, 100, 100).is_empty());
+        assert!(extract_frame(&world, 100, 100).batches.is_empty());
 
         let mut world = world_with_camera_at(Vec3::Z);
         world.spawn((Transform::default(), Mesh::triangle()));
-        assert!(visible_batches(&world, 0, 100).is_empty());
+        assert!(extract_frame(&world, 0, 100).batches.is_empty());
     }
 
     #[test]
@@ -345,7 +407,8 @@ mod tests {
         world.spawn((Transform::default(), Mesh::triangle()));
         world.spawn((Transform::default(),));
 
-        let mut counts: Vec<usize> = visible_batches(&world, 100, 100)
+        let mut counts: Vec<usize> = extract_frame(&world, 100, 100)
+            .batches
             .iter()
             .map(|batch| batch.transforms.len())
             .collect();
@@ -374,8 +437,9 @@ mod tests {
             let mut world = world_with_camera_at(eye);
             world.spawn((Transform::default(), Mesh::triangle()));
 
-            let clip =
-                visible_batches(&world, 100, 100)[0].transforms[0].project_point3(Vec3::ZERO);
+            let clip = extract_frame(&world, 100, 100)
+                .view_projection
+                .project_point3(Vec3::ZERO);
 
             assert_near(clip * Vec3::new(1.0, 1.0, 0.0), Vec3::ZERO);
         }
@@ -386,7 +450,8 @@ mod tests {
         let height_at = |distance: f32| {
             let mut world = world_with_camera_at(Vec3::Z * distance);
             world.spawn((Transform::default(), Mesh::triangle()));
-            visible_batches(&world, 100, 100)[0].transforms[0]
+            extract_frame(&world, 100, 100)
+                .view_projection
                 .project_point3(Vec3::Y)
                 .y
         };
