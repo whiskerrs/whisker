@@ -3,6 +3,7 @@ use std::sync::{Arc, OnceLock};
 use glam::Mat4;
 
 use crate::animation::Rig;
+use crate::pack::{MODEL_SECTION, is_pack, read_model, read_section};
 use crate::renderer::log;
 use crate::{Material, Mesh};
 
@@ -53,6 +54,31 @@ impl Model {
             })
             .collect();
         Self(Arc::new(OnceLock::from(Ok(ModelData { parts, rig: None }))))
+    }
+
+    /// Starts loading a cooked `.kiba` pack, or with the `gltf` feature a binary glTF file, and
+    /// returns at once.
+    ///
+    /// `location` is a URL on the Web and a path elsewhere, as `asset!` gives. Check
+    /// [`Model::load_state`] to learn about progress and failures, which are also logged.
+    pub fn load(location: impl Into<String>) -> Self {
+        let state = Arc::new(OnceLock::new());
+        let finish = {
+            let state = state.clone();
+            move |result: Result<Vec<u8>, String>| {
+                let parsed = result.and_then(|bytes| parse_model(&bytes));
+                report_failure(parsed.as_ref().err());
+                let _ = state.set(parsed);
+            }
+        };
+        read_file(location.into(), finish);
+        Model(state)
+    }
+
+    /// Reads a cooked `.kiba` pack already in memory.
+    pub fn from_pack(bytes: &[u8]) -> Result<Self, String> {
+        let data = read_model(read_section(bytes, MODEL_SECTION)?)?;
+        Ok(Self(Arc::new(OnceLock::from(Ok(data)))))
     }
 
     /// Reports how far loading has come.
@@ -118,6 +144,18 @@ pub(crate) fn read_file(
     });
 }
 
+fn parse_model(bytes: &[u8]) -> Result<ModelData, String> {
+    if is_pack(bytes) {
+        return read_model(read_section(bytes, MODEL_SECTION)?);
+    }
+    #[cfg(feature = "gltf")]
+    return Model::from_glb(bytes)
+        .map(|model| model.data().expect("just parsed").clone())
+        .map_err(|error| error.to_string());
+    #[cfg(not(feature = "gltf"))]
+    Err("loading glTF needs the gltf feature, and shipped games load cooked packs".into())
+}
+
 pub(crate) fn report_failure(reason: Option<&String>) {
     if let Some(reason) = reason {
         log(&format!("failed to load: {reason}"));
@@ -136,7 +174,7 @@ mod import {
     use glam::{Mat4, Quat, Vec3};
 
     use super::log;
-    use super::{Model, ModelData, ModelPart, read_file, report_failure};
+    use super::{Model, ModelData, ModelPart};
     use crate::animation::{Channel, Clip, Keys, MAX_JOINTS, Pose, Rig, RigNode, Skin};
     use crate::mesh::SkinVertex;
     use crate::{Material, Mesh, Texture, Vertex};
@@ -158,28 +196,6 @@ mod import {
     }
 
     impl Model {
-        /// Starts loading a binary glTF file and returns at once.
-        ///
-        /// `location` is a URL on the Web and a path elsewhere, as `asset!` gives. Check
-        /// [`Model::load_state`] to learn about progress and failures, which are also logged.
-        pub fn load(location: impl Into<String>) -> Self {
-            let state = Arc::new(OnceLock::new());
-            let finish = {
-                let state = state.clone();
-                move |result: Result<Vec<u8>, String>| {
-                    let parsed = result.and_then(|bytes| {
-                        Model::from_glb(&bytes)
-                            .map(|model| model.data().expect("just parsed").clone())
-                            .map_err(|error| error.to_string())
-                    });
-                    report_failure(parsed.as_ref().err());
-                    let _ = state.set(parsed);
-                }
-            };
-            read_file(location.into(), finish);
-            Model(state)
-        }
-
         /// Reads the default scene of a binary glTF file.
         ///
         /// Takes geometry, vertex colors, base color, metallic-roughness, and normal materials,

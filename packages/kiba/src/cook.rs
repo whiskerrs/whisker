@@ -3,6 +3,7 @@
 use glam::{UVec3, Vec3};
 
 use crate::Model;
+use crate::pack::{MODEL_SECTION, write_model, write_pack};
 use crate::probes::{ProbeData, ProbeVolume};
 
 const RAYS: usize = 256;
@@ -194,6 +195,13 @@ pub fn bake_probes(models: &[Model], spacing: f32) -> Result<ProbeVolume, String
             .map(|probe| probe.map_or([128, 128, 128, 255], encode))
             .collect(),
     }))
+}
+
+/// Writes `model` as a cooked pack, in the form a game loads with
+/// [`Model::load`](crate::Model::load).
+pub fn cook_model(model: &Model) -> Result<Vec<u8>, String> {
+    let data = model.data().ok_or("the model is not loaded")?;
+    Ok(write_pack(&[(MODEL_SECTION, write_model(data))]))
 }
 
 /// [`bake_probes`], in the form a game loads with [`ProbeVolume::load`].

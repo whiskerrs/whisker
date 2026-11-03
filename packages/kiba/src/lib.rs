@@ -74,7 +74,8 @@
 //!     }
 //! });
 //! setup.on_update(move |context| {
-//!     let target = context.drawn_transform(hero).translation;
+//!     let Some(drawn) = context.drawn_transform(hero) else { return };
+//!     let target = drawn.translation;
 //!     let eye = target + Vec3::new(0.0, 2.0, 5.0);
 //!     let view = Transform::looking_at(eye, target, Vec3::Y);
 //!     *context.world.query_one_mut::<&mut Transform>(camera).unwrap() = view;
@@ -99,6 +100,7 @@ mod game;
 mod input;
 mod mesh;
 mod model;
+mod pack;
 mod probes;
 mod renderer;
 mod sky;

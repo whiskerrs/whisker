@@ -3,12 +3,10 @@ use std::sync::{Arc, OnceLock};
 use glam::{UVec3, Vec3};
 
 use crate::model::{read_file, report_failure};
+use crate::pack::{PROBE_SECTION, Reader, read_section};
+#[cfg(any(test, feature = "cook"))]
+use crate::pack::{Writer, write_pack};
 use crate::{LoadState, renderer};
-
-const MAGIC: &[u8; 4] = b"KIBA";
-const VERSION: u32 = 1;
-const PROBE_SECTION: &[u8; 4] = b"PROB";
-const HEADER_LENGTH: usize = 4 + 4 + 4 + 4 + 12 + 12 + 4;
 
 /// How much of the sky each point of a box can see, in a grid cooked ahead of time.
 #[derive(Debug, PartialEq)]
@@ -22,58 +20,43 @@ pub(crate) struct ProbeData {
 }
 
 impl ProbeData {
+    #[cfg(any(test, feature = "cook"))]
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let payload = HEADER_LENGTH - 16 + self.visibility.len() * 4;
-        let mut bytes = Vec::with_capacity(16 + payload);
-        bytes.extend(MAGIC);
-        bytes.extend(VERSION.to_le_bytes());
-        bytes.extend(PROBE_SECTION);
-        bytes.extend((payload as u32).to_le_bytes());
-        for value in self.dimensions.to_array() {
-            bytes.extend(value.to_le_bytes());
-        }
-        for value in self.origin.to_array() {
-            bytes.extend(value.to_le_bytes());
-        }
-        bytes.extend(self.spacing.to_le_bytes());
-        bytes.extend(self.visibility.iter().flatten());
-        bytes
+        write_pack(&[(PROBE_SECTION, self.to_section())])
     }
 
-    fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        let body = bytes
-            .get(..HEADER_LENGTH)
-            .ok_or("the file is too short to be a cooked pack")?;
-        if &body[..4] != MAGIC {
-            return Err("the file is not a cooked pack".into());
+    #[cfg(any(test, feature = "cook"))]
+    pub(crate) fn to_section(&self) -> Vec<u8> {
+        let mut out = Writer::default();
+        for value in self.dimensions.to_array() {
+            out.u32(value);
         }
-        let word = |at: usize| [body[at], body[at + 1], body[at + 2], body[at + 3]];
-        let version = u32::from_le_bytes(word(4));
-        if version != VERSION {
-            return Err(format!(
-                "pack version {version}, and this engine reads {VERSION}"
-            ));
-        }
-        if &body[8..12] != PROBE_SECTION {
-            return Err("the pack holds no light probes".into());
-        }
-        let unsigned = |at| u32::from_le_bytes(word(at));
-        let float = |at| f32::from_le_bytes(word(at));
-        let dimensions = UVec3::new(unsigned(16), unsigned(20), unsigned(24));
-        let count = dimensions.as_u64vec3().element_product() as usize;
-        let data = &bytes[HEADER_LENGTH..];
-        if count == 0 || data.len() != count * 4 {
+        out.vec3(self.origin);
+        out.f32(self.spacing);
+        out.slice(&self.visibility);
+        out.0
+    }
+
+    pub(crate) fn from_section(section: &[u8]) -> Result<Self, String> {
+        let mut input = Reader::new(section);
+        let dimensions = UVec3::new(input.u32()?, input.u32()?, input.u32()?);
+        let origin = input.vec3()?;
+        let spacing = input.f32()?;
+        let visibility: Vec<[u8; 4]> = input.slice()?;
+        let count = dimensions.as_u64vec3().element_product();
+        if count == 0 || visibility.len() as u64 != count {
             return Err("the pack's probe count does not match its data".into());
         }
         Ok(Self {
             dimensions,
-            origin: Vec3::new(float(28), float(32), float(36)),
-            spacing: float(40),
-            visibility: data
-                .chunks_exact(4)
-                .map(|texel| [texel[0], texel[1], texel[2], texel[3]])
-                .collect(),
+            origin,
+            spacing,
+            visibility,
         })
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        Self::from_section(read_section(bytes, PROBE_SECTION)?)
     }
 }
 
