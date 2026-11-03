@@ -23,7 +23,10 @@ fn stress(setup: &mut GameSetup<Command>) {
         Camera::default(),
         Transform::looking_at(Vec3::new(0.0, 60.0, 90.0), Vec3::ZERO, Vec3::Y),
     ));
-    setup.world.spawn((Sun::default(),));
+    setup.world.spawn((Sun {
+        shadow_distance: 200.0,
+        ..Sun::default()
+    },));
     let cube = Mesh::cube(0.6);
     for x in 0..100 {
         for z in 0..100 {

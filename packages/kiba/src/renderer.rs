@@ -62,7 +62,18 @@ pub struct Frame {
     pub(crate) camera_position: Vec3,
     pub(crate) exposure: f32,
     pub(crate) sun: Sun,
+    pub(crate) shadows: Option<Shadows>,
     pub(crate) batches: Vec<Batch>,
+}
+
+pub(crate) const CASCADES: usize = 2;
+pub(crate) const SHADOW_MAP_SIZE: u32 = 1024;
+
+#[derive(Clone, Debug)]
+pub(crate) struct Shadows {
+    pub(crate) view_projections: [Mat4; CASCADES],
+    pub(crate) split: f32,
+    pub(crate) casters: [Vec<Batch>; CASCADES],
 }
 
 /// The fixed scene of Hosts that do not run a [`Game`](crate::Game) yet.
@@ -74,6 +85,7 @@ pub fn placeholder_scene() -> Frame {
         camera_position: Vec3::Z,
         exposure: 1.0,
         sun: Sun::UNLIT,
+        shadows: None,
         batches: vec![Batch {
             mesh: TRIANGLE.clone(),
             material: Material::default(),
@@ -90,6 +102,8 @@ struct FrameUniform {
     to_sun: Vec4,
     sun_color: Vec4,
     ambient: Vec4,
+    cascades: [Mat4; CASCADES],
+    shadow_params: Vec4,
 }
 
 impl From<&Frame> for FrameUniform {
@@ -101,6 +115,16 @@ impl From<&Frame> for FrameUniform {
             to_sun: (-frame.sun.direction).normalize_or_zero().extend(0.0),
             sun_color: frame.sun.color.extend(0.0),
             ambient: frame.sun.ambient.extend(0.0),
+            cascades: frame
+                .shadows
+                .as_ref()
+                .map_or([Mat4::IDENTITY; CASCADES], |s| s.view_projections),
+            shadow_params: Vec4::new(
+                frame.shadows.as_ref().map_or(0.0, |s| s.split),
+                f32::from(u8::from(frame.shadows.is_some())),
+                0.0,
+                0.0,
+            ),
         }
     }
 }
@@ -282,6 +306,10 @@ pub struct SceneRenderer {
     post_layout: wgpu::BindGroupLayout,
     frame_uniform: wgpu::Buffer,
     frame_bindings: wgpu::BindGroup,
+    shadow_pipeline: wgpu::RenderPipeline,
+    shadow_layers: [wgpu::TextureView; CASCADES],
+    shadow_uniforms: [wgpu::Buffer; CASCADES],
+    shadow_bindings: [wgpu::BindGroup; CASCADES],
     meshes: HashMap<usize, GpuMesh>,
     material_layout: wgpu::BindGroupLayout,
     material_sampler: wgpu::Sampler,
@@ -298,6 +326,15 @@ impl SceneRenderer {
         // Encoding in the shader gives the same output on backends without an sRGB surface format.
         let encode_srgb = !format.is_srgb();
         let constants = [("ENCODE_SRGB", f64::from(u8::from(encode_srgb)))];
+        let instance_attributes = wgpu::vertex_attr_array![
+            4 => Float32x4,
+            5 => Float32x4,
+            6 => Float32x4,
+            7 => Float32x4,
+            8 => Float32x3,
+            9 => Float32,
+            10 => Float32,
+        ];
         let shader = device.create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("kiba mesh"),
@@ -320,15 +357,7 @@ impl SceneRenderer {
                     wgpu::VertexBufferLayout {
                         array_stride: size_of::<Instance>() as u64,
                         step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![
-                            4 => Float32x4,
-                            5 => Float32x4,
-                            6 => Float32x4,
-                            7 => Float32x4,
-                            8 => Float32x3,
-                            9 => Float32,
-                            10 => Float32,
-                        ],
+                        attributes: &instance_attributes,
                     },
                 ],
             },
@@ -352,6 +381,98 @@ impl SceneRenderer {
             multisample: Default::default(),
             multiview: None,
             cache: None,
+        });
+        let shadow_shader = device.create_shader_module(wgpu::include_wgsl!("shadow.wgsl"));
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("kiba shadow"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &shadow_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                    },
+                    wgpu::VertexBufferLayout {
+                        array_stride: size_of::<Instance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &instance_attributes,
+                    },
+                ],
+            },
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: Default::default(),
+            multiview: None,
+            cache: None,
+        });
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("kiba shadow map"),
+            size: wgpu::Extent3d {
+                width: SHADOW_MAP_SIZE,
+                height: SHADOW_MAP_SIZE,
+                depth_or_array_layers: CASCADES as u32,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_array = shadow_texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let shadow_layers = [0, 1].map(|layer| {
+            shadow_texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: layer,
+                array_layer_count: Some(1),
+                ..Default::default()
+            })
+        });
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("kiba shadow"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        let shadow_uniforms = [0, 1].map(|_| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("kiba shadow light"),
+                size: size_of::<Mat4>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
+        let shadow_bindings = [0, 1].map(|cascade: usize| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("kiba shadow"),
+                layout: &shadow_pipeline.get_bind_group_layout(0),
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: shadow_uniforms[cascade].as_entire_binding(),
+                }],
+            })
         });
         let post_shader = device.create_shader_module(wgpu::include_wgsl!("post.wgsl"));
         let post_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -387,14 +508,28 @@ impl SceneRenderer {
         let frame_bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("kiba frame"),
             layout: &pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: frame_uniform.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: frame_uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&shadow_array),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+            ],
         });
         Self {
             frame_uniform,
             frame_bindings,
+            shadow_pipeline,
+            shadow_layers,
+            shadow_uniforms,
+            shadow_bindings,
             meshes: HashMap::new(),
             material_layout: pipeline.get_bind_group_layout(1),
             material_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
@@ -433,6 +568,10 @@ impl SceneRenderer {
     ) {
         let batches = &frame.batches;
         self.meshes.retain(|_, mesh| mesh.source.strong_count() > 0);
+        let casters = frame
+            .shadows
+            .iter()
+            .flat_map(|s| s.casters.iter().flatten());
         self.materials
             .retain(|_, material| material.sources.iter().all(|s| s.strong_count() > 0));
         self.textures
@@ -442,6 +581,11 @@ impl SceneRenderer {
                 .entry(batch.mesh.key())
                 .or_insert_with(|| GpuMesh::new(device, &batch.mesh));
             self.prepare_material(device, queue, &batch.material);
+        }
+        for batch in casters.clone() {
+            self.meshes
+                .entry(batch.mesh.key())
+                .or_insert_with(|| GpuMesh::new(device, &batch.mesh));
         }
         if self
             .targets
@@ -454,6 +598,7 @@ impl SceneRenderer {
 
         let instance_data: Vec<Instance> = batches
             .iter()
+            .chain(casters)
             .flat_map(|batch| batch.instances.iter().copied())
             .collect();
         let bytes: &[u8] = bytemuck::cast_slice(&instance_data);
@@ -478,6 +623,48 @@ impl SceneRenderer {
         );
 
         let mut encoder = device.create_command_encoder(&Default::default());
+        let mut next_instance: u64 = batches.iter().map(|b| b.instances.len() as u64).sum();
+        if let Some(shadows) = &frame.shadows {
+            for cascade in 0..CASCADES {
+                queue.write_buffer(
+                    &self.shadow_uniforms[cascade],
+                    0,
+                    bytemuck::bytes_of(&shadows.view_projections[cascade]),
+                );
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("kiba shadow"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.shadow_layers[cascade],
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.shadow_pipeline);
+                pass.set_bind_group(0, &self.shadow_bindings[cascade], &[]);
+                let stride = size_of::<Instance>() as u64;
+                let mut first = next_instance;
+                for batch in &shadows.casters[cascade] {
+                    let count = batch.instances.len() as u64;
+                    let mesh = &self.meshes[&batch.mesh.key()];
+                    let range = first * stride..(first + count) * stride;
+                    first += count;
+                    if count == 0 || mesh.index_count == 0 {
+                        continue;
+                    }
+                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    pass.set_vertex_buffer(1, instances.slice(range));
+                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..count as u32);
+                }
+                next_instance = first;
+            }
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("kiba main"),
@@ -838,6 +1025,7 @@ mod tests {
             camera_position: Vec3::Z * 2.0,
             exposure: 1.0,
             sun,
+            shadows: None,
             batches,
         }
     }
@@ -857,6 +1045,7 @@ mod tests {
             direction,
             color: Vec3::splat(0.1),
             ambient: Vec3::ZERO,
+            shadow_distance: 0.0,
         }
     }
 
@@ -938,6 +1127,7 @@ mod tests {
             direction: Vec3::Z,
             color: Vec3::ONE,
             ambient: Vec3::splat(0.25),
+            shadow_distance: 0.0,
         };
         for metallic in [0.0, 1.0] {
             let material = Material { metallic, ..MATTE };
@@ -1187,6 +1377,40 @@ mod tests {
             at(1.0, 2.0) > at(1.0, 0.5),
             "bright light still has gradation"
         );
+    }
+
+    #[test]
+    fn a_blocked_sun_darkens_the_ground_even_when_the_caster_is_off_screen() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let ground_brightness = |with_caster: bool| {
+            let mut world = hecs::World::new();
+            world.spawn((
+                crate::Camera::default(),
+                crate::Transform::looking_at(Vec3::Y, Vec3::ZERO, Vec3::Z),
+            ));
+            world.spawn((Sun {
+                direction: Vec3::NEG_Y,
+                ..Sun::default()
+            },));
+            world.spawn((crate::Transform::default(), Mesh::plane(20.0)));
+            if with_caster {
+                world.spawn((
+                    crate::Transform {
+                        translation: Vec3::Y * 5.0,
+                        ..crate::Transform::default()
+                    },
+                    Mesh::cube(4.0),
+                ));
+            }
+            let frame = crate::game::extract_frame(&world, SIZE, SIZE, 1.0);
+            center_of(&device, &queue, &frame)[0]
+        };
+
+        let lit = ground_brightness(false);
+        let shadowed = ground_brightness(true);
+        assert!(lit > shadowed + 32, "lit {lit}, shadowed {shadowed}");
     }
 
     #[test]

@@ -9,9 +9,14 @@ struct Frame {
     to_sun: vec4<f32>,
     sun_color: vec4<f32>,
     ambient: vec4<f32>,
+    cascades: array<mat4x4<f32>, 2>,
+    // Split distance, then one when shadows are on.
+    shadow_params: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
+@group(0) @binding(1) var shadow_map: texture_depth_2d_array;
+@group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(1) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(1) @binding(1) var metallic_roughness_texture: texture_2d<f32>;
 @group(1) @binding(2) var normal_texture: texture_2d<f32>;
@@ -82,7 +87,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     let specular = ggx(n_dot_h, alpha) * visibility(n_dot_l, n_dot_v, alpha) * fresnel(reflectance, v_dot_h);
     // Sun.color is the light leaving a white diffuse surface, so diffuse carries no 1/PI and specular gains PI.
-    let sun = (diffuse + specular * PI) * frame.sun_color.rgb * n_dot_l;
+    let lit = sun_visibility(input.world_position, input.normal);
+    let sun = (diffuse + specular * PI) * frame.sun_color.rgb * n_dot_l * lit;
     let ambient = (diffuse + ambient_specular(reflectance, roughness, n_dot_v)) * frame.ambient.rgb;
     return vec4<f32>((sun + ambient) * frame.camera_position.w, 1.0);
 }
@@ -102,6 +108,35 @@ fn mapped_normal(normal: vec3<f32>, position: vec3<f32>, uv: vec2<f32>) -> vec3<
     let scale = inverseSqrt(max(max(dot(along_u, along_u), dot(along_v, along_v)), 1e-20));
     let mapped = textureSample(normal_texture, material_sampler, uv).xyz * 2.0 - 1.0;
     return normalize(mapped.x * along_u * scale - mapped.y * along_v * scale + mapped.z * normal);
+}
+
+// A rotated grid hides the stair steps of the map better than an aligned one.
+const SHADOW_TAPS = array<vec2<f32>, 4>(
+    vec2<f32>(-0.75, -0.25),
+    vec2<f32>(0.25, -0.75),
+    vec2<f32>(0.75, 0.25),
+    vec2<f32>(-0.25, 0.75),
+);
+
+fn sun_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if frame.shadow_params.y == 0.0 {
+        return 1.0;
+    }
+    let distance = length(position - frame.camera_position.xyz);
+    let cascade = select(1i, 0i, distance < frame.shadow_params.x);
+    // Pushing the lookup off the surface removes self-shadowing without detaching contact shadows.
+    let offset = normalize(normal) * 0.02 * (1.0 + f32(cascade) * 3.0);
+    let clip = frame.cascades[cascade] * vec4<f32>(position + offset, 1.0);
+    let uv = clip.xy * vec2<f32>(0.5, -0.5) + 0.5;
+    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || clip.z > 1.0 {
+        return 1.0;
+    }
+    let texel = 1.0 / vec2<f32>(textureDimensions(shadow_map));
+    var lit = 0.0;
+    for (var i = 0; i < 4; i++) {
+        lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + SHADOW_TAPS[i] * texel, cascade, clip.z);
+    }
+    return lit / 4.0;
 }
 
 fn ggx(n_dot_h: f32, alpha: f32) -> f32 {

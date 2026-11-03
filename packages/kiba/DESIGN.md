@@ -135,8 +135,12 @@ Every tier uses reversed `Depth32Float` depth, which keeps precision over open-w
 Every tier shades with the metallic-roughness model: GGX, height-correlated Smith visibility, and
 Schlick Fresnel. It matches glTF, so cooked assets need no material conversion. Material factors are
 per-instance values, so entities that share a mesh and textures stay in one draw call. Normal maps
-derive their tangent frame from screen derivatives, so meshes carry no tangent attribute. Output is not yet tone
-mapped, so highlights clip at display white.
+derive their tangent frame from screen derivatives, so meshes carry no tangent attribute.
+
+The sun casts shadows through two cascades in one 1024-texel depth array. The near cascade covers the
+first fifth of `Sun::shadow_distance`, entities are culled per cascade, and entities off screen still
+cast. Each cascade snaps to whole texels so that edges do not crawl, and lookups take four rotated
+hardware-filtered taps.
 
 ### D8. The world is delivered in cells and controlled by memory budgets
 

@@ -10,7 +10,7 @@ use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 
 use crate::controller::run_controllers;
 use crate::input::InputEvent;
-use crate::renderer::{Batch, Frame, Instance};
+use crate::renderer::{Batch, CASCADES, Frame, Instance, SHADOW_MAP_SIZE, Shadows};
 use crate::{Input, Material, Mesh, Model, Renderer};
 
 const MAX_DELTA_SECONDS: f32 = 0.1;
@@ -109,6 +109,8 @@ pub struct Sun {
     pub color: Vec3,
     /// Linear RGB light on every surface, whichever way it faces.
     pub ambient: Vec3,
+    /// How far from the camera surfaces receive shadows. Zero turns shadows off.
+    pub shadow_distance: f32,
 }
 
 impl Default for Sun {
@@ -117,6 +119,7 @@ impl Default for Sun {
             direction: Vec3::new(-0.5, -1.0, -0.7),
             color: Vec3::new(1.0, 0.95, 0.85),
             ambient: Vec3::new(0.12, 0.14, 0.18),
+            shadow_distance: 40.0,
         }
     }
 }
@@ -126,6 +129,7 @@ impl Sun {
         direction: Vec3::NEG_Y,
         color: Vec3::ZERO,
         ambient: Vec3::ZERO,
+        shadow_distance: 0.0,
     };
 
     /// Shows surface colors nearly as they are.
@@ -133,6 +137,7 @@ impl Sun {
         direction: Vec3::NEG_Y,
         color: Vec3::ZERO,
         ambient: Vec3::ONE,
+        shadow_distance: 0.0,
     };
 }
 
@@ -443,15 +448,20 @@ impl<C: 'static> RunningGame for Registered<C> {
         let extracted = Instant::now();
         target.renderer.render(width, height, &frame);
         let rendered = Instant::now();
+        let drawn = || {
+            let casters = frame
+                .shadows
+                .iter()
+                .flat_map(|s| s.casters.iter().flatten());
+            frame.batches.iter().chain(casters)
+        };
         setup.stats = FrameStats {
             update_ms: (updated - now).as_secs_f32() * 1000.0,
             extract_ms: (extracted - updated).as_secs_f32() * 1000.0,
             render_ms: (rendered - extracted).as_secs_f32() * 1000.0,
-            draw_calls: frame.batches.len() as u32,
-            instances: frame.batches.iter().map(|b| b.instances.len() as u32).sum(),
-            triangles: frame
-                .batches
-                .iter()
+            draw_calls: drawn().count() as u32,
+            instances: drawn().map(|b| b.instances.len() as u32).sum(),
+            triangles: drawn()
                 .map(|b| b.instances.len() as u64 * b.mesh.data().indices.len() as u64 / 3)
                 .sum(),
         };
@@ -465,6 +475,59 @@ impl<C: 'static> RunningGame for Registered<C> {
     fn as_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
         self
     }
+}
+
+// Slices the view so that nearby surfaces get most of the shadow map's resolution.
+const CASCADE_SPLIT_FRACTION: f32 = 0.2;
+// Reaches past the view so that tall casters outside it still reach the map.
+const CASTER_MARGIN: f32 = 100.0;
+
+fn cascades(eye: &Transform, camera: &Camera, aspect: f32, sun: &Sun) -> Option<Shadows> {
+    let direction = sun.direction.try_normalize()?;
+    if sun.shadow_distance <= 0.0 {
+        return None;
+    }
+    let projection = camera.projection(aspect);
+    let (tan_x, tan_y) = (1.0 / projection.x_axis.x, 1.0 / projection.y_axis.y);
+    let corner_reach = Vec3::new(tan_x, tan_y, 1.0).length();
+    let forward = eye.rotation * Vec3::NEG_Z;
+    let far = sun.shadow_distance.min(camera.far);
+    let split = far * CASCADE_SPLIT_FRACTION;
+    let up = if direction.y.abs() > 0.99 {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
+
+    let slice = |start: f32, end: f32| {
+        let middle = (start + end) / 2.0;
+        // The farther corner bounds the slice, so the sphere never changes size as the camera turns.
+        let radius = (end * corner_reach - middle)
+            .max(middle - start)
+            .max(end - middle);
+        let center = eye.translation + forward * middle;
+
+        let rotation = Mat4::look_to_rh(Vec3::ZERO, direction, up);
+        // Snapping to whole shadow texels keeps edges from crawling as the camera moves.
+        let texel = 2.0 * radius / SHADOW_MAP_SIZE as f32;
+        let light_space = rotation.transform_point3(center);
+        let snapped = (light_space / texel).round() * texel;
+        let light_view = Mat4::from_translation(-snapped) * rotation;
+        let projection = Mat4::orthographic_rh(
+            -radius,
+            radius,
+            -radius,
+            radius,
+            -radius - CASTER_MARGIN,
+            radius,
+        );
+        projection * light_view
+    };
+    Some(Shadows {
+        view_projections: [slice(camera.near, split), slice(split, far)],
+        split,
+        casters: Default::default(),
+    })
 }
 
 /// Planes facing inward, each as a normal and a distance.
@@ -499,7 +562,7 @@ fn shown(transform: &Transform, motion: Option<&Interpolated>, alpha: f32) -> Tr
     }
 }
 
-fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
+pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
     let sun = world
         .query::<&Sun>()
         .iter()
@@ -513,6 +576,7 @@ fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
             camera_position: Vec3::ZERO,
             exposure: 1.0,
             sun,
+            shadows: None,
             batches: Vec::new(),
         };
     };
@@ -521,7 +585,26 @@ fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
     let view_projection = camera.projection(width as f32 / height as f32) * view;
     let mut batches = HashMap::<(usize, [usize; 3]), Batch>::new();
     let frustum = Frustum::new(&view_projection);
+    let shadows = cascades(&eye, camera, width as f32 / height as f32, &sun);
+    let caster_frustums = shadows
+        .as_ref()
+        .map(|shadows| shadows.view_projections.each_ref().map(Frustum::new));
+    let mut casters: [HashMap<usize, Batch>; CASCADES] = Default::default();
     let mut add = |mesh: &Mesh, transform: Mat4, material: &Material| {
+        // Off-screen entities still throw shadows into the view.
+        for (cascade, frustum) in caster_frustums.iter().flatten().enumerate() {
+            if frustum.contains(mesh, &transform) {
+                casters[cascade]
+                    .entry(mesh.key())
+                    .or_insert_with(|| Batch {
+                        mesh: mesh.clone(),
+                        material: Material::default(),
+                        instances: Vec::new(),
+                    })
+                    .instances
+                    .push(Instance::new(transform, material));
+            }
+        }
         if !frustum.contains(mesh, &transform) {
             return;
         }
@@ -559,6 +642,10 @@ fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
         camera_position: eye.translation,
         exposure: camera.exposure,
         sun,
+        shadows: shadows.map(|shadows| Shadows {
+            casters: casters.map(|batches| batches.into_values().collect()),
+            ..shadows
+        }),
         batches: batches.into_values().collect(),
     }
 }
