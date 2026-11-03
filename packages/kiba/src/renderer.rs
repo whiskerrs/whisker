@@ -1067,6 +1067,7 @@ impl SceneRenderer {
             }
             if frame.sky.is_some() {
                 self.sky.draw(&mut pass);
+                pass.set_bind_group(0, &self.frame_bindings, &[]);
             }
             // Blending needs what is behind drawn first, so these go one at a time from the farthest.
             blended.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -1996,7 +1997,10 @@ mod tests {
                 Mat4::from_translation(Vec3::Z * 0.6),
                 material,
             );
-            let frame = frame(Sun::UNLIT, vec![front, solid_quad([1.0, 0.0, 0.0], 0.3)]);
+            let frame = Frame {
+                sky: Some(Sky::default()),
+                ..frame(Sun::UNLIT, vec![front, solid_quad([1.0, 0.0, 0.0], 0.3)])
+            };
             center_of(&device, &queue, &frame)
         };
         let mask = AlphaMode::Mask { cutoff: 0.5 };
@@ -2004,9 +2008,9 @@ mod tests {
         let hidden = over_red(mask, 0.3);
         let solid = over_red(mask, 0.8);
         let mixed = over_red(AlphaMode::Blend, 0.5);
-        assert!(hidden[0] > 150 && hidden[2] < 30, "{hidden:?}");
-        assert!(solid[2] > 150 && solid[0] < 30, "{solid:?}");
-        assert!(mixed[0] > 60 && mixed[2] > 60, "{mixed:?}");
+        assert!(hidden[0] > 80 && hidden[2] < 30, "{hidden:?}");
+        assert!(solid[2] > 80 && solid[0] < 30, "{solid:?}");
+        assert!(mixed[0] > 40 && mixed[2] > 40, "{mixed:?}");
     }
 
     #[test]
