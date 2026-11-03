@@ -7,6 +7,8 @@
 //! |---|---|
 //! | A view | `(Camera::default(), Transform::looking_at(eye, target, Vec3::Y))` |
 //! | Direct light and shadows | `(Sun::default(),)` |
+//! | A lamp or torch, without shadows; the nearest 16 in view shade | `(Transform::at(position), PointLight::default())` |
+//! | A flashlight along -Z, without shadows | `(Transform::looking_at(position, target, Vec3::Y), SpotLight::default())` |
 //! | A background and light from all around | `(Sky::default(),)`, or `Sky::from_sun(direction)` for a time of day |
 //! | Haze that hides the distance | `(Fog::default(),)` |
 //! | Fire, sparks, or magic | `(Transform::default(), ParticleEmitter::default())` |
@@ -108,6 +110,7 @@ mod controller;
 pub mod cook;
 mod game;
 mod input;
+mod lights;
 mod mesh;
 mod model;
 mod pack;
@@ -140,6 +143,7 @@ pub use hecs::{Entity, World};
 #[doc(hidden)]
 pub use input::InputEvent;
 pub use input::{Input, Key, Pointer};
+pub use lights::{PointLight, SpotLight};
 pub use mesh::{Material, Mesh, Vertex};
 #[cfg(feature = "gltf")]
 pub use model::ModelError;
@@ -163,8 +167,8 @@ pub mod prelude {
     pub use crate::{
         Animator, Camera, Context, Entity, FlyCamera, Fog, FrameStats, Game, GameSetup, Input,
         Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, ParticleEmitter,
-        Playback, Pointer, ProbeVolume, Quat, Sky, Sound, StreamSettings, Sun, Texture, Tier, Time,
-        Transform, Vec2, Vec3, Vertex, Viewport, World, WorldStream,
+        Playback, PointLight, Pointer, ProbeVolume, Quat, Sky, Sound, SpotLight, StreamSettings,
+        Sun, Texture, Tier, Time, Transform, Vec2, Vec3, Vertex, Viewport, World, WorldStream,
     };
     #[cfg(feature = "physics")]
     pub use crate::{BodyKind, Collider, Physics, RayHit, RigidBody};

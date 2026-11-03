@@ -6,6 +6,7 @@ use glam::{Mat4, UVec3, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::animation::MAX_JOINTS;
+use crate::lights::{LightUniform, MAX_LIGHTS};
 use crate::mesh::{MeshData, SkinVertex, Vertex};
 use crate::particles::{ParticleInstance, ParticlePass};
 use crate::post::{PostPasses, SizedTargets};
@@ -87,6 +88,8 @@ pub(crate) struct Effects {
     pub(crate) camera_up: Vec3,
     pub(crate) fog: Option<Fog>,
     pub(crate) particles: Vec<ParticleInstance>,
+    /// Point and spot lights, at most [`MAX_LIGHTS`].
+    pub(crate) lights: Vec<LightUniform>,
 }
 
 const UPLOAD_BYTES_PER_FRAME: u64 = 8 * 1024 * 1024;
@@ -136,6 +139,7 @@ struct FrameUniform {
     probe_scale: Vec4,
     shadow_params: Vec4,
     fog: Vec4,
+    lights: [LightUniform; MAX_LIGHTS],
 }
 
 impl From<&Frame> for FrameUniform {
@@ -166,12 +170,15 @@ impl From<&Frame> for FrameUniform {
                 frame.shadows.as_ref().map_or(0.0, |s| s.split),
                 f32::from(u8::from(frame.shadows.is_some())),
                 f32::from(u8::from(frame.sky.is_some())),
-                0.0,
+                frame.effects.lights.len().min(MAX_LIGHTS) as f32,
             ),
             fog: frame
                 .effects
                 .fog
                 .map_or(Vec4::ZERO, |fog| fog.color.extend(fog.density)),
+            lights: std::array::from_fn(|i| {
+                frame.effects.lights.get(i).copied().unwrap_or_default()
+            }),
         }
     }
 }
@@ -1248,6 +1255,8 @@ pub fn log(message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Transform;
+    use glam::Quat;
 
     const SIZE: u32 = 64;
 
@@ -1911,6 +1920,43 @@ mod tests {
             u16::from(outside) > u16::from(blocked) * 2,
             "outside {outside}, blocked {blocked}"
         );
+    }
+
+    #[test]
+    fn point_and_spot_lights_reach_only_within_their_range_and_cone() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let shot = |light: LightUniform| {
+            let mut frame = frame(DARK_SUN, vec![near_surface(MATTE)]);
+            frame.effects.lights = vec![light];
+            center_of(&device, &queue, &frame)[0]
+        };
+        let at = |z: f32| Transform::at(Vec3::Z * z);
+        let point = |range| crate::PointLight {
+            color: Vec3::ONE,
+            intensity: 1.0,
+            range,
+        };
+
+        let near = shot(LightUniform::point(&at(1.5), &point(10.0)));
+        let farther = shot(LightUniform::point(&at(2.5), &point(10.0)));
+        let out_of_range = shot(LightUniform::point(&at(1.5), &point(0.9)));
+        assert!(near > farther + 20 && farther > 20, "{near} {farther}");
+        assert_eq!(out_of_range, 0);
+
+        let spot = crate::SpotLight {
+            color: Vec3::ONE,
+            intensity: 1.0,
+            ..crate::SpotLight::default()
+        };
+        let toward = shot(LightUniform::spot(&at(1.5), &spot));
+        let away = Transform {
+            rotation: Quat::from_rotation_x(std::f32::consts::PI),
+            ..at(1.5)
+        };
+        assert!(toward > 100, "{toward}");
+        assert_eq!(shot(LightUniform::spot(&away, &spot)), 0);
     }
 
     #[test]

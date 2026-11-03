@@ -13,6 +13,7 @@ use crate::animation::{Animator, run_animators};
 use crate::audio::{resume_audio, set_listener};
 use crate::controller::run_controllers;
 use crate::input::{InputEvent, Key};
+use crate::lights::{LightUniform, MAX_LIGHTS, PointLight, SpotLight};
 use crate::particles::{extract_particles, run_particles};
 use crate::probes::ProbeVolume;
 use crate::quality::{Governor, Quality, Tier};
@@ -624,9 +625,14 @@ impl Frustum {
         Self([w + x, w - x, w + y, w - y, z, w - z].map(|plane| plane / plane.truncate().length()))
     }
 
+    fn contains_sphere(&self, center: Vec3, radius: f32) -> bool {
+        let center = center.extend(1.0);
+        self.0.iter().all(|plane| plane.dot(center) >= -radius)
+    }
+
     fn contains(&self, mesh: &Mesh, transform: &Mat4) -> bool {
         let data = mesh.data();
-        let center = transform.transform_point3(data.bounds_center).extend(1.0);
+        let center = transform.transform_point3(data.bounds_center);
         let scale = transform
             .x_axis
             .truncate()
@@ -634,8 +640,7 @@ impl Frustum {
             .max(transform.y_axis.truncate().length_squared())
             .max(transform.z_axis.truncate().length_squared())
             .sqrt();
-        let radius = data.bounds_radius * scale;
-        self.0.iter().all(|plane| plane.dot(center) >= -radius)
+        self.contains_sphere(center, data.bounds_radius * scale)
     }
 }
 
@@ -772,8 +777,38 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
             camera_up: eye.rotation * Vec3::Y,
             fog: world.query::<&Fog>().iter().next().map(|(_, fog)| *fog),
             particles: extract_particles(world),
+            lights: extract_lights(world, &frustum, eye.translation, alpha),
         },
     }
+}
+
+fn extract_lights(world: &World, frustum: &Frustum, eye: Vec3, alpha: f32) -> Vec<LightUniform> {
+    let points = world
+        .query::<(&Transform, Option<&Interpolated>, &PointLight)>()
+        .iter()
+        .map(|(_, (transform, motion, light))| {
+            LightUniform::point(&shown(transform, motion, alpha), light)
+        })
+        .collect::<Vec<_>>();
+    let spots = world
+        .query::<(&Transform, Option<&Interpolated>, &SpotLight)>()
+        .iter()
+        .map(|(_, (transform, motion, light))| {
+            LightUniform::spot(&shown(transform, motion, alpha), light)
+        })
+        .collect::<Vec<_>>();
+    let mut lights: Vec<_> = points
+        .into_iter()
+        .chain(spots)
+        .filter(|light| frustum.contains_sphere(light.center(), light.range()))
+        .collect();
+    lights.sort_by(|a, b| {
+        a.center()
+            .distance_squared(eye)
+            .total_cmp(&b.center().distance_squared(eye))
+    });
+    lights.truncate(MAX_LIGHTS);
+    lights
 }
 
 /// A running game, shown by passing it to [`Viewport`](crate::Viewport).
@@ -906,6 +941,22 @@ mod tests {
 
         world.spawn((Sun::default(),));
         assert_eq!(extract_frame(&world, 100, 100, 1.0).sun, Sun::default());
+    }
+
+    #[test]
+    fn the_frame_takes_the_nearest_lights_in_view() {
+        let mut world = world_with_camera_at(Vec3::Z * 10.0);
+        let at = Transform::at;
+        world.spawn((at(Vec3::Z * 100.0), PointLight::default()));
+        for i in 0..MAX_LIGHTS + 4 {
+            world.spawn((at(Vec3::X * i as f32), PointLight::default()));
+        }
+        world.spawn((at(Vec3::Z * 5.0), SpotLight::default()));
+
+        let lights = extract_frame(&world, 100, 100, 1.0).effects.lights;
+        assert_eq!(lights.len(), MAX_LIGHTS);
+        assert_eq!(lights[0].center(), Vec3::Z * 5.0);
+        assert!(lights.iter().all(|light| light.center().z < 50.0));
     }
 
     #[test]

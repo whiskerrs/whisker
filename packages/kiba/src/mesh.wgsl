@@ -15,10 +15,20 @@ struct Frame {
     probe_min: vec4<f32>,
     // The inverse size of the probe box, with W at zero when there is none.
     probe_scale: vec4<f32>,
-    // Split distance, then one when shadows are on, then one when a sky lights the scene.
+    // Split distance, then one when shadows are on, then one when a sky lights the scene, then the light count.
     shadow_params: vec4<f32>,
     // The color of the air, with W as its density.
     fog: vec4<f32>,
+    lights: array<Light, 16>,
+}
+
+struct Light {
+    // Position, then range.
+    position: vec4<f32>,
+    // Color times intensity, then the cosine of the outer angle, below -1 for a point light.
+    color: vec4<f32>,
+    // The axis of a spot, then the cosine of its inner angle.
+    direction: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -111,22 +121,19 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let metallic = input.metallic * metal_rough.b;
     let base_color = input.base_color * textureSample(base_color_texture, material_sampler, input.uv).rgb;
     let to_camera = normalize(frame.camera_position.xyz - input.world_position);
-    let to_sun = frame.to_sun.xyz;
-    let halfway = normalize(to_camera + to_sun);
-    let n_dot_l = max(dot(normal, to_sun), 0.0);
     let n_dot_v = max(dot(normal, to_camera), 1e-4);
-    let n_dot_h = max(dot(normal, halfway), 0.0);
-    let v_dot_h = max(dot(to_camera, halfway), 0.0);
 
     let roughness = clamp(input.roughness * metal_rough.g, MIN_ROUGHNESS, 1.0);
     let alpha = roughness * roughness;
     let reflectance = mix(vec3<f32>(DIELECTRIC_REFLECTANCE), base_color, metallic);
     let diffuse = base_color * (1.0 - metallic);
+    let surface = Surface(normal, to_camera, n_dot_v, alpha, diffuse, reflectance);
 
-    let specular = ggx(n_dot_h, alpha) * visibility(n_dot_l, n_dot_v, alpha) * fresnel(reflectance, v_dot_h);
-    // Sun.color is the light leaving a white diffuse surface, so diffuse carries no 1/PI and specular gains PI.
     let lit = sun_visibility(input.world_position, input.normal);
-    let sun = (diffuse + specular * PI) * frame.sun_color.rgb * n_dot_l * lit;
+    var sun = shade(surface, frame.to_sun.xyz, frame.sun_color.rgb * lit);
+    for (var i = 0u; i < u32(frame.shadow_params.w); i++) {
+        sun += local_light(surface, frame.lights[i], input.world_position);
+    }
     var ambient_diffuse = frame.ambient.rgb;
     var ambient_reflected = frame.ambient.rgb;
     if frame.shadow_params.z != 0.0 {
@@ -138,6 +145,39 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         + ambient_specular(reflectance, roughness, n_dot_v) * ambient_reflected * sky_visibility(input.world_position, reflect(-to_camera, normal));
     let air = 1.0 - exp(-length(frame.camera_position.xyz - input.world_position) * frame.fog.w);
     return vec4<f32>(mix(sun + ambient, frame.fog.rgb, air) * frame.camera_position.w, 1.0);
+}
+
+struct Surface {
+    normal: vec3<f32>,
+    to_camera: vec3<f32>,
+    n_dot_v: f32,
+    alpha: f32,
+    diffuse: vec3<f32>,
+    reflectance: vec3<f32>,
+}
+
+// Light colors are the light leaving a white diffuse surface, so diffuse carries no 1/PI and specular gains PI.
+fn shade(surface: Surface, to_light: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
+    let halfway = normalize(surface.to_camera + to_light);
+    let n_dot_l = max(dot(surface.normal, to_light), 0.0);
+    let n_dot_h = max(dot(surface.normal, halfway), 0.0);
+    let v_dot_h = max(dot(surface.to_camera, halfway), 0.0);
+    let specular = ggx(n_dot_h, surface.alpha) * visibility(n_dot_l, surface.n_dot_v, surface.alpha) * fresnel(surface.reflectance, v_dot_h);
+    return (surface.diffuse + specular * PI) * light * n_dot_l;
+}
+
+fn local_light(surface: Surface, light: Light, position: vec3<f32>) -> vec3<f32> {
+    let offset = light.position.xyz - position;
+    let distance_squared = max(dot(offset, offset), 1e-4);
+    let to_light = offset * inverseSqrt(distance_squared);
+    // Karis's window brings the inverse square to exactly zero at the range.
+    let reach = saturate(1.0 - pow(distance_squared / (light.position.w * light.position.w), 2.0));
+    var strength = reach * reach / distance_squared;
+    if light.color.w >= -1.0 {
+        let along = dot(-to_light, light.direction.xyz);
+        strength *= smoothstep(light.color.w, light.direction.w, along);
+    }
+    return shade(surface, to_light, light.color.rgb * strength);
 }
 
 // Derives the tangent frame from screen derivatives, so meshes need no tangent attribute.
