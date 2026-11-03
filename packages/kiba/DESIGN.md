@@ -257,6 +257,11 @@ closures such as `on_tap`, avoiding the problem of `#[component]` arguments that
 
 All values are **[assumed]** and are replaced by device measurements in P1.
 
+A first measurement on a Mac, in a web build, is **[verified]** only for that machine: 10,000 cube
+instances (120,000 triangles, one draw call) all moving each frame take 2.3 ms of main-thread time,
+and 4.3 ms under Chrome's 6x CPU throttling, at the display's 60 fps. Throttling does not slow the
+GPU, so this shows only that the CPU side has room. It does not replace the device check in P1.
+
 | Item | Initial T0 value |
 |---|---|
 | Frame rate | Stable 30 fps (33 ms, without thermal throttling) |
@@ -271,8 +276,22 @@ All values are **[assumed]** and are replaced by device measurements in P1.
 
 ## Phases and exit criteria
 
-Each phase's exit criteria include on-device checks. If they are not met, budgets or features are
-revisited before moving on.
+This document is complete when every phase row has its implementation, a Web measurement, and an API
+review recorded under [Phase results](#phase-results); every spike has a result; every open question
+is answered; and no **[assumed]** or **[unverified]** label is left without a deferral reason.
+
+All measurements use the Web. The stand-in for the reference device is Chrome on the development Mac,
+with a 6x CPU throttle and an internal resolution capped at 1280 px on the long side. It proves CPU
+headroom and correctness only, because throttling does not slow the GPU. Each criterion below that
+names the reference device is met through this stand-in, and checking on a real mid-range Android
+device is deferred to the project owner.
+
+Each phase ends with an API review for humans and for AI: a fresh agent given only the public docs
+writes a small game, and its misreadings are recorded and fixed. The review also counts the concepts
+and imports needed to draw one lit, textured model.
+
+Changes outside `packages/kiba`, such as to `crates/` or `platforms/`, need the project owner's
+approval first.
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
@@ -282,6 +301,10 @@ revisited before moving on.
 | P3 | Streaming, LOD, HLOD, physics, audio | Moving through a 4 km square for 30 minutes on the reference device holds the memory limit and frame rate |
 | P4 | Tiers, upscaling, VFX, atmosphere, T1/T2 features | Automatic tier selection works per device |
 | P5 | Navmesh and networking as needed | Decided by requests from real games |
+
+## Phase results
+
+Results are added as each phase finishes.
 
 ## Spikes to run first
 
