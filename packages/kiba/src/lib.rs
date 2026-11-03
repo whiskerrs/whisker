@@ -3,7 +3,9 @@
 //! Application code mounts [`Viewport`]; each Host only supplies a render target
 //! and frame timing to the shared wgpu [`SceneRenderer`].
 
+mod controller;
 mod game;
+mod input;
 mod mesh;
 mod model;
 mod renderer;
@@ -14,11 +16,15 @@ mod android;
 #[cfg(target_vendor = "apple")]
 mod ios;
 
-pub use game::{Camera, Game, GameSetup, Sun, Time, Transform};
+pub use controller::{FlyCamera, OrbitCamera};
+pub use game::{Camera, Context, Game, GameSetup, Interpolated, Sun, Time, Transform};
 #[doc(hidden)]
-pub use game::{attach_renderer, detach_renderer};
-pub use glam::{Mat4, Quat, Vec3};
+pub use game::{attach_renderer, detach_renderer, send_input};
+pub use glam::{Mat4, Quat, Vec2, Vec3};
 pub use hecs::{Entity, World};
+#[doc(hidden)]
+pub use input::InputEvent;
+pub use input::{Input, Key, Pointer};
 pub use mesh::{Material, Mesh, Vertex};
 pub use model::Model;
 #[cfg(feature = "gltf")]
@@ -33,8 +39,9 @@ pub use wgpu;
 /// Commonly used items.
 pub mod prelude {
     pub use crate::{
-        Camera, Entity, Game, GameSetup, Material, Mesh, Model, Quat, Sun, Texture, Time,
-        Transform, Vec3, Vertex, Viewport, World,
+        Camera, Context, Entity, FlyCamera, Game, GameSetup, Input, Interpolated, Key, Material,
+        Mesh, Model, OrbitCamera, Pointer, Quat, Sun, Texture, Time, Transform, Vec2, Vec3, Vertex,
+        Viewport, World,
     };
 }
 

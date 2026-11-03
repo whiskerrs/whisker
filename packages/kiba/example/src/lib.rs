@@ -8,6 +8,15 @@ enum Command {
     Boost,
 }
 
+struct Spin {
+    speed: f32,
+    angle: f32,
+}
+
+struct Orbit {
+    angle: f32,
+}
+
 #[whisker::main]
 pub fn app() -> Element {
     let turns = signal(0);
@@ -15,7 +24,12 @@ pub fn app() -> Element {
     let game = Game::<Command>::new(move |setup| {
         setup.world.spawn((
             Camera::default(),
-            Transform::looking_at(Vec3::new(0.0, 1.4, 3.2), Vec3::new(0.0, 0.0, -0.4), Vec3::Y),
+            Transform::default(),
+            OrbitCamera {
+                target: Vec3::new(0.0, 0.0, -0.4),
+                distance: 3.8,
+                ..OrbitCamera::default()
+            },
         ));
         setup.world.spawn((Sun::default(),));
 
@@ -67,12 +81,17 @@ pub fn app() -> Element {
             },
         ));
 
-        let robot = setup.world.spawn((
+        setup.world.spawn((
+            Spin {
+                speed: 1.0,
+                angle: 0.0,
+            },
             Transform::default(),
             Model::from_glb(include_bytes!("../assets/robot.glb"))
                 .expect("the robot is a valid file"),
         ));
-        let moon = setup.world.spawn((
+        setup.world.spawn((
+            Orbit { angle: 0.0 },
             Transform::default(),
             sphere,
             Material {
@@ -83,27 +102,27 @@ pub fn app() -> Element {
             },
         ));
 
-        let mut speed = 1.0;
-        let mut angle = 0.0;
-        setup.on_update(move |world, time, commands| {
-            for command in commands {
-                match command {
-                    Command::Boost => speed *= 2.0,
+        setup.on_command(|context, command| match command {
+            Command::Boost => {
+                for (_, spin) in context.world.query_mut::<&mut Spin>() {
+                    spin.speed *= 2.0;
                 }
             }
-            angle += speed * time.delta_seconds();
-            world
-                .get::<&mut Transform>(robot)
-                .expect("the robot is never despawned")
-                .rotation = Quat::from_rotation_y(angle);
-            world
-                .get::<&mut Transform>(moon)
-                .expect("the moon is never despawned")
-                .translation = Vec3::new(angle.cos(), 0.0, angle.sin()) * 0.8;
-
-            let completed = (angle / std::f32::consts::TAU) as i32;
-            if completed != turns.get_untracked() {
-                turns.set(completed);
+        });
+        setup.on_update(move |context| {
+            let delta = context.time.delta_seconds();
+            for (_, (transform, spin)) in context.world.query_mut::<(&mut Transform, &mut Spin)>() {
+                spin.angle += spin.speed * delta;
+                transform.rotation = Quat::from_rotation_y(spin.angle);
+                let completed = (spin.angle / std::f32::consts::TAU) as i32;
+                if completed != turns.get_untracked() {
+                    turns.set(completed);
+                }
+            }
+            for (_, (transform, orbit)) in context.world.query_mut::<(&mut Transform, &mut Orbit)>()
+            {
+                orbit.angle += delta;
+                transform.translation = Vec3::new(orbit.angle.cos(), 0.0, orbit.angle.sin()) * 0.8;
             }
         });
     });

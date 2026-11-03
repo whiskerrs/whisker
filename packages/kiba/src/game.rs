@@ -8,10 +8,13 @@ use hecs::World;
 use web_time::Instant;
 use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 
+use crate::controller::run_controllers;
+use crate::input::InputEvent;
 use crate::renderer::{Batch, Frame, Instance};
-use crate::{Material, Mesh, Model, Renderer};
+use crate::{Input, Material, Mesh, Model, Renderer};
 
 const MAX_DELTA_SECONDS: f32 = 0.1;
+const DEFAULT_FIXED_HZ: f32 = 60.0;
 
 /// Position, orientation, and size of an entity.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -41,6 +44,14 @@ impl Transform {
             translation: eye,
             rotation: Quat::from_mat4(&Mat4::look_at_rh(eye, target, up).inverse()),
             scale: Vec3::ONE,
+        }
+    }
+
+    fn lerp(&self, target: &Self, alpha: f32) -> Self {
+        Self {
+            translation: self.translation.lerp(target.translation, alpha),
+            rotation: self.rotation.slerp(target.rotation, alpha),
+            scale: self.scale.lerp(target.scale, alpha),
         }
     }
 
@@ -118,35 +129,183 @@ impl Sun {
     };
 }
 
-/// Frame timing passed to update callbacks.
+/// Smooths an entity moved in `on_fixed_update` between fixed steps.
+///
+/// Without it, motion visibly stutters when the display rate differs from the fixed rate.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Interpolated {
+    previous: Option<Transform>,
+}
+
+/// Timing passed to callbacks.
 #[derive(Clone, Copy, Debug)]
 pub struct Time {
     delta_seconds: f32,
+    elapsed_seconds: f64,
 }
 
 impl Time {
-    /// Seconds since the previous frame, capped so a long stall does not jump the simulation.
+    /// Seconds this callback covers: the fixed step in `on_fixed_update`, otherwise the time since
+    /// the previous frame, capped so a long stall does not jump the simulation.
     pub fn delta_seconds(&self) -> f32 {
         self.delta_seconds
     }
+
+    /// Seconds of game time since the first frame.
+    pub fn elapsed_seconds(&self) -> f64 {
+        self.elapsed_seconds
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(delta_seconds: f32) -> Self {
+        Self {
+            delta_seconds,
+            elapsed_seconds: 0.0,
+        }
+    }
 }
 
-type UpdateCallback<C> = Box<dyn FnMut(&mut World, &Time, Vec<C>)>;
+/// What a callback can see and change.
+pub struct Context<'a> {
+    /// The entities of this game.
+    pub world: &'a mut World,
+    /// Timing of this callback.
+    pub time: Time,
+    /// Keyboard and pointer state.
+    pub input: &'a Input,
+    /// Viewport size in physical pixels, zero before the first frame.
+    pub viewport: (u32, u32),
+}
+
+type Callback = Box<dyn FnMut(&mut Context<'_>)>;
+type CommandCallback<C> = Box<dyn FnMut(&mut Context<'_>, C)>;
 
 /// Configures a [`Game`] during [`Game::new`].
+///
+/// Each frame runs the callbacks in this order: commands, fixed updates, updates, drawing. Updates
+/// can be added several times, and run in the order they were added.
 pub struct GameSetup<C> {
     /// The entities of this game.
     pub world: World,
-    update: Option<UpdateCallback<C>>,
+    on_command: Option<CommandCallback<C>>,
+    on_fixed_update: Vec<Callback>,
+    on_update: Vec<Callback>,
+    fixed_delta: f32,
+    accumulator: f32,
+    elapsed: f64,
+    fixed_elapsed: f64,
+    frame_input: Input,
+    fixed_input: Input,
+    viewport: (u32, u32),
 }
 
 impl<C> GameSetup<C> {
-    /// Sets the callback that runs once per frame, before drawing.
+    fn new() -> Self {
+        Self {
+            world: World::new(),
+            on_command: None,
+            on_fixed_update: Vec::new(),
+            on_update: Vec::new(),
+            fixed_delta: 1.0 / DEFAULT_FIXED_HZ,
+            accumulator: 0.0,
+            elapsed: 0.0,
+            fixed_elapsed: 0.0,
+            frame_input: Input::default(),
+            fixed_input: Input::default(),
+            viewport: (0, 0),
+        }
+    }
+
+    /// Sets the callback for commands sent with [`Game::send`], which runs before the frame's
+    /// updates. A later call replaces it, because a command has only one owner.
+    pub fn on_command(&mut self, callback: impl FnMut(&mut Context<'_>, C) + 'static) {
+        self.on_command = Some(Box::new(callback));
+    }
+
+    /// Adds a callback that runs at a steady rate, for physics and gameplay that must not depend on
+    /// the display. It can run zero or several times in a frame.
+    pub fn on_fixed_update(&mut self, callback: impl FnMut(&mut Context<'_>) + 'static) {
+        self.on_fixed_update.push(Box::new(callback));
+    }
+
+    /// Adds a callback that runs once per frame, before drawing.
     ///
     /// It runs inside the Whisker runtime, so it can write signals. Write only
     /// on change, because each write schedules UI work.
-    pub fn on_update(&mut self, update: impl FnMut(&mut World, &Time, Vec<C>) + 'static) {
-        self.update = Some(Box::new(update));
+    pub fn on_update(&mut self, callback: impl FnMut(&mut Context<'_>) + 'static) {
+        self.on_update.push(Box::new(callback));
+    }
+
+    /// Sets how many times per second `on_fixed_update` runs. The default is 60.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `hz` is not greater than zero.
+    pub fn set_fixed_rate(&mut self, hz: f32) {
+        assert!(hz > 0.0, "the fixed rate must be greater than zero");
+        self.fixed_delta = 1.0 / hz;
+    }
+
+    fn apply_input(&mut self, event: InputEvent) {
+        self.frame_input.apply(event);
+        self.fixed_input.apply(event);
+    }
+
+    /// Runs one frame of simulation and returns how far drawing is between the last two fixed steps.
+    fn advance(&mut self, delta_seconds: f32, commands: Vec<C>) -> f32 {
+        let viewport = self.viewport;
+        self.elapsed += f64::from(delta_seconds);
+        let frame_time = Time {
+            delta_seconds,
+            elapsed_seconds: self.elapsed,
+        };
+        for command in commands {
+            let mut context = Context {
+                world: &mut self.world,
+                time: frame_time,
+                input: &self.frame_input,
+                viewport,
+            };
+            if let Some(callback) = &mut self.on_command {
+                callback(&mut context, command);
+            }
+        }
+
+        self.accumulator += delta_seconds;
+        while self.accumulator >= self.fixed_delta {
+            self.accumulator -= self.fixed_delta;
+            self.fixed_elapsed += f64::from(self.fixed_delta);
+            for (_, (transform, interpolated)) in
+                self.world.query_mut::<(&Transform, &mut Interpolated)>()
+            {
+                interpolated.previous = Some(*transform);
+            }
+            let time = Time {
+                delta_seconds: self.fixed_delta,
+                elapsed_seconds: self.fixed_elapsed,
+            };
+            for callback in &mut self.on_fixed_update {
+                callback(&mut Context {
+                    world: &mut self.world,
+                    time,
+                    input: &self.fixed_input,
+                    viewport,
+                });
+            }
+            self.fixed_input.end_pass();
+        }
+
+        for callback in &mut self.on_update {
+            callback(&mut Context {
+                world: &mut self.world,
+                time: frame_time,
+                input: &self.frame_input,
+                viewport,
+            });
+        }
+        run_controllers(&mut self.world, &frame_time, &self.frame_input);
+        self.frame_input.end_pass();
+        self.accumulator / self.fixed_delta
     }
 }
 
@@ -158,6 +317,7 @@ struct RenderTarget {
 struct GameState<C> {
     setup: RefCell<GameSetup<C>>,
     commands: RefCell<Vec<C>>,
+    input: RefCell<Vec<InputEvent>>,
     target: RefCell<Option<RenderTarget>>,
     last_frame: Cell<Option<Instant>>,
     running: Cell<bool>,
@@ -168,6 +328,7 @@ trait RunningGame {
     fn attach(&self, target: RenderTarget);
     fn detach(&self);
     fn frame(&self);
+    fn input(&self, event: InputEvent);
     fn as_any(self: Rc<Self>) -> Rc<dyn std::any::Any>;
 }
 
@@ -222,15 +383,20 @@ impl<C: 'static> RunningGame for Registered<C> {
         });
         let commands = state.commands.take();
         let mut setup = state.setup.borrow_mut();
-        let GameSetup { world, update } = &mut *setup;
-        if let Some(update) = update {
-            update(world, &Time { delta_seconds }, commands);
+        for event in state.input.take() {
+            setup.apply_input(event);
         }
-
         let (width, height) = (target.size)();
-        let frame = extract_frame(world, width, height);
+        setup.viewport = (width, height);
+        let alpha = setup.advance(delta_seconds, commands);
+
+        let frame = extract_frame(&setup.world, width, height, alpha);
         target.renderer.render(width, height, &frame);
         schedule_frame(&state.dispatcher, self.id);
+    }
+
+    fn input(&self, event: InputEvent) {
+        self.state.input.borrow_mut().push(event);
     }
 
     fn as_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
@@ -238,15 +404,22 @@ impl<C: 'static> RunningGame for Registered<C> {
     }
 }
 
-fn extract_frame(world: &World, width: u32, height: u32) -> Frame {
+fn shown(transform: &Transform, motion: Option<&Interpolated>, alpha: f32) -> Transform {
+    match motion.and_then(|motion| motion.previous) {
+        Some(previous) => previous.lerp(transform, alpha),
+        None => *transform,
+    }
+}
+
+fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
     let sun = world
         .query::<&Sun>()
         .iter()
         .next()
         .map_or(Sun::DARK, |(_, sun)| *sun);
-    let mut cameras = world.query::<(&Transform, &Camera)>();
+    let mut cameras = world.query::<(&Transform, &Camera, Option<&Interpolated>)>();
     let camera = cameras.iter().next().filter(|_| width > 0 && height > 0);
-    let Some((_, (eye, camera))) = camera else {
+    let Some((_, (eye, camera, eye_motion))) = camera else {
         return Frame {
             view_projection: Mat4::IDENTITY,
             camera_position: Vec3::ZERO,
@@ -254,6 +427,7 @@ fn extract_frame(world: &World, width: u32, height: u32) -> Frame {
             batches: Vec::new(),
         };
     };
+    let eye = shown(eye, eye_motion, alpha);
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
     let view_projection = camera.projection(width as f32 / height as f32) * view;
     let mut batches = HashMap::<(usize, [usize; 3]), Batch>::new();
@@ -268,23 +442,23 @@ fn extract_frame(world: &World, width: u32, height: u32) -> Frame {
             .instances
             .push(Instance::new(transform, material));
     };
-    for (_, (transform, mesh, material)) in world
-        .query::<(&Transform, &Mesh, Option<&Material>)>()
+    for (_, (transform, motion, mesh, material)) in world
+        .query::<(&Transform, Option<&Interpolated>, &Mesh, Option<&Material>)>()
         .iter()
     {
         add(
             mesh,
-            transform.matrix(),
+            shown(transform, motion, alpha).matrix(),
             material.unwrap_or(&Material::default()),
         );
     }
-    for (_, (transform, model)) in world.query::<(&Transform, &Model)>().iter() {
+    for (_, (transform, motion, model)) in world
+        .query::<(&Transform, Option<&Interpolated>, &Model)>()
+        .iter()
+    {
+        let matrix = shown(transform, motion, alpha).matrix();
         for part in model.parts() {
-            add(
-                &part.mesh,
-                transform.matrix() * part.transform,
-                &part.material,
-            );
+            add(&part.mesh, matrix * part.transform, &part.material);
         }
     }
     Frame {
@@ -320,15 +494,13 @@ impl<C: 'static> Game<C> {
     /// Panics outside a running Whisker runtime.
     pub fn new(configure: impl FnOnce(&mut GameSetup<C>)) -> Self {
         let dispatcher = runtime_dispatcher().expect("Game::new requires a Whisker runtime");
-        let mut setup = GameSetup {
-            world: World::new(),
-            update: None,
-        };
+        let mut setup = GameSetup::new();
         configure(&mut setup);
         let id = NEXT_ID.replace(NEXT_ID.get() + 1);
         let state = Rc::new(GameState {
             setup: RefCell::new(setup),
             commands: RefCell::new(Vec::new()),
+            input: RefCell::new(Vec::new()),
             target: RefCell::new(None),
             last_frame: Cell::new(None),
             running: Cell::new(false),
@@ -380,6 +552,14 @@ pub fn detach_renderer(id: i64) {
     }
 }
 
+/// Passes a Host's input to a game.
+#[doc(hidden)]
+pub fn send_input(id: i64, event: InputEvent) {
+    if let Some(game) = find(id) {
+        game.input(event);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,10 +583,10 @@ mod tests {
     #[test]
     fn the_frame_carries_the_sun_of_the_world_or_darkness() {
         let mut world = world_with_camera_at(Vec3::Z);
-        assert_eq!(extract_frame(&world, 100, 100).sun, Sun::DARK);
+        assert_eq!(extract_frame(&world, 100, 100, 1.0).sun, Sun::DARK);
 
         world.spawn((Sun::default(),));
-        assert_eq!(extract_frame(&world, 100, 100).sun, Sun::default());
+        assert_eq!(extract_frame(&world, 100, 100, 1.0).sun, Sun::default());
     }
 
     #[test]
@@ -424,7 +604,7 @@ mod tests {
         };
         world.spawn((entity, model));
 
-        let frame = extract_frame(&world, 100, 100);
+        let frame = extract_frame(&world, 100, 100, 1.0);
 
         assert_eq!(frame.batches.len(), 1);
         let origins: Vec<Vec3> = frame.batches[0]
@@ -454,7 +634,7 @@ mod tests {
         };
         world.spawn((Transform::default(), mesh, rough));
 
-        let mut counts: Vec<usize> = extract_frame(&world, 100, 100)
+        let mut counts: Vec<usize> = extract_frame(&world, 100, 100, 1.0)
             .batches
             .iter()
             .map(|batch| batch.instances.len())
@@ -464,15 +644,94 @@ mod tests {
         assert_eq!(counts, [1, 2]);
     }
 
+    fn setup_counting_steps() -> (GameSetup<i32>, Rc<Cell<u32>>, Rc<Cell<u32>>) {
+        let mut setup = GameSetup::<i32>::new();
+        let (fixed, frames) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+        let counter = fixed.clone();
+        setup.on_fixed_update(move |_| counter.set(counter.get() + 1));
+        let counter = frames.clone();
+        setup.on_update(move |_| counter.set(counter.get() + 1));
+        (setup, fixed, frames)
+    }
+
+    #[test]
+    fn fixed_steps_follow_game_time_whatever_the_frame_rate() {
+        let (mut setup, fixed, frames) = setup_counting_steps();
+        setup.set_fixed_rate(10.0);
+
+        for _ in 0..30 {
+            setup.advance(1.0 / 60.0, Vec::new());
+        }
+        assert!((4..=5).contains(&fixed.get()), "{}", fixed.get());
+        assert_eq!(frames.get(), 30);
+
+        let before = fixed.get();
+        setup.advance(0.5, Vec::new());
+        assert_eq!(fixed.get() - before, 5);
+    }
+
+    #[test]
+    fn commands_reach_callbacks_before_the_frames_updates() {
+        let mut setup = GameSetup::<i32>::new();
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let writer = log.clone();
+        setup.on_command(move |_, command| writer.borrow_mut().push(command));
+        let writer = log.clone();
+        setup.on_update(move |_| writer.borrow_mut().push(0));
+
+        setup.advance(0.0, vec![1, 2]);
+
+        assert_eq!(*log.borrow(), [1, 2, 0]);
+    }
+
+    #[test]
+    fn a_key_press_in_a_frame_without_a_fixed_step_reaches_the_next_step_once() {
+        let mut setup = GameSetup::<i32>::new();
+        setup.set_fixed_rate(10.0);
+        let seen = Rc::new(Cell::new(0));
+        let counter = seen.clone();
+        setup.on_fixed_update(move |context| {
+            if context.input.key_just_pressed(crate::Key::Space) {
+                counter.set(counter.get() + 1);
+            }
+        });
+
+        setup.apply_input(InputEvent::KeyDown(crate::Key::Space));
+        setup.advance(0.01, Vec::new());
+        assert_eq!(seen.get(), 0);
+        setup.advance(0.3, Vec::new());
+        assert_eq!(seen.get(), 1);
+    }
+
+    #[test]
+    fn interpolated_entities_draw_between_their_last_two_fixed_positions() {
+        let mut world = world_with_camera_at(Vec3::Z);
+        let at = |x: f32| Transform {
+            translation: Vec3::X * x,
+            ..Transform::default()
+        };
+        world.spawn((
+            at(2.0),
+            Interpolated {
+                previous: Some(at(0.0)),
+            },
+            Mesh::triangle(),
+        ));
+
+        let frame = extract_frame(&world, 100, 100, 0.25);
+
+        assert_eq!(frame.batches[0].instances[0].origin(), [0.5, 0.0, 0.0]);
+    }
+
     #[test]
     fn nothing_is_drawn_without_a_camera_or_a_size() {
         let mut world = World::new();
         world.spawn((Transform::default(), Mesh::triangle()));
-        assert!(extract_frame(&world, 100, 100).batches.is_empty());
+        assert!(extract_frame(&world, 100, 100, 1.0).batches.is_empty());
 
         let mut world = world_with_camera_at(Vec3::Z);
         world.spawn((Transform::default(), Mesh::triangle()));
-        assert!(extract_frame(&world, 0, 100).batches.is_empty());
+        assert!(extract_frame(&world, 0, 100, 1.0).batches.is_empty());
     }
 
     #[test]
@@ -484,7 +743,7 @@ mod tests {
         world.spawn((Transform::default(), Mesh::triangle()));
         world.spawn((Transform::default(),));
 
-        let mut counts: Vec<usize> = extract_frame(&world, 100, 100)
+        let mut counts: Vec<usize> = extract_frame(&world, 100, 100, 1.0)
             .batches
             .iter()
             .map(|batch| batch.instances.len())
@@ -514,7 +773,7 @@ mod tests {
             let mut world = world_with_camera_at(eye);
             world.spawn((Transform::default(), Mesh::triangle()));
 
-            let clip = extract_frame(&world, 100, 100)
+            let clip = extract_frame(&world, 100, 100, 1.0)
                 .view_projection
                 .project_point3(Vec3::ZERO);
 
@@ -527,7 +786,7 @@ mod tests {
         let height_at = |distance: f32| {
             let mut world = world_with_camera_at(Vec3::Z * distance);
             world.spawn((Transform::default(), Mesh::triangle()));
-            extract_frame(&world, 100, 100)
+            extract_frame(&world, 100, 100, 1.0)
                 .view_projection
                 .project_point3(Vec3::Y)
                 .y
