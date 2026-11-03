@@ -29,7 +29,7 @@ pub(crate) struct MeshData {
 
 /// How the surface of a [`Mesh`] reflects light, used as a component next to it.
 ///
-/// A mesh without one uses the default, a white non-metal of medium roughness.
+/// A mesh without one uses the default, a white non-metal of roughness 0.5.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Material {
     /// Linear RGB color, multiplied by the vertex colors.
@@ -188,7 +188,7 @@ impl Mesh {
         Self::new(vertices, indices)
     }
 
-    /// Creates a white square in the XZ plane, facing +Y, with one image across it.
+    /// Creates a white square with sides of `size` in the XZ plane, facing +Y, with one image across it.
     pub fn plane(size: f32) -> Self {
         let half = size / 2.0;
         let corner = |x: f32, z: f32, uv| Vertex {

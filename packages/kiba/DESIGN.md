@@ -193,7 +193,9 @@ because each callback owns its captures.
 
 ```rust
 use kiba::prelude::*;
+use whisker::css::PositionKind;
 use whisker::prelude::*;
+use whisker::runtime::view::Element;
 use whisker_asset::asset;
 
 #[derive(Clone, Copy)]
@@ -312,7 +314,22 @@ approval first.
 
 ## Phase results
 
-Results are added as each phase finishes.
+### P1
+
+**Built:** the fixed schedule, `Interpolated`, `Input`, `OrbitCamera`, `FlyCamera`, async `Model::load`
+for binary glTF, PBR with base color, metallic-roughness, and normal textures, frustum culling, an
+HDR target with tone mapping, and `FrameStats`.
+
+**Measured** with the example's `stress` feature at 1280x720 in Chrome on the development Mac: 10,000
+moving cubes (120,000 triangles, one draw call) hold 60 fps with about 3 ms of main-thread time, and
+about 5 ms under a 6x CPU throttle. The GPU cost on a mid-range phone is unknown.
+
+**API review:** an agent given only the docs wrote a 75-line game using 16 Kiba concepts, with one
+compile error, which came from this document's example. Fixed as a result: a crate-level guide with a
+table of component sets, documented defaults and sizes, `Context::drawn_transform` so a camera can
+follow an interpolated entity without jitter, and the missing import. Callbacks taking one `Context`
+drew no complaints. Shared state between callbacks was a trap found while writing the example: a
+captured `Copy` value silently forks, so the guide now directs state into components.
 
 ## Spikes to run first
 

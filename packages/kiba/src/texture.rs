@@ -9,6 +9,7 @@ pub(crate) struct TextureData {
 
 /// An image used by a [`Material`](crate::Material).
 ///
+/// It repeats outside the 0 to 1 range and blends smoothly between pixels and mip levels.
 /// Clones share one GPU copy, which is released after the last clone is dropped.
 #[derive(Clone, Debug)]
 pub struct Texture(Arc<TextureData>);

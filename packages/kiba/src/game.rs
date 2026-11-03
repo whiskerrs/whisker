@@ -62,7 +62,9 @@ impl Transform {
 
 /// Views the scene in perspective from its entity's [`Transform`], looking along -Z.
 ///
-/// Nothing is drawn without a camera, and only one is used if the world has several.
+/// Spawn it with a [`Transform`]. Nothing is drawn without a camera, and only one is used if the
+/// world has several. The default has a 60 degree field of view, planes at 0.1 and 1000, and
+/// exposure 1.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
     /// Field of view across the viewport's shorter side, in radians.
@@ -96,7 +98,9 @@ impl Camera {
 
 /// Lights the scene from one direction, as an entity of its own.
 ///
-/// Surfaces are black without a sun, and only one is used if the world has several.
+/// Spawn it alone, as `(Sun::default(),)`. Surfaces are black without a sun, and only one is used
+/// if the world has several. The default is warm white from the upper right behind the camera's
+/// default position, with a dim blue ambient.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sun {
     /// Direction the light travels, of any length.
@@ -134,7 +138,9 @@ impl Sun {
 
 /// Smooths an entity moved in `on_fixed_update` between fixed steps.
 ///
-/// Without it, motion visibly stutters when the display rate differs from the fixed rate.
+/// Add it next to the entity's [`Transform`]. The `Transform` keeps the latest fixed-step value,
+/// and only drawing blends it with the previous one. To follow such an entity from `on_update`,
+/// read [`Context::drawn_transform`], because its `Transform` would make the follower jitter.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Interpolated {
     previous: Option<Transform>,
@@ -197,6 +203,16 @@ pub struct Context<'a> {
     pub viewport: (u32, u32),
     /// Cost of the previous frame.
     pub stats: FrameStats,
+    alpha: f32,
+}
+
+impl Context<'_> {
+    /// Where `entity` will be drawn this frame, or `None` if it has no [`Transform`].
+    pub fn drawn_transform(&self, entity: hecs::Entity) -> Option<Transform> {
+        let transform = *self.world.get::<&Transform>(entity).ok()?;
+        let motion = self.world.get::<&Interpolated>(entity).ok();
+        Some(shown(&transform, motion.as_deref(), self.alpha))
+    }
 }
 
 type Callback = Box<dyn FnMut(&mut Context<'_>)>;
@@ -291,6 +307,7 @@ impl<C> GameSetup<C> {
                 input: &self.frame_input,
                 viewport,
                 stats,
+                alpha: 1.0,
             };
             if let Some(callback) = &mut self.on_command {
                 callback(&mut context, command);
@@ -317,11 +334,13 @@ impl<C> GameSetup<C> {
                     input: &self.fixed_input,
                     viewport,
                     stats,
+                    alpha: 1.0,
                 });
             }
             self.fixed_input.end_pass();
         }
 
+        let alpha = self.accumulator / self.fixed_delta;
         for callback in &mut self.on_update {
             callback(&mut Context {
                 world: &mut self.world,
@@ -329,11 +348,12 @@ impl<C> GameSetup<C> {
                 input: &self.frame_input,
                 viewport,
                 stats,
+                alpha,
             });
         }
         run_controllers(&mut self.world, &frame_time, &self.frame_input);
         self.frame_input.end_pass();
-        self.accumulator / self.fixed_delta
+        alpha
     }
 }
 
@@ -546,7 +566,7 @@ fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
 /// A running game, shown by passing it to [`Viewport`](crate::Viewport).
 ///
 /// This is a `Copy` key, so it moves freely into event handlers. `C` is the type of commands
-/// the UI sends with [`Game::send`].
+/// the UI sends with [`Game::send`]; write `Game::<()>::new` for a game without commands.
 pub struct Game<C: 'static = ()> {
     id: i64,
     _commands: PhantomData<fn(C)>,
