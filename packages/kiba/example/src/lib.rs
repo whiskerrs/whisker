@@ -121,6 +121,10 @@ pub fn app() -> Element {
         setup.world.spawn((Sun::default(),));
         setup.world.spawn((Sky::default(),));
         setup.world.spawn((ProbeVolume::load(whisker_asset::asset!("robot.kiba")),));
+        setup.world.spawn((
+            Transform::at(Vec3::new(0.0, 0.0, 0.0)),
+            ReflectionProbe::new(Vec3::new(8.0, 6.0, 8.0)),
+        ));
 
         let sphere = Mesh::sphere(0.22);
         for column in 0..5 {

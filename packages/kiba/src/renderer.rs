@@ -12,6 +12,7 @@ use crate::particles::{ParticleInstance, ParticlePass};
 use crate::post::{PostPasses, SizedTargets};
 use crate::probes::{self, ProbeVolume};
 use crate::quality::Quality;
+use crate::reflection::{Reflection, ReflectionTextures, face_view_projections};
 use crate::sky::{Fog, Sky, SkyRenderer};
 use crate::texture::{TextureData, mip_chain};
 use crate::{AlphaMode, Material, Mesh, Sun, Texture};
@@ -103,6 +104,7 @@ pub(crate) struct Effects {
     pub(crate) particles: Vec<ParticleInstance>,
     /// Point and spot lights, at most [`MAX_LIGHTS`].
     pub(crate) lights: Vec<LightUniform>,
+    pub(crate) reflection: Option<Reflection>,
 }
 
 const UPLOAD_BYTES_PER_FRAME: u64 = 8 * 1024 * 1024;
@@ -153,6 +155,11 @@ struct FrameUniform {
     shadow_params: Vec4,
     fog: Vec4,
     lights: [LightUniform; MAX_LIGHTS],
+    /// The reflection probe's box, with W at one when there is one.
+    reflection_min: Vec4,
+    reflection_max: Vec4,
+    /// Where the probe captured from, with W as the width over which it fades in at the box's edge.
+    reflection_center: Vec4,
 }
 
 impl From<&Frame> for FrameUniform {
@@ -192,6 +199,35 @@ impl From<&Frame> for FrameUniform {
             lights: std::array::from_fn(|i| {
                 frame.effects.lights.get(i).copied().unwrap_or_default()
             }),
+            reflection_min: frame
+                .effects
+                .reflection
+                .as_ref()
+                .map_or(Vec4::ZERO, |r| r.id.min().extend(1.0)),
+            reflection_max: frame
+                .effects
+                .reflection
+                .as_ref()
+                .map_or(Vec4::ZERO, |r| r.id.max().extend(0.0)),
+            reflection_center: frame.effects.reflection.as_ref().map_or(Vec4::ZERO, |r| {
+                r.id.center
+                    .extend((r.id.size.min_element() * REFLECTION_FADE).max(1e-3))
+            }),
+        }
+    }
+}
+
+// The share of a probe box's shortest side over which its reflection fades in.
+const REFLECTION_FADE: f32 = 0.1;
+
+impl FrameUniform {
+    /// What one capture layer of a reflection probe draws with: no exposure and no probe of its own.
+    fn capture(&self, view_projection: Mat4, center: Vec3) -> Self {
+        Self {
+            view_projection,
+            camera_position: center.extend(1.0),
+            reflection_min: Vec4::ZERO,
+            ..*self
         }
     }
 }
@@ -428,7 +464,9 @@ pub struct SceneRenderer {
     post: PostPasses,
     particles: ParticlePass,
     frame_uniform: wgpu::Buffer,
+    frame_stride: u64,
     frame_bindings: wgpu::BindGroup,
+    reflection: ReflectionTextures,
     sky: SkyRenderer,
     probes_layout: wgpu::BindGroupLayout,
     probes_bindings: wgpu::BindGroup,
@@ -483,8 +521,8 @@ impl SceneRenderer {
                     visibility: frame_visibility,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(size_of::<FrameUniform>() as u64),
                     },
                     count: None,
                 },
@@ -503,6 +541,7 @@ impl SceneRenderer {
                 fragment_entry(3, float_texture(wgpu::TextureViewDimension::Cube)),
                 fragment_entry(4, float_texture(wgpu::TextureViewDimension::Cube)),
                 fragment_entry(5, filtering),
+                fragment_entry(6, float_texture(wgpu::TextureViewDimension::Cube)),
             ],
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -772,12 +811,17 @@ impl SceneRenderer {
                 }],
             })
         });
+        let frame_stride = (size_of::<FrameUniform>() as u64).next_multiple_of(u64::from(
+            device.limits().min_uniform_buffer_offset_alignment,
+        ));
+        // The frame, then one slot for each layer of a reflection capture.
         let frame_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("kiba frame"),
-            size: size_of::<FrameUniform>() as u64,
+            size: frame_stride * 7,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let reflection = ReflectionTextures::new(device);
         let sky = SkyRenderer::new(device);
         let sky_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("kiba sky"),
@@ -792,7 +836,11 @@ impl SceneRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: frame_uniform.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &frame_uniform,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(size_of::<FrameUniform>() as u64),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -814,11 +862,17 @@ impl SceneRenderer {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(&sky_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&reflection.cube_view()),
+                },
             ],
         });
         Self {
             frame_uniform,
+            frame_stride,
             frame_bindings,
+            reflection,
             sky,
             shadow_pipelines,
             shadow_layers,
@@ -861,6 +915,11 @@ impl SceneRenderer {
         }
     }
 
+    /// Whether the frame must carry what to draw into reflection probe `id`.
+    pub(crate) fn needs_capture(&self, id: &crate::reflection::ReflectionId) -> bool {
+        self.reflection.captured != Some(*id)
+    }
+
     /// Bytes of meshes and textures held on the GPU.
     pub fn gpu_bytes(&self) -> u64 {
         let meshes = self.meshes.values().map(|mesh| mesh.bytes);
@@ -900,6 +959,21 @@ impl SceneRenderer {
         for batch in batches.iter().chain(casters.clone()) {
             self.prepare_material(device, queue, &batch.material, &mut upload_left);
         }
+        let capture = frame
+            .effects
+            .reflection
+            .as_ref()
+            .filter(|r| self.reflection.captured != Some(r.id))
+            .and_then(|r| r.faces.as_deref().map(|faces| (r.id, faces)));
+        let face_batches = capture.iter().flat_map(|(_, faces)| faces.iter().flatten());
+        for batch in face_batches.clone() {
+            if upload_left > 0 && !self.meshes.contains_key(&batch.mesh.key()) {
+                let mesh = GpuMesh::new(device, &batch.mesh);
+                upload_left = upload_left.saturating_sub(mesh.bytes);
+                self.meshes.insert(batch.mesh.key(), mesh);
+            }
+            self.prepare_material(device, queue, &batch.material, &mut upload_left);
+        }
         let joint_offsets = self.upload_joints(device, queue, frame);
         if let Some(volume) = frame.probes.as_ref().filter(|v| v.key() != self.probes_key) {
             let data = volume.data().expect("extraction keeps only loaded volumes");
@@ -919,9 +993,11 @@ impl SceneRenderer {
         }
         let targets = self.targets.as_ref().expect("allocated above");
 
+        let face_batches = capture.iter().flat_map(|(_, faces)| faces.iter().flatten());
         let instance_data: Vec<Instance> = batches
             .iter()
             .chain(casters)
+            .chain(face_batches)
             .flat_map(|batch| batch.instances.iter().copied())
             .collect();
         let bytes: &[u8] = bytemuck::cast_slice(&instance_data);
@@ -939,11 +1015,18 @@ impl SceneRenderer {
         }
         let instances = self.instances.as_ref().expect("allocated above");
         queue.write_buffer(instances, 0, bytes);
-        queue.write_buffer(
-            &self.frame_uniform,
-            0,
-            bytemuck::bytes_of(&FrameUniform::from(frame)),
-        );
+        let uniform = FrameUniform::from(frame);
+        queue.write_buffer(&self.frame_uniform, 0, bytemuck::bytes_of(&uniform));
+        if let Some((id, _)) = capture {
+            for (layer, view_projection) in face_view_projections(id.center).into_iter().enumerate()
+            {
+                queue.write_buffer(
+                    &self.frame_uniform,
+                    self.frame_stride * (layer as u64 + 1),
+                    bytemuck::bytes_of(&uniform.capture(view_projection, id.center)),
+                );
+            }
+        }
 
         self.sky.prepare(device, queue, frame);
         self.particles.prepare(
@@ -1013,6 +1096,56 @@ impl SceneRenderer {
                 next_instance = first;
             }
         }
+        if let Some((id, faces)) = capture {
+            let stride = size_of::<Instance>() as u64;
+            for (layer, batches) in faces.iter().enumerate() {
+                let (color, depth) = self.reflection.layer_targets(layer as u32);
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("kiba reflection capture"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &color,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(DEPTH_CLEAR),
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                let offset = (self.frame_stride * (layer as u64 + 1)) as u32;
+                pass.set_bind_group(0, &self.frame_bindings, &[offset]);
+                pass.set_bind_group(3, &self.probes_bindings, &[]);
+                for batch in batches {
+                    let count = batch.instances.len() as u64;
+                    let range = next_instance * stride..(next_instance + count) * stride;
+                    next_instance += count;
+                    self.draw_batch(
+                        &mut pass,
+                        batch,
+                        instances.slice(range),
+                        count,
+                        &joint_offsets,
+                    );
+                }
+            }
+            self.reflection.finish(
+                device,
+                &mut encoder,
+                &self.sky.radiance_view(),
+                frame.sky.is_some(),
+                frame.sun.ambient,
+            );
+            self.reflection.captured = Some(id);
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("kiba main"),
@@ -1039,7 +1172,7 @@ impl SceneRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_bind_group(0, &self.frame_bindings, &[]);
+            pass.set_bind_group(0, &self.frame_bindings, &[0]);
             pass.set_bind_group(3, &self.probes_bindings, &[]);
             let stride = size_of::<Instance>() as u64;
             let mut first = 0;
@@ -1067,7 +1200,7 @@ impl SceneRenderer {
             }
             if frame.sky.is_some() {
                 self.sky.draw(&mut pass);
-                pass.set_bind_group(0, &self.frame_bindings, &[]);
+                pass.set_bind_group(0, &self.frame_bindings, &[0]);
             }
             // Blending needs what is behind drawn first, so these go one at a time from the farthest.
             blended.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -1127,12 +1260,18 @@ impl SceneRenderer {
             .shadows
             .iter()
             .flat_map(|s| s.casters.iter().flatten());
+        let faces = frame
+            .effects
+            .reflection
+            .iter()
+            .flat_map(|r| r.faces.iter().flat_map(|faces| faces.iter().flatten()));
         let mut offsets = HashMap::new();
         let mut bytes = Vec::new();
         for palette in frame
             .batches
             .iter()
             .chain(casters)
+            .chain(faces)
             .filter_map(|b| b.palette.as_ref())
         {
             offsets.entry(palette.as_ptr() as usize).or_insert_with(|| {
@@ -1328,7 +1467,11 @@ impl Renderer {
         })
     }
 
-    /// Draws at the given physical size, reconfiguring the surface when it changed.
+    pub(crate) fn needs_capture(&self, id: &crate::reflection::ReflectionId) -> bool {
+        self.scene.needs_capture(id)
+    }
+
+    /// Bytes of meshes and textures held on the GPU.
     pub(crate) fn gpu_bytes(&self) -> u64 {
         self.scene.gpu_bytes()
     }
@@ -2212,6 +2355,56 @@ mod tests {
         };
         assert!(toward > 100, "{toward}");
         assert_eq!(shot(LightUniform::spot(&away, &spot)), 0);
+    }
+
+    #[test]
+    fn a_mirror_inside_a_reflection_probe_shows_its_surroundings_the_right_way_up() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        // Tilted so that the view, along -Z, reflects toward +X and a little up.
+        let normal = Vec3::new(1.0, 0.3, 1.0).normalize();
+        let mirror = quad(
+            Vec3::Z,
+            [1.0; 3],
+            Mat4::from_rotation_translation(
+                Quat::from_rotation_arc(Vec3::Z, normal),
+                Vec3::Z * 0.5,
+            ),
+            Material {
+                metallic: 1.0,
+                roughness: 0.0,
+                ..MATTE
+            },
+        );
+        let panel = |y: f32, emissive: Vec3| {
+            let facing_minus_x = Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2);
+            let transform = Mat4::from_translation(Vec3::new(3.0, y, 0.0)) * facing_minus_x;
+            quad(Vec3::Z, [1.0; 3], transform, Material { emissive, ..MATTE })
+        };
+        let surroundings = vec![
+            mirror.clone(),
+            panel(1.0, Vec3::new(2.0, 0.0, 0.0)),
+            panel(-1.0, Vec3::new(0.0, 0.0, 2.0)),
+        ];
+        let shot = |probe: bool| {
+            let mut frame = frame(DARK_SUN, vec![mirror.clone()]);
+            frame.effects.reflection = probe.then(|| Reflection {
+                id: crate::reflection::ReflectionId {
+                    entity: 1,
+                    revision: 0,
+                    center: Vec3::Z,
+                    size: Vec3::splat(10.0),
+                },
+                faces: Some(Box::new(std::array::from_fn(|_| surroundings.clone()))),
+            });
+            center_of(&device, &queue, &frame)
+        };
+
+        let without = shot(false);
+        let with = shot(true);
+        assert!(with[0] > without[0] + 60, "{with:?} {without:?}");
+        assert!(with[0] > with[2] * 2, "{with:?}");
     }
 
     #[test]

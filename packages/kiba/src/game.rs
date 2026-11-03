@@ -17,6 +17,7 @@ use crate::lights::{LightUniform, MAX_LIGHTS, PointLight, SpotLight};
 use crate::particles::{extract_particles, run_particles};
 use crate::probes::ProbeVolume;
 use crate::quality::{Governor, Quality, Tier};
+use crate::reflection::{Reflection, ReflectionId, ReflectionProbe, face_view_projections};
 use crate::renderer::{Batch, CASCADES, Effects, Frame, Instance, SHADOW_MAP_SIZE, Shadows};
 use crate::sky::{Fog, Sky};
 use crate::stream::run_streams;
@@ -525,6 +526,14 @@ impl<C: 'static> RunningGame for Registered<C> {
         let updated = Instant::now();
         setup.governor.update(real_delta);
         let mut frame = extract_frame(&setup.world, width, height, alpha);
+        if frame
+            .effects
+            .reflection
+            .as_ref()
+            .is_some_and(|r| target.renderer.needs_capture(&r.id))
+        {
+            add_capture(&mut frame, &setup.world, alpha);
+        }
         frame.effects.quality = setup.governor.quality(width, height);
         let extracted = Instant::now();
         target.renderer.render(width, height, &frame);
@@ -654,6 +663,80 @@ fn shown(transform: &Transform, motion: Option<&Interpolated>, alpha: f32) -> Tr
 /// A mesh, textures, pipeline, and joint palette, which entities must share to draw as one batch.
 type BatchKey = (usize, [usize; 4], (u8, bool), usize);
 
+/// Adds one instance to the batch that draws `mesh` with `batch_material`'s textures and pipeline.
+fn add_instance(
+    batches: &mut HashMap<BatchKey, Batch>,
+    mesh: &Mesh,
+    batch_material: &Material,
+    material: &Material,
+    transform: Mat4,
+    palette: Option<&Arc<[Mat4]>>,
+) {
+    // A posed mesh draws alone, because instances in a batch share their joint matrices.
+    let owner = palette.map_or(0, |palette| palette.as_ptr() as usize);
+    batches
+        .entry((
+            mesh.key(),
+            batch_material.texture_keys(),
+            batch_material.pipeline_key(),
+            owner,
+        ))
+        .or_insert_with(|| Batch {
+            mesh: mesh.clone(),
+            material: batch_material.clone(),
+            palette: palette.cloned(),
+            instances: Vec::new(),
+        })
+        .instances
+        .push(Instance::new(transform, material));
+}
+
+/// Calls `visit` for every mesh the world draws, with models choosing their detail by distance from `eye`.
+fn visit_drawn(
+    world: &World,
+    alpha: f32,
+    eye: Vec3,
+    mut visit: impl FnMut(&Mesh, Mat4, &Material, Option<&Arc<[Mat4]>>),
+) {
+    for (_, (transform, motion, mesh, material)) in world
+        .query::<(&Transform, Option<&Interpolated>, &Mesh, Option<&Material>)>()
+        .iter()
+    {
+        visit(
+            mesh,
+            shown(transform, motion, alpha).matrix(),
+            material.unwrap_or(&Material::default()),
+            None,
+        );
+    }
+    for (_, (transform, motion, model, animator)) in world
+        .query::<(&Transform, Option<&Interpolated>, &Model, Option<&Animator>)>()
+        .iter()
+    {
+        let matrix = shown(transform, motion, alpha).matrix();
+        let parts = model.parts();
+        let rig = model.data().and_then(|data| data.rig.as_ref());
+        let posed = rig
+            .filter(|_| animator.is_some() || parts.iter().any(|part| part.skin.is_some()))
+            .map(|rig| rig.posed(animator));
+        for part in parts {
+            let center = matrix * part.transform * part.mesh.data().bounds_center.extend(1.0);
+            let mesh = part.mesh_at(center.truncate().distance(eye));
+            let palette = posed
+                .as_ref()
+                .zip(part.skin)
+                .map(|(posed, skin)| &posed.palettes[skin]);
+            // Joint matrices already place a skinned mesh within the model.
+            let within = match (palette, &posed, part.node) {
+                (Some(_), _, _) => Mat4::IDENTITY,
+                (None, Some(posed), Some(node)) => posed.nodes[node],
+                _ => part.transform,
+            };
+            visit(mesh, matrix * within, &part.material, palette);
+        }
+    }
+}
+
 pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
     let sun = world
         .query::<&Sun>()
@@ -686,10 +769,11 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
         .as_ref()
         .map(|shadows| shadows.view_projections.each_ref().map(Frustum::new));
     let mut casters: [HashMap<BatchKey, Batch>; CASCADES] = Default::default();
-    let mut add =
-        |mesh: &Mesh, transform: Mat4, material: &Material, palette: Option<&Arc<[Mat4]>>| {
-            // A posed mesh draws alone, because instances in a batch share their joint matrices.
-            let owner = palette.map_or(0, |palette| palette.as_ptr() as usize);
+    visit_drawn(
+        world,
+        alpha,
+        eye.translation,
+        |mesh, transform, material, palette| {
             // Only a masked caster needs its textures, so the others share batches across materials.
             let caster = match material.alpha_mode {
                 AlphaMode::Blend => None,
@@ -705,79 +789,21 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
                     break;
                 };
                 if frustum.contains(mesh, &transform) {
-                    casters[cascade]
-                        .entry((
-                            mesh.key(),
-                            caster.texture_keys(),
-                            caster.pipeline_key(),
-                            owner,
-                        ))
-                        .or_insert_with(|| Batch {
-                            mesh: mesh.clone(),
-                            material: caster.clone(),
-                            palette: palette.cloned(),
-                            instances: Vec::new(),
-                        })
-                        .instances
-                        .push(Instance::new(transform, material));
+                    add_instance(
+                        &mut casters[cascade],
+                        mesh,
+                        caster,
+                        material,
+                        transform,
+                        palette,
+                    );
                 }
             }
-            if !frustum.contains(mesh, &transform) {
-                return;
+            if frustum.contains(mesh, &transform) {
+                add_instance(&mut batches, mesh, material, material, transform, palette);
             }
-            batches
-                .entry((
-                    mesh.key(),
-                    material.texture_keys(),
-                    material.pipeline_key(),
-                    owner,
-                ))
-                .or_insert_with(|| Batch {
-                    mesh: mesh.clone(),
-                    material: material.clone(),
-                    palette: palette.cloned(),
-                    instances: Vec::new(),
-                })
-                .instances
-                .push(Instance::new(transform, material));
-        };
-    for (_, (transform, motion, mesh, material)) in world
-        .query::<(&Transform, Option<&Interpolated>, &Mesh, Option<&Material>)>()
-        .iter()
-    {
-        add(
-            mesh,
-            shown(transform, motion, alpha).matrix(),
-            material.unwrap_or(&Material::default()),
-            None,
-        );
-    }
-    for (_, (transform, motion, model, animator)) in world
-        .query::<(&Transform, Option<&Interpolated>, &Model, Option<&Animator>)>()
-        .iter()
-    {
-        let matrix = shown(transform, motion, alpha).matrix();
-        let parts = model.parts();
-        let rig = model.data().and_then(|data| data.rig.as_ref());
-        let posed = rig
-            .filter(|_| animator.is_some() || parts.iter().any(|part| part.skin.is_some()))
-            .map(|rig| rig.posed(animator));
-        for part in parts {
-            let center = matrix * part.transform * part.mesh.data().bounds_center.extend(1.0);
-            let mesh = part.mesh_at(center.truncate().distance(eye.translation));
-            let palette = posed
-                .as_ref()
-                .zip(part.skin)
-                .map(|(posed, skin)| &posed.palettes[skin]);
-            // Joint matrices already place a skinned mesh within the model.
-            let within = match (palette, &posed, part.node) {
-                (Some(_), _, _) => Mat4::IDENTITY,
-                (None, Some(posed), Some(node)) => posed.nodes[node],
-                _ => part.transform,
-            };
-            add(mesh, matrix * within, &part.material, palette);
-        }
-    }
+        },
+    );
     Frame {
         view_projection,
         camera_position: eye.translation,
@@ -803,8 +829,55 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
             fog: world.query::<&Fog>().iter().next().map(|(_, fog)| *fog),
             particles: extract_particles(world),
             lights: extract_lights(world, &frustum, eye.translation, alpha),
+            reflection: world
+                .query::<(&Transform, &ReflectionProbe)>()
+                .iter()
+                .map(|(entity, (transform, probe))| ReflectionId {
+                    entity: entity.to_bits().get(),
+                    revision: probe.revision(),
+                    center: transform.translation,
+                    size: probe.size,
+                })
+                .find(|id| id.contains(eye.translation))
+                .map(|id| Reflection { id, faces: None }),
         },
     }
+}
+
+/// Gives `frame`'s reflection probe what to draw into each of its capture layers.
+pub(crate) fn add_capture(frame: &mut Frame, world: &World, alpha: f32) {
+    let Some(reflection) = frame.effects.reflection.as_mut() else {
+        return;
+    };
+    let center = reflection.id.center;
+    let frustums = face_view_projections(center).map(|vp| Frustum::new(&vp));
+    let mut faces: [HashMap<BatchKey, Batch>; 6] = Default::default();
+    visit_drawn(
+        world,
+        alpha,
+        center,
+        |mesh, transform, material, palette| {
+            // Blending needs sorting the capture does not do, and glass seen in a reflection is faint anyway.
+            if material.alpha_mode == AlphaMode::Blend {
+                return;
+            }
+            for (face, frustum) in frustums.iter().enumerate() {
+                if frustum.contains(mesh, &transform) {
+                    add_instance(
+                        &mut faces[face],
+                        mesh,
+                        material,
+                        material,
+                        transform,
+                        palette,
+                    );
+                }
+            }
+        },
+    );
+    reflection.faces = Some(Box::new(
+        faces.map(|batches| batches.into_values().collect()),
+    ));
 }
 
 fn extract_lights(world: &World, frustum: &Frustum, eye: Vec3, alpha: f32) -> Vec<LightUniform> {
@@ -982,6 +1055,40 @@ mod tests {
         assert_eq!(lights.len(), MAX_LIGHTS);
         assert_eq!(lights[0].center(), Vec3::Z * 5.0);
         assert!(lights.iter().all(|light| light.center().z < 50.0));
+    }
+
+    #[test]
+    fn the_frame_uses_the_reflection_probe_around_the_camera_and_captures_on_request() {
+        let mut world = world_with_camera_at(Vec3::Z * 10.0);
+        world.spawn((
+            Transform::at(Vec3::X * 50.0),
+            ReflectionProbe::new(Vec3::splat(4.0)),
+        ));
+        assert!(
+            extract_frame(&world, 100, 100, 1.0)
+                .effects
+                .reflection
+                .is_none()
+        );
+
+        world.spawn((
+            Transform::at(Vec3::Z * 9.0),
+            ReflectionProbe::new(Vec3::splat(4.0)),
+        ));
+        world.spawn((Transform::at(Vec3::Z * 9.0 + Vec3::X), Mesh::cube(0.5)));
+        let mut frame = extract_frame(&world, 100, 100, 1.0);
+        let reflection = frame
+            .effects
+            .reflection
+            .as_ref()
+            .expect("the camera is inside");
+        assert_eq!(reflection.id.center, Vec3::Z * 9.0);
+        assert!(reflection.faces.is_none());
+
+        add_capture(&mut frame, &world, 1.0);
+        let faces = frame.effects.reflection.unwrap().faces.unwrap();
+        let counts = faces.map(|batches| batches.len());
+        assert_eq!(counts, [1, 0, 0, 0, 0, 0]);
     }
 
     #[test]

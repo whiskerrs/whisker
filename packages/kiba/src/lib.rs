@@ -9,6 +9,7 @@
 //! | Direct light and shadows | `(Sun::default(),)` |
 //! | A lamp or torch, without shadows; the nearest 16 in view shade | `(Transform::at(position), PointLight::default())` |
 //! | A flashlight along -Z, without shadows | `(Transform::looking_at(position, target, Vec3::Y), SpotLight::default())` |
+//! | Reflections of a room or street on glossy surfaces inside it | `(Transform::at(center), ReflectionProbe::new(size))` |
 //! | A background and light from all around | `(Sky::default(),)`, or `Sky::from_sun(direction)` for a time of day |
 //! | Haze that hides the distance | `(Fog::default(),)` |
 //! | Fire, sparks, or magic | `(Transform::default(), ParticleEmitter::default())` |
@@ -121,6 +122,7 @@ mod physics;
 mod post;
 mod probes;
 mod quality;
+mod reflection;
 mod renderer;
 mod sky;
 mod stream;
@@ -154,6 +156,7 @@ pub use particles::ParticleEmitter;
 pub use physics::{BodyKind, Collider, Physics, RayHit, RigidBody};
 pub use probes::ProbeVolume;
 pub use quality::Tier;
+pub use reflection::ReflectionProbe;
 pub use renderer::{Frame, Renderer, SceneRenderer};
 #[doc(hidden)]
 pub use renderer::{log, placeholder_scene};
@@ -168,8 +171,9 @@ pub mod prelude {
     pub use crate::{
         AlphaMode, Animator, Camera, Context, Entity, FlyCamera, Fog, FrameStats, Game, GameSetup,
         Input, Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, ParticleEmitter,
-        Playback, PointLight, Pointer, ProbeVolume, Quat, Sky, Sound, SpotLight, StreamSettings,
-        Sun, Texture, Tier, Time, Transform, Vec2, Vec3, Vertex, Viewport, World, WorldStream,
+        Playback, PointLight, Pointer, ProbeVolume, Quat, ReflectionProbe, Sky, Sound, SpotLight,
+        StreamSettings, Sun, Texture, Tier, Time, Transform, Vec2, Vec3, Vertex, Viewport, World,
+        WorldStream,
     };
     #[cfg(feature = "physics")]
     pub use crate::{BodyKind, Collider, Physics, RayHit, RigidBody};

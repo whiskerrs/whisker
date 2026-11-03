@@ -20,6 +20,11 @@ struct Frame {
     // The color of the air, with W as its density.
     fog: vec4<f32>,
     lights: array<Light, 16>,
+    // The reflection probe's box, with W at one when there is one.
+    reflection_min: vec4<f32>,
+    reflection_max: vec4<f32>,
+    // Where the probe captured from, with W as the width over which it fades in at the box's edge.
+    reflection_center: vec4<f32>,
 }
 
 struct Light {
@@ -37,6 +42,7 @@ struct Light {
 @group(0) @binding(3) var sky_radiance: texture_cube<f32>;
 @group(0) @binding(4) var sky_irradiance: texture_cube<f32>;
 @group(0) @binding(5) var sky_sampler: sampler;
+@group(0) @binding(6) var reflection: texture_cube<f32>;
 @group(1) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(1) @binding(1) var metallic_roughness_texture: texture_2d<f32>;
 @group(1) @binding(2) var normal_texture: texture_2d<f32>;
@@ -169,15 +175,17 @@ fn lit(input: VertexOutput, front: bool, opacity: f32) -> vec3<f32> {
     for (var i = 0u; i < u32(frame.shadow_params.w); i++) {
         direct += local_light(surface, frame.lights[i], input.world_position);
     }
+    let mirrored = reflect(-to_camera, normal);
     var ambient_diffuse = frame.ambient.rgb;
     var ambient_reflected = frame.ambient.rgb;
     if frame.shadow_params.z != 0.0 {
         ambient_diffuse = textureSampleLevel(sky_irradiance, sky_sampler, normal, 0.0).rgb;
-        let mirrored = reflect(-to_camera, normal);
         ambient_reflected = textureSampleLevel(sky_radiance, sky_sampler, mirrored, roughness * SKY_LAST_MIP).rgb;
     }
+    let sky_reflected = ambient_reflected * sky_visibility(input.world_position, mirrored);
+    let reflected = probe_reflection(input.world_position, mirrored, roughness, sky_reflected);
     let ambient = diffuse * (ambient_diffuse * sky_visibility(input.world_position, normal) + bounce_light(input.world_position, normal))
-        + ambient_specular(reflectance, roughness, n_dot_v) * ambient_reflected * sky_visibility(input.world_position, reflect(-to_camera, normal));
+        + ambient_specular(reflectance, roughness, n_dot_v) * reflected;
     let glow = input.emissive * textureSample(emissive_texture, material_sampler, input.uv).rgb * opacity;
     let air = 1.0 - exp(-length(frame.camera_position.xyz - input.world_position) * frame.fog.w);
     return mix(direct + ambient + glow, frame.fog.rgb * opacity, air) * frame.camera_position.w;
@@ -254,6 +262,23 @@ fn sky_visibility(position: vec3<f32>, direction: vec3<f32>) -> f32 {
     // Fading out over the outermost probes keeps the edge of the box from showing on surfaces.
     let inward = min(uvw, 1.0 - uvw) / frame.probe_scale.xyz;
     return mix(1.0, visible, saturate(min(inward.x, min(inward.y, inward.z)) * frame.probe_min.w));
+}
+
+// Inside the probe's box, the surroundings it captured replace `outside`.
+fn probe_reflection(position: vec3<f32>, mirrored: vec3<f32>, roughness: f32, outside: vec3<f32>) -> vec3<f32> {
+    let low = frame.reflection_min.xyz;
+    let high = frame.reflection_max.xyz;
+    if frame.reflection_min.w == 0.0 || any(position < low) || any(position > high) {
+        return outside;
+    }
+    // Looking up where the ray leaves the box, rather than its direction alone, keeps near walls in place.
+    let leave = max((high - position) / mirrored, (low - position) / mirrored);
+    let reach = min(leave.x, min(leave.y, leave.z));
+    let toward = position + mirrored * reach - frame.reflection_center.xyz;
+    let captured = textureSampleLevel(reflection, sky_sampler, toward, roughness * SKY_LAST_MIP).rgb;
+    let inward = min(position - low, high - position);
+    let fade = saturate(min(inward.x, min(inward.y, inward.z)) / frame.reflection_center.w);
+    return mix(outside, captured, fade);
 }
 
 // Lights what blocks the sky from above, by the sun and sky, and returns it in that surface's color,
