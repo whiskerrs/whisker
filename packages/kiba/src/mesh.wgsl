@@ -17,6 +17,8 @@ struct Frame {
     probe_scale: vec4<f32>,
     // Split distance, then one when shadows are on, then one when a sky lights the scene.
     shadow_params: vec4<f32>,
+    // The color of the air, with W as its density.
+    fog: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -133,7 +135,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
     let ambient = diffuse * ambient_diffuse * sky_visibility(input.world_position, normal)
         + ambient_specular(reflectance, roughness, n_dot_v) * ambient_reflected * sky_visibility(input.world_position, reflect(-to_camera, normal));
-    return vec4<f32>((sun + ambient) * frame.camera_position.w, 1.0);
+    let air = 1.0 - exp(-length(frame.camera_position.xyz - input.world_position) * frame.fog.w);
+    return vec4<f32>(mix(sun + ambient, frame.fog.rgb, air) * frame.camera_position.w, 1.0);
 }
 
 // Derives the tangent frame from screen derivatives, so meshes need no tangent attribute.

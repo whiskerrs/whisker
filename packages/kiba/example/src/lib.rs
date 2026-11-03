@@ -65,6 +65,7 @@ fn soak(setup: &mut GameSetup<Command>) {
         .spawn((Camera::default(), Transform::default()));
     setup.world.spawn((Sun::default(),));
     setup.world.spawn((Sky::default(),));
+    setup.world.spawn((Fog::default(),));
     let stream = setup.world.spawn((WorldStream::load(
         "/world/index.kiba",
         StreamSettings::default(),
@@ -176,6 +177,13 @@ pub fn app() -> Element {
             },
             Transform::default(),
             Model::load(whisker_asset::asset!("robot.glb")),
+        ));
+        setup.world.spawn((
+            Transform {
+                translation: Vec3::new(1.4, -0.85, 0.4),
+                ..Transform::default()
+            },
+            ParticleEmitter::default(),
         ));
         setup.world.spawn((
             Orbit { angle: 0.0 },

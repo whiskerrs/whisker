@@ -66,7 +66,8 @@ struct Manifest {
 ///
 /// Cook the world with `kiba-cook world`, and keep its directory together. Point at its
 /// `index.kiba`. Cells appear as entities with a [`Model`], and go again once they are out of reach.
-/// Only one stream is used if the world has several.
+/// Only one stream is used if the world has several. Cells have no colliders, so a game with physics
+/// spawns its own ground.
 #[derive(Debug)]
 pub struct WorldStream {
     settings: StreamSettings,

@@ -7,8 +7,11 @@ use wgpu::util::DeviceExt;
 
 use crate::animation::MAX_JOINTS;
 use crate::mesh::{MeshData, SkinVertex, Vertex};
+use crate::particles::{ParticleInstance, ParticlePass};
+use crate::post::{PostPasses, SizedTargets};
 use crate::probes::{self, ProbeVolume};
-use crate::sky::{Sky, SkyRenderer};
+use crate::quality::Quality;
+use crate::sky::{Fog, Sky, SkyRenderer};
 use crate::texture::{TextureData, mip_chain};
 use crate::{Material, Mesh, Sun, Texture};
 
@@ -72,6 +75,18 @@ pub struct Frame {
     pub(crate) probes: Option<ProbeVolume>,
     pub(crate) shadows: Option<Shadows>,
     pub(crate) batches: Vec<Batch>,
+    pub(crate) effects: Effects,
+}
+
+/// What a frame needs beyond its opaque surfaces.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Effects {
+    pub(crate) quality: Quality,
+    pub(crate) projection: Mat4,
+    pub(crate) camera_right: Vec3,
+    pub(crate) camera_up: Vec3,
+    pub(crate) fog: Option<Fog>,
+    pub(crate) particles: Vec<ParticleInstance>,
 }
 
 const UPLOAD_BYTES_PER_FRAME: u64 = 8 * 1024 * 1024;
@@ -104,6 +119,7 @@ pub fn placeholder_scene() -> Frame {
             material: Material::default(),
             instances: vec![Instance::new(Mat4::IDENTITY, &Material::default())],
         }],
+        effects: Effects::default(),
     }
 }
 
@@ -119,6 +135,7 @@ struct FrameUniform {
     probe_min: Vec4,
     probe_scale: Vec4,
     shadow_params: Vec4,
+    fog: Vec4,
 }
 
 impl From<&Frame> for FrameUniform {
@@ -151,6 +168,10 @@ impl From<&Frame> for FrameUniform {
                 f32::from(u8::from(frame.sky.is_some())),
                 0.0,
             ),
+            fog: frame
+                .effects
+                .fog
+                .map_or(Vec4::ZERO, |fog| fog.color.extend(fog.density)),
         }
     }
 }
@@ -283,63 +304,6 @@ struct GpuMaterial {
     bindings: wgpu::BindGroup,
 }
 
-struct SizedTargets {
-    size: (u32, u32),
-    depth: wgpu::TextureView,
-    hdr: wgpu::TextureView,
-    post_bindings: wgpu::BindGroup,
-}
-
-impl SizedTargets {
-    fn new(device: &wgpu::Device, post_layout: &wgpu::BindGroupLayout, size: (u32, u32)) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("kiba depth"),
-            size: wgpu::Extent3d {
-                width: size.0,
-                height: size.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let hdr = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("kiba hdr"),
-                size: wgpu::Extent3d {
-                    width: size.0,
-                    height: size.1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: HDR_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&Default::default());
-        let post_bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("kiba post"),
-            layout: post_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&hdr),
-            }],
-        });
-        Self {
-            size,
-            depth: texture.create_view(&Default::default()),
-            hdr,
-            post_bindings,
-        }
-    }
-}
-
 fn probes_binding(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -394,8 +358,8 @@ pub(crate) fn volume_view(
 pub struct SceneRenderer {
     pipeline: wgpu::RenderPipeline,
     skinned_pipeline: wgpu::RenderPipeline,
-    post_pipeline: wgpu::RenderPipeline,
-    post_layout: wgpu::BindGroupLayout,
+    post: PostPasses,
+    particles: ParticlePass,
     frame_uniform: wgpu::Buffer,
     frame_bindings: wgpu::BindGroup,
     sky: SkyRenderer,
@@ -422,9 +386,6 @@ pub struct SceneRenderer {
 impl SceneRenderer {
     /// Prepares the pipeline for targets of `format`.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        // Encoding in the shader gives the same output on backends without an sRGB surface format.
-        let encode_srgb = !format.is_srgb();
-        let constants = [("ENCODE_SRGB", f64::from(u8::from(encode_srgb)))];
         let instance_attributes = wgpu::vertex_attr_array![
             4 => Float32x4,
             5 => Float32x4,
@@ -696,31 +657,6 @@ impl SceneRenderer {
                 }],
             })
         });
-        let post_shader = device.create_shader_module(wgpu::include_wgsl!("post.wgsl"));
-        let post_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("kiba post"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &post_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &post_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &constants,
-                    ..Default::default()
-                },
-                targets: &[Some(format.into())],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview: None,
-            cache: None,
-        });
         let frame_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("kiba frame"),
             size: size_of::<FrameUniform>() as u64,
@@ -805,8 +741,8 @@ impl SceneRenderer {
             materials: HashMap::new(),
             instances: None,
             targets: None,
-            post_layout: post_pipeline.get_bind_group_layout(0),
-            post_pipeline,
+            post: PostPasses::new(device, solid_view(device, queue, false, [255; 4]), format),
+            particles: ParticlePass::new(device),
             pipeline,
         }
     }
@@ -857,12 +793,15 @@ impl SceneRenderer {
             self.probes_bindings = probes_binding(device, &self.probes_layout, &view);
             self.probes_key = volume.key();
         }
+        let quality = frame.effects.quality;
+        let scaled = |side: u32| ((side as f32 * quality.render_scale).round() as u32).max(1);
+        let internal_size = (scaled(size.0), scaled(size.1));
         if self
             .targets
             .as_ref()
-            .is_none_or(|targets| targets.size != size)
+            .is_none_or(|targets| !targets.matches(internal_size, &quality))
         {
-            self.targets = Some(SizedTargets::new(device, &self.post_layout, size));
+            self.targets = Some(self.post.targets(device, internal_size, &quality));
         }
         let targets = self.targets.as_ref().expect("allocated above");
 
@@ -893,6 +832,13 @@ impl SceneRenderer {
         );
 
         self.sky.prepare(device, queue, frame);
+        self.particles.prepare(
+            device,
+            queue,
+            frame.view_projection,
+            (frame.effects.camera_right, frame.effects.camera_up),
+            &frame.effects.particles,
+        );
 
         let mut encoder = device.create_command_encoder(&Default::default());
         let mut next_instance: u64 = batches.iter().map(|b| b.instances.len() as u64).sum();
@@ -961,7 +907,11 @@ impl SceneRenderer {
                     view: &targets.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(DEPTH_CLEAR),
-                        store: wgpu::StoreOp::Discard,
+                        store: if targets.keeps_depth() {
+                            wgpu::StoreOp::Store
+                        } else {
+                            wgpu::StoreOp::Discard
+                        },
                     }),
                     stencil_ops: None,
                 }),
@@ -1003,26 +953,17 @@ impl SceneRenderer {
             if frame.sky.is_some() {
                 self.sky.draw(&mut pass);
             }
+            self.particles
+                .draw(&mut pass, frame.effects.particles.len());
         }
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("kiba post"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.post_pipeline);
-            pass.set_bind_group(0, &targets.post_bindings, &[]);
-            pass.draw(0..3, 0..1);
-        }
+        self.post.encode(
+            &mut encoder,
+            queue,
+            targets,
+            (target, size),
+            &quality,
+            frame.effects.projection,
+        );
         queue.submit([encoder.finish()]);
     }
 
@@ -1429,6 +1370,7 @@ mod tests {
             probes: None,
             shadows: None,
             batches,
+            effects: Effects::default(),
         }
     }
 
@@ -2035,5 +1977,145 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 3] {
+        let at = (y * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT + x * 4) as usize;
+        [pixels[at], pixels[at + 1], pixels[at + 2]]
+    }
+
+    fn with_quality(mut frame: Frame, quality: Quality) -> Frame {
+        frame.effects.quality = quality;
+        frame
+    }
+
+    fn rendered(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<u8> {
+        render_to_pixels(device, queue, wgpu::TextureFormat::Rgba8Unorm, frame)
+    }
+
+    #[test]
+    fn a_lower_internal_resolution_keeps_the_image_in_place() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let small = quad(
+            Vec3::Z,
+            [0.6; 3],
+            Mat4::from_scale(Vec3::splat(0.5)),
+            Material::default(),
+        );
+        let scene = frame(Sun::UNLIT, vec![small]);
+        let half = Quality {
+            render_scale: 0.5,
+            ..Quality::default()
+        };
+        let full = rendered(&device, &queue, &scene);
+        let scaled = rendered(&device, &queue, &with_quality(scene, half));
+        for (x, y) in [(32, 32), (20, 20), (4, 4), (60, 32)] {
+            let difference = pixel(&full, x, y)[0].abs_diff(pixel(&scaled, x, y)[0]);
+            assert!(difference < 8, "({x}, {y}) differs by {difference}");
+        }
+    }
+
+    #[test]
+    fn bloom_spreads_only_light_brighter_than_white() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let spot = |brightness| {
+            frame(
+                Sun::UNLIT,
+                vec![quad(
+                    Vec3::Z,
+                    [brightness; 3],
+                    Mat4::from_scale(Vec3::splat(0.15)),
+                    Material::default(),
+                )],
+            )
+        };
+        let glow = Quality {
+            bloom: 0.2,
+            ..Quality::default()
+        };
+        let beside = |frame| pixel(&rendered(&device, &queue, &frame), 32, 44)[0];
+        let background = beside(spot(40.0));
+        assert!(beside(with_quality(spot(40.0), glow)) > background + 5);
+        assert_eq!(beside(with_quality(spot(0.9), glow)), background);
+    }
+
+    #[test]
+    fn particles_add_light_unless_something_is_in_front() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let sparks = |depth| {
+            let mut frame = frame(DARK_SUN, vec![solid_quad([1.0; 3], 0.5)]);
+            frame.effects.camera_right = Vec3::X;
+            frame.effects.camera_up = Vec3::Y;
+            frame.effects.particles = vec![ParticleInstance {
+                center: [0.0, 0.0, depth],
+                size: 0.5,
+                color: [4.0, 4.0, 4.0, 1.0],
+            }];
+            center_of(&device, &queue, &frame)[0]
+        };
+        assert!(sparks(0.8) > 100);
+        assert_eq!(sparks(0.2), 0);
+    }
+
+    #[test]
+    fn fog_takes_over_with_distance() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let fogged = |density| {
+            let mut frame = frame(Sun::UNLIT, vec![surface(MATTE)]);
+            frame.effects.fog = Some(Fog {
+                color: Vec3::new(1.0, 0.0, 0.0),
+                density,
+            });
+            center_of(&device, &queue, &frame)
+        };
+        let clear = fogged(0.0);
+        assert_eq!(clear[0], clear[1]);
+        let thick = fogged(10.0);
+        assert!(thick[0] > 100 && thick[1] < 5, "{thick:?}");
+    }
+
+    #[test]
+    fn ambient_occlusion_darkens_creases_and_leaves_open_ground() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let wall = quad(
+            Vec3::Z,
+            [0.5; 3],
+            Mat4::from_translation(Vec3::new(-0.5, 0.0, 0.5)) * Mat4::from_scale(Vec3::splat(0.5)),
+            Material::default(),
+        );
+        let ground = quad(
+            Vec3::Z,
+            [0.5; 3],
+            Mat4::from_translation(Vec3::Z * 0.2),
+            Material::default(),
+        );
+        let scene = frame(Sun::UNLIT, vec![wall, ground]);
+        let occluded = Quality {
+            ambient_occlusion: 1.0,
+            ..Quality::default()
+        };
+        let plain = rendered(&device, &queue, &scene);
+        let shaded = rendered(&device, &queue, &with_quality(scene, occluded));
+        let crease = (36, 32);
+        let open = (60, 60);
+        assert!(
+            pixel(&shaded, crease.0, crease.1)[0] + 10 < pixel(&plain, crease.0, crease.1)[0],
+            "{:?} vs {:?}",
+            pixel(&shaded, crease.0, crease.1),
+            pixel(&plain, crease.0, crease.1)
+        );
+        let open_difference =
+            pixel(&shaded, open.0, open.1)[0].abs_diff(pixel(&plain, open.0, open.1)[0]);
+        assert!(open_difference < 4, "{open_difference}");
     }
 }

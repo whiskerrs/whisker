@@ -7,7 +7,9 @@
 //! |---|---|
 //! | A view | `(Camera::default(), Transform::looking_at(eye, target, Vec3::Y))` |
 //! | Direct light and shadows | `(Sun::default(),)` |
-//! | A background and light from all around | `(Sky::default(),)` |
+//! | A background and light from all around | `(Sky::default(),)`, or `Sky::from_sun(direction)` for a time of day |
+//! | Haze that hides the distance | `(Fog::default(),)` |
+//! | Fire, sparks, or magic | `(Transform::default(), ParticleEmitter::default())` |
 //! | A shape | `(Transform::default(), Mesh::cube(1.0), Material::default())` |
 //! | A file | `(Transform::default(), Model::load(asset!("crate.glb")))` |
 //! | Sky light blocked by still models | `(ProbeVolume::load(asset!("scene.kiba")),)`, cooked with `kiba-cook` |
@@ -50,6 +52,10 @@
 //! ```
 //!
 //! The camera looks along -Z, with +Y up and +X to its right.
+//!
+//! Rendering quality adapts by itself: a game starts at [`Tier::T2`] and lowers resolution, then the
+//! tier, while frames take too long. [`FrameStats`] shows where it settled, and
+//! [`GameSetup::set_tier`] or [`Context::set_tier`] fixes the tier.
 //!
 //! # Recipes
 //!
@@ -105,9 +111,12 @@ mod input;
 mod mesh;
 mod model;
 mod pack;
+mod particles;
 #[cfg(feature = "physics")]
 mod physics;
+mod post;
 mod probes;
+mod quality;
 mod renderer;
 mod sky;
 mod stream;
@@ -135,13 +144,15 @@ pub use mesh::{Material, Mesh, Vertex};
 #[cfg(feature = "gltf")]
 pub use model::ModelError;
 pub use model::{LoadState, Model};
+pub use particles::ParticleEmitter;
 #[cfg(feature = "physics")]
 pub use physics::{BodyKind, Collider, Physics, RayHit, RigidBody};
 pub use probes::ProbeVolume;
+pub use quality::Tier;
 pub use renderer::{Frame, Renderer, SceneRenderer};
 #[doc(hidden)]
 pub use renderer::{log, placeholder_scene};
-pub use sky::Sky;
+pub use sky::{Fog, Sky};
 pub use stream::{StreamSettings, WorldStream};
 pub use texture::Texture;
 #[doc(hidden)]
@@ -150,10 +161,10 @@ pub use wgpu;
 /// Commonly used items.
 pub mod prelude {
     pub use crate::{
-        Animator, Camera, Context, Entity, FlyCamera, FrameStats, Game, GameSetup, Input,
-        Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, Playback, Pointer,
-        ProbeVolume, Quat, Sky, Sound, StreamSettings, Sun, Texture, Time, Transform, Vec2, Vec3,
-        Vertex, Viewport, World, WorldStream,
+        Animator, Camera, Context, Entity, FlyCamera, Fog, FrameStats, Game, GameSetup, Input,
+        Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, ParticleEmitter,
+        Playback, Pointer, ProbeVolume, Quat, Sky, Sound, StreamSettings, Sun, Texture, Tier, Time,
+        Transform, Vec2, Vec3, Vertex, Viewport, World, WorldStream,
     };
     #[cfg(feature = "physics")]
     pub use crate::{BodyKind, Collider, Physics, RayHit, RigidBody};

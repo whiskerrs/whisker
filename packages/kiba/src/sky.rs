@@ -10,7 +10,8 @@ const IRRADIANCE_SIDE: u32 = 16;
 /// Colors the background and lights every surface from all around, used alone as `(Sky::default(),)`.
 ///
 /// It replaces [`Sun::ambient`](crate::Sun::ambient), and the sun's disk appears in it. Changing one
-/// recalculates its lighting, so avoid changing it every frame.
+/// recalculates its lighting, so avoid changing it every frame; a day cycle that updates it once a second
+/// looks smooth.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sky {
     /// Linear RGB straight up.
@@ -28,6 +29,50 @@ impl Default for Sky {
             zenith: Vec3::new(0.12, 0.28, 0.65),
             horizon: Vec3::new(0.65, 0.78, 0.95),
             ground: Vec3::new(0.2, 0.18, 0.16),
+        }
+    }
+}
+
+impl Sky {
+    /// The colors of a clear sky with the sun heading along `direction`, from noon through dusk to night.
+    pub fn from_sun(direction: Vec3) -> Self {
+        let noon = Self::default();
+        let height = -direction.normalize_or_zero().y;
+        let night = Vec3::new(0.004, 0.006, 0.015);
+        let daylight = smoothstep(-0.05, 0.3, height);
+        let dusk = smoothstep(-0.15, 0.02, height);
+        let glow = night.lerp(Vec3::new(1.0, 0.42, 0.18), dusk);
+        Self {
+            zenith: night.lerp(noon.zenith, daylight),
+            horizon: glow.lerp(noon.horizon, daylight),
+            ground: (night * 0.5).lerp(noon.ground, daylight),
+        }
+    }
+}
+
+fn smoothstep(from: f32, to: f32, value: f32) -> f32 {
+    let t = ((value - from) / (to - from)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Fades distant surfaces into the air, used alone as `(Fog::default(),)`.
+///
+/// Set `color` near [`Sky::horizon`] so that far surfaces meet the sky without an edge, and copy it again
+/// whenever the sky changes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fog {
+    /// Linear RGB of the air.
+    pub color: Vec3,
+    /// How thick the air is. About 3 divided by this is the distance where surfaces are nearly gone.
+    pub density: f32,
+}
+
+impl Default for Fog {
+    /// A light haze that hides surfaces at about 1.5 km, in the color of the default sky.
+    fn default() -> Self {
+        Self {
+            color: Sky::default().horizon,
+            density: 0.002,
         }
     }
 }
@@ -241,5 +286,24 @@ impl SkyRenderer {
         }
         face_pass(&self.irradiance, 0, -1.0);
         queue.submit([encoder.finish()]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_sky_follows_the_sun_from_noon_to_night() {
+        let noon = Sky::from_sun(Vec3::NEG_Y);
+        let dusk = Sky::from_sun(Vec3::new(1.0, -0.02, 0.0));
+        let night = Sky::from_sun(Vec3::new(1.0, 0.5, 0.0));
+        assert_eq!(noon, Sky::default());
+        assert!(
+            dusk.horizon.x > dusk.horizon.z,
+            "dusk glows red: {:?}",
+            dusk.horizon
+        );
+        assert!(night.zenith.length() < 0.05 && night.horizon.length() < 0.05);
     }
 }

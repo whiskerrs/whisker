@@ -175,6 +175,8 @@ fn pose(transform: &Transform) -> rapier::Isometry<f32> {
 
 impl Physics {
     /// Finds the nearest collider along a ray, as of the last step, within `longest` direction lengths.
+    ///
+    /// A ray that starts inside a collider hits that collider, so start it outside the player's own.
     pub fn raycast(&self, origin: Vec3, direction: Vec3, longest: f32) -> Option<RayHit> {
         let ray = rapier::Ray::new(
             na::Point3::new(origin.x, origin.y, origin.z),

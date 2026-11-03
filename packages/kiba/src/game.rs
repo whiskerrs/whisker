@@ -13,9 +13,11 @@ use crate::animation::{Animator, run_animators};
 use crate::audio::{resume_audio, set_listener};
 use crate::controller::run_controllers;
 use crate::input::{InputEvent, Key};
+use crate::particles::{extract_particles, run_particles};
 use crate::probes::ProbeVolume;
-use crate::renderer::{Batch, CASCADES, Frame, Instance, SHADOW_MAP_SIZE, Shadows};
-use crate::sky::Sky;
+use crate::quality::{Governor, Quality, Tier};
+use crate::renderer::{Batch, CASCADES, Effects, Frame, Instance, SHADOW_MAP_SIZE, Shadows};
+use crate::sky::{Fog, Sky};
 use crate::stream::run_streams;
 use crate::{Input, Material, Mesh, Model, Renderer};
 
@@ -44,6 +46,14 @@ impl Default for Transform {
 }
 
 impl Transform {
+    /// Places an entity at `translation`, unturned and unscaled.
+    pub fn at(translation: Vec3) -> Self {
+        Self {
+            translation,
+            ..Self::default()
+        }
+    }
+
     /// Places an entity at `eye` with its -Z axis facing `target`. `up` must not point along that axis.
     pub fn looking_at(eye: Vec3, target: Vec3, up: Vec3) -> Self {
         Self {
@@ -202,6 +212,10 @@ pub struct FrameStats {
     pub triangles: u64,
     /// Bytes of meshes and textures held on the GPU.
     pub gpu_bytes: u64,
+    /// The rendering features in use.
+    pub tier: Tier,
+    /// Internal resolution as a fraction of the viewport.
+    pub render_scale: f32,
 }
 
 /// What a callback can see and change.
@@ -217,6 +231,7 @@ pub struct Context<'a> {
     /// Cost of the previous frame.
     pub stats: FrameStats,
     alpha: f32,
+    governor: &'a mut Governor,
 }
 
 impl Context<'_> {
@@ -225,6 +240,11 @@ impl Context<'_> {
         let transform = *self.world.get::<&Transform>(entity).ok()?;
         let motion = self.world.get::<&Interpolated>(entity).ok();
         Some(shown(&transform, motion.as_deref(), self.alpha))
+    }
+
+    /// Keeps the game at one [`Tier`] from the next frame on, as [`GameSetup::set_tier`] does.
+    pub fn set_tier(&mut self, tier: Tier) {
+        self.governor.lock(tier);
     }
 }
 
@@ -249,6 +269,7 @@ pub struct GameSetup<C> {
     fixed_input: Input,
     viewport: (u32, u32),
     stats: FrameStats,
+    governor: Governor,
 }
 
 impl<C> GameSetup<C> {
@@ -266,7 +287,18 @@ impl<C> GameSetup<C> {
             fixed_input: Input::default(),
             viewport: (0, 0),
             stats: FrameStats::default(),
+            governor: Governor::default(),
         }
+    }
+
+    /// Keeps the game at one [`Tier`] from the start, for a known device. [`Context::set_tier`] does the
+    /// same from a callback, such as a settings menu's command.
+    ///
+    /// Without this, the game starts at the top tier and steps down when frames take too long. It
+    /// never climbs back, because a brief quiet moment says little about the next busy one.
+    /// Internal resolution keeps adapting either way.
+    pub fn set_tier(&mut self, tier: Tier) {
+        self.governor.lock(tier);
     }
 
     /// Sets the callback for commands sent with [`Game::send`], which runs before the frame's
@@ -337,6 +369,7 @@ impl<C> GameSetup<C> {
                 viewport,
                 stats,
                 alpha: 1.0,
+                governor: &mut self.governor,
             };
             if let Some(callback) = &mut self.on_command {
                 callback(&mut context, command);
@@ -364,6 +397,7 @@ impl<C> GameSetup<C> {
                     viewport,
                     stats,
                     alpha: 1.0,
+                    governor: &mut self.governor,
                 });
             }
             #[cfg(feature = "physics")]
@@ -380,9 +414,11 @@ impl<C> GameSetup<C> {
                 viewport,
                 stats,
                 alpha,
+                governor: &mut self.governor,
             });
         }
         run_animators(&mut self.world, frame_time.delta_seconds());
+        run_particles(&mut self.world, frame_time.delta_seconds());
         run_streams(&mut self.world);
         if let Some((_, (eye, _))) = self
             .world
@@ -471,9 +507,11 @@ impl<C: 'static> RunningGame for Registered<C> {
         };
 
         let now = Instant::now();
-        let delta_seconds = state.last_frame.replace(Some(now)).map_or(0.0, |last| {
-            (now - last).as_secs_f32().min(MAX_DELTA_SECONDS)
-        });
+        let real_delta = state
+            .last_frame
+            .replace(Some(now))
+            .map_or(0.0, |last| (now - last).as_secs_f32());
+        let delta_seconds = real_delta.min(MAX_DELTA_SECONDS);
         let commands = state.commands.take();
         let mut setup = state.setup.borrow_mut();
         for event in state.input.take() {
@@ -484,7 +522,9 @@ impl<C: 'static> RunningGame for Registered<C> {
         let alpha = setup.advance(delta_seconds, commands);
 
         let updated = Instant::now();
-        let frame = extract_frame(&setup.world, width, height, alpha);
+        setup.governor.update(real_delta);
+        let mut frame = extract_frame(&setup.world, width, height, alpha);
+        frame.effects.quality = setup.governor.quality(width, height);
         let extracted = Instant::now();
         target.renderer.render(width, height, &frame);
         let rendered = Instant::now();
@@ -502,6 +542,8 @@ impl<C: 'static> RunningGame for Registered<C> {
             draw_calls: drawn().count() as u32,
             instances: drawn().map(|b| b.instances.len() as u32).sum(),
             gpu_bytes: 0,
+            tier: setup.governor.tier(),
+            render_scale: frame.effects.quality.render_scale,
             triangles: drawn()
                 .map(|b| b.instances.len() as u64 * b.mesh.data().indices.len() as u64 / 3)
                 .sum(),
@@ -622,11 +664,13 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
             probes: None,
             shadows: None,
             batches: Vec::new(),
+            effects: Effects::default(),
         };
     };
     let eye = shown(eye, eye_motion, alpha);
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
-    let view_projection = camera.projection(width as f32 / height as f32) * view;
+    let projection = camera.projection(width as f32 / height as f32);
+    let view_projection = projection * view;
     let mut batches = HashMap::<(usize, [usize; 3], usize), Batch>::new();
     let frustum = Frustum::new(&view_projection);
     let shadows = cascades(&eye, camera, width as f32 / height as f32, &sun);
@@ -721,6 +765,14 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
             ..shadows
         }),
         batches: batches.into_values().collect(),
+        effects: Effects {
+            quality: Quality::default(),
+            projection,
+            camera_right: eye.rotation * Vec3::X,
+            camera_up: eye.rotation * Vec3::Y,
+            fog: world.query::<&Fog>().iter().next().map(|(_, fog)| *fog),
+            particles: extract_particles(world),
+        },
     }
 }
 

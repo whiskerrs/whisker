@@ -118,17 +118,40 @@ Chrome 146's compatibility mode (GLES 3.1) **[verified]** is out of scope throug
 ### D7. Rendering uses forward+, without deferred on the lowest tier
 
 Memory bandwidth dominates on tile GPUs **[verified]**. Writing out a G-buffer is expensive, and core
-WebGPU has no subpass for reading a G-buffer within a tile **[unverified]**.
+WebGPU has no subpass for reading a G-buffer within a tile. The closest addition, transient attachments
+(Chrome intent to ship, January 2026) **[verified]**, keeps one pass's attachments in tile memory but does
+not let a later pass read them there.
 
-| Tier | Target | Features |
-|---|---|---|
-| T0 | Mid-range Android | forward+, CPU culling, instancing, baked light + probes, 1–2 sun shadow cascades, lightweight bloom, no temporal upscale |
-| T1 | High-end phones | T0 + GPU culling, additional shadows, temporal upscale, lightweight AO |
-| T2 | Desktop | T1 + SSR, volumetrics, high-quality AO and shadows |
+| Tier | Target | Frame time | Longest side | Lowest scale | Features |
+|---|---|---|---|---|---|
+| T0 | Mid-range Android | 33 ms | 1280 px | 0.5 | forward, CPU culling, instancing, probes, two sun cascades, bloom, fog, particles |
+| T1 | High-end phones | 16.7 ms | 1920 px | 0.7 | T0 + half-resolution AO |
+| T2 | Desktop | 16.7 ms | native | 0.7 | T0 + stronger AO |
 
 All tiers use the same assets. T0's image is tuned as the product baseline, not as a compromise.
 
-The tier is chosen by a benchmark at startup and maintained with dynamic resolution.
+The tier is chosen while the game runs, not by a benchmark at startup, because a benchmark draws a scene
+other than the game's and a phone that heats up slows minutes later. A game starts at T2. Whenever a
+one-second window averages more than 110% of the tier's frame time, internal resolution drops by a tenth,
+and at the tier's lowest scale the tier drops. Windows are judged by their median frame, so a load's hitch
+does not count. A display's refresh caps how fast frames arrive, so meeting the budget for three windows
+is enough to try a tenth more resolution, and each try that fails doubles the wait for the next. A tier
+never climbs back, so the image does not pulse. Frames over 250 ms, from a hidden tab or a
+load, do not count. `GameSetup::set_tier` fixes the tier for a settings menu, and resolution still
+adapts. The scene renders at the scaled size, and post-processing upscales it with bilinear filtering
+and a light sharpen.
+
+Deferred, with reasons:
+
+- **GPU culling.** CPU culling held 20,000 instances within about 10 ms under a 6x throttle, so it is not
+  the bottleneck yet, and multi-draw indirect, which would make one culled draw per batch cheap, is still an experimental
+Chrome feature behind a flag **[verified]**.
+- **Temporal upscaling.** It needs motion vectors from every pass, a jittered projection, and history
+  rejection. Spatial upscaling is what T0 needs, and whether T1 needs more waits for a device measurement.
+- **Additional shadows.** Kiba has no point or spot light yet; they come when a game asks for them.
+- **SSR and volumetrics.** Nothing in Kiba is glossy and flat enough for screen-space reflections to beat
+  the sky cube yet, and exponential fog stands in for volumetric fog, which would need a compute froxel
+  grid.
 
 Every tier uses reversed `Depth32Float` depth, which keeps precision over open-world distances.
 
@@ -146,6 +169,12 @@ hardware-filtered taps.
 texel into a 32-texel radiance cube of five roughness levels and a 16-texel irradiance cube. This
 happens once per change of the sky, so a frame pays only two cube lookups per fragment. The sun is left
 out of the cubes, because surfaces receive it directly.
+
+`Sky::from_sun` derives sky colors from the sun's height for a day cycle, and `Fog` fades surfaces into
+the air with distance. Ambient occlusion reads the depth of the main pass at half resolution with eight
+samples per pixel and is blurred while post-processing reads it. Bloom keeps light above 1.0, halves it
+four times, and adds the chain back up. Particles are CPU-simulated sprites drawn as one instanced draw
+that adds light, so smoke that darkens waits for sorted transparency.
 
 Skinning runs in the vertex shader from a uniform palette at a dynamic offset. A uniform rather than a
 storage buffer keeps vertex shaders within what GLES guarantees. Skin data is a separate vertex stream,
@@ -188,7 +217,7 @@ load.
 | Camera | Own (basic controllers) | P1 |
 | Animation | Own (skinning, blending, IK later) | P2 |
 | Physics / collision | Integrate Rapier as first candidate | P3 |
-| Particles / VFX | Own (starting from instancing) | P4 |
+| Particles / VFX | Own: CPU-simulated additive sprites in one instanced draw | P4 |
 | Audio | Thin wrapper over Web Audio; relationship to `whisker-audio` decided in P3 | P3 |
 | UI / text | Whisker | Done |
 | Scripting | Rust only | Out of scope |
