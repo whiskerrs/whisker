@@ -132,6 +132,11 @@ The tier is chosen by a benchmark at startup and maintained with dynamic resolut
 
 Every tier uses reversed `Depth32Float` depth, which keeps precision over open-world distances.
 
+Every tier shades with the metallic-roughness model: GGX, height-correlated Smith visibility, and
+Schlick Fresnel. It matches glTF, so cooked assets need no material conversion. Materials are
+per-instance values, so entities that share a mesh stay in one draw call. Output is not yet tone
+mapped, so highlights clip at display white.
+
 ### D8. The world is delivered in cells and controlled by memory budgets
 
 The world is split into grid cells, loaded and evicted with LRU by distance and budget. Distant
@@ -177,8 +182,8 @@ load.
 ## Target API
 
 This is what a Whisker app author writes. It is the target shape: `Game`, `GameSetup::on_update`,
-`Game::send`, `Transform`, `Camera`, `Sun`, `Mesh`, and `Viewport` exist today, with `Mesh::cube` in
-place of a loaded model and a diffuse-only sun in place of PBR. Hook names are finalized in P1.
+`Game::send`, `Transform`, `Camera`, `Sun`, `Mesh`, `Material`, and `Viewport` exist today, with
+`Mesh::cube` in place of a loaded model. Hook names are finalized in P1.
 
 ```rust
 use kiba::prelude::*;

@@ -8,8 +8,8 @@ use hecs::World;
 use web_time::Instant;
 use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 
-use crate::renderer::{Batch, Frame};
-use crate::{Mesh, Renderer};
+use crate::renderer::{Batch, Frame, Instance};
+use crate::{Material, Mesh, Renderer};
 
 const MAX_DELTA_SECONDS: f32 = 0.1;
 
@@ -110,7 +110,7 @@ impl Sun {
         ambient: Vec3::ZERO,
     };
 
-    /// Shows surface colors as they are.
+    /// Shows surface colors nearly as they are.
     pub(crate) const UNLIT: Self = Self {
         direction: Vec3::NEG_Y,
         color: Vec3::ZERO,
@@ -249,6 +249,7 @@ fn extract_frame(world: &World, width: u32, height: u32) -> Frame {
     let Some((_, (eye, camera))) = camera else {
         return Frame {
             view_projection: Mat4::IDENTITY,
+            camera_position: Vec3::ZERO,
             sun,
             batches: Vec::new(),
         };
@@ -256,18 +257,25 @@ fn extract_frame(world: &World, width: u32, height: u32) -> Frame {
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
     let view_projection = camera.projection(width as f32 / height as f32) * view;
     let mut batches = HashMap::<usize, Batch>::new();
-    for (_, (transform, mesh)) in world.query::<(&Transform, &Mesh)>().iter() {
+    for (_, (transform, mesh, material)) in world
+        .query::<(&Transform, &Mesh, Option<&Material>)>()
+        .iter()
+    {
         batches
             .entry(mesh.key())
             .or_insert_with(|| Batch {
                 mesh: mesh.clone(),
-                transforms: Vec::new(),
+                instances: Vec::new(),
             })
-            .transforms
-            .push(transform.matrix());
+            .instances
+            .push(Instance::new(
+                transform.matrix(),
+                material.unwrap_or(&Material::default()),
+            ));
     }
     Frame {
         view_projection,
+        camera_position: eye.translation,
         sun,
         batches: batches.into_values().collect(),
     }
@@ -410,7 +418,7 @@ mod tests {
         let mut counts: Vec<usize> = extract_frame(&world, 100, 100)
             .batches
             .iter()
-            .map(|batch| batch.transforms.len())
+            .map(|batch| batch.instances.len())
             .collect();
         counts.sort_unstable();
 

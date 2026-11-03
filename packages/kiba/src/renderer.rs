@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Weak};
 
-use glam::{Mat4, Vec4};
+use glam::{Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::mesh::{MeshData, Vertex};
-use crate::{Mesh, Sun};
+use crate::{Material, Mesh, Sun};
 
 const CLEAR_COLOR: [f64; 3] = [0.02, 0.02, 0.04];
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -13,16 +13,38 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const DEPTH_CLEAR: f32 = 0.0;
 const DEPTH_COMPARE: wgpu::CompareFunction = wgpu::CompareFunction::GreaterEqual;
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct Instance {
+    // Plain arrays because `Mat4`'s SIMD alignment would leave padding that `Pod` forbids.
+    transform: [[f32; 4]; 4],
+    base_color: [f32; 3],
+    metallic: f32,
+    roughness: f32,
+}
+
+impl Instance {
+    pub(crate) fn new(transform: Mat4, material: &Material) -> Self {
+        Self {
+            transform: transform.to_cols_array_2d(),
+            base_color: material.base_color.to_array(),
+            metallic: material.metallic,
+            roughness: material.roughness,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Batch {
     pub(crate) mesh: Mesh,
-    pub(crate) transforms: Vec<Mat4>,
+    pub(crate) instances: Vec<Instance>,
 }
 
 /// Everything [`SceneRenderer::draw`] needs to draw one frame.
 #[derive(Clone, Debug)]
 pub struct Frame {
     pub(crate) view_projection: Mat4,
+    pub(crate) camera_position: Vec3,
     pub(crate) sun: Sun,
     pub(crate) batches: Vec<Batch>,
 }
@@ -33,10 +55,11 @@ pub fn placeholder_scene() -> Frame {
     static TRIANGLE: LazyLock<Mesh> = LazyLock::new(Mesh::triangle);
     Frame {
         view_projection: Mat4::IDENTITY,
+        camera_position: Vec3::Z,
         sun: Sun::UNLIT,
         batches: vec![Batch {
             mesh: TRIANGLE.clone(),
-            transforms: vec![Mat4::IDENTITY],
+            instances: vec![Instance::new(Mat4::IDENTITY, &Material::default())],
         }],
     }
 }
@@ -45,6 +68,7 @@ pub fn placeholder_scene() -> Frame {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct FrameUniform {
     view_projection: Mat4,
+    camera_position: Vec4,
     to_sun: Vec4,
     sun_color: Vec4,
     ambient: Vec4,
@@ -54,6 +78,7 @@ impl From<&Frame> for FrameUniform {
     fn from(frame: &Frame) -> Self {
         Self {
             view_projection: frame.view_projection,
+            camera_position: frame.camera_position.extend(1.0),
             to_sun: (-frame.sun.direction).normalize_or_zero().extend(0.0),
             sun_color: frame.sun.color.extend(0.0),
             ambient: frame.sun.ambient.extend(0.0),
@@ -152,13 +177,16 @@ impl SceneRenderer {
                         ],
                     },
                     wgpu::VertexBufferLayout {
-                        array_stride: size_of::<Mat4>() as u64,
+                        array_stride: size_of::<Instance>() as u64,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &wgpu::vertex_attr_array![
                             3 => Float32x4,
                             4 => Float32x4,
                             5 => Float32x4,
                             6 => Float32x4,
+                            7 => Float32x3,
+                            8 => Float32,
+                            9 => Float32,
                         ],
                     },
                 ],
@@ -245,11 +273,11 @@ impl SceneRenderer {
         }
         let depth = self.depth.as_ref().expect("allocated above");
 
-        let transforms: Vec<Mat4> = batches
+        let instance_data: Vec<Instance> = batches
             .iter()
-            .flat_map(|batch| batch.transforms.iter().copied())
+            .flat_map(|batch| batch.instances.iter().copied())
             .collect();
-        let bytes: &[u8] = bytemuck::cast_slice(&transforms);
+        let bytes: &[u8] = bytemuck::cast_slice(&instance_data);
         if self
             .instances
             .as_ref()
@@ -297,9 +325,9 @@ impl SceneRenderer {
             pass.set_bind_group(0, &self.frame_bindings, &[]);
             let mut first = 0;
             for batch in batches {
-                let count = batch.transforms.len() as u64;
+                let count = batch.instances.len() as u64;
                 let mesh = &self.meshes[&batch.mesh.key()];
-                let stride = size_of::<Mat4>() as u64;
+                let stride = size_of::<Instance>() as u64;
                 let range = first * stride..(first + count) * stride;
                 first += count;
                 // Slicing an empty range panics in wgpu.
@@ -445,8 +473,6 @@ pub(crate) fn log(message: &str) {
 
 #[cfg(test)]
 mod tests {
-    use glam::Vec3;
-
     use super::*;
 
     const SIZE: u32 = 64;
@@ -519,7 +545,11 @@ mod tests {
         [pixels[at], pixels[at + 1], pixels[at + 2]]
     }
 
-    fn quad(normal: Vec3, color: [f32; 3], transform: Mat4) -> Batch {
+    fn instance(transform: Mat4, material: Material) -> Instance {
+        Instance::new(transform, &material)
+    }
+
+    fn quad(normal: Vec3, color: [f32; 3], instance: Instance) -> Batch {
         let vertex = |x, y| Vertex {
             position: [x, y, 0.0],
             normal: normal.to_array(),
@@ -535,21 +565,29 @@ mod tests {
                 ],
                 vec![0, 1, 2, 0, 2, 3],
             ),
-            transforms: vec![transform],
+            instances: vec![instance],
         }
+    }
+
+    fn surface(material: Material) -> Batch {
+        quad(Vec3::Z, [1.0; 3], instance(Mat4::IDENTITY, material))
     }
 
     fn solid_quad(color: [f32; 3], depth: f32) -> Batch {
         quad(
             Vec3::Z,
             color,
-            Mat4::from_translation(Vec3::new(0.0, 0.0, depth)),
+            instance(
+                Mat4::from_translation(Vec3::new(0.0, 0.0, depth)),
+                Material::default(),
+            ),
         )
     }
 
     fn frame(sun: Sun, batches: Vec<Batch>) -> Frame {
         Frame {
             view_projection: Mat4::IDENTITY,
+            camera_position: Vec3::Z * 2.0,
             sun,
             batches,
         }
@@ -564,30 +602,82 @@ mod tests {
         ))
     }
 
-    fn encoded(linear: f64) -> u8 {
-        (linear_to_srgb(linear) * 255.0).round() as u8
+    /// A sun dim enough that highlights stay below the 8-bit clamp.
+    fn dim_sun(direction: Vec3) -> Sun {
+        Sun {
+            direction,
+            color: Vec3::splat(0.1),
+            ambient: Vec3::ZERO,
+        }
     }
 
+    const MATTE: Material = Material {
+        base_color: Vec3::ONE,
+        metallic: 0.0,
+        roughness: 1.0,
+    };
+
     #[test]
-    fn a_surface_is_lit_by_how_directly_it_faces_the_sun() {
+    fn a_matte_surface_dims_as_it_turns_from_the_sun() {
         let Some((device, queue)) = gpu() else {
             return;
         };
-        let white = quad(Vec3::Z, [1.0; 3], Mat4::IDENTITY);
-        let sun = |direction| Sun {
-            direction,
-            color: Vec3::ONE,
-            ambient: Vec3::ZERO,
+        let center = |direction| {
+            center_of(
+                &device,
+                &queue,
+                &frame(dim_sun(direction), vec![surface(MATTE)]),
+            )[0]
         };
-        let center = |sun| center_of(&device, &queue, &frame(sun, vec![white.clone()]))[0];
 
-        assert_eq!(center(sun(Vec3::NEG_Z)), 255);
-        assert!(center(sun(Vec3::new(1.0, 0.0, -1.0))).abs_diff(encoded(0.5f64.sqrt())) <= 1);
-        assert_eq!(center(sun(Vec3::Z)), 0);
+        assert!(center(Vec3::NEG_Z) > center(Vec3::new(1.0, 0.0, -1.0)));
+        assert_eq!(center(Vec3::Z), 0);
     }
 
     #[test]
-    fn ambient_light_reaches_surfaces_facing_away_from_the_sun() {
+    fn smoother_surfaces_have_a_tighter_and_brighter_highlight() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let center = |roughness, direction| {
+            let material = Material { roughness, ..MATTE };
+            center_of(
+                &device,
+                &queue,
+                &frame(dim_sun(direction), vec![surface(material)]),
+            )[0]
+        };
+        let mirror_angle = Vec3::NEG_Z;
+        let off_angle = Vec3::new(1.0, 0.0, -1.0);
+
+        assert!(center(0.2, mirror_angle) > center(0.6, mirror_angle));
+        assert!(center(0.2, off_angle) < center(0.6, off_angle));
+    }
+
+    #[test]
+    fn only_metals_tint_their_highlight() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let center = |metallic| {
+            let material = Material {
+                base_color: Vec3::X,
+                metallic,
+                roughness: 0.2,
+            };
+            center_of(
+                &device,
+                &queue,
+                &frame(dim_sun(Vec3::NEG_Z), vec![surface(material)]),
+            )
+        };
+
+        assert_eq!(center(1.0)[1], 0);
+        assert!(center(0.0)[1] > 0);
+    }
+
+    #[test]
+    fn ambient_light_reaches_non_metals_and_metals_facing_away_from_the_sun() {
         let Some((device, queue)) = gpu() else {
             return;
         };
@@ -596,29 +686,34 @@ mod tests {
             color: Vec3::ONE,
             ambient: Vec3::splat(0.25),
         };
-        let white = quad(Vec3::Z, [1.0; 3], Mat4::IDENTITY);
-
-        let center = center_of(&device, &queue, &frame(sun, vec![white]));
-
-        assert!(center[0].abs_diff(encoded(0.25)) <= 1);
+        for metallic in [0.0, 1.0] {
+            let material = Material { metallic, ..MATTE };
+            let center = center_of(&device, &queue, &frame(sun, vec![surface(material)]));
+            assert!(center[0] > 32, "metallic {metallic}: {center:?}");
+        }
     }
 
     #[test]
-    fn surface_colors_tint_the_light() {
+    fn vertex_colors_and_the_sun_tint_the_base_color() {
         let Some((device, queue)) = gpu() else {
             return;
         };
         let sun = Sun {
-            direction: Vec3::NEG_Z,
-            color: Vec3::new(1.0, 0.0, 1.0),
-            ambient: Vec3::ZERO,
+            color: Vec3::new(1.0, 1.0, 0.0),
+            ..dim_sun(Vec3::NEG_Z)
         };
-        let yellow = quad(Vec3::Z, [1.0, 1.0, 0.0], Mat4::IDENTITY);
+        let material = Material {
+            base_color: Vec3::new(1.0, 0.0, 1.0),
+            metallic: 1.0,
+            roughness: 1.0,
+        };
+        // Yellow vertices under a magenta base color and a yellow sun leave only red.
+        let batch = quad(Vec3::Z, [1.0, 1.0, 0.0], instance(Mat4::IDENTITY, material));
 
-        assert_eq!(
-            center_of(&device, &queue, &frame(sun, vec![yellow])),
-            [255, 0, 0]
-        );
+        let center = center_of(&device, &queue, &frame(sun, vec![batch]));
+
+        assert!(center[0] > 0);
+        assert_eq!(center[1..], [0, 0]);
     }
 
     #[test]
@@ -626,22 +721,24 @@ mod tests {
         let Some((device, queue)) = gpu() else {
             return;
         };
-        let sun = Sun {
-            direction: Vec3::NEG_X,
-            color: Vec3::ONE,
-            ambient: Vec3::ZERO,
-        };
+        let sun = dim_sun(Vec3::NEG_X);
         // The inverse transpose of this scale turns the normal (1, 1, 0) toward (1, 1/3, 0).
         let stretched = quad(
             Vec3::new(1.0, 1.0, 0.0).normalize(),
             [1.0; 3],
-            Mat4::from_scale(Vec3::new(1.0, 3.0, 1.0)),
+            instance(Mat4::from_scale(Vec3::new(1.0, 3.0, 1.0)), MATTE),
         );
-        let expected = 1.0 / (1.0f64 + 1.0 / 9.0).sqrt();
+        let corrected = quad(
+            Vec3::new(1.0, 1.0 / 3.0, 0.0).normalize(),
+            [1.0; 3],
+            instance(Mat4::IDENTITY, MATTE),
+        );
 
-        let center = center_of(&device, &queue, &frame(sun, vec![stretched]));
+        let actual = center_of(&device, &queue, &frame(sun, vec![stretched]));
+        let expected = center_of(&device, &queue, &frame(sun, vec![corrected]));
 
-        assert!(center[0].abs_diff(encoded(expected)) <= 1);
+        assert!(expected[0] > 0);
+        assert!(actual[0].abs_diff(expected[0]) <= 1);
     }
 
     #[test]
@@ -656,10 +753,8 @@ mod tests {
             vec![near.clone(), far.clone()],
             vec![far.clone(), near.clone()],
         ] {
-            assert_eq!(
-                center_of(&device, &queue, &frame(Sun::UNLIT, batches)),
-                [255, 0, 0]
-            );
+            let [red, green, _] = center_of(&device, &queue, &frame(Sun::UNLIT, batches));
+            assert!(red > green);
         }
     }
 
@@ -672,7 +767,7 @@ mod tests {
             Mat4::from_rotation_y(std::f32::consts::PI) * Mat4::from_scale(Vec3::splat(0.5));
         let batch = Batch {
             mesh: Mesh::triangle(),
-            transforms: vec![turned],
+            instances: vec![instance(turned, Material::default())],
         };
 
         let center = center_of(&device, &queue, &frame(Sun::UNLIT, vec![batch]));
@@ -705,7 +800,7 @@ mod tests {
             Sun::UNLIT,
             vec![Batch {
                 mesh: Mesh::triangle(),
-                transforms: vec![Mat4::IDENTITY],
+                instances: vec![instance(Mat4::IDENTITY, Material::default())],
             }],
         );
 
