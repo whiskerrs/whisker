@@ -23,6 +23,8 @@ pub struct Vertex {
 pub(crate) struct MeshData {
     pub(crate) vertices: Vec<Vertex>,
     pub(crate) indices: Vec<u32>,
+    pub(crate) bounds_center: Vec3,
+    pub(crate) bounds_radius: f32,
 }
 
 /// How the surface of a [`Mesh`] reflects light, used as a component next to it.
@@ -91,7 +93,28 @@ impl Mesh {
                 .all(|&index| (index as usize) < vertices.len()),
             "mesh index out of range"
         );
-        Self(Arc::new(MeshData { vertices, indices }))
+        let (min, max) = vertices.iter().fold(
+            (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+            |(min, max), vertex| {
+                let position = Vec3::from(vertex.position);
+                (min.min(position), max.max(position))
+            },
+        );
+        let bounds_center = if vertices.is_empty() {
+            Vec3::ZERO
+        } else {
+            (min + max) / 2.0
+        };
+        let bounds_radius = vertices
+            .iter()
+            .map(|vertex| bounds_center.distance(vertex.position.into()))
+            .fold(0.0, f32::max);
+        Self(Arc::new(MeshData {
+            vertices,
+            indices,
+            bounds_center,
+            bounds_radius,
+        }))
     }
 
     /// Creates a white cube centered on the origin.

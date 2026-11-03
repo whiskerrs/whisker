@@ -8,7 +8,13 @@ use crate::mesh::{MeshData, Vertex};
 use crate::texture::{TextureData, mip_chain};
 use crate::{Material, Mesh, Sun, Texture};
 
-const CLEAR_COLOR: [f64; 3] = [0.02, 0.02, 0.04];
+const CLEAR_COLOR: wgpu::Color = wgpu::Color {
+    r: 0.02,
+    g: 0.02,
+    b: 0.04,
+    a: 1.0,
+};
+const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 // Reversed depth (1 at the near plane) keeps floating-point precision over open-world distances.
 const DEPTH_CLEAR: f32 = 0.0;
@@ -54,6 +60,7 @@ pub(crate) struct Batch {
 pub struct Frame {
     pub(crate) view_projection: Mat4,
     pub(crate) camera_position: Vec3,
+    pub(crate) exposure: f32,
     pub(crate) sun: Sun,
     pub(crate) batches: Vec<Batch>,
 }
@@ -65,6 +72,7 @@ pub fn placeholder_scene() -> Frame {
     Frame {
         view_projection: Mat4::IDENTITY,
         camera_position: Vec3::Z,
+        exposure: 1.0,
         sun: Sun::UNLIT,
         batches: vec![Batch {
             mesh: TRIANGLE.clone(),
@@ -88,7 +96,8 @@ impl From<&Frame> for FrameUniform {
     fn from(frame: &Frame) -> Self {
         Self {
             view_projection: frame.view_projection,
-            camera_position: frame.camera_position.extend(1.0),
+            // The spare component keeps the uniform to four vectors.
+            camera_position: frame.camera_position.extend(frame.exposure),
             to_sun: (-frame.sun.direction).normalize_or_zero().extend(0.0),
             sun_color: frame.sun.color.extend(0.0),
             ambient: frame.sun.ambient.extend(0.0),
@@ -209,13 +218,15 @@ struct GpuMaterial {
     bindings: wgpu::BindGroup,
 }
 
-struct DepthTarget {
+struct SizedTargets {
     size: (u32, u32),
-    view: wgpu::TextureView,
+    depth: wgpu::TextureView,
+    hdr: wgpu::TextureView,
+    post_bindings: wgpu::BindGroup,
 }
 
-impl DepthTarget {
-    fn new(device: &wgpu::Device, size: (u32, u32)) -> Self {
+impl SizedTargets {
+    fn new(device: &wgpu::Device, post_layout: &wgpu::BindGroupLayout, size: (u32, u32)) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("kiba depth"),
             size: wgpu::Extent3d {
@@ -230,9 +241,36 @@ impl DepthTarget {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
+        let hdr = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("kiba hdr"),
+                size: wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: HDR_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        let post_bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("kiba post"),
+            layout: post_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&hdr),
+            }],
+        });
         Self {
             size,
-            view: texture.create_view(&Default::default()),
+            depth: texture.create_view(&Default::default()),
+            hdr,
+            post_bindings,
         }
     }
 }
@@ -240,7 +278,8 @@ impl DepthTarget {
 /// Encodes the scene into any render target, on a device owned by the caller.
 pub struct SceneRenderer {
     pipeline: wgpu::RenderPipeline,
-    clear_color: wgpu::Color,
+    post_pipeline: wgpu::RenderPipeline,
+    post_layout: wgpu::BindGroupLayout,
     frame_uniform: wgpu::Buffer,
     frame_bindings: wgpu::BindGroup,
     meshes: HashMap<usize, GpuMesh>,
@@ -250,7 +289,7 @@ pub struct SceneRenderer {
     textures: HashMap<(usize, bool), GpuTexture>,
     materials: HashMap<[usize; 3], GpuMaterial>,
     instances: Option<wgpu::Buffer>,
-    depth: Option<DepthTarget>,
+    targets: Option<SizedTargets>,
 }
 
 impl SceneRenderer {
@@ -296,11 +335,8 @@ impl SceneRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &constants,
-                    ..Default::default()
-                },
-                targets: &[Some(format.into())],
+                compilation_options: Default::default(),
+                targets: &[Some(HDR_FORMAT.into())],
             }),
             primitive: wgpu::PrimitiveState {
                 cull_mode: Some(wgpu::Face::Back),
@@ -313,6 +349,31 @@ impl SceneRenderer {
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
+            multisample: Default::default(),
+            multiview: None,
+            cache: None,
+        });
+        let post_shader = device.create_shader_module(wgpu::include_wgsl!("post.wgsl"));
+        let post_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("kiba post"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &post_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &post_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &constants,
+                    ..Default::default()
+                },
+                targets: &[Some(format.into())],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
             multisample: Default::default(),
             multiview: None,
             cache: None,
@@ -331,20 +392,7 @@ impl SceneRenderer {
                 resource: frame_uniform.as_entire_binding(),
             }],
         });
-        let channel = |linear| {
-            if encode_srgb {
-                linear_to_srgb(linear)
-            } else {
-                linear
-            }
-        };
         Self {
-            clear_color: wgpu::Color {
-                r: channel(CLEAR_COLOR[0]),
-                g: channel(CLEAR_COLOR[1]),
-                b: channel(CLEAR_COLOR[2]),
-                a: 1.0,
-            },
             frame_uniform,
             frame_bindings,
             meshes: HashMap::new(),
@@ -367,7 +415,9 @@ impl SceneRenderer {
             textures: HashMap::new(),
             materials: HashMap::new(),
             instances: None,
-            depth: None,
+            targets: None,
+            post_layout: post_pipeline.get_bind_group_layout(0),
+            post_pipeline,
             pipeline,
         }
     }
@@ -393,10 +443,14 @@ impl SceneRenderer {
                 .or_insert_with(|| GpuMesh::new(device, &batch.mesh));
             self.prepare_material(device, queue, &batch.material);
         }
-        if self.depth.as_ref().is_none_or(|depth| depth.size != size) {
-            self.depth = Some(DepthTarget::new(device, size));
+        if self
+            .targets
+            .as_ref()
+            .is_none_or(|targets| targets.size != size)
+        {
+            self.targets = Some(SizedTargets::new(device, &self.post_layout, size));
         }
-        let depth = self.depth.as_ref().expect("allocated above");
+        let targets = self.targets.as_ref().expect("allocated above");
 
         let instance_data: Vec<Instance> = batches
             .iter()
@@ -428,15 +482,15 @@ impl SceneRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("kiba main"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view: &targets.hdr,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        load: wgpu::LoadOp::Clear(CLEAR_COLOR),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth.view,
+                    view: &targets.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(DEPTH_CLEAR),
                         store: wgpu::StoreOp::Discard,
@@ -466,6 +520,25 @@ impl SceneRenderer {
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..count as u32);
             }
+        }
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("kiba post"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.post_pipeline);
+            pass.set_bind_group(0, &targets.post_bindings, &[]);
+            pass.draw(0..3, 0..1);
         }
         queue.submit([encoder.finish()]);
     }
@@ -623,14 +696,6 @@ impl Renderer {
     }
 }
 
-fn linear_to_srgb(linear: f64) -> f64 {
-    if linear <= 0.0031308 {
-        linear * 12.92
-    } else {
-        1.055 * linear.powf(1.0 / 2.4) - 0.055
-    }
-}
-
 #[cfg(target_os = "android")]
 pub(crate) fn log(message: &str) {
     #[link(name = "log")]
@@ -771,6 +836,7 @@ mod tests {
         Frame {
             view_projection: Mat4::IDENTITY,
             camera_position: Vec3::Z * 2.0,
+            exposure: 1.0,
             sun,
             batches,
         }
@@ -1008,7 +1074,13 @@ mod tests {
             center_of(
                 &device,
                 &queue,
-                &frame(dim_sun(Vec3::NEG_Z), vec![surface(material)]),
+                &frame(
+                    Sun {
+                        color: Vec3::ONE,
+                        ..dim_sun(Vec3::NEG_Z)
+                    },
+                    vec![surface(material)],
+                ),
             )
         };
 
@@ -1091,6 +1163,30 @@ mod tests {
         );
         assert!(scene.textures.is_empty());
         assert!(scene.materials.is_empty());
+    }
+
+    #[test]
+    fn exposure_scales_the_scene_and_tone_mapping_keeps_highlights_below_white_clipping() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let at = |exposure, sun_strength: f32| {
+            let mut drawn = frame(
+                Sun {
+                    color: Vec3::splat(sun_strength),
+                    ..dim_sun(Vec3::NEG_Z)
+                },
+                vec![surface(MATTE)],
+            );
+            drawn.exposure = exposure;
+            center_of(&device, &queue, &drawn)[0]
+        };
+
+        assert!(at(2.0, 0.2) > at(1.0, 0.2));
+        assert!(
+            at(1.0, 2.0) > at(1.0, 0.5),
+            "bright light still has gradation"
+        );
     }
 
     #[test]

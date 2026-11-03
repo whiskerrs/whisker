@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use hecs::World;
 use web_time::Instant;
 use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
@@ -71,6 +71,8 @@ pub struct Camera {
     pub near: f32,
     /// Distance to the far clipping plane, greater than `near`.
     pub far: f32,
+    /// Multiplies the light reaching the camera before tone mapping.
+    pub exposure: f32,
 }
 
 impl Default for Camera {
@@ -79,6 +81,7 @@ impl Default for Camera {
             fov: 60f32.to_radians(),
             near: 0.1,
             far: 1000.0,
+            exposure: 1.0,
         }
     }
 }
@@ -404,6 +407,31 @@ impl<C: 'static> RunningGame for Registered<C> {
     }
 }
 
+/// Planes facing inward, each as a normal and a distance.
+struct Frustum([Vec4; 6]);
+
+impl Frustum {
+    fn new(view_projection: &Mat4) -> Self {
+        let matrix = view_projection.transpose();
+        let [x, y, z, w] = [matrix.x_axis, matrix.y_axis, matrix.z_axis, matrix.w_axis];
+        Self([w + x, w - x, w + y, w - y, z, w - z].map(|plane| plane / plane.truncate().length()))
+    }
+
+    fn contains(&self, mesh: &Mesh, transform: &Mat4) -> bool {
+        let data = mesh.data();
+        let center = transform.transform_point3(data.bounds_center).extend(1.0);
+        let scale = transform
+            .x_axis
+            .truncate()
+            .length_squared()
+            .max(transform.y_axis.truncate().length_squared())
+            .max(transform.z_axis.truncate().length_squared())
+            .sqrt();
+        let radius = data.bounds_radius * scale;
+        self.0.iter().all(|plane| plane.dot(center) >= -radius)
+    }
+}
+
 fn shown(transform: &Transform, motion: Option<&Interpolated>, alpha: f32) -> Transform {
     match motion.and_then(|motion| motion.previous) {
         Some(previous) => previous.lerp(transform, alpha),
@@ -423,6 +451,7 @@ fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
         return Frame {
             view_projection: Mat4::IDENTITY,
             camera_position: Vec3::ZERO,
+            exposure: 1.0,
             sun,
             batches: Vec::new(),
         };
@@ -431,7 +460,11 @@ fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
     let view_projection = camera.projection(width as f32 / height as f32) * view;
     let mut batches = HashMap::<(usize, [usize; 3]), Batch>::new();
+    let frustum = Frustum::new(&view_projection);
     let mut add = |mesh: &Mesh, transform: Mat4, material: &Material| {
+        if !frustum.contains(mesh, &transform) {
+            return;
+        }
         batches
             .entry((mesh.key(), material.texture_keys()))
             .or_insert_with(|| Batch {
@@ -464,6 +497,7 @@ fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
     Frame {
         view_projection,
         camera_position: eye.translation,
+        exposure: camera.exposure,
         sun,
         batches: batches.into_values().collect(),
     }
@@ -591,7 +625,7 @@ mod tests {
 
     #[test]
     fn model_parts_are_placed_relative_to_their_entity() {
-        let mut world = world_with_camera_at(Vec3::Z);
+        let mut world = world_with_camera_at(Vec3::Z * 10.0);
         let mesh = Mesh::triangle();
         let part = Mat4::from_translation(Vec3::X);
         let model = Model::new(vec![
@@ -721,6 +755,48 @@ mod tests {
         let frame = extract_frame(&world, 100, 100, 0.25);
 
         assert_eq!(frame.batches[0].instances[0].origin(), [0.5, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn entities_outside_the_view_are_not_drawn() {
+        let count_at = |translation| {
+            let mut world = world_with_camera_at(Vec3::Z * 5.0);
+            world.spawn((
+                Transform {
+                    translation,
+                    ..Transform::default()
+                },
+                Mesh::cube(1.0),
+            ));
+            extract_frame(&world, 100, 100, 1.0).batches.len()
+        };
+
+        assert_eq!(count_at(Vec3::ZERO), 1);
+        for away in [
+            Vec3::X * 100.0,
+            Vec3::NEG_X * 100.0,
+            Vec3::Y * 100.0,
+            Vec3::NEG_Y * 100.0,
+            Vec3::Z * 100.0,
+            Vec3::NEG_Z * 2000.0,
+        ] {
+            assert_eq!(count_at(away), 0, "{away}");
+        }
+    }
+
+    #[test]
+    fn a_large_entity_centered_outside_the_view_still_draws_if_it_reaches_in() {
+        let mut world = world_with_camera_at(Vec3::Z * 5.0);
+        world.spawn((
+            Transform {
+                translation: Vec3::X * 20.0,
+                scale: Vec3::splat(40.0),
+                ..Transform::default()
+            },
+            Mesh::cube(1.0),
+        ));
+
+        assert_eq!(extract_frame(&world, 100, 100, 1.0).batches.len(), 1);
     }
 
     #[test]

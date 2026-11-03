@@ -1,5 +1,3 @@
-override ENCODE_SRGB: bool = false;
-
 const PI: f32 = 3.14159265;
 const DIELECTRIC_REFLECTANCE: f32 = 0.04;
 // Below this, the highlight of a directional light shrinks under one pixel and flickers.
@@ -86,11 +84,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Sun.color is the light leaving a white diffuse surface, so diffuse carries no 1/PI and specular gains PI.
     let sun = (diffuse + specular * PI) * frame.sun_color.rgb * n_dot_l;
     let ambient = (diffuse + ambient_specular(reflectance, roughness, n_dot_v)) * frame.ambient.rgb;
-    let lit = sun + ambient;
-    if ENCODE_SRGB {
-        return vec4<f32>(linear_to_srgb(lit), 1.0);
-    }
-    return vec4<f32>(lit, 1.0);
+    return vec4<f32>((sun + ambient) * frame.camera_position.w, 1.0);
 }
 
 // Derives the tangent frame from screen derivatives, so meshes need no tangent attribute.
@@ -130,10 +124,4 @@ fn ambient_specular(reflectance: vec3<f32>, roughness: f32, n_dot_v: f32) -> vec
     let a004 = min(r.x * r.x, pow(2.0, -9.28 * n_dot_v)) * r.x + r.y;
     let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
     return reflectance * ab.x + vec3<f32>(ab.y);
-}
-
-fn linear_to_srgb(linear: vec3<f32>) -> vec3<f32> {
-    let low = linear * 12.92;
-    let high = 1.055 * pow(linear, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(high, low, linear <= vec3<f32>(0.0031308));
 }
