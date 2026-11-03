@@ -403,7 +403,10 @@ approval first.
 ### P0
 
 **Built:** the `Viewport` element, which a Whisker layout sizes like any view, the render targets, and Hosts
-for the Web, iOS, Android, and Desktop. Native Hosts draw a placeholder; only the Web Host runs a `Game`.
+for the Web, iOS, Android, and Desktop. The exit criterion was checked when P0 landed (92cac9bb), before
+measurement moved to the Web only: each Host drew one triangle through the shared `SceneRenderer` on the
+Web, the iOS Simulator, the Android Emulator over GLES, and macOS. Native Hosts still draw that
+placeholder; only the Web Host runs a `Game`.
 
 **Measured** with the example at 1280x720 in Chrome on the development Mac, cache disabled, from a local
 server: the GPU was ready about 40 ms after navigation, and the download is 1.25 MB of wasm and 15 KB of
