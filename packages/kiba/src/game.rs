@@ -2,12 +2,14 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use glam::{Mat4, Quat, Vec3, Vec4};
 use hecs::World;
 use web_time::Instant;
 use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 
+use crate::animation::{Animator, run_animators};
 use crate::controller::run_controllers;
 use crate::input::InputEvent;
 use crate::renderer::{Batch, CASCADES, Frame, Instance, SHADOW_MAP_SIZE, Shadows};
@@ -108,7 +110,7 @@ pub struct Sun {
     pub direction: Vec3,
     /// Linear RGB light on a surface facing the sun.
     pub color: Vec3,
-    /// Linear RGB light on every surface, whichever way it faces.
+    /// Linear RGB light on every surface, whichever way it faces. A [`Sky`] replaces this.
     pub ambient: Vec3,
     /// How far from the camera surfaces receive shadows. Zero turns shadows off.
     pub shadow_distance: f32,
@@ -357,6 +359,7 @@ impl<C> GameSetup<C> {
                 alpha,
             });
         }
+        run_animators(&mut self.world, frame_time.delta_seconds());
         run_controllers(&mut self.world, &frame_time, &self.frame_input);
         self.frame_input.end_pass();
         alpha
@@ -585,41 +588,46 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
     let eye = shown(eye, eye_motion, alpha);
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
     let view_projection = camera.projection(width as f32 / height as f32) * view;
-    let mut batches = HashMap::<(usize, [usize; 3]), Batch>::new();
+    let mut batches = HashMap::<(usize, [usize; 3], usize), Batch>::new();
     let frustum = Frustum::new(&view_projection);
     let shadows = cascades(&eye, camera, width as f32 / height as f32, &sun);
     let caster_frustums = shadows
         .as_ref()
         .map(|shadows| shadows.view_projections.each_ref().map(Frustum::new));
-    let mut casters: [HashMap<usize, Batch>; CASCADES] = Default::default();
-    let mut add = |mesh: &Mesh, transform: Mat4, material: &Material| {
-        // Off-screen entities still throw shadows into the view.
-        for (cascade, frustum) in caster_frustums.iter().flatten().enumerate() {
-            if frustum.contains(mesh, &transform) {
-                casters[cascade]
-                    .entry(mesh.key())
-                    .or_insert_with(|| Batch {
-                        mesh: mesh.clone(),
-                        material: Material::default(),
-                        instances: Vec::new(),
-                    })
-                    .instances
-                    .push(Instance::new(transform, material));
+    let mut casters: [HashMap<(usize, usize), Batch>; CASCADES] = Default::default();
+    let mut add =
+        |mesh: &Mesh, transform: Mat4, material: &Material, palette: Option<&Arc<[Mat4]>>| {
+            // A posed mesh draws alone, because instances in a batch share their joint matrices.
+            let owner = palette.map_or(0, |palette| palette.as_ptr() as usize);
+            // Off-screen entities still throw shadows into the view.
+            for (cascade, frustum) in caster_frustums.iter().flatten().enumerate() {
+                if frustum.contains(mesh, &transform) {
+                    casters[cascade]
+                        .entry((mesh.key(), owner))
+                        .or_insert_with(|| Batch {
+                            mesh: mesh.clone(),
+                            material: Material::default(),
+                            palette: palette.cloned(),
+                            instances: Vec::new(),
+                        })
+                        .instances
+                        .push(Instance::new(transform, material));
+                }
             }
-        }
-        if !frustum.contains(mesh, &transform) {
-            return;
-        }
-        batches
-            .entry((mesh.key(), material.texture_keys()))
-            .or_insert_with(|| Batch {
-                mesh: mesh.clone(),
-                material: material.clone(),
-                instances: Vec::new(),
-            })
-            .instances
-            .push(Instance::new(transform, material));
-    };
+            if !frustum.contains(mesh, &transform) {
+                return;
+            }
+            batches
+                .entry((mesh.key(), material.texture_keys(), owner))
+                .or_insert_with(|| Batch {
+                    mesh: mesh.clone(),
+                    material: material.clone(),
+                    palette: palette.cloned(),
+                    instances: Vec::new(),
+                })
+                .instances
+                .push(Instance::new(transform, material));
+        };
     for (_, (transform, motion, mesh, material)) in world
         .query::<(&Transform, Option<&Interpolated>, &Mesh, Option<&Material>)>()
         .iter()
@@ -628,15 +636,31 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
             mesh,
             shown(transform, motion, alpha).matrix(),
             material.unwrap_or(&Material::default()),
+            None,
         );
     }
-    for (_, (transform, motion, model)) in world
-        .query::<(&Transform, Option<&Interpolated>, &Model)>()
+    for (_, (transform, motion, model, animator)) in world
+        .query::<(&Transform, Option<&Interpolated>, &Model, Option<&Animator>)>()
         .iter()
     {
         let matrix = shown(transform, motion, alpha).matrix();
-        for part in model.parts() {
-            add(&part.mesh, matrix * part.transform, &part.material);
+        let parts = model.parts();
+        let rig = model.data().and_then(|data| data.rig.as_ref());
+        let posed = rig
+            .filter(|_| animator.is_some() || parts.iter().any(|part| part.skin.is_some()))
+            .map(|rig| rig.posed(animator));
+        for part in parts {
+            let palette = posed
+                .as_ref()
+                .zip(part.skin)
+                .map(|(posed, skin)| &posed.palettes[skin]);
+            // Joint matrices already place a skinned mesh within the model.
+            let within = match (palette, &posed, part.node) {
+                (Some(_), _, _) => Mat4::IDENTITY,
+                (None, Some(posed), Some(node)) => posed.nodes[node],
+                _ => part.transform,
+            };
+            add(&part.mesh, matrix * within, &part.material, palette);
         }
     }
     Frame {

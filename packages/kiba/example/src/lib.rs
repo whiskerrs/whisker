@@ -27,6 +27,7 @@ fn stress(setup: &mut GameSetup<Command>) {
         shadow_distance: 200.0,
         ..Sun::default()
     },));
+    setup.world.spawn((Sky::default(),));
     let cube = Mesh::cube(0.6);
     for x in 0..100 {
         for z in 0..100 {

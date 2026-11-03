@@ -147,6 +147,10 @@ texel into a 32-texel radiance cube of five roughness levels and a 16-texel irra
 happens once per change of the sky, so a frame pays only two cube lookups per fragment. The sun is left
 out of the cubes, because surfaces receive it directly.
 
+Skinning runs in the vertex shader from a uniform palette at a dynamic offset. A uniform rather than a
+storage buffer keeps vertex shaders within what GLES guarantees. Skin data is a separate vertex stream,
+so unskinned meshes do not pay for it, and each posed mesh draws alone.
+
 ### D8. The world is delivered in cells and controlled by memory budgets
 
 The world is split into grid cells, loaded and evicted with LRU by distance and budget. Distant
@@ -155,8 +159,8 @@ content is replaced with HLOD and impostors. Upload volume per frame is also cap
 ### D9. Assets are cooked, and run-time glTF is for development only
 
 Run-time glTF sits behind the `gltf` feature so that shipped games do not carry its parser. It reads
-binary glTF geometry, vertex colors, material factors, and base color, metallic-roughness, and normal
-textures. Occlusion, emission, transparency, double-sided materials, and texture samplers are not
+binary glTF geometry, vertex colors, material factors, base color, metallic-roughness, and normal
+textures, skins of up to 128 joints, and animation clips, with cubic curves played as straight lines. Occlusion, emission, transparency, double-sided materials, and texture samplers are not
 read yet. Images decode and build mipmaps on the main thread, which D5 allows only for development.
 
 Distribution uses per-cell `.kiba` packs. Compressed textures are cooked into a separate pack for
@@ -227,6 +231,7 @@ pub fn app() -> Element {
             OrbitCamera::default(),
         ));
         setup.world.spawn((Sun::default(),));
+        setup.world.spawn((Sky::default(),));
         setup.world.spawn((
             Transform::default(),
             Model::load(asset!("crate.glb")),

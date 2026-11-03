@@ -2,6 +2,7 @@ use std::sync::{Arc, OnceLock};
 
 use glam::Mat4;
 
+use crate::animation::Rig;
 use crate::{Material, Mesh};
 
 #[derive(Clone, Debug)]
@@ -9,13 +10,22 @@ pub(crate) struct ModelPart {
     pub(crate) mesh: Mesh,
     pub(crate) material: Material,
     pub(crate) transform: Mat4,
+    /// The rig node holding this part, which moves it when animated.
+    pub(crate) node: Option<usize>,
+    pub(crate) skin: Option<usize>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ModelData {
+    pub(crate) parts: Vec<ModelPart>,
+    pub(crate) rig: Option<Rig>,
 }
 
 /// Meshes placed relative to an entity, used as a component next to a [`Transform`](crate::Transform).
 ///
 /// Clones share their meshes, so entities using one model draw as instances.
 #[derive(Clone, Debug)]
-pub struct Model(Arc<OnceLock<Result<Vec<ModelPart>, String>>>);
+pub struct Model(Arc<OnceLock<Result<ModelData, String>>>);
 
 /// How far a [`Model::load`] has come.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,9 +47,11 @@ impl Model {
                 mesh,
                 material,
                 transform,
+                node: None,
+                skin: None,
             })
             .collect();
-        Self(Arc::new(OnceLock::from(Ok(parts))))
+        Self(Arc::new(OnceLock::from(Ok(ModelData { parts, rig: None }))))
     }
 
     /// Reports how far loading has come.
@@ -51,11 +63,23 @@ impl Model {
         }
     }
 
+    /// Names the animation clips that an [`Animator`](crate::Animator) can play, once loaded.
+    pub fn clip_names(&self) -> Vec<&str> {
+        let clips = self.data().and_then(|data| data.rig.as_ref());
+        let mut names: Vec<&str> = clips
+            .iter()
+            .flat_map(|rig| rig.clips.keys().map(String::as_str))
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    pub(crate) fn data(&self) -> Option<&ModelData> {
+        self.0.get()?.as_ref().ok()
+    }
+
     pub(crate) fn parts(&self) -> &[ModelPart] {
-        match self.0.get() {
-            Some(Ok(parts)) => parts,
-            _ => &[],
-        }
+        self.data().map_or(&[], |data| &data.parts)
     }
 }
 
@@ -68,9 +92,11 @@ mod import {
     use std::fmt;
     use std::sync::{Arc, OnceLock};
 
-    use glam::{Mat4, Vec3};
+    use glam::{Mat4, Quat, Vec3};
 
-    use super::Model;
+    use super::{Model, ModelData, ModelPart};
+    use crate::animation::{Channel, Clip, Keys, MAX_JOINTS, Pose, Rig, RigNode, Skin};
+    use crate::mesh::SkinVertex;
     use crate::renderer::log;
     use crate::{Material, Mesh, Texture, Vertex};
 
@@ -102,7 +128,7 @@ mod import {
                 move |result: Result<Vec<u8>, String>| {
                     let parsed = result.and_then(|bytes| {
                         Model::from_glb(&bytes)
-                            .map(|model| model.parts().to_vec())
+                            .map(|model| model.data().expect("just parsed").clone())
                             .map_err(|error| error.to_string())
                     });
                     if let Err(reason) = &parsed {
@@ -117,8 +143,9 @@ mod import {
 
         /// Reads the default scene of a binary glTF file.
         ///
-        /// Takes geometry, vertex colors, and base color, metallic-roughness, and normal
-        /// materials. Other textures and non-triangle primitives are left out with a log line.
+        /// Takes geometry, vertex colors, base color, metallic-roughness, and normal materials,
+        /// skins, and animation clips, whose curves play as straight lines between keys. Other
+        /// textures, morph targets, and non-triangle primitives are left out with a log line.
         /// Decoding images blocks the caller, and textures ignore their glTF sampler.
         pub fn from_glb(bytes: &[u8]) -> Result<Self, ModelError> {
             let gltf = gltf::Gltf::from_slice(bytes).map_err(|e| error(e.to_string()))?;
@@ -132,15 +159,34 @@ mod import {
                 meshes: HashMap::new(),
                 images: HashMap::new(),
                 parts: Vec::new(),
+                nodes: Vec::new(),
+                node_indices: HashMap::new(),
                 unsupported_textures: false,
             };
             for node in scene.nodes() {
-                importer.visit(&node, Mat4::IDENTITY)?;
+                importer.visit(&node, Mat4::IDENTITY, None)?;
             }
             if importer.unsupported_textures {
                 log("ignored glTF occlusion or emissive textures, or a second UV set");
             }
-            Ok(Model::new(importer.parts))
+            let skins = gltf
+                .skins()
+                .map(|skin| importer.read_skin(&skin))
+                .collect::<Result<Vec<_>, _>>()?;
+            let clips = gltf
+                .animations()
+                .enumerate()
+                .map(|(index, animation)| importer.read_clip(index, &animation))
+                .collect::<Result<_, _>>()?;
+            let data = ModelData {
+                parts: importer.parts,
+                rig: Some(Rig {
+                    nodes: importer.nodes,
+                    skins,
+                    clips,
+                }),
+            };
+            Ok(Model(Arc::new(OnceLock::from(Ok(data)))))
         }
     }
 
@@ -179,13 +225,32 @@ mod import {
         blob: Option<&'a [u8]>,
         meshes: HashMap<(usize, usize, bool), Mesh>,
         images: HashMap<usize, Texture>,
-        parts: Vec<(Mesh, Material, Mat4)>,
+        parts: Vec<ModelPart>,
+        nodes: Vec<RigNode>,
+        node_indices: HashMap<usize, usize>,
         unsupported_textures: bool,
     }
 
     impl Importer<'_> {
-        fn visit(&mut self, node: &gltf::Node<'_>, parent: Mat4) -> Result<(), ModelError> {
+        fn visit(
+            &mut self,
+            node: &gltf::Node<'_>,
+            parent: Mat4,
+            parent_index: Option<usize>,
+        ) -> Result<(), ModelError> {
             let transform = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
+            let (translation, rotation, scale) = node.transform().decomposed();
+            let index = self.nodes.len();
+            self.node_indices.insert(node.index(), index);
+            self.nodes.push(RigNode {
+                parent: parent_index,
+                rest: Pose {
+                    translation: translation.into(),
+                    rotation: Quat::from_array(rotation),
+                    scale: scale.into(),
+                },
+            });
+            let skin = node.skin().map(|skin| skin.index());
             if let Some(mesh) = node.mesh() {
                 // A mirrored transform turns triangles inside out, which glTF requires undoing.
                 let mirrored = transform.determinant() < 0.0;
@@ -204,13 +269,107 @@ mod import {
                         }
                     };
                     let material = self.read_material(&primitive.material())?;
-                    self.parts.push((part_mesh, material, transform));
+                    self.parts.push(ModelPart {
+                        mesh: part_mesh,
+                        material,
+                        transform,
+                        node: Some(index),
+                        skin,
+                    });
                 }
             }
             for child in node.children() {
-                self.visit(&child, transform)?;
+                self.visit(&child, transform, Some(index))?;
             }
             Ok(())
+        }
+
+        fn rig_index(&self, node: &gltf::Node<'_>) -> Result<usize, ModelError> {
+            self.node_indices
+                .get(&node.index())
+                .copied()
+                .ok_or_else(|| error("an animated node is outside the scene"))
+        }
+
+        fn read_skin(&self, skin: &gltf::Skin<'_>) -> Result<Skin, ModelError> {
+            let joints = skin
+                .joints()
+                .map(|joint| self.rig_index(&joint))
+                .collect::<Result<Vec<_>, _>>()?;
+            if joints.len() > MAX_JOINTS {
+                return Err(error(format!(
+                    "a skin has {} joints, and the limit is {MAX_JOINTS}",
+                    joints.len()
+                )));
+            }
+            let reader = skin.reader(|_| self.blob);
+            let inverse_binds = match reader.read_inverse_bind_matrices() {
+                Some(matrices) => matrices.map(|m| Mat4::from_cols_array_2d(&m)).collect(),
+                None => vec![Mat4::IDENTITY; joints.len()],
+            };
+            if inverse_binds.len() != joints.len() {
+                return Err(error("a skin has the wrong number of bind matrices"));
+            }
+            Ok(Skin {
+                joints,
+                inverse_binds,
+            })
+        }
+
+        fn read_clip(
+            &self,
+            index: usize,
+            animation: &gltf::Animation<'_>,
+        ) -> Result<(String, Clip), ModelError> {
+            use gltf::animation::Interpolation;
+            use gltf::animation::util::ReadOutputs;
+
+            let mut channels = Vec::new();
+            let mut duration = 0.0f32;
+            for channel in animation.channels() {
+                let reader = channel.reader(|_| self.blob);
+                let (Some(inputs), Some(outputs)) = (reader.read_inputs(), reader.read_outputs())
+                else {
+                    return Err(error("an animation channel has no readable keys"));
+                };
+                let times: Vec<f32> = inputs.collect();
+                let interpolation = channel.sampler().interpolation();
+                let cubic = interpolation == Interpolation::CubicSpline;
+                let keys = match outputs {
+                    ReadOutputs::Translations(keys) => {
+                        Keys::Translation(key_values(keys.map(Vec3::from).collect(), cubic))
+                    }
+                    ReadOutputs::Rotations(keys) => Keys::Rotation(key_values(
+                        keys.into_f32().map(Quat::from_array).collect(),
+                        cubic,
+                    )),
+                    ReadOutputs::Scales(keys) => {
+                        Keys::Scale(key_values(keys.map(Vec3::from).collect(), cubic))
+                    }
+                    ReadOutputs::MorphTargetWeights(_) => {
+                        log("skipped a morph target animation");
+                        continue;
+                    }
+                };
+                let count = match &keys {
+                    Keys::Translation(keys) | Keys::Scale(keys) => keys.len(),
+                    Keys::Rotation(keys) => keys.len(),
+                };
+                if times.is_empty() || count != times.len() {
+                    return Err(error("an animation channel has mismatched keys"));
+                }
+                duration = duration.max(*times.last().expect("checked above"));
+                channels.push(Channel {
+                    node: self.rig_index(&channel.target().node())?,
+                    times,
+                    keys,
+                    step: interpolation == Interpolation::Step,
+                });
+            }
+            let name = animation
+                .name()
+                .map_or_else(|| format!("clip{index}"), str::to_owned);
+            Ok((name, Clip { duration, channels }))
         }
 
         fn read_material(&mut self, material: &gltf::Material<'_>) -> Result<Material, ModelError> {
@@ -260,6 +419,15 @@ mod import {
         }
     }
 
+    /// Cubic curves store an in-tangent, a value, and an out-tangent for every key.
+    fn key_values<T>(all: Vec<T>, cubic: bool) -> Vec<T> {
+        if cubic {
+            all.into_iter().skip(1).step_by(3).collect()
+        } else {
+            all
+        }
+    }
+
     fn read_mesh(
         primitive: &gltf::Primitive<'_>,
         blob: Option<&[u8]>,
@@ -298,8 +466,19 @@ mod import {
                 .map_or([1.0; 3], |c| *c)
         };
 
+        let joints: Option<Vec<[u16; 4]>> = reader.read_joints(0).map(|j| j.into_u16().collect());
+        let weights: Option<Vec<[f32; 4]>> = reader.read_weights(0).map(|w| w.into_f32().collect());
+        let skin_at = |i: usize| -> Option<SkinVertex> {
+            Some(SkinVertex {
+                joints: *joints.as_ref()?.get(i)?,
+                weights: *weights.as_ref()?.get(i)?,
+            })
+        };
+        let mut skin = Vec::new();
+
         let (vertices, mut indices) = match normals {
             Some(normals) if normals.len() == positions.len() => {
+                skin.extend((0..positions.len()).filter_map(skin_at));
                 let vertices = positions
                     .iter()
                     .zip(&normals)
@@ -316,6 +495,7 @@ mod import {
             // glTF asks for flat shading here, which needs one vertex per triangle corner.
             _ => {
                 let mut vertices = Vec::with_capacity(indices.len());
+                skin.extend(indices.iter().filter_map(|&i| skin_at(i as usize)));
                 for triangle in indices.chunks_exact(3) {
                     let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(positions[triangle[i] as usize]));
                     let normal = (b - a).cross(c - a).normalize_or_zero().to_array();
@@ -334,6 +514,9 @@ mod import {
             for triangle in indices.chunks_exact_mut(3) {
                 triangle.swap(1, 2);
             }
+        }
+        if skin.len() == vertices.len() && !skin.is_empty() {
+            return Ok(Mesh::skinned(vertices, indices, skin));
         }
         Ok(Mesh::new(vertices, indices))
     }
@@ -463,6 +646,67 @@ mod import {
             }
             assert!(matches!(model.load_state(), crate::LoadState::Failed(_)));
             assert!(model.parts().is_empty());
+        }
+
+        #[test]
+        fn skins_and_clips_are_read() {
+            let mut bin = triangle_bin([0, 1, 2]);
+            bin.resize(80, 0);
+            for joints in [[0u16; 4]; 3] {
+                bin.extend(joints.iter().flat_map(|j| j.to_le_bytes()));
+            }
+            for _ in 0..3 {
+                for weight in [1.0f32, 0.0, 0.0, 0.0] {
+                    bin.extend(weight.to_le_bytes());
+                }
+            }
+            for value in Mat4::IDENTITY.to_cols_array() {
+                bin.extend(value.to_le_bytes());
+            }
+            for time in [0.0f32, 1.0] {
+                bin.extend(time.to_le_bytes());
+            }
+            for value in [0.0f32, 0.0, 0.0, 2.0, 0.0, 0.0] {
+                bin.extend(value.to_le_bytes());
+            }
+            let json = format!(
+                r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0,1]}}],
+                "nodes":[{{"mesh":0,"skin":0}},{{"translation":[0,1,0]}}],
+                "skins":[{{"joints":[1],"inverseBindMatrices":3}}],
+                "animations":[{{"name":"slide","samplers":[{{"input":4,"output":5}}],
+                  "channels":[{{"sampler":0,"target":{{"node":1,"path":"translation"}}}}]}}],
+                "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"NORMAL":1,"JOINTS_0":6,"WEIGHTS_0":7}},"indices":2}}]}}],
+                "buffers":[{{"byteLength":{}}}],
+                "bufferViews":[
+                  {{"buffer":0,"byteOffset":0,"byteLength":36}},{{"buffer":0,"byteOffset":36,"byteLength":36}},
+                  {{"buffer":0,"byteOffset":72,"byteLength":6}},{{"buffer":0,"byteOffset":152,"byteLength":64}},
+                  {{"buffer":0,"byteOffset":216,"byteLength":8}},{{"buffer":0,"byteOffset":224,"byteLength":24}},
+                  {{"buffer":0,"byteOffset":80,"byteLength":24}},{{"buffer":0,"byteOffset":104,"byteLength":48}}],
+                "accessors":[
+                  {{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}},
+                  {{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}},
+                  {{"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}},
+                  {{"bufferView":3,"componentType":5126,"count":1,"type":"MAT4"}},
+                  {{"bufferView":4,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[1]}},
+                  {{"bufferView":5,"componentType":5126,"count":2,"type":"VEC3"}},
+                  {{"bufferView":6,"componentType":5123,"count":3,"type":"VEC4"}},
+                  {{"bufferView":7,"componentType":5126,"count":3,"type":"VEC4"}}]}}"#,
+                bin.len()
+            );
+            let model = Model::from_glb(&glb(&json, &bin)).expect("valid file");
+
+            assert_eq!(model.clip_names(), ["slide"]);
+            let part = &model.parts()[0];
+            assert_eq!(part.skin, Some(0));
+            assert_eq!(part.mesh.data().skin.as_ref().map(Vec::len), Some(3));
+            let rig = model
+                .data()
+                .and_then(|data| data.rig.as_ref())
+                .expect("rig");
+            assert_eq!(rig.clips["slide"].duration, 1.0);
+            let animator = crate::Animator::new("slide");
+            let posed = rig.posed(Some(&animator));
+            assert_eq!(posed.palettes[0].len(), 1);
         }
 
         #[test]

@@ -6,9 +6,11 @@
 //! | To get | Spawn |
 //! |---|---|
 //! | A view | `(Camera::default(), Transform::looking_at(eye, target, Vec3::Y))` |
-//! | Light | `(Sun::default(),)` |
+//! | Direct light and shadows | `(Sun::default(),)` |
+//! | A background and light from all around | `(Sky::default(),)` |
 //! | A shape | `(Transform::default(), Mesh::cube(1.0), Material::default())` |
 //! | A file | `(Transform::default(), Model::load(asset!("crate.glb")))` |
+//! | A file's animation | Add `Animator::new("walk")` next to its `Model` |
 //!
 //! Your own structs are components too, and mutable game state belongs in them, because each
 //! callback owns what it captures. Query them from callbacks with `context.world.query_mut`.
@@ -42,6 +44,7 @@
 //!
 //! The camera looks along -Z, with +Y up and +X to its right.
 
+mod animation;
 mod controller;
 mod game;
 mod input;
@@ -56,6 +59,7 @@ mod android;
 #[cfg(target_vendor = "apple")]
 mod ios;
 
+pub use animation::Animator;
 pub use controller::{FlyCamera, OrbitCamera};
 pub use game::{Camera, Context, FrameStats, Game, GameSetup, Interpolated, Sun, Time, Transform};
 #[doc(hidden)]
@@ -80,9 +84,9 @@ pub use wgpu;
 /// Commonly used items.
 pub mod prelude {
     pub use crate::{
-        Camera, Context, Entity, FlyCamera, FrameStats, Game, GameSetup, Input, Interpolated, Key,
-        LoadState, Material, Mesh, Model, OrbitCamera, Pointer, Quat, Sky, Sun, Texture, Time,
-        Transform, Vec2, Vec3, Vertex, Viewport, World,
+        Animator, Camera, Context, Entity, FlyCamera, FrameStats, Game, GameSetup, Input,
+        Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, Pointer, Quat, Sky, Sun,
+        Texture, Time, Transform, Vec2, Vec3, Vertex, Viewport, World,
     };
 }
 

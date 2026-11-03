@@ -5,6 +5,8 @@ use glam::Vec3;
 
 use crate::Texture;
 
+const SKINNED_BOUNDS_MARGIN: f32 = 2.0;
+
 /// One corner of a [`Mesh`].
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -19,9 +21,18 @@ pub struct Vertex {
     pub uv: [f32; 2],
 }
 
+/// Which joints move one [`Vertex`], in a stream of its own so that most meshes do not pay for it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct SkinVertex {
+    pub(crate) joints: [u16; 4],
+    pub(crate) weights: [f32; 4],
+}
+
 #[derive(Debug)]
 pub(crate) struct MeshData {
     pub(crate) vertices: Vec<Vertex>,
+    pub(crate) skin: Option<Vec<SkinVertex>>,
     pub(crate) indices: Vec<u32>,
     pub(crate) bounds_center: Vec3,
     pub(crate) bounds_radius: f32,
@@ -111,9 +122,22 @@ impl Mesh {
             .fold(0.0, f32::max);
         Self(Arc::new(MeshData {
             vertices,
+            skin: None,
             indices,
             bounds_center,
             bounds_radius,
+        }))
+    }
+
+    /// Creates a mesh that bends with joints.
+    pub(crate) fn skinned(vertices: Vec<Vertex>, indices: Vec<u32>, skin: Vec<SkinVertex>) -> Self {
+        let rest = Self::new(vertices, indices);
+        let data = Arc::try_unwrap(rest.0).expect("just created");
+        Self(Arc::new(MeshData {
+            skin: Some(skin),
+            // Culling sees only the rest pose, and limbs reach beyond it.
+            bounds_radius: data.bounds_radius * SKINNED_BOUNDS_MARGIN,
+            ..data
         }))
     }
 

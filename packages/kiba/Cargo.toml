@@ -26,7 +26,7 @@ gltf = ["dep:gltf", "dep:image"]
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
 glam = { version = "0.30", features = ["bytemuck"] }
-gltf = { version = "1.4", default-features = false, features = ["utils"], optional = true }
+gltf = { version = "1.4", default-features = false, features = ["utils", "names"], optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 hecs = "0.10"
 web-time = "1"

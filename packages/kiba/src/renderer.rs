@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use std::sync::{LazyLock, Weak};
+use std::sync::{Arc, LazyLock, Weak};
 
 use glam::{Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
-use crate::mesh::{MeshData, Vertex};
+use crate::animation::MAX_JOINTS;
+use crate::mesh::{MeshData, SkinVertex, Vertex};
 use crate::sky::{Sky, SkyRenderer};
 use crate::texture::{TextureData, mip_chain};
 use crate::{Material, Mesh, Sun, Texture};
@@ -50,6 +51,8 @@ impl Instance {
 
 #[derive(Clone, Debug)]
 pub(crate) struct Batch {
+    /// Joint matrices for a skinned mesh.
+    pub(crate) palette: Option<Arc<[Mat4]>>,
     pub(crate) mesh: Mesh,
     /// Supplies the textures, which every instance shares.
     pub(crate) material: Material,
@@ -68,6 +71,7 @@ pub struct Frame {
     pub(crate) batches: Vec<Batch>,
 }
 
+const JOINTS_BINDING_SIZE: u64 = (MAX_JOINTS * size_of::<Mat4>()) as u64;
 pub(crate) const CASCADES: usize = 2;
 pub(crate) const SHADOW_MAP_SIZE: u32 = 1024;
 
@@ -90,6 +94,7 @@ pub fn placeholder_scene() -> Frame {
         sky: None,
         shadows: None,
         batches: vec![Batch {
+            palette: None,
             mesh: TRIANGLE.clone(),
             material: Material::default(),
             instances: vec![Instance::new(Mat4::IDENTITY, &Material::default())],
@@ -135,6 +140,7 @@ impl From<&Frame> for FrameUniform {
 struct GpuMesh {
     source: Weak<MeshData>,
     vertices: wgpu::Buffer,
+    skin: Option<wgpu::Buffer>,
     indices: wgpu::Buffer,
     index_count: u32,
 }
@@ -148,6 +154,13 @@ impl GpuMesh {
                 label: Some("kiba vertices"),
                 contents: bytemuck::cast_slice(&data.vertices),
                 usage: wgpu::BufferUsages::VERTEX,
+            }),
+            skin: data.skin.as_ref().map(|skin| {
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("kiba skin"),
+                    contents: bytemuck::cast_slice(skin),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
             }),
             indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("kiba indices"),
@@ -305,12 +318,16 @@ impl SizedTargets {
 /// Encodes the scene into any render target, on a device owned by the caller.
 pub struct SceneRenderer {
     pipeline: wgpu::RenderPipeline,
+    skinned_pipeline: wgpu::RenderPipeline,
     post_pipeline: wgpu::RenderPipeline,
     post_layout: wgpu::BindGroupLayout,
     frame_uniform: wgpu::Buffer,
     frame_bindings: wgpu::BindGroup,
     sky: SkyRenderer,
     shadow_pipeline: wgpu::RenderPipeline,
+    skinned_shadow_pipeline: wgpu::RenderPipeline,
+    joints_layout: wgpu::BindGroupLayout,
+    joints: Option<(wgpu::Buffer, wgpu::BindGroup)>,
     shadow_layers: [wgpu::TextureView; CASCADES],
     shadow_uniforms: [wgpu::Buffer; CASCADES],
     shadow_bindings: [wgpu::BindGroup; CASCADES],
@@ -339,94 +356,205 @@ impl SceneRenderer {
             9 => Float32,
             10 => Float32,
         ];
-        let shader = device.create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("kiba mesh"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[
-                    wgpu::VertexBufferLayout {
-                        array_stride: size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3,
-                            1 => Float32x3,
-                            2 => Float32x3,
-                            3 => Float32x2,
-                        ],
+        let frame_visibility = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
+        let fragment_entry = |binding, ty| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty,
+            count: None,
+        };
+        let float_texture = |view_dimension| wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension,
+            multisampled: false,
+        };
+        let filtering = wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering);
+        let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("kiba frame"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: frame_visibility,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::VertexBufferLayout {
-                        array_stride: size_of::<Instance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &instance_attributes,
-                    },
-                ],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(HDR_FORMAT.into())],
-            }),
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: DEPTH_COMPARE,
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            multiview: None,
-            cache: None,
-        });
-        let shadow_shader = device.create_shader_module(wgpu::include_wgsl!("shadow.wgsl"));
-        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("kiba shadow"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &shadow_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[
-                    wgpu::VertexBufferLayout {
-                        array_stride: size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                    },
-                    wgpu::VertexBufferLayout {
-                        array_stride: size_of::<Instance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &instance_attributes,
-                    },
-                ],
-            },
-            fragment: None,
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: Default::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
-                    clamp: 0.0,
+                    count: None,
                 },
-            }),
-            multisample: Default::default(),
-            multiview: None,
-            cache: None,
+                fragment_entry(
+                    1,
+                    wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                ),
+                fragment_entry(
+                    2,
+                    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                ),
+                fragment_entry(3, float_texture(wgpu::TextureViewDimension::Cube)),
+                fragment_entry(4, float_texture(wgpu::TextureViewDimension::Cube)),
+                fragment_entry(5, filtering),
+            ],
         });
+        let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("kiba material"),
+            entries: &[
+                fragment_entry(0, float_texture(wgpu::TextureViewDimension::D2)),
+                fragment_entry(1, float_texture(wgpu::TextureViewDimension::D2)),
+                fragment_entry(2, float_texture(wgpu::TextureViewDimension::D2)),
+                fragment_entry(3, filtering),
+            ],
+        });
+        let vertex_uniform = |has_dynamic_offset, min_binding_size| wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset,
+                min_binding_size,
+            },
+            count: None,
+        };
+        let joints_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("kiba joints"),
+            entries: &[vertex_uniform(
+                true,
+                wgpu::BufferSize::new(JOINTS_BINDING_SIZE),
+            )],
+        });
+        let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("kiba shadow"),
+            entries: &[vertex_uniform(false, None)],
+        });
+        let pipeline_layout = |label, layouts: &[&wgpu::BindGroupLayout]| {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: layouts,
+                push_constant_ranges: &[],
+            })
+        };
+        // Both pipelines take the same layout, so bindings carry over when switching between them.
+        let mesh_layout = pipeline_layout(
+            "kiba mesh",
+            &[&frame_layout, &material_layout, &joints_layout],
+        );
+        let shadow_layout = pipeline_layout("kiba shadow", &[&light_layout, &joints_layout]);
+        let skin_buffer = wgpu::VertexBufferLayout {
+            array_stride: size_of::<SkinVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![11 => Uint16x4, 12 => Float32x4],
+        };
+        let shader = device.create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
+        let vertex_buffer = wgpu::VertexBufferLayout {
+            array_stride: size_of::<Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![
+                0 => Float32x3,
+                1 => Float32x3,
+                2 => Float32x3,
+                3 => Float32x2,
+            ],
+        };
+        let instance_buffer = wgpu::VertexBufferLayout {
+            array_stride: size_of::<Instance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &instance_attributes,
+        };
+        let mesh_pipeline = |label, entry_point, buffers: &[wgpu::VertexBufferLayout<'_>]| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&mesh_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    buffers,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(HDR_FORMAT.into())],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: DEPTH_COMPARE,
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            })
+        };
+        let pipeline = mesh_pipeline(
+            "kiba mesh",
+            "vs_main",
+            &[vertex_buffer.clone(), instance_buffer.clone()],
+        );
+        let skinned_pipeline = mesh_pipeline(
+            "kiba skinned mesh",
+            "vs_skinned",
+            &[
+                vertex_buffer.clone(),
+                instance_buffer.clone(),
+                skin_buffer.clone(),
+            ],
+        );
+        let shadow_shader = device.create_shader_module(wgpu::include_wgsl!("shadow.wgsl"));
+        let shadow_vertex = wgpu::VertexBufferLayout {
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+            ..vertex_buffer
+        };
+        let shadow_pipeline_of = |label, entry_point, buffers: &[wgpu::VertexBufferLayout<'_>]| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&shadow_layout),
+                vertex: wgpu::VertexState {
+                    module: &shadow_shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    buffers,
+                },
+                fragment: None,
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: Default::default(),
+                    bias: wgpu::DepthBiasState {
+                        constant: 2,
+                        slope_scale: 2.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            })
+        };
+        let shadow_pipeline = shadow_pipeline_of(
+            "kiba shadow",
+            "vs_main",
+            &[shadow_vertex.clone(), instance_buffer.clone()],
+        );
+        let skinned_shadow_pipeline = shadow_pipeline_of(
+            "kiba skinned shadow",
+            "vs_skinned",
+            &[shadow_vertex, instance_buffer, skin_buffer],
+        );
         let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("kiba shadow map"),
             size: wgpu::Extent3d {
@@ -471,7 +599,7 @@ impl SceneRenderer {
         let shadow_bindings = [0, 1].map(|cascade: usize| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("kiba shadow"),
-                layout: &shadow_pipeline.get_bind_group_layout(0),
+                layout: &light_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: shadow_uniforms[cascade].as_entire_binding(),
@@ -519,7 +647,7 @@ impl SceneRenderer {
         });
         let frame_bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("kiba frame"),
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &frame_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -556,7 +684,11 @@ impl SceneRenderer {
             shadow_uniforms,
             shadow_bindings,
             meshes: HashMap::new(),
-            material_layout: pipeline.get_bind_group_layout(1),
+            material_layout,
+            joints_layout,
+            joints: None,
+            skinned_pipeline,
+            skinned_shadow_pipeline,
             material_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("kiba material"),
                 address_mode_u: wgpu::AddressMode::Repeat,
@@ -612,6 +744,7 @@ impl SceneRenderer {
                 .entry(batch.mesh.key())
                 .or_insert_with(|| GpuMesh::new(device, &batch.mesh));
         }
+        let joint_offsets = self.upload_joints(device, queue, frame);
         if self
             .targets
             .as_ref()
@@ -672,7 +805,6 @@ impl SceneRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(&self.shadow_pipeline);
                 pass.set_bind_group(0, &self.shadow_bindings[cascade], &[]);
                 let stride = size_of::<Instance>() as u64;
                 let mut first = next_instance;
@@ -684,6 +816,14 @@ impl SceneRenderer {
                     if count == 0 || mesh.index_count == 0 {
                         continue;
                     }
+                    self.bind_skin(
+                        &mut pass,
+                        batch,
+                        mesh,
+                        &joint_offsets,
+                        1,
+                        [&self.shadow_pipeline, &self.skinned_shadow_pipeline],
+                    );
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_vertex_buffer(1, instances.slice(range));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -714,7 +854,6 @@ impl SceneRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.frame_bindings, &[]);
             let mut first = 0;
             for batch in batches {
@@ -728,6 +867,14 @@ impl SceneRenderer {
                     continue;
                 }
                 let material = &self.materials[&batch.material.texture_keys()];
+                self.bind_skin(
+                    &mut pass,
+                    batch,
+                    mesh,
+                    &joint_offsets,
+                    2,
+                    [&self.pipeline, &self.skinned_pipeline],
+                );
                 pass.set_bind_group(1, &material.bindings, &[]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_vertex_buffer(1, instances.slice(range));
@@ -758,6 +905,88 @@ impl SceneRenderer {
             pass.draw(0..3, 0..1);
         }
         queue.submit([encoder.finish()]);
+    }
+
+    /// Copies every batch's joint matrices into one buffer, returning each palette's offset.
+    fn upload_joints(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &Frame,
+    ) -> HashMap<usize, u32> {
+        let align = u64::from(device.limits().min_uniform_buffer_offset_alignment) as usize;
+        let casters = frame
+            .shadows
+            .iter()
+            .flat_map(|s| s.casters.iter().flatten());
+        let mut offsets = HashMap::new();
+        let mut bytes = Vec::new();
+        for palette in frame
+            .batches
+            .iter()
+            .chain(casters)
+            .filter_map(|b| b.palette.as_ref())
+        {
+            offsets.entry(palette.as_ptr() as usize).or_insert_with(|| {
+                bytes.resize(bytes.len().next_multiple_of(align), 0);
+                let offset = bytes.len() as u32;
+                bytes.extend_from_slice(bytemuck::cast_slice(palette));
+                offset
+            });
+        }
+        // The shader binds a full-size array at every offset, even for a short palette.
+        let needed = bytes.len() as u64 + JOINTS_BINDING_SIZE;
+        if self
+            .joints
+            .as_ref()
+            .is_none_or(|(buffer, _)| buffer.size() < needed)
+        {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("kiba joints"),
+                size: needed.next_power_of_two(),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("kiba joints"),
+                layout: &self.joints_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(JOINTS_BINDING_SIZE),
+                    }),
+                }],
+            });
+            self.joints = Some((buffer, bindings));
+        }
+        let (buffer, _) = self.joints.as_ref().expect("allocated above");
+        queue.write_buffer(buffer, 0, &bytes);
+        offsets
+    }
+
+    /// Selects the pipeline for `batch`, whose group `slot` always needs some joint binding.
+    fn bind_skin(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        batch: &Batch,
+        mesh: &GpuMesh,
+        offsets: &HashMap<usize, u32>,
+        slot: u32,
+        [plain, skinned]: [&wgpu::RenderPipeline; 2],
+    ) {
+        let (_, bindings) = self.joints.as_ref().expect("allocated each frame");
+        let posed = batch.palette.as_ref().zip(mesh.skin.as_ref());
+        let offset = posed.map_or(0, |(palette, _)| offsets[&(palette.as_ptr() as usize)]);
+        pass.set_bind_group(slot, bindings, &[offset]);
+        match posed {
+            Some((_, skin)) => {
+                pass.set_pipeline(skinned);
+                pass.set_vertex_buffer(2, skin.slice(..));
+            }
+            None => pass.set_pipeline(plain),
+        }
     }
 
     fn prepare_material(
@@ -1022,6 +1251,7 @@ mod tests {
             uv: [(x + 1.0) / 2.0, (1.0 - y) / 2.0],
         };
         Batch {
+            palette: None,
             material,
             mesh: Mesh::new(
                 vec![
@@ -1248,6 +1478,7 @@ mod tests {
         let turned =
             Mat4::from_rotation_y(std::f32::consts::PI) * Mat4::from_scale(Vec3::splat(0.5));
         let batch = Batch {
+            palette: None,
             mesh: Mesh::triangle(),
             material: Material::default(),
             instances: vec![Instance::new(turned, &Material::default())],
@@ -1515,6 +1746,50 @@ mod tests {
     }
 
     #[test]
+    fn joints_move_the_vertices_they_weigh_on() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let corner = |x: f32, y: f32| Vertex {
+            position: [x, y, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            color: [1.0; 3],
+            uv: [0.0; 2],
+        };
+        let mesh = Mesh::skinned(
+            vec![
+                corner(-0.2, -0.2),
+                corner(0.2, -0.2),
+                corner(0.2, 0.2),
+                corner(-0.2, 0.2),
+            ],
+            vec![0, 1, 2, 0, 2, 3],
+            vec![
+                SkinVertex {
+                    joints: [1, 0, 0, 0],
+                    weights: [1.0, 0.0, 0.0, 0.0],
+                };
+                4
+            ],
+        );
+        let shot = |shift: f32| {
+            let palette: Arc<[Mat4]> =
+                vec![Mat4::IDENTITY, Mat4::from_translation(Vec3::X * shift)].into();
+            let batch = Batch {
+                mesh: mesh.clone(),
+                material: MATTE,
+                palette: Some(palette),
+                instances: vec![Instance::new(Mat4::IDENTITY, &MATTE)],
+            };
+            center_of(&device, &queue, &frame(Sun::UNLIT, vec![batch]))
+        };
+
+        let background = center_of(&device, &queue, &frame(Sun::UNLIT, Vec::new()));
+        assert_ne!(shot(0.0), background);
+        assert_eq!(shot(0.8), background);
+    }
+
+    #[test]
     fn dropped_meshes_release_their_gpu_copy() {
         let Some((device, queue)) = gpu() else {
             return;
@@ -1538,6 +1813,7 @@ mod tests {
         let drawn = frame(
             Sun::UNLIT,
             vec![Batch {
+                palette: None,
                 mesh: Mesh::triangle(),
                 material: Material::default(),
                 instances: vec![Instance::new(Mat4::IDENTITY, &Material::default())],

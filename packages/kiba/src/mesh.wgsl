@@ -26,6 +26,12 @@ struct Frame {
 @group(1) @binding(2) var normal_texture: texture_2d<f32>;
 @group(1) @binding(3) var material_sampler: sampler;
 
+struct Joints {
+    matrices: array<mat4x4<f32>, 128>,
+}
+
+@group(2) @binding(0) var<uniform> joints: Joints;
+
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) world_position: vec3<f32>,
@@ -36,12 +42,7 @@ struct VertexOutput {
     @location(5) uv: vec2<f32>,
 }
 
-@vertex
-fn vs_main(
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) color: vec3<f32>,
-    @location(3) uv: vec2<f32>,
+struct InstanceInput {
     @location(4) column0: vec4<f32>,
     @location(5) column1: vec4<f32>,
     @location(6) column2: vec4<f32>,
@@ -49,25 +50,50 @@ fn vs_main(
     @location(8) base_color: vec3<f32>,
     @location(9) metallic: f32,
     @location(10) roughness: f32,
-) -> VertexOutput {
-    let transform = mat4x4<f32>(column0, column1, column2, column3);
-    let basis = mat3x3<f32>(column0.xyz, column1.xyz, column2.xyz);
-    let squared_scale = vec3<f32>(
-        dot(column0.xyz, column0.xyz),
-        dot(column1.xyz, column1.xyz),
-        dot(column2.xyz, column2.xyz),
-    );
+}
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec3<f32>,
+    @location(3) uv: vec2<f32>,
+}
+
+fn place_vertex(vertex: VertexInput, instance: InstanceInput, transform: mat4x4<f32>) -> VertexOutput {
+    let basis = mat3x3<f32>(transform[0].xyz, transform[1].xyz, transform[2].xyz);
+    let squared_scale = vec3<f32>(dot(basis[0], basis[0]), dot(basis[1], basis[1]), dot(basis[2], basis[2]));
     var output: VertexOutput;
-    let world_position = transform * vec4<f32>(position, 1.0);
+    let world_position = transform * vec4<f32>(vertex.position, 1.0);
     output.position = frame.view_projection * world_position;
     output.world_position = world_position.xyz;
     // Equals the inverse transpose for a matrix without shear, which every Transform is, and WGSL has no inverse.
-    output.normal = basis * (normal / squared_scale);
-    output.base_color = color * base_color;
-    output.metallic = metallic;
-    output.roughness = roughness;
-    output.uv = uv;
+    output.normal = basis * (vertex.normal / squared_scale);
+    output.base_color = vertex.color * instance.base_color;
+    output.metallic = instance.metallic;
+    output.roughness = instance.roughness;
+    output.uv = vertex.uv;
     return output;
+}
+
+@vertex
+fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
+    let transform = mat4x4<f32>(instance.column0, instance.column1, instance.column2, instance.column3);
+    return place_vertex(vertex, instance, transform);
+}
+
+@vertex
+fn vs_skinned(
+    vertex: VertexInput,
+    instance: InstanceInput,
+    @location(11) joint_indices: vec4<u32>,
+    @location(12) weights: vec4<f32>,
+) -> VertexOutput {
+    let transform = mat4x4<f32>(instance.column0, instance.column1, instance.column2, instance.column3);
+    let skin = joints.matrices[joint_indices.x] * weights.x
+        + joints.matrices[joint_indices.y] * weights.y
+        + joints.matrices[joint_indices.z] * weights.z
+        + joints.matrices[joint_indices.w] * weights.w;
+    return place_vertex(vertex, instance, transform * skin);
 }
 
 @fragment
