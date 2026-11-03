@@ -20,7 +20,7 @@ use crate::quality::{Governor, Quality, Tier};
 use crate::renderer::{Batch, CASCADES, Effects, Frame, Instance, SHADOW_MAP_SIZE, Shadows};
 use crate::sky::{Fog, Sky};
 use crate::stream::run_streams;
-use crate::{Input, Material, Mesh, Model, Renderer};
+use crate::{AlphaMode, Input, Material, Mesh, Model, Renderer};
 
 const MAX_DELTA_SECONDS: f32 = 0.1;
 const DEFAULT_FIXED_HZ: f32 = 60.0;
@@ -651,6 +651,9 @@ fn shown(transform: &Transform, motion: Option<&Interpolated>, alpha: f32) -> Tr
     }
 }
 
+/// A mesh, textures, pipeline, and joint palette, which entities must share to draw as one batch.
+type BatchKey = (usize, [usize; 4], (u8, bool), usize);
+
 pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
     let sun = world
         .query::<&Sun>()
@@ -676,25 +679,42 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
     let projection = camera.projection(width as f32 / height as f32);
     let view_projection = projection * view;
-    let mut batches = HashMap::<(usize, [usize; 3], usize), Batch>::new();
+    let mut batches = HashMap::<BatchKey, Batch>::new();
     let frustum = Frustum::new(&view_projection);
     let shadows = cascades(&eye, camera, width as f32 / height as f32, &sun);
     let caster_frustums = shadows
         .as_ref()
         .map(|shadows| shadows.view_projections.each_ref().map(Frustum::new));
-    let mut casters: [HashMap<(usize, usize), Batch>; CASCADES] = Default::default();
+    let mut casters: [HashMap<BatchKey, Batch>; CASCADES] = Default::default();
     let mut add =
         |mesh: &Mesh, transform: Mat4, material: &Material, palette: Option<&Arc<[Mat4]>>| {
             // A posed mesh draws alone, because instances in a batch share their joint matrices.
             let owner = palette.map_or(0, |palette| palette.as_ptr() as usize);
+            // Only a masked caster needs its textures, so the others share batches across materials.
+            let caster = match material.alpha_mode {
+                AlphaMode::Blend => None,
+                AlphaMode::Mask { .. } => Some(material.clone()),
+                AlphaMode::Opaque => Some(Material {
+                    double_sided: material.double_sided,
+                    ..Material::default()
+                }),
+            };
             // Off-screen entities still throw shadows into the view.
             for (cascade, frustum) in caster_frustums.iter().flatten().enumerate() {
+                let Some(caster) = caster.as_ref() else {
+                    break;
+                };
                 if frustum.contains(mesh, &transform) {
                     casters[cascade]
-                        .entry((mesh.key(), owner))
+                        .entry((
+                            mesh.key(),
+                            caster.texture_keys(),
+                            caster.pipeline_key(),
+                            owner,
+                        ))
                         .or_insert_with(|| Batch {
                             mesh: mesh.clone(),
-                            material: Material::default(),
+                            material: caster.clone(),
                             palette: palette.cloned(),
                             instances: Vec::new(),
                         })
@@ -706,7 +726,12 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
                 return;
             }
             batches
-                .entry((mesh.key(), material.texture_keys(), owner))
+                .entry((
+                    mesh.key(),
+                    material.texture_keys(),
+                    material.pipeline_key(),
+                    owner,
+                ))
                 .or_insert_with(|| Batch {
                     mesh: mesh.clone(),
                     material: material.clone(),

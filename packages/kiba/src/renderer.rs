@@ -14,7 +14,7 @@ use crate::probes::{self, ProbeVolume};
 use crate::quality::Quality;
 use crate::sky::{Fog, Sky, SkyRenderer};
 use crate::texture::{TextureData, mip_chain};
-use crate::{Material, Mesh, Sun, Texture};
+use crate::{AlphaMode, Material, Mesh, Sun, Texture};
 
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.02,
@@ -36,16 +36,29 @@ pub(crate) struct Instance {
     base_color: [f32; 3],
     metallic: f32,
     roughness: f32,
+    emissive: [f32; 3],
+    /// Opacity, then the cutoff below which a masked surface is absent.
+    opacity: [f32; 2],
 }
 
 impl Instance {
     pub(crate) fn new(transform: Mat4, material: &Material) -> Self {
+        let cutoff = match material.alpha_mode {
+            AlphaMode::Mask { cutoff } => cutoff,
+            AlphaMode::Opaque | AlphaMode::Blend => 0.0,
+        };
         Self {
             transform: transform.to_cols_array_2d(),
             base_color: material.base_color.to_array(),
             metallic: material.metallic,
             roughness: material.roughness,
+            emissive: material.emissive.to_array(),
+            opacity: [material.opacity, cutoff],
         }
+    }
+
+    fn origin_point(&self) -> Vec3 {
+        Vec3::from_slice(&self.transform[3][..3])
     }
 
     #[cfg(test)]
@@ -367,17 +380,56 @@ pub(crate) fn volume_view(
     texture.create_view(&Default::default())
 }
 
+const MASKED: u8 = 1;
+const BLENDED: u8 = 2;
+
+/// Which variant of the mesh or shadow pipeline a batch draws with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    skinned: bool,
+    /// Opaque, [`MASKED`], or [`BLENDED`].
+    mode: u8,
+    double_sided: bool,
+}
+
+impl PipelineKey {
+    const ALL: [Self; 12] = {
+        let mut all = [Self {
+            skinned: false,
+            mode: 0,
+            double_sided: false,
+        }; 12];
+        let mut i = 0;
+        while i < 12 {
+            all[i] = Self {
+                skinned: i & 1 != 0,
+                mode: (i / 4) as u8,
+                double_sided: i & 2 != 0,
+            };
+            i += 1;
+        }
+        all
+    };
+
+    fn of(material: &Material, skinned: bool) -> Self {
+        let (mode, double_sided) = material.pipeline_key();
+        Self {
+            skinned,
+            mode,
+            double_sided,
+        }
+    }
+}
+
 /// Encodes the scene into any render target, on a device owned by the caller.
 pub struct SceneRenderer {
-    pipeline: wgpu::RenderPipeline,
-    skinned_pipeline: wgpu::RenderPipeline,
+    pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
+    shadow_pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
     post: PostPasses,
     particles: ParticlePass,
     frame_uniform: wgpu::Buffer,
     frame_bindings: wgpu::BindGroup,
     sky: SkyRenderer,
-    shadow_pipeline: wgpu::RenderPipeline,
-    skinned_shadow_pipeline: wgpu::RenderPipeline,
     probes_layout: wgpu::BindGroupLayout,
     probes_bindings: wgpu::BindGroup,
     probes_key: usize,
@@ -389,9 +441,9 @@ pub struct SceneRenderer {
     meshes: HashMap<usize, GpuMesh>,
     material_layout: wgpu::BindGroupLayout,
     material_sampler: wgpu::Sampler,
-    default_views: [wgpu::TextureView; 3],
+    default_views: [wgpu::TextureView; 4],
     textures: HashMap<(usize, bool), GpuTexture>,
-    materials: HashMap<[usize; 3], GpuMaterial>,
+    materials: HashMap<[usize; 4], GpuMaterial>,
     instances: Option<wgpu::Buffer>,
     targets: Option<SizedTargets>,
 }
@@ -407,6 +459,8 @@ impl SceneRenderer {
             8 => Float32x3,
             9 => Float32,
             10 => Float32,
+            13 => Float32x3,
+            14 => Float32x2,
         ];
         let frame_visibility = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
         let fragment_entry = |binding, ty| wgpu::BindGroupLayoutEntry {
@@ -458,6 +512,7 @@ impl SceneRenderer {
                 fragment_entry(1, float_texture(wgpu::TextureViewDimension::D2)),
                 fragment_entry(2, float_texture(wgpu::TextureViewDimension::D2)),
                 fragment_entry(3, filtering),
+                fragment_entry(4, float_texture(wgpu::TextureViewDimension::D2)),
             ],
         });
         let vertex_uniform = |has_dynamic_offset, min_binding_size| wgpu::BindGroupLayoutEntry {
@@ -506,6 +561,10 @@ impl SceneRenderer {
             ],
         );
         let shadow_layout = pipeline_layout("kiba shadow", &[&light_layout, &joints_layout]);
+        let masked_shadow_layout = pipeline_layout(
+            "kiba masked shadow",
+            &[&light_layout, &joints_layout, &material_layout],
+        );
         let skin_buffer = wgpu::VertexBufferLayout {
             array_stride: size_of::<SkinVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -527,29 +586,58 @@ impl SceneRenderer {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &instance_attributes,
         };
-        let mesh_pipeline = |label, entry_point, buffers: &[wgpu::VertexBufferLayout<'_>]| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
+        let premultiplied = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let plain_buffers = [vertex_buffer.clone(), instance_buffer.clone()];
+        let skinned_buffers = [
+            vertex_buffer.clone(),
+            instance_buffer.clone(),
+            skin_buffer.clone(),
+        ];
+        let mut pipelines = HashMap::new();
+        for key @ PipelineKey {
+            skinned,
+            mode,
+            double_sided,
+        } in PipelineKey::ALL
+        {
+            let blended = mode == BLENDED;
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("kiba mesh"),
                 layout: Some(&mesh_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some(entry_point),
+                    entry_point: Some(if skinned { "vs_skinned" } else { "vs_main" }),
                     compilation_options: Default::default(),
-                    buffers,
+                    buffers: if skinned {
+                        &skinned_buffers
+                    } else {
+                        &plain_buffers
+                    },
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some("fs_main"),
+                    entry_point: Some(["fs_main", "fs_masked", "fs_blended"][usize::from(mode)]),
                     compilation_options: Default::default(),
-                    targets: &[Some(HDR_FORMAT.into())],
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: HDR_FORMAT,
+                        blend: blended.then_some(wgpu::BlendState {
+                            color: premultiplied,
+                            alpha: premultiplied,
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
                 }),
                 primitive: wgpu::PrimitiveState {
-                    cull_mode: Some(wgpu::Face::Back),
+                    cull_mode: (!double_sided).then_some(wgpu::Face::Back),
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
-                    depth_write_enabled: true,
+                    depth_write_enabled: !blended,
                     depth_compare: DEPTH_COMPARE,
                     stencil: Default::default(),
                     bias: Default::default(),
@@ -557,40 +645,63 @@ impl SceneRenderer {
                 multisample: Default::default(),
                 multiview: None,
                 cache: None,
-            })
-        };
-        let pipeline = mesh_pipeline(
-            "kiba mesh",
-            "vs_main",
-            &[vertex_buffer.clone(), instance_buffer.clone()],
-        );
-        let skinned_pipeline = mesh_pipeline(
-            "kiba skinned mesh",
-            "vs_skinned",
-            &[
-                vertex_buffer.clone(),
-                instance_buffer.clone(),
-                skin_buffer.clone(),
-            ],
-        );
+            });
+            pipelines.insert(key, pipeline);
+        }
         let shadow_shader = device.create_shader_module(wgpu::include_wgsl!("shadow.wgsl"));
         let shadow_vertex = wgpu::VertexBufferLayout {
             attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-            ..vertex_buffer
+            ..vertex_buffer.clone()
         };
-        let shadow_pipeline_of = |label, entry_point, buffers: &[wgpu::VertexBufferLayout<'_>]| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&shadow_layout),
+        let mut shadow_pipelines = HashMap::new();
+        for key @ PipelineKey {
+            skinned,
+            mode,
+            double_sided,
+        } in PipelineKey::ALL
+        {
+            if mode == BLENDED {
+                continue;
+            }
+            let masked = mode == MASKED;
+            let position_only = [shadow_vertex.clone(), instance_buffer.clone()];
+            let position_and_skin = [
+                shadow_vertex.clone(),
+                instance_buffer.clone(),
+                skin_buffer.clone(),
+            ];
+            let buffers: &[wgpu::VertexBufferLayout<'_>] = match (masked, skinned) {
+                (false, false) => &position_only,
+                (false, true) => &position_and_skin,
+                (true, false) => &plain_buffers,
+                (true, true) => &skinned_buffers,
+            };
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("kiba shadow"),
+                layout: Some(if masked {
+                    &masked_shadow_layout
+                } else {
+                    &shadow_layout
+                }),
                 vertex: wgpu::VertexState {
                     module: &shadow_shader,
-                    entry_point: Some(entry_point),
+                    entry_point: Some(match (masked, skinned) {
+                        (false, false) => "vs_main",
+                        (false, true) => "vs_skinned",
+                        (true, false) => "vs_masked",
+                        (true, true) => "vs_masked_skinned",
+                    }),
                     compilation_options: Default::default(),
                     buffers,
                 },
-                fragment: None,
+                fragment: masked.then(|| wgpu::FragmentState {
+                    module: &shadow_shader,
+                    entry_point: Some("fs_masked"),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
                 primitive: wgpu::PrimitiveState {
-                    cull_mode: Some(wgpu::Face::Back),
+                    cull_mode: (!double_sided).then_some(wgpu::Face::Back),
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
@@ -607,18 +718,9 @@ impl SceneRenderer {
                 multisample: Default::default(),
                 multiview: None,
                 cache: None,
-            })
-        };
-        let shadow_pipeline = shadow_pipeline_of(
-            "kiba shadow",
-            "vs_main",
-            &[shadow_vertex.clone(), instance_buffer.clone()],
-        );
-        let skinned_shadow_pipeline = shadow_pipeline_of(
-            "kiba skinned shadow",
-            "vs_skinned",
-            &[shadow_vertex, instance_buffer, skin_buffer],
-        );
+            });
+            shadow_pipelines.insert(key, pipeline);
+        }
         let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("kiba shadow map"),
             size: wgpu::Extent3d {
@@ -718,7 +820,7 @@ impl SceneRenderer {
             frame_uniform,
             frame_bindings,
             sky,
-            shadow_pipeline,
+            shadow_pipelines,
             shadow_layers,
             shadow_uniforms,
             shadow_bindings,
@@ -733,8 +835,6 @@ impl SceneRenderer {
             probes_key: 0,
             joints_layout,
             joints: None,
-            skinned_pipeline,
-            skinned_shadow_pipeline,
             material_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("kiba material"),
                 address_mode_u: wgpu::AddressMode::Repeat,
@@ -749,6 +849,7 @@ impl SceneRenderer {
                 solid_view(device, queue, true, [255; 4]),
                 solid_view(device, queue, false, [255; 4]),
                 solid_view(device, queue, false, [128, 128, 255, 255]),
+                solid_view(device, queue, true, [255; 4]),
             ],
             textures: HashMap::new(),
             materials: HashMap::new(),
@@ -756,7 +857,7 @@ impl SceneRenderer {
             targets: None,
             post: PostPasses::new(device, solid_view(device, queue, false, [255; 4]), format),
             particles: ParticlePass::new(device),
-            pipeline,
+            pipelines,
         }
     }
 
@@ -796,7 +897,7 @@ impl SceneRenderer {
                 self.meshes.insert(batch.mesh.key(), mesh);
             }
         }
-        for batch in batches {
+        for batch in batches.iter().chain(casters.clone()) {
             self.prepare_material(device, queue, &batch.material, &mut upload_left);
         }
         let joint_offsets = self.upload_joints(device, queue, frame);
@@ -889,13 +990,20 @@ impl SceneRenderer {
                     if count == 0 || mesh.index_count == 0 {
                         continue;
                     }
+                    if PipelineKey::of(&batch.material, false).mode == MASKED {
+                        let Some(material) = self.materials.get(&batch.material.texture_keys())
+                        else {
+                            continue;
+                        };
+                        pass.set_bind_group(2, &material.bindings, &[]);
+                    }
                     self.bind_skin(
                         &mut pass,
                         batch,
                         mesh,
                         &joint_offsets,
                         1,
-                        [&self.shadow_pipeline, &self.skinned_shadow_pipeline],
+                        &self.shadow_pipelines,
                     );
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_vertex_buffer(1, instances.slice(range));
@@ -933,38 +1041,38 @@ impl SceneRenderer {
             });
             pass.set_bind_group(0, &self.frame_bindings, &[]);
             pass.set_bind_group(3, &self.probes_bindings, &[]);
+            let stride = size_of::<Instance>() as u64;
             let mut first = 0;
+            let mut blended = Vec::new();
             for batch in batches {
                 let count = batch.instances.len() as u64;
-                let stride = size_of::<Instance>() as u64;
                 let range = first * stride..(first + count) * stride;
                 first += count;
-                let (Some(mesh), Some(material)) = (
-                    self.meshes.get(&batch.mesh.key()),
-                    self.materials.get(&batch.material.texture_keys()),
-                ) else {
-                    continue;
-                };
-                // Slicing an empty range panics in wgpu.
-                if count == 0 || mesh.index_count == 0 {
+                if PipelineKey::of(&batch.material, false).mode == BLENDED {
+                    for (index, instance) in batch.instances.iter().enumerate() {
+                        let distance = instance
+                            .origin_point()
+                            .distance_squared(frame.camera_position);
+                        blended.push((distance, batch, range.start / stride + index as u64));
+                    }
                     continue;
                 }
-                self.bind_skin(
+                self.draw_batch(
                     &mut pass,
                     batch,
-                    mesh,
+                    instances.slice(range),
+                    count,
                     &joint_offsets,
-                    2,
-                    [&self.pipeline, &self.skinned_pipeline],
                 );
-                pass.set_bind_group(1, &material.bindings, &[]);
-                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                pass.set_vertex_buffer(1, instances.slice(range));
-                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.index_count, 0, 0..count as u32);
             }
             if frame.sky.is_some() {
                 self.sky.draw(&mut pass);
+            }
+            // Blending needs what is behind drawn first, so these go one at a time from the farthest.
+            blended.sort_by(|a, b| b.0.total_cmp(&a.0));
+            for (_, batch, at) in blended {
+                let slice = instances.slice(at * stride..(at + 1) * stride);
+                self.draw_batch(&mut pass, batch, slice, 1, &joint_offsets);
             }
             self.particles
                 .draw(&mut pass, frame.effects.particles.len());
@@ -978,6 +1086,32 @@ impl SceneRenderer {
             frame.effects.projection,
         );
         queue.submit([encoder.finish()]);
+    }
+
+    fn draw_batch(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        batch: &Batch,
+        instances: wgpu::BufferSlice<'_>,
+        count: u64,
+        joint_offsets: &HashMap<usize, u32>,
+    ) {
+        let (Some(mesh), Some(material)) = (
+            self.meshes.get(&batch.mesh.key()),
+            self.materials.get(&batch.material.texture_keys()),
+        ) else {
+            return;
+        };
+        // Slicing an empty range panics in wgpu.
+        if count == 0 || mesh.index_count == 0 {
+            return;
+        }
+        self.bind_skin(pass, batch, mesh, joint_offsets, 2, &self.pipelines);
+        pass.set_bind_group(1, &material.bindings, &[]);
+        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+        pass.set_vertex_buffer(1, instances);
+        pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..mesh.index_count, 0, 0..count as u32);
     }
 
     /// Copies every batch's joint matrices into one buffer, returning each palette's offset.
@@ -1047,18 +1181,15 @@ impl SceneRenderer {
         mesh: &GpuMesh,
         offsets: &HashMap<usize, u32>,
         slot: u32,
-        [plain, skinned]: [&wgpu::RenderPipeline; 2],
+        pipelines: &HashMap<PipelineKey, wgpu::RenderPipeline>,
     ) {
         let (_, bindings) = self.joints.as_ref().expect("allocated each frame");
         let posed = batch.palette.as_ref().zip(mesh.skin.as_ref());
         let offset = posed.map_or(0, |(palette, _)| offsets[&(palette.as_ptr() as usize)]);
         pass.set_bind_group(slot, bindings, &[offset]);
-        match posed {
-            Some((_, skin)) => {
-                pass.set_pipeline(skinned);
-                pass.set_vertex_buffer(2, skin.slice(..));
-            }
-            None => pass.set_pipeline(plain),
+        pass.set_pipeline(&pipelines[&PipelineKey::of(&batch.material, posed.is_some())]);
+        if let Some((_, skin)) = posed {
+            pass.set_vertex_buffer(2, skin.slice(..));
         }
     }
 
@@ -1073,11 +1204,12 @@ impl SceneRenderer {
         if self.materials.contains_key(&key) {
             return;
         }
-        // Only base color is sRGB, and an image may fill several slots.
+        // Only colors are sRGB, and an image may fill several slots.
         let slots = [
             (&material.base_color_texture, true),
             (&material.metallic_roughness_texture, false),
             (&material.normal_texture, false),
+            (&material.emissive_texture, true),
         ];
         let mut sources = Vec::new();
         for (texture, srgb) in slots {
@@ -1093,7 +1225,7 @@ impl SceneRenderer {
                 }
             }
         }
-        let views = [0, 1, 2].map(|slot| {
+        let views = [0, 1, 2, 3].map(|slot| {
             let (texture, srgb) = slots[slot];
             texture
                 .as_ref()
@@ -1120,6 +1252,10 @@ impl SceneRenderer {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(views[3]),
                 },
             ],
         });
@@ -1417,9 +1553,14 @@ mod tests {
         base_color: Vec3::ONE,
         metallic: 0.0,
         roughness: 1.0,
+        emissive: Vec3::ZERO,
+        opacity: 1.0,
+        alpha_mode: crate::AlphaMode::Opaque,
+        double_sided: false,
         base_color_texture: None,
         metallic_roughness_texture: None,
         normal_texture: None,
+        emissive_texture: None,
     };
 
     #[test]
@@ -1776,6 +1917,116 @@ mod tests {
         let lit = ground_brightness(false);
         let shadowed = ground_brightness(true);
         assert!(lit > shadowed + 32, "lit {lit}, shadowed {shadowed}");
+    }
+
+    #[test]
+    fn a_masked_caster_lets_the_sun_through_its_holes() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let ground_brightness = |opacity: u8| {
+            let mut world = hecs::World::new();
+            world.spawn((
+                crate::Camera::default(),
+                crate::Transform::looking_at(Vec3::Y, Vec3::ZERO, Vec3::Z),
+            ));
+            world.spawn((Sun {
+                direction: Vec3::NEG_Y,
+                ..Sun::default()
+            },));
+            world.spawn((crate::Transform::default(), Mesh::plane(20.0)));
+            world.spawn((
+                crate::Transform::at(Vec3::Y * 5.0),
+                Mesh::plane(8.0),
+                Material {
+                    alpha_mode: AlphaMode::Mask { cutoff: 0.5 },
+                    double_sided: true,
+                    base_color_texture: Some(Texture::from_rgba8(
+                        1,
+                        1,
+                        vec![255, 255, 255, opacity],
+                    )),
+                    ..Material::default()
+                },
+            ));
+            let frame = crate::game::extract_frame(&world, SIZE, SIZE, 1.0);
+            center_of(&device, &queue, &frame)[0]
+        };
+
+        let through_hole = ground_brightness(0);
+        let under_leaf = ground_brightness(255);
+        assert!(
+            through_hole > under_leaf + 32,
+            "{through_hole} {under_leaf}"
+        );
+    }
+
+    #[test]
+    fn emissive_surfaces_glow_without_any_light() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let glow = |emissive: Vec3| {
+            let material = Material { emissive, ..MATTE };
+            center_of(
+                &device,
+                &queue,
+                &frame(DARK_SUN, vec![near_surface(material)]),
+            )
+        };
+        assert_eq!(glow(Vec3::ZERO), [0, 0, 0]);
+        let red = glow(Vec3::new(1.0, 0.0, 0.0));
+        assert!(red[0] > 150 && red[1] == 0, "{red:?}");
+    }
+
+    #[test]
+    fn opacity_hides_masked_surfaces_and_blends_blended_ones() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let over_red = |alpha_mode: AlphaMode, opacity: f32| {
+            let material = Material {
+                alpha_mode,
+                opacity,
+                ..Material::default()
+            };
+            let front = quad(
+                Vec3::Z,
+                [0.0, 0.0, 1.0],
+                Mat4::from_translation(Vec3::Z * 0.6),
+                material,
+            );
+            let frame = frame(Sun::UNLIT, vec![front, solid_quad([1.0, 0.0, 0.0], 0.3)]);
+            center_of(&device, &queue, &frame)
+        };
+        let mask = AlphaMode::Mask { cutoff: 0.5 };
+
+        let hidden = over_red(mask, 0.3);
+        let solid = over_red(mask, 0.8);
+        let mixed = over_red(AlphaMode::Blend, 0.5);
+        assert!(hidden[0] > 150 && hidden[2] < 30, "{hidden:?}");
+        assert!(solid[2] > 150 && solid[0] < 30, "{solid:?}");
+        assert!(mixed[0] > 60 && mixed[2] > 60, "{mixed:?}");
+    }
+
+    #[test]
+    fn back_faces_draw_only_on_double_sided_materials() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let back = |double_sided: bool| {
+            let material = Material {
+                emissive: Vec3::ONE,
+                double_sided,
+                ..MATTE
+            };
+            let turned =
+                Mat4::from_translation(Vec3::Z * 0.5) * Mat4::from_rotation_y(std::f32::consts::PI);
+            let batch = quad(Vec3::Z, [1.0; 3], turned, material);
+            center_of(&device, &queue, &frame(DARK_SUN, vec![batch]))[0]
+        };
+        let culled = back(false);
+        assert!(back(true) > culled + 100, "{culled}");
     }
 
     #[test]

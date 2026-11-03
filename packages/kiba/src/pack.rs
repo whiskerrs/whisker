@@ -9,7 +9,7 @@ use glam::{Mat4, Quat, Vec3};
 use crate::animation::{Channel, Clip, Keys, MAX_JOINTS, Pose, Rig, RigNode, Skin};
 use crate::mesh::SkinVertex;
 use crate::model::{Lod, ModelData, ModelPart};
-use crate::{Material, Mesh, Texture, Vertex};
+use crate::{AlphaMode, Material, Mesh, Texture, Vertex};
 
 const MAGIC: &[u8; 4] = b"KIBA";
 const VERSION: u32 = 3;
@@ -215,6 +215,7 @@ pub(crate) fn write_model(data: &ModelData) -> Vec<u8> {
             &material.base_color_texture,
             &material.metallic_roughness_texture,
             &material.normal_texture,
+            &material.emissive_texture,
         ]
         .into_iter()
         .flatten()
@@ -248,10 +249,21 @@ pub(crate) fn write_model(data: &ModelData) -> Vec<u8> {
         out.vec3(material.base_color);
         out.f32(material.metallic);
         out.f32(material.roughness);
+        out.vec3(material.emissive);
+        out.f32(material.opacity);
+        let (mode, cutoff) = match material.alpha_mode {
+            AlphaMode::Opaque => (0, 0.0),
+            AlphaMode::Mask { cutoff } => (1, cutoff),
+            AlphaMode::Blend => (2, 0.0),
+        };
+        out.u32(mode);
+        out.f32(cutoff);
+        out.u32(u32::from(material.double_sided));
         for texture in [
             &material.base_color_texture,
             &material.metallic_roughness_texture,
             &material.normal_texture,
+            &material.emissive_texture,
         ] {
             out.option(
                 texture
@@ -360,6 +372,15 @@ pub(crate) fn read_model(bytes: &[u8]) -> Result<ModelData, String> {
             .ok_or("a part's mesh is out of range")?
             .clone();
         let (base_color, metallic, roughness) = (input.vec3()?, input.f32()?, input.f32()?);
+        let (emissive, opacity) = (input.vec3()?, input.f32()?);
+        let (mode, cutoff) = (input.u32()?, input.f32()?);
+        let alpha_mode = match mode {
+            0 => AlphaMode::Opaque,
+            1 => AlphaMode::Mask { cutoff },
+            2 => AlphaMode::Blend,
+            _ => return Err("a material's alpha mode is unknown".into()),
+        };
+        let double_sided = input.u32()? != 0;
         let texture = |input: &mut Reader<'_>| -> Result<Option<Texture>, String> {
             let slot = checked(input.option()?, textures.len(), "texture")?;
             Ok(slot.map(|slot| textures[slot].clone()))
@@ -368,9 +389,14 @@ pub(crate) fn read_model(bytes: &[u8]) -> Result<ModelData, String> {
             base_color,
             metallic,
             roughness,
+            emissive,
+            opacity,
+            alpha_mode,
+            double_sided,
             base_color_texture: texture(input)?,
             metallic_roughness_texture: texture(input)?,
             normal_texture: texture(input)?,
+            emissive_texture: texture(input)?,
         };
         let transform = input.mat4()?;
         let node = input.option()?;
@@ -494,7 +520,12 @@ mod tests {
         let part = |transform| ModelPart {
             mesh: mesh.clone(),
             material: Material {
+                emissive: Vec3::new(0.5, 0.25, 0.0),
+                opacity: 0.75,
+                alpha_mode: AlphaMode::Mask { cutoff: 0.3 },
+                double_sided: true,
                 base_color_texture: Some(texture.clone()),
+                emissive_texture: Some(texture.clone()),
                 ..Material::default()
             },
             transform,
@@ -546,6 +577,12 @@ mod tests {
             read.parts[0].material.base_color_texture,
             read.parts[1].material.base_color_texture
         );
+        let material = &read.parts[0].material;
+        assert_eq!(material.emissive, Vec3::new(0.5, 0.25, 0.0));
+        assert_eq!(material.opacity, 0.75);
+        assert_eq!(material.alpha_mode, AlphaMode::Mask { cutoff: 0.3 });
+        assert!(material.double_sided);
+        assert_eq!(material.emissive_texture, material.base_color_texture);
         let clip = &read.rig.as_ref().unwrap().clips["wave"];
         assert_eq!(clip.channels[0].times, vec![0.0, 1.0]);
     }

@@ -13,6 +13,7 @@
 //! | Haze that hides the distance | `(Fog::default(),)` |
 //! | Fire, sparks, or magic | `(Transform::default(), ParticleEmitter::default())` |
 //! | A shape | `(Transform::default(), Mesh::cube(1.0), Material::default())` |
+//! | Glass, leaves, or a glowing sign | That `Material` with `alpha_mode: AlphaMode::Blend` and `opacity`, `AlphaMode::Mask { cutoff: 0.5 }` and `double_sided: true`, or `emissive` |
 //! | A file | `(Transform::default(), Model::load(asset!("crate.glb")))` |
 //! | Sky light blocked and bounced by still models | `(ProbeVolume::load(asset!("scene.kiba")),)`, cooked with `kiba-cook` |
 //! | A large world, loaded around the camera | `(WorldStream::load(asset!("world/index.kiba"), StreamSettings::default()),)`, cooked with `kiba-cook` |
@@ -144,7 +145,7 @@ pub use hecs::{Entity, World};
 pub use input::InputEvent;
 pub use input::{Input, Key, Pointer};
 pub use lights::{PointLight, SpotLight};
-pub use mesh::{Material, Mesh, Vertex};
+pub use mesh::{AlphaMode, Material, Mesh, Vertex};
 #[cfg(feature = "gltf")]
 pub use model::ModelError;
 pub use model::{LoadState, Model};
@@ -165,8 +166,8 @@ pub use wgpu;
 /// Commonly used items.
 pub mod prelude {
     pub use crate::{
-        Animator, Camera, Context, Entity, FlyCamera, Fog, FrameStats, Game, GameSetup, Input,
-        Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, ParticleEmitter,
+        AlphaMode, Animator, Camera, Context, Entity, FlyCamera, Fog, FrameStats, Game, GameSetup,
+        Input, Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, ParticleEmitter,
         Playback, PointLight, Pointer, ProbeVolume, Quat, Sky, Sound, SpotLight, StreamSettings,
         Sun, Texture, Tier, Time, Transform, Vec2, Vec3, Vertex, Viewport, World, WorldStream,
     };

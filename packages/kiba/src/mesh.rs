@@ -49,22 +49,59 @@ pub struct Material {
     pub metallic: f32,
     /// 0 for a mirror finish and 1 for fully matte.
     pub roughness: f32,
-    /// sRGB color, multiplied by `base_color`.
+    /// Linear RGB light the surface gives off by itself, in the scale of [`Sun::color`](crate::Sun::color).
+    /// It lights nothing else, so pair a lamp's glow with a [`PointLight`](crate::PointLight).
+    pub emissive: Vec3,
+    /// 1 for solid and 0 for invisible, multiplied by the base color texture's alpha. Only
+    /// `alpha_mode` decides whether it has an effect.
+    pub opacity: f32,
+    pub alpha_mode: AlphaMode,
+    /// Draws back faces too, lit as if they faced the viewer, for leaves, paper, and cloth.
+    pub double_sided: bool,
+    /// sRGB color, multiplied by `base_color`, with opacity in alpha.
     pub base_color_texture: Option<Texture>,
     /// Roughness in green and metallic in blue, multiplied by their factors.
     pub metallic_roughness_texture: Option<Texture>,
     /// Surface direction in glTF's tangent space: +X along U, +Y against V, and +Z out.
     pub normal_texture: Option<Texture>,
+    /// sRGB color, multiplied by `emissive`.
+    pub emissive_texture: Option<Texture>,
+}
+
+/// How a [`Material`]'s opacity shows what is behind it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum AlphaMode {
+    /// Opacity is ignored.
+    #[default]
+    Opaque,
+    /// Fully solid where opacity reaches `cutoff` and absent elsewhere, for leaves and fences. It
+    /// casts shadows with its holes and sorts like an opaque surface.
+    Mask { cutoff: f32 },
+    /// Blended over what is behind, for glass and water. Reflections stay at full strength, it casts
+    /// no shadow, and surfaces are sorted back to front by their entity's position, so one that
+    /// crosses another can draw in the wrong order.
+    Blend,
 }
 
 impl Material {
-    pub(crate) fn texture_keys(&self) -> [usize; 3] {
+    pub(crate) fn texture_keys(&self) -> [usize; 4] {
         [
             &self.base_color_texture,
             &self.metallic_roughness_texture,
             &self.normal_texture,
+            &self.emissive_texture,
         ]
         .map(|texture| texture.as_ref().map_or(0, Texture::key))
+    }
+
+    /// What a batch must share beyond its textures, because it selects the pipeline.
+    pub(crate) fn pipeline_key(&self) -> (u8, bool) {
+        let mode = match self.alpha_mode {
+            AlphaMode::Opaque => 0,
+            AlphaMode::Mask { .. } => 1,
+            AlphaMode::Blend => 2,
+        };
+        (mode, self.double_sided)
     }
 }
 
@@ -74,9 +111,14 @@ impl Default for Material {
             base_color: Vec3::ONE,
             metallic: 0.0,
             roughness: 0.5,
+            emissive: Vec3::ZERO,
+            opacity: 1.0,
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
             base_color_texture: None,
             metallic_roughness_texture: None,
             normal_texture: None,
+            emissive_texture: None,
         }
     }
 }

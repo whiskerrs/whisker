@@ -41,6 +41,7 @@ struct Light {
 @group(1) @binding(1) var metallic_roughness_texture: texture_2d<f32>;
 @group(1) @binding(2) var normal_texture: texture_2d<f32>;
 @group(1) @binding(3) var material_sampler: sampler;
+@group(1) @binding(4) var emissive_texture: texture_2d<f32>;
 
 struct Joints {
     matrices: array<mat4x4<f32>, 128>,
@@ -58,6 +59,9 @@ struct VertexOutput {
     @location(3) metallic: f32,
     @location(4) roughness: f32,
     @location(5) uv: vec2<f32>,
+    @location(6) emissive: vec3<f32>,
+    // Opacity, then the cutoff below which a masked surface is absent.
+    @location(7) opacity: vec2<f32>,
 }
 
 struct InstanceInput {
@@ -68,6 +72,8 @@ struct InstanceInput {
     @location(8) base_color: vec3<f32>,
     @location(9) metallic: f32,
     @location(10) roughness: f32,
+    @location(13) emissive: vec3<f32>,
+    @location(14) opacity: vec2<f32>,
 }
 
 struct VertexInput {
@@ -90,6 +96,8 @@ fn place_vertex(vertex: VertexInput, instance: InstanceInput, transform: mat4x4<
     output.metallic = instance.metallic;
     output.roughness = instance.roughness;
     output.uv = vertex.uv;
+    output.emissive = instance.emissive;
+    output.opacity = instance.opacity;
     return output;
 }
 
@@ -115,8 +123,35 @@ fn vs_skinned(
 }
 
 @fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let normal = mapped_normal(normalize(input.normal), input.world_position, input.uv);
+fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return vec4<f32>(lit(input, front, 1.0), 1.0);
+}
+
+@fragment
+fn fs_masked(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    if opacity_of(input) < input.opacity.y {
+        discard;
+    }
+    return vec4<f32>(lit(input, front, 1.0), 1.0);
+}
+
+// Premultiplied, so that what the surface reflects keeps its strength however clear the surface is.
+@fragment
+fn fs_blended(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let opacity = opacity_of(input);
+    return vec4<f32>(lit(input, front, opacity), opacity);
+}
+
+fn opacity_of(input: VertexOutput) -> f32 {
+    return textureSample(base_color_texture, material_sampler, input.uv).a * input.opacity.x;
+}
+
+// Scales only what the surface itself sends back by `opacity`, and fades it into the fog.
+fn lit(input: VertexOutput, front: bool, opacity: f32) -> vec3<f32> {
+    // A back face seen through a double-sided material is lit as the side facing the viewer.
+    let facing = select(-1.0, 1.0, front);
+    let geometric = normalize(input.normal) * facing;
+    let normal = mapped_normal(geometric, input.world_position, input.uv);
     let metal_rough = textureSample(metallic_roughness_texture, material_sampler, input.uv);
     let metallic = input.metallic * metal_rough.b;
     let base_color = input.base_color * textureSample(base_color_texture, material_sampler, input.uv).rgb;
@@ -126,13 +161,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let roughness = clamp(input.roughness * metal_rough.g, MIN_ROUGHNESS, 1.0);
     let alpha = roughness * roughness;
     let reflectance = mix(vec3<f32>(DIELECTRIC_REFLECTANCE), base_color, metallic);
-    let diffuse = base_color * (1.0 - metallic);
+    let diffuse = base_color * (1.0 - metallic) * opacity;
     let surface = Surface(normal, to_camera, n_dot_v, alpha, diffuse, reflectance);
 
-    let lit = sun_visibility(input.world_position, input.normal);
-    var sun = shade(surface, frame.to_sun.xyz, frame.sun_color.rgb * lit);
+    let shadowed = sun_visibility(input.world_position, geometric);
+    var direct = shade(surface, frame.to_sun.xyz, frame.sun_color.rgb * shadowed);
     for (var i = 0u; i < u32(frame.shadow_params.w); i++) {
-        sun += local_light(surface, frame.lights[i], input.world_position);
+        direct += local_light(surface, frame.lights[i], input.world_position);
     }
     var ambient_diffuse = frame.ambient.rgb;
     var ambient_reflected = frame.ambient.rgb;
@@ -143,8 +178,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
     let ambient = diffuse * (ambient_diffuse * sky_visibility(input.world_position, normal) + bounce_light(input.world_position, normal))
         + ambient_specular(reflectance, roughness, n_dot_v) * ambient_reflected * sky_visibility(input.world_position, reflect(-to_camera, normal));
+    let glow = input.emissive * textureSample(emissive_texture, material_sampler, input.uv).rgb * opacity;
     let air = 1.0 - exp(-length(frame.camera_position.xyz - input.world_position) * frame.fog.w);
-    return vec4<f32>(mix(sun + ambient, frame.fog.rgb, air) * frame.camera_position.w, 1.0);
+    return mix(direct + ambient + glow, frame.fog.rgb * opacity, air) * frame.camera_position.w;
 }
 
 struct Surface {

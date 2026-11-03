@@ -201,7 +201,7 @@ mod import {
     use super::{Model, ModelData, ModelPart};
     use crate::animation::{Channel, Clip, Keys, MAX_JOINTS, Pose, Rig, RigNode, Skin};
     use crate::mesh::SkinVertex;
-    use crate::{Material, Mesh, Texture, Vertex};
+    use crate::{AlphaMode, Material, Mesh, Texture, Vertex};
 
     /// Why a file could not become a [`Model`].
     #[derive(Debug)]
@@ -246,7 +246,7 @@ mod import {
                 importer.visit(&node, Mat4::IDENTITY, None)?;
             }
             if importer.unsupported_textures {
-                log("ignored glTF occlusion or emissive textures, or a second UV set");
+                log("ignored glTF occlusion textures, or a second UV set");
             }
             let skins = gltf
                 .skins()
@@ -426,21 +426,36 @@ mod import {
             let base = pbr.base_color_texture();
             let metal_rough = pbr.metallic_roughness_texture();
             let normal = material.normal_texture();
+            let emissive = material.emissive_texture();
             self.unsupported_textures |= material.occlusion_texture().is_some()
-                || material.emissive_texture().is_some()
                 || base.as_ref().is_some_and(|t| t.tex_coord() != 0)
                 || metal_rough.as_ref().is_some_and(|t| t.tex_coord() != 0)
-                || normal.as_ref().is_some_and(|t| t.tex_coord() != 0);
-            let [r, g, b, _] = pbr.base_color_factor();
+                || normal.as_ref().is_some_and(|t| t.tex_coord() != 0)
+                || emissive.as_ref().is_some_and(|t| t.tex_coord() != 0);
+            let [r, g, b, a] = pbr.base_color_factor();
             Ok(Material {
                 base_color: Vec3::new(r, g, b),
                 metallic: pbr.metallic_factor(),
                 roughness: pbr.roughness_factor(),
+                emissive: Vec3::from(material.emissive_factor())
+                    * material.emissive_strength().unwrap_or(1.0),
+                opacity: a,
+                alpha_mode: match material.alpha_mode() {
+                    gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+                    gltf::material::AlphaMode::Mask => AlphaMode::Mask {
+                        cutoff: material.alpha_cutoff().unwrap_or(0.5),
+                    },
+                    gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+                },
+                double_sided: material.double_sided(),
                 base_color_texture: base.map(|t| self.read_image(&t.texture())).transpose()?,
                 metallic_roughness_texture: metal_rough
                     .map(|t| self.read_image(&t.texture()))
                     .transpose()?,
                 normal_texture: normal.map(|t| self.read_image(&t.texture())).transpose()?,
+                emissive_texture: emissive
+                    .map(|t| self.read_image(&t.texture()))
+                    .transpose()?,
             })
         }
 
