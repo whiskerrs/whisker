@@ -96,6 +96,44 @@
 //! });
 //! ```
 //!
+//! A HUD over the game and a panel below it, with signals carrying state out of the game and
+//! commands carrying taps in. The viewport draws at whatever size layout gives it, and a later sibling
+//! draws over it. `PositionKind` comes from `whisker::css`:
+//!
+//! ```ignore
+//! let score = signal(0);
+//! let game = Game::<Command>::new(move |setup| {
+//!     setup.on_command(|context, Command::Reset| { /* change components */ });
+//!     let mut shown = 0;
+//!     setup.on_update(move |context| {
+//!         let now = /* read components */ 0;
+//!         if now != shown {
+//!             shown = now;
+//!             score.set(now);
+//!         }
+//!     });
+//! });
+//! render! {
+//!     View(style: css!(width: percent(100), height: percent(100), flex_direction: FlexDirection::Column)) {
+//!         View(style: css!(width: percent(100), height: percent(70))) {
+//!             Viewport(game: game, style: css!(width: percent(100), height: percent(100)))
+//!             Text(value: "HUD", style: css!(position: PositionKind::Absolute, top: px(12), left: px(12)))
+//!         }
+//!         View(style: css!(flex_grow: 1.0), on_tap: move |_| game.send(Command::Reset)) {
+//!             Text(value: computed(move || format!("Score {}", score.get())))
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! # What Kiba leaves to the game
+//!
+//! Kiba has no navmesh and no networking. For pathfinding, search a grid of your own or use a crate such
+//! as `pathfinding`; `Physics::raycast`, with the `physics` feature, checks a line of sight but cannot route around
+//! corners. For networking, build snapshots in `on_fixed_update`, whose step is exact, and give entities
+//! an id component of your own, because an [`Entity`] means nothing outside its world. Simulation is not
+//! promised to be deterministic across machines: it uses `f32` math, and query order is not specified.
+//!
 //! An on-screen button that holds the action, with the touch events of Whisker's elements:
 //!
 //! ```ignore
@@ -182,9 +220,11 @@ pub mod prelude {
     pub use crate::{BodyKind, Collider, Physics, RayHit, RigidBody};
 }
 
-/// A surface that shows a [`Game`]: `Viewport(game: game, style: css!(...))`.
+/// A surface that shows a [`Game`]: `Viewport(game: game, style: css!(...))`, where `game` converts
+/// into the `Signal<String>` the element carries.
 ///
-/// Give it a size through `style`, and layer UI over it as its siblings. Keys reach the game while
+/// Give it a size through `style`; it draws at its layout size every frame, so it follows resizes. Layer
+/// UI over it as later siblings positioned with `PositionKind::Absolute`. Keys reach the game while
 /// no text field has focus.
 #[whisker::module_element(name = "kiba:Viewport", measurement = None)]
 pub fn viewport(game: whisker::Signal<String>, style: whisker::Style) {}

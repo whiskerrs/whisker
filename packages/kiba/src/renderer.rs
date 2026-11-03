@@ -2803,7 +2803,13 @@ mod tests {
         };
         let side = 16;
         let stripes = (0..side * side)
-            .flat_map(|i: u32| if i.is_multiple_of(2) { [255; 4] } else { [0, 0, 0, 255] })
+            .flat_map(|i: u32| {
+                if i.is_multiple_of(2) {
+                    [255; 4]
+                } else {
+                    [0, 0, 0, 255]
+                }
+            })
             .collect();
         let striped = Material {
             base_color_texture: Some(Texture::from_rgba8(side, side, stripes)),

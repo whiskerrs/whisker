@@ -360,6 +360,10 @@ impl<C> GameSetup<C> {
 
     /// Sets how many times per second `on_fixed_update` runs. The default is 60.
     ///
+    /// Each step's [`Time::delta_seconds`] is exactly `1 / hz`. A frame advances game time by at most
+    /// 0.1 seconds, so after a longer stall the game falls behind the clock rather than running a burst
+    /// of steps.
+    ///
     /// # Panics
     ///
     /// Panics if `hz` is not greater than zero.
@@ -1034,7 +1038,8 @@ impl<C: 'static> Game<C> {
         game.input(InputEvent::Action { name: action, down });
     }
 
-    /// Queues a command for the next update callback. Does nothing after the game is removed.
+    /// Queues a command for [`GameSetup::on_command`] at the start of the next frame, before its fixed
+    /// updates. Does nothing after the game is removed.
     pub fn send(self, command: C) {
         let Some(game) = find(self.id) else {
             return;

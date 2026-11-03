@@ -400,6 +400,23 @@ approval first.
 
 ## Phase results
 
+### P0
+
+**Built:** the `Viewport` element, which a Whisker layout sizes like any view, the render targets, and Hosts
+for the Web, iOS, Android, and Desktop. Native Hosts draw a placeholder; only the Web Host runs a `Game`.
+
+**Measured** with the example at 1280x720 in Chrome on the development Mac, cache disabled, from a local
+server: the GPU was ready about 40 ms after navigation, and the download is 1.25 MB of wasm and 15 KB of
+JavaScript gzipped. The canvas followed its layout when the window went from 1280x720 to 800x600, and a tap on
+UI layered over the viewport reached the game as a command, whose result came back through a signal.
+
+**API review** (run after P6, with P5's): an agent given only the docs built a viewport with a HUD
+over it and a panel below with a button, and it compiled on the first try. It guessed how to layer the
+HUD, how state reaches the UI, what `Viewport`'s `Signal<String>` prop accepts, and whether the viewport
+follows resizes; `Game::send` said commands reached the next update, though they run before fixed
+updates. Fixed as a result: a crate-level recipe for a HUD, a panel, signals out, and commands in, with
+where `PositionKind` comes from; `Viewport`'s docs on its prop and resizing; and `Game::send`'s timing.
+
 ### P1
 
 **Built:** the fixed schedule, `Interpolated`, `Input`, `OrbitCamera`, `FlyCamera`, async `Model::load`
@@ -498,6 +515,19 @@ which a settings menu cannot use, so `Context::set_tier` was added.
 
 Navmesh and networking are not built, because no game built on Kiba has asked for them yet. D10's plan
 stands: an external navmesh crate, and networking left to the game, each when a game requests it.
+
+**API review:** the same agent wrote a chase game in which an enemy finds its way around boxes by a
+breadth-first search on its own grid, and each fixed step writes a 14-byte snapshot of the two positions
+as a stand-in for networking. It compiled on the first try without the `physics` feature, because
+raycasts check a line of sight but cannot route around corners. It asked for the fixed step's contract,
+what is promised about determinism, how entities are named across machines, a model's bounds, and a
+statement of what Kiba leaves to the game. Fixed as a result: `set_fixed_rate` states that each step is
+exactly `1 / hz` and that a frame advances at most 0.1 seconds, and a crate-level section on what Kiba
+leaves to the game covers pathfinding, snapshots, entity ids, and the lack of a determinism promise.
+Left as is: a model's bounds, which no game has needed yet.
+
+**Measured** with that game at 1280x720 in Chrome on the development Mac: 60 fps with no console errors,
+the enemy reached the player around the boxes, and Reset in the panel cleared the score.
 
 Native Hosts (iOS, Android, and Desktop) still draw only the placeholder, because every phase was
 measured on the Web. Running a `Game` on them is deferred to the project owner.
