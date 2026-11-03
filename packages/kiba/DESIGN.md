@@ -8,7 +8,8 @@ It has three goals, in priority order when they conflict:
 3. Photorealistic look
 
 Evidence labels: **[verified]** was confirmed in code or a primary source, **[assumed]** is a
-value to replace with a measurement, and **[unverified]** is not yet known to work.
+value to replace with a measurement, **[unverified]** is not yet known to work, and **[deferred]** marks
+a check left to the project owner, with its reason beside it.
 
 ## How the goals are interpreted
 
@@ -21,7 +22,7 @@ baked light, PBR materials, IBL, and color grading.
 
 This has three costs:
 
-- Time-of-day changes are limited to blending a few baked variations.
+- Time of day changes the sky, the sun, and its shadows, but baked sky visibility does not move.
 - Terrain or buildings that change significantly, such as through destruction, do not receive
   correct indirect light.
 - Indirect light from moving lights is not represented on the lowest tier.
@@ -83,10 +84,11 @@ in ordinary Rust rather than a macro **[verified]**.
 
 UI is layered as siblings of `Viewport`.
 
-### D4. Entities use an ECS (first candidate `hecs`), and Kiba owns a fixed schedule
+### D4. Entities use the `hecs` ECS, and Kiba owns a fixed schedule
 
 An ECS is adopted because many similar objects and streaming are assumed. The schedule has the
-fixed order `input → fixed_update → update → extract → render`.
+fixed order `commands → fixed updates (then physics) → updates → animation, particles, streaming, and
+cameras → extract → render`.
 
 `bevy_ecs` also works standalone **[verified]**, but `hecs` stays. For the same spawn-and-query wasm,
 `hecs` 0.10 is 18 KB gzipped and `bevy_ecs` 0.16 is 51 KB **[verified]**. `extract` walks every entity
@@ -99,10 +101,11 @@ Signals are not `Send`, so moving the game to a Worker would turn D2's bridge in
 messages. Wasm threads also require COOP and COEP headers, and no mention of them was found in
 Whisker's Web code (searched `platforms/web` and `whisker-build`) **[verified]**.
 
-Only asset decoding runs in dedicated Workers, without shared memory.
+The cost is that heavy game logic consumes the same frame budget as the UI.
 
-The cost is that heavy game logic consumes the same frame budget as the UI. P3 measures and
-revisits this.
+Revisited in P3: packs are fetched asynchronously but parsed on the main thread, with uploads capped
+at 8 MB per frame. The 30-minute soak never dropped below 59 fps under a 6x CPU throttle, so asset work
+stays on the main thread. Workers are the next step if a device measurement shows parse hitches.
 
 ### D6. On Web, the GPU baseline is WebGPU only, without WebGL2
 
@@ -113,7 +116,8 @@ reached. This is accepted.
 WebGL2 has no compute or storage buffers, so supporting it would mean maintaining a separate
 renderer.
 
-Chrome 146's compatibility mode (GLES 3.1) **[verified]** is out of scope through P3.
+Chrome 146's compatibility mode (GLES 3.1) **[verified]** is out of scope, because every phase met its criteria on
+WebGPU.
 
 ### D7. Rendering uses forward+, without deferred on the lowest tier
 
@@ -182,8 +186,11 @@ so unskinned meshes do not pay for it, and each posed mesh draws alone.
 
 ### D8. The world is delivered in cells and controlled by memory budgets
 
-The world is split into grid cells, loaded and evicted with LRU by distance and budget. Distant
-content is replaced with HLOD and impostors. Upload volume per frame is also capped.
+The world is split into grid cells, loaded and evicted with LRU by distance and budget. Within
+`StreamSettings::full_distance` a cell loads its full pack with mesh LODs, and out to `far_distance` it
+loads a cooked far stand-in of a few simplified meshes, which serves as its HLOD. Impostors are not
+built, because stand-ins already held about 400,000 triangles and 200 draw calls in the soak. Upload
+volume per frame is also capped.
 
 ### D9. Assets are cooked, and run-time glTF is for development only
 
@@ -197,6 +204,11 @@ each GPU format, with no run-time transcoding.
 
 Play device support is over 80% for ASTC and over 95% for ETC2 **[verified]**. ASTC is preferred, with
 ETC2 and BC7 also provided.
+
+Packs hold raw RGBA textures for now. Texture compression is deferred, because it needs an encoder in
+`kiba-cook` for each format and a device to check quality and the WebGPU features each GPU reports. The
+soak's synthetic world peaked at 210 MB of GPU data, within the 300 MB budget, so raw textures do not
+block anything measured so far.
 
 On T0, baked light is primarily probe volumes, without per-texel lightmaps across all terrain.
 Lightmaps are limited to important buildings and close range.
@@ -218,7 +230,7 @@ load.
 | Animation | Own (skinning, blending, IK later) | P2 |
 | Physics / collision | Integrate Rapier as first candidate | P3 |
 | Particles / VFX | Own: CPU-simulated additive sprites in one instanced draw | P4 |
-| Audio | Thin wrapper over Web Audio; relationship to `whisker-audio` decided in P3 | P3 |
+| Audio | Own `Sound` over Web Audio for short effects with a 3D listener; music and background audio stay with `whisker-audio` | P3 |
 | UI / text | Whisker | Done |
 | Scripting | Rust only | Out of scope |
 | AI / navigation | External crate for navmesh | P5 or later |
@@ -229,8 +241,8 @@ load.
 
 ## Target API
 
-This is what a Whisker app author writes today. A cooked `.kiba` asset replaces the `.glb` once
-`kiba-cook` exists. Mutable game state lives in components, not in variables shared between callbacks,
+This is what a Whisker app author writes today. A shipped game loads a `.kiba` pack cooked by
+`kiba-cook model` in place of the `.glb`, through the same `Model::load`. Mutable game state lives in components, not in variables shared between callbacks,
 because each callback owns its captures.
 
 ```rust
@@ -308,12 +320,15 @@ closures such as `on_tap`, avoiding the problem of `#[component]` arguments that
 
 ## Performance budgets
 
-All values are **[assumed]** and are replaced by device measurements in P1.
+These are targets for the reference device. Stand-in measurements under [Phase results](#phase-results)
+stay within frame rate, internal resolution, draw calls, triangles, GPU textures, baked light (about 2.3 KB
+of probes per synthetic cell), and download size. Total tab memory is inferred, not read, as P3 explains.
+Device measurements are deferred to the project owner with spike 1.
 
 A first measurement on a Mac, in a web build, is **[verified]** only for that machine: 10,000 cube
 instances (120,000 triangles, one draw call) all moving each frame take 2.3 ms of main-thread time,
 and 4.3 ms under Chrome's 6x CPU throttling, at the display's 60 fps. Throttling does not slow the
-GPU, so this shows only that the CPU side has room. It does not replace the device check in P1.
+GPU, so this shows only that the CPU side has room. It does not replace the device check, which is deferred to the project owner.
 
 | Item | Initial T0 value |
 |---|---|
@@ -321,7 +336,7 @@ GPU, so this shows only that the CPU side has room. It does not replace the devi
 | Internal resolution | Adjusted dynamically from about 1280 px on the long side |
 | Draw calls | 300 or fewer |
 | Triangles per frame | 500,000 or fewer |
-| Render passes | 3–4: shadows + main + post-processing |
+| Render passes | Two shadow cascades, main, and post-processing, plus bloom's seven small passes |
 | GPU textures | 300 MB or less |
 | Baked light data | 2 MB or less per cell (compressed, assuming 256 m cells) |
 | Total tab memory | 1 GB or less (no primary source found for the limit) |
@@ -382,7 +397,8 @@ rays through still models into a `ProbeVolume` of sky visibility.
 
 Light cooking is sky visibility only, not baked bounce light or color. Probes store what can see the sky,
 so a sky can change without a second cook, and one bounce or per-texel lightmaps are not implemented.
-Only one volume applies at a time, until cells bring their own in P3.
+Only one volume applies at a time: streamed cells carry their own, and the one around the camera lights
+the frame, so surfaces just across a cell edge use the neighbor's volume only once the camera crosses.
 
 **Measured** the same way as P1: 10,000 moving cubes that all cast shadows, under a `Sky` (240,660
 triangles, three draw calls because shadow passes now count) hold 60 fps with about 4 ms of main-thread
@@ -401,31 +417,94 @@ It also found a trap: an action pressed only through `Game::set_action` must sti
 panics in debug builds. Fixed as a result: documented `asset!`, the binding rule, and clip restarts, and
 added crate-level recipes for a character with a follow camera and for an on-screen button.
 
+### P3
+
+**Built:** `.kiba` packs read without the glTF parser, `kiba-cook` commands for models, probes, and worlds,
+mesh LODs by distance, `WorldStream` with far stand-ins and a byte budget, Rapier physics behind the
+`physics` feature (`Physics`, `RigidBody`, `Collider`, `raycast`), and `Sound` over Web Audio. Streamed
+cells have no colliders yet, so a game with physics spawns its own ground; the docs say so.
+
+**Measured** with the example's `soak` feature at 1280x720 under a 6x CPU throttle: the camera flew back
+and forth across a synthetic 4 km square of cooked cells (16x16 cells of 256 m, 734 MB on disk) at 20 m/s
+for 33 minutes. Frame rate averaged 60 fps, and the worst one-second window was 59.2 fps. Loaded cell
+data rose to the 300 MiB budget after about 15 minutes and held there, GPU data peaked at 210 MB, the JS
+heap stayed under 44 MB, and the console showed no errors. A scene held 100–210 draw calls and up to
+430,000 triangles. Rapier adds about 222 KB gzipped to the wasm.
+
+Two limits remain. The world is synthetic boxes, so its textures and triangle density are lighter than
+authored art. Wasm linear memory was not read, so total tab memory is inferred from loaded bytes plus GPU
+data, about 0.5 GB, against the 1 GB budget. **The exit criterion is met by the stand-in only;** the
+reference device run is deferred to the project owner.
+
+**API review** (run once P4 had landed, covering both phases): an agent given only the docs wrote a game
+with streaming, a physics ball, a raycast, a jump sound, a campfire, fog, a day cycle, and a tier readout,
+using about 22 Kiba types through `kiba::prelude::*`. It compiled on the second try; the only error was
+a placeholder it invented for placing a `Transform`. Fixed as a result: `Transform::at`, documented that
+streamed cells have no colliders, that a ray starting inside a collider hits it, and how often a day cycle
+should change `Sky`. Left as is: action names are strings, so a typo is found only at run time by the
+debug panic, and `raycast` has no filter.
+
+### P4
+
+**Built:** tiers T0–T2 chosen while the game runs, dynamic resolution with a sharpened upscale, bloom,
+half-resolution ambient occlusion on T1 and T2, `Fog`, `Sky::from_sun`, and `ParticleEmitter`. GPU
+culling, temporal upscaling, SSR, volumetrics, and additional shadows are deferred with the reasons in D7.
+
+**Measured** with the `stress` scene at 1280x720 in Chrome on the development Mac. Without throttling it
+stayed at T2 and full resolution, and under a 6x throttle too. Under a 20x throttle it stepped from T2 to
+T1 to T0 within about 30 seconds and settled at half resolution. That scene is CPU-bound there, with 39 ms
+of main-thread work, so lowering resolution could not restore 30 fps; the governor sees only frame times and
+cannot tell CPU from GPU cost. The example shows the campfire, bloom, and AO with no console errors.
+
+A first Web run found that on a 60 Hz display frames never arrive faster than 16.7 ms, so resolution lost
+to a load hitch never came back. The governor now judges each second by its median frame and probes upward
+whenever the budget is met.
+
+**Automatic tier selection works on the stand-in.** Which tier a real mid-range phone settles on is
+deferred to the project owner with spike 1.
+
+**API review:** shared with P3 above. Its main finding was that the tier could be fixed only during setup,
+which a settings menu cannot use, so `Context::set_tier` was added.
+
+### P5
+
+Navmesh and networking are not built, because no game built on Kiba has asked for them yet. D10's plan
+stands: an external navmesh crate, and networking left to the game, each when a game requests it.
+
+Native Hosts (iOS, Android, and Desktop) still draw only the placeholder, because every phase was
+measured on the Web. Running a `Game` on them is deferred to the project owner.
+
 ## Spikes to run first
 
-Each result can change the decisions above. They run at the start of P1.
+Each result can change the decisions above.
 
-1. **Android device baseline** [unverified]: Collect WebGPU adapter limits, PBR frame rate, and ASTC
-   support on the reference device. Affects D6, D7, and all budgets.
+1. **Android device baseline** [deferred]: Collect WebGPU adapter limits, PBR frame rate, and ASTC
+   support on the reference device. Affects D6, D7, and all budgets. Deferred to the project owner,
+   because measurements here are Web-only on the development Mac and no reference device is chosen.
 2. **Frame integration** [verified on Web]: Kiba rides Whisker's frame driver, so `on_update` can
    call `signal.set`, and the Web Host's own loop is gone. Each frame posts the next one through
    `RuntimeDispatcher`, which requires a drain to run only what was queued when it started. A drain
    that also runs newly posted work draws up to 4096 frames without yielding and hangs the page.
    Dispatches also drain on input, so a frame can occasionally run off the display's cadence.
    Native Hosts do not run a `Game` yet.
-3. **Tab memory limit** [unverified]: Increase allocation on the reference device and measure where
-   context loss and tab discard occur.
-4. **Wasm size** [partly verified]: The example is about 0.9 MB gzipped without `gltf` content and
-   1.12 MB with it. `hecs` adds 18 KB. Rapier is measured in P3.
-5. **Hot reload** [unverified]: Check the behavior when editing `Game::new`'s closure. Web uses side
-   modules **[verified]**, so also confirm whether the thread-local registry refers to the same
-   object after a patch.
+3. **Tab memory limit** [deferred]: Increase allocation on the reference device and measure where
+   context loss and tab discard occur. A desktop's limit says nothing about a phone's, so this waits
+   for the device. The P3 soak shows the budgets keep Kiba's own use near 0.5 GB.
+4. **Wasm size** [verified on Web]: The example is about 0.9 MB gzipped without `gltf` content and
+   1.12 MB with it. `hecs` adds 18 KB, and Rapier about 222 KB. After P4 the example is 1.22 MB with `gltf`, well within
+   the 20 MB download budget.
+5. **Hot reload** [verified on Web]: With `whisker run web`, editing `Game::new`'s closure applied as a
+   0.7 MB subsecond patch in under a second. The app remounts, so `Game::new` runs again into a new
+   registry entry, and the old game is removed by its owner's cleanup. Game state starts over on every
+   patch; keeping the world across a patch is not attempted.
 
 ## Open questions
 
-- The reference device must be chosen. Android 12 or later with Adreno 6xx-class or Mali-G6x-class
-  is assumed.
-- Iteration speed during development is a concern. `whisker build web` has a long wait each time, so
-  `kiba` tests run natively with wgpu headless rendering, separate from browser checks.
-- wgpu is pinned to 25.0.2 to match `platforms/desktop`. Bevy 0.20 uses wgpu 30 **[verified]**, and
-  whether to upgrade together with Whisker is undecided.
+- **The reference device.** Not chosen; it is the project owner's call. Android 12 or later with an
+  Adreno 6xx-class or Mali-G6x-class GPU is the working target, and the Mac stand-in in the phase rules
+  serves until then.
+- **Iteration speed.** Answered: `kiba` tests run natively with wgpu headless rendering, and `whisker run
+  web` hot-patches game code in under a second, so browser rebuilds are needed only for measurements.
+- **wgpu version.** Kiba stays on 25.0.2 with `platforms/desktop`. No P1–P4 feature needed a newer
+  version, and upgrading means changing Whisker itself, which the project owner decides with Whisker's
+  own upgrade.
