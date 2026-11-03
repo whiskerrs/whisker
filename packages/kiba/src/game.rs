@@ -9,7 +9,7 @@ use web_time::Instant;
 use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 
 use crate::renderer::{Batch, Frame, Instance};
-use crate::{Material, Mesh, Renderer};
+use crate::{Material, Mesh, Model, Renderer};
 
 const MAX_DELTA_SECONDS: f32 = 0.1;
 
@@ -257,10 +257,7 @@ fn extract_frame(world: &World, width: u32, height: u32) -> Frame {
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
     let view_projection = camera.projection(width as f32 / height as f32) * view;
     let mut batches = HashMap::<usize, Batch>::new();
-    for (_, (transform, mesh, material)) in world
-        .query::<(&Transform, &Mesh, Option<&Material>)>()
-        .iter()
-    {
+    let mut add = |mesh: &Mesh, transform: Mat4, material: &Material| {
         batches
             .entry(mesh.key())
             .or_insert_with(|| Batch {
@@ -268,10 +265,26 @@ fn extract_frame(world: &World, width: u32, height: u32) -> Frame {
                 instances: Vec::new(),
             })
             .instances
-            .push(Instance::new(
-                transform.matrix(),
-                material.unwrap_or(&Material::default()),
-            ));
+            .push(Instance::new(transform, material));
+    };
+    for (_, (transform, mesh, material)) in world
+        .query::<(&Transform, &Mesh, Option<&Material>)>()
+        .iter()
+    {
+        add(
+            mesh,
+            transform.matrix(),
+            material.unwrap_or(&Material::default()),
+        );
+    }
+    for (_, (transform, model)) in world.query::<(&Transform, &Model)>().iter() {
+        for part in model.parts() {
+            add(
+                &part.mesh,
+                transform.matrix() * part.transform,
+                &part.material,
+            );
+        }
     }
     Frame {
         view_projection,
@@ -393,6 +406,35 @@ mod tests {
 
         world.spawn((Sun::default(),));
         assert_eq!(extract_frame(&world, 100, 100).sun, Sun::default());
+    }
+
+    #[test]
+    fn model_parts_are_placed_relative_to_their_entity() {
+        let mut world = world_with_camera_at(Vec3::Z);
+        let mesh = Mesh::triangle();
+        let part = Mat4::from_translation(Vec3::X);
+        let model = Model::new(vec![
+            (mesh.clone(), Material::default(), part),
+            (mesh, Material::default(), part * part),
+        ]);
+        let entity = Transform {
+            translation: Vec3::Y,
+            ..Transform::default()
+        };
+        world.spawn((entity, model));
+
+        let frame = extract_frame(&world, 100, 100);
+
+        assert_eq!(frame.batches.len(), 1);
+        let origins: Vec<Vec3> = frame.batches[0]
+            .instances
+            .iter()
+            .map(|instance| Vec3::from_array(instance.origin()))
+            .collect();
+        assert_eq!(
+            origins,
+            [Vec3::new(1.0, 1.0, 0.0), Vec3::new(2.0, 1.0, 0.0)]
+        );
     }
 
     #[test]

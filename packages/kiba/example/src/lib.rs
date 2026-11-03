@@ -42,14 +42,10 @@ pub fn app() -> Element {
             }
         }
 
-        let cube = setup.world.spawn((
+        let robot = setup.world.spawn((
             Transform::default(),
-            Mesh::cube(0.8),
-            Material {
-                base_color: Vec3::new(0.1, 0.25, 0.6),
-                metallic: 0.0,
-                roughness: 0.3,
-            },
+            Model::from_glb(include_bytes!("../assets/robot.glb"))
+                .expect("the robot is a valid file"),
         ));
         let moon = setup.world.spawn((
             Transform::default(),
@@ -71,8 +67,8 @@ pub fn app() -> Element {
             }
             angle += speed * time.delta_seconds();
             world
-                .get::<&mut Transform>(cube)
-                .expect("the cube is never despawned")
+                .get::<&mut Transform>(robot)
+                .expect("the robot is never despawned")
                 .rotation = Quat::from_rotation_y(angle);
             world
                 .get::<&mut Transform>(moon)

@@ -144,6 +144,10 @@ content is replaced with HLOD and impostors. Upload volume per frame is also cap
 
 ### D9. Assets are cooked, and run-time glTF is for development only
 
+Run-time glTF sits behind the `gltf` feature so that shipped games do not carry its parser. It reads
+binary glTF geometry, vertex colors, and material factors. Textures, transparency, emission, and
+double-sided materials are not read yet.
+
 Distribution uses per-cell `.kiba` packs. Compressed textures are cooked into a separate pack for
 each GPU format, with no run-time transcoding.
 
@@ -182,8 +186,8 @@ load.
 ## Target API
 
 This is what a Whisker app author writes. It is the target shape: `Game`, `GameSetup::on_update`,
-`Game::send`, `Transform`, `Camera`, `Sun`, `Mesh`, `Material`, and `Viewport` exist today, with
-`Mesh::cube` in place of a loaded model. Hook names are finalized in P1.
+`Game::send`, `Transform`, `Camera`, `Sun`, `Mesh`, `Material`, `Model`, and `Viewport` exist today,
+with `Model::from_glb(include_bytes!(...))` in place of a cooked asset. Hook names are finalized in P1.
 
 ```rust
 use kiba::prelude::*;
@@ -205,7 +209,7 @@ pub fn app() -> Element {
             Transform::looking_at(Vec3::new(0.0, 1.5, 4.0), Vec3::ZERO, Vec3::Y),
         ));
         world.spawn((Sun::default(),));
-        let crate_id = world.spawn(Model::load(asset!("crate.kiba")));
+        let crate_id = world.spawn((Transform::default(), Model::load(asset!("crate.kiba"))));
 
         let mut speed = 1.0;
         let mut angle = 0.0;

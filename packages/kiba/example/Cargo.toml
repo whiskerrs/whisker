@@ -21,4 +21,4 @@ whisker-config = ["whisker-cng/generate"]
 [dependencies]
 whisker-cng = { path = "../../../crates/whisker-cng", version = "0.15.0", default-features = false }
 whisker = { workspace = true }
-kiba = { path = ".." }
+kiba = { path = "..", features = ["gltf"] }

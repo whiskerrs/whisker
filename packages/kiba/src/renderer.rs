@@ -32,6 +32,12 @@ impl Instance {
             roughness: material.roughness,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn origin(&self) -> [f32; 3] {
+        let [x, y, z, _] = self.transform[3];
+        [x, y, z]
+    }
 }
 
 #[derive(Clone, Debug)]
