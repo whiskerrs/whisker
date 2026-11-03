@@ -110,7 +110,13 @@ pub fn app() -> Element {
             return;
         }
         setup.world.spawn((
-            Camera::default(),
+            Camera {
+                depth_of_field: Some(DepthOfField {
+                    focus_distance: 3.8,
+                    blur: 0.006,
+                }),
+                ..Camera::default()
+            },
             Transform::default(),
             OrbitCamera {
                 target: Vec3::new(0.0, 0.0, -0.4),

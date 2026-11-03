@@ -1,4 +1,6 @@
-use glam::{Mat4, Vec4};
+use glam::{Mat4, Vec3, Vec4};
+
+use crate::game::DepthOfField;
 
 use crate::quality::Quality;
 use crate::renderer::{DEPTH_FORMAT, HDR_FORMAT};
@@ -12,6 +14,25 @@ const SHARPEN_WHEN_UPSCALING: f32 = 0.35;
 struct PostUniform {
     amounts: Vec4,
     output_size: Vec4,
+    focus: Vec4,
+    sun: Vec4,
+    inverse_projection: Mat4,
+}
+
+/// What the passes after the scene need to know about the camera.
+pub(crate) struct PostView {
+    pub(crate) projection: Mat4,
+    pub(crate) view_projection: Mat4,
+    pub(crate) to_sun: Vec3,
+    pub(crate) depth_of_field: Option<DepthOfField>,
+}
+
+impl PostView {
+    pub(crate) fn reads_depth(&self, quality: &Quality) -> bool {
+        quality.ambient_occlusion > 0.0
+            || quality.light_shafts > 0.0
+            || self.depth_of_field.is_some()
+    }
 }
 
 #[repr(C)]
@@ -24,6 +45,7 @@ struct OcclusionUniform {
 /// The render targets of one internal resolution.
 pub(crate) struct SizedTargets {
     key: (u32, u32, bool),
+    size: (u32, u32),
     pub(crate) depth: wgpu::TextureView,
     pub(crate) hdr: wgpu::TextureView,
     bloom_views: Vec<wgpu::TextureView>,
@@ -36,11 +58,6 @@ pub(crate) struct SizedTargets {
 impl SizedTargets {
     pub(crate) fn matches(&self, size: (u32, u32), quality: &Quality) -> bool {
         self.key == (size.0, size.1, quality.ambient_occlusion > 0.0)
-    }
-
-    /// Whether a later pass reads this frame's depth.
-    pub(crate) fn keeps_depth(&self) -> bool {
-        self.occlusion.is_some()
     }
 }
 
@@ -71,6 +88,11 @@ fn fragment_entry(binding: u32, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutE
 
 const FLOAT_TEXTURE: wgpu::BindingType = wgpu::BindingType::Texture {
     sample_type: wgpu::TextureSampleType::Float { filterable: true },
+    view_dimension: wgpu::TextureViewDimension::D2,
+    multisampled: false,
+};
+const DEPTH_TEXTURE: wgpu::BindingType = wgpu::BindingType::Texture {
+    sample_type: wgpu::TextureSampleType::Depth,
     view_dimension: wgpu::TextureViewDimension::D2,
     multisampled: false,
 };
@@ -158,6 +180,7 @@ impl PostPasses {
                 fragment_entry(2, FLOAT_TEXTURE),
                 fragment_entry(3, FLOAT_TEXTURE),
                 fragment_entry(4, UNIFORM),
+                fragment_entry(5, DEPTH_TEXTURE),
             ],
         });
         let source_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -169,17 +192,7 @@ impl PostPasses {
         });
         let occlusion_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kiba occlusion"),
-            entries: &[
-                fragment_entry(
-                    0,
-                    wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                ),
-                fragment_entry(1, UNIFORM),
-            ],
+            entries: &[fragment_entry(0, DEPTH_TEXTURE), fragment_entry(1, UNIFORM)],
         });
         // Encoding in the shader gives the same output on backends without an sRGB surface format.
         let constants = [("ENCODE_SRGB", f64::from(u8::from(!format.is_srgb())))];
@@ -377,10 +390,15 @@ impl PostPasses {
                     binding: 4,
                     resource: self.post_uniform.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&depth),
+                },
             ],
         });
         SizedTargets {
             key: (size.0, size.1, occlusion.is_some()),
+            size,
             depth,
             hdr,
             bloom_views,
@@ -398,8 +416,9 @@ impl PostPasses {
         targets: &SizedTargets,
         (output, output_size): (&wgpu::TextureView, (u32, u32)),
         quality: &Quality,
-        projection: Mat4,
+        view: &PostView,
     ) {
+        let projection = view.projection;
         if let Some((view, bindings)) = &targets.occlusion {
             queue.write_buffer(
                 &self.occlusion_uniform,
@@ -427,12 +446,37 @@ impl PostPasses {
         } else {
             0.0
         };
+        let height = targets.size.1 as f32;
+        let focus = view.depth_of_field.map_or(Vec4::ZERO, |focus| {
+            Vec4::new(focus.focus_distance, focus.blur * height, 0.0, 0.0)
+        });
+        // A direction projects with no translation, so the sun lands where the sky shows it.
+        let sun = view.view_projection * view.to_sun.extend(0.0);
+        let sun = if quality.light_shafts > 0.0 && sun.w > 0.0 {
+            let ndc = sun.truncate().truncate() / sun.w;
+            Vec4::new(
+                ndc.x * 0.5 + 0.5,
+                0.5 - ndc.y * 0.5,
+                quality.light_shafts,
+                0.0,
+            )
+        } else {
+            Vec4::ZERO
+        };
         queue.write_buffer(
             &self.post_uniform,
             0,
             bytemuck::bytes_of(&PostUniform {
-                amounts: Vec4::new(quality.bloom, quality.ambient_occlusion, sharpen, 0.0),
+                amounts: Vec4::new(
+                    quality.bloom,
+                    quality.ambient_occlusion,
+                    sharpen,
+                    f32::from(u8::from(quality.antialias)),
+                ),
                 output_size: Vec4::new(output_size.0 as f32, output_size.1 as f32, 0.0, 0.0),
+                focus,
+                sun,
+                inverse_projection: projection.inverse(),
             }),
         );
         let mut pass = color_pass(

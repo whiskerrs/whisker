@@ -93,6 +93,27 @@ pub struct Camera {
     pub far: f32,
     /// Multiplies the light reaching the camera before tone mapping.
     pub exposure: f32,
+    /// Blurs what is nearer or farther than a distance, as a real lens does. `None` keeps everything sharp.
+    pub depth_of_field: Option<DepthOfField>,
+}
+
+/// How a [`Camera`] blurs what is out of focus.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DepthOfField {
+    /// Distance from the camera that stays sharp.
+    pub focus_distance: f32,
+    /// How wide the blur of something far behind the focus grows, as a share of the view's height.
+    /// Something at half the focus distance blurs as wide.
+    pub blur: f32,
+}
+
+impl Default for DepthOfField {
+    fn default() -> Self {
+        Self {
+            focus_distance: 5.0,
+            blur: 0.01,
+        }
+    }
 }
 
 impl Default for Camera {
@@ -102,6 +123,7 @@ impl Default for Camera {
             near: 0.1,
             far: 1000.0,
             exposure: 1.0,
+            depth_of_field: None,
         }
     }
 }
@@ -863,6 +885,7 @@ pub(crate) fn extract_frame(
         effects: Effects {
             quality: *quality,
             projection,
+            depth_of_field: camera.depth_of_field,
             camera_right: eye.rotation * Vec3::X,
             camera_up: eye.rotation * Vec3::Y,
             fog: world.query::<&Fog>().iter().next().map(|(_, fog)| *fog),

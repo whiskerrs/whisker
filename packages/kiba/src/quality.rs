@@ -2,9 +2,11 @@
 /// different set of assets.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {
-    /// Mid-range phones: 30 fps, up to 1280 pixels on the long side, with bloom and two shadow cascades.
+    /// Mid-range phones: 30 fps, up to 1280 pixels on the long side, with antialiasing, bloom, and two
+    /// shadow cascades.
     T0,
-    /// High-end phones: 60 fps, up to 1920 pixels, adding ambient occlusion and three cascades of soft shadows.
+    /// High-end phones: 60 fps, up to 1920 pixels, adding ambient occlusion, light shafts, and three
+    /// cascades of soft shadows.
     T1,
     /// Desktops: 60 fps at any size, with stronger ambient occlusion and four cascades of soft shadows.
     #[default]
@@ -55,6 +57,9 @@ pub(crate) struct Quality {
     /// Texels per side of each cascade's shadow map.
     pub(crate) shadow_map_size: u32,
     pub(crate) soft_shadows: bool,
+    pub(crate) antialias: bool,
+    /// Strength of the sun's rays through gaps in what stands in front of the sky.
+    pub(crate) light_shafts: f32,
 }
 
 impl Default for Quality {
@@ -66,6 +71,8 @@ impl Default for Quality {
             shadow_cascades: 2,
             shadow_map_size: 1024,
             soft_shadows: false,
+            antialias: false,
+            light_shafts: 0.0,
         }
     }
 }
@@ -167,10 +174,10 @@ impl Governor {
     pub(crate) fn quality(&self, width: u32, height: u32) -> Quality {
         let side = width.max(height).max(1) as f32;
         let cap = (self.tier.longest_side() / side).min(1.0);
-        let (bloom, ambient_occlusion) = match self.tier {
-            Tier::T0 => (0.04, 0.0),
-            Tier::T1 => (0.04, 0.6),
-            Tier::T2 => (0.05, 0.9),
+        let (bloom, ambient_occlusion, light_shafts) = match self.tier {
+            Tier::T0 => (0.04, 0.0, 0.0),
+            Tier::T1 => (0.04, 0.6, 0.3),
+            Tier::T2 => (0.05, 0.9, 0.3),
         };
         let (shadow_cascades, shadow_map_size, soft_shadows) = match self.tier {
             Tier::T0 => (2, 1024, false),
@@ -184,6 +191,8 @@ impl Governor {
             shadow_cascades,
             shadow_map_size,
             soft_shadows,
+            antialias: true,
+            light_shafts,
         }
     }
 

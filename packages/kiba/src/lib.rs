@@ -6,6 +6,7 @@
 //! | To get | Spawn |
 //! |---|---|
 //! | A view | `(Camera::default(), Transform::looking_at(eye, target, Vec3::Y))` |
+//! | A view that blurs what is out of focus | `Camera { depth_of_field: Some(DepthOfField { focus_distance, ..DepthOfField::default() }), ..Camera::default() }` |
 //! | Direct light and shadows | `(Sun::default(),)` |
 //! | A lamp or torch, without shadows; the nearest 16 in view shade | `(Transform::at(position), PointLight::default())` |
 //! | A flashlight along -Z, without shadows | `(Transform::looking_at(position, target, Vec3::Y), SpotLight::default())` |
@@ -138,7 +139,9 @@ pub use animation::Animator;
 pub use audio::resume_audio;
 pub use audio::{Playback, Sound};
 pub use controller::{FlyCamera, OrbitCamera};
-pub use game::{Camera, Context, FrameStats, Game, GameSetup, Interpolated, Sun, Time, Transform};
+pub use game::{
+    Camera, Context, DepthOfField, FrameStats, Game, GameSetup, Interpolated, Sun, Time, Transform,
+};
 #[doc(hidden)]
 pub use game::{attach_renderer, detach_renderer, send_input};
 pub use glam::{Mat4, Quat, Vec2, Vec3};
@@ -169,11 +172,11 @@ pub use wgpu;
 /// Commonly used items.
 pub mod prelude {
     pub use crate::{
-        AlphaMode, Animator, Camera, Context, Entity, FlyCamera, Fog, FrameStats, Game, GameSetup,
-        Input, Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, ParticleEmitter,
-        Playback, PointLight, Pointer, ProbeVolume, Quat, ReflectionProbe, Sky, Sound, SpotLight,
-        StreamSettings, Sun, Texture, Tier, Time, Transform, Vec2, Vec3, Vertex, Viewport, World,
-        WorldStream,
+        AlphaMode, Animator, Camera, Context, DepthOfField, Entity, FlyCamera, Fog, FrameStats,
+        Game, GameSetup, Input, Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera,
+        ParticleEmitter, Playback, PointLight, Pointer, ProbeVolume, Quat, ReflectionProbe, Sky,
+        Sound, SpotLight, StreamSettings, Sun, Texture, Tier, Time, Transform, Vec2, Vec3, Vertex,
+        Viewport, World, WorldStream,
     };
     #[cfg(feature = "physics")]
     pub use crate::{BodyKind, Collider, Physics, RayHit, RigidBody};

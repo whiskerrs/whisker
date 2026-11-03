@@ -9,13 +9,13 @@ use crate::animation::MAX_JOINTS;
 use crate::lights::{LightUniform, MAX_LIGHTS};
 use crate::mesh::{MeshData, SkinVertex, Vertex};
 use crate::particles::{ParticleInstance, ParticlePass};
-use crate::post::{PostPasses, SizedTargets};
+use crate::post::{PostPasses, PostView, SizedTargets};
 use crate::probes::{self, ProbeVolume};
 use crate::quality::Quality;
 use crate::reflection::{Reflection, ReflectionTextures, face_view_projections};
 use crate::sky::{Fog, Sky, SkyRenderer};
 use crate::texture::{TextureData, mip_chain};
-use crate::{AlphaMode, Material, Mesh, Sun, Texture};
+use crate::{AlphaMode, DepthOfField, Material, Mesh, Sun, Texture};
 
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.02,
@@ -98,6 +98,7 @@ pub struct Frame {
 pub(crate) struct Effects {
     pub(crate) quality: Quality,
     pub(crate) projection: Mat4,
+    pub(crate) depth_of_field: Option<DepthOfField>,
     pub(crate) camera_right: Vec3,
     pub(crate) camera_up: Vec3,
     pub(crate) fog: Option<Fog>,
@@ -1090,6 +1091,12 @@ impl SceneRenderer {
             self.targets = Some(self.post.targets(device, internal_size, &quality));
         }
         let targets = self.targets.as_ref().expect("allocated above");
+        let post_view = PostView {
+            projection: frame.effects.projection,
+            view_projection: frame.view_projection,
+            to_sun: -frame.sun.direction.normalize_or(Vec3::NEG_Y),
+            depth_of_field: frame.effects.depth_of_field,
+        };
 
         let face_batches = capture.iter().flat_map(|(_, faces)| faces.iter().flatten());
         let instance_data: Vec<Instance> = batches
@@ -1277,7 +1284,7 @@ impl SceneRenderer {
                     view: &targets.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(DEPTH_CLEAR),
-                        store: if targets.keeps_depth() {
+                        store: if post_view.reads_depth(&quality) {
                             wgpu::StoreOp::Store
                         } else {
                             wgpu::StoreOp::Discard
@@ -1333,7 +1340,7 @@ impl SceneRenderer {
             targets,
             (target, size),
             &quality,
-            frame.effects.projection,
+            &post_view,
         );
         queue.submit([encoder.finish()]);
     }
@@ -2750,6 +2757,112 @@ mod tests {
         let background = beside(spot(40.0));
         assert!(beside(with_quality(spot(40.0), glow)) > background + 5);
         assert_eq!(beside(with_quality(spot(0.9), glow)), background);
+    }
+
+    /// `frame` seen through a camera at the origin looking along -Z.
+    fn through_lens(mut frame: Frame) -> Frame {
+        let projection = Mat4::perspective_rh(1.0, 1.0, 100.0, 0.1);
+        frame.view_projection = projection;
+        frame.camera_position = Vec3::ZERO;
+        frame.effects.projection = projection;
+        frame
+    }
+
+    #[test]
+    fn antialiasing_softens_a_slanted_edge() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let slanted = |antialias| {
+            let turned = Mat4::from_rotation_z(0.4) * Mat4::from_scale(Vec3::splat(0.5));
+            let frame = frame(Sun::UNLIT, vec![quad(Vec3::Z, [1.0; 3], turned, MATTE)]);
+            let pixels = rendered(
+                &device,
+                &queue,
+                &with_quality(
+                    frame,
+                    Quality {
+                        antialias,
+                        ..Quality::default()
+                    },
+                ),
+            );
+            (0..SIZE)
+                .flat_map(|y| (0..SIZE).map(move |x| (x, y)))
+                .filter(|&(x, y)| (30..220).contains(&pixel(&pixels, x, y)[0]))
+                .count()
+        };
+        let hard = slanted(false);
+        assert!(slanted(true) > hard + 20, "{hard}");
+    }
+
+    #[test]
+    fn depth_of_field_blurs_only_what_is_out_of_focus() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let side = 16;
+        let stripes = (0..side * side)
+            .flat_map(|i: u32| if i % 2 == 0 { [255; 4] } else { [0, 0, 0, 255] })
+            .collect();
+        let striped = Material {
+            base_color_texture: Some(Texture::from_rgba8(side, side, stripes)),
+            ..MATTE
+        };
+        let contrast = |focus_distance| {
+            let wall =
+                Mat4::from_translation(Vec3::NEG_Z * 2.0) * Mat4::from_scale(Vec3::splat(3.0));
+            let mut frame = through_lens(frame(
+                Sun::UNLIT,
+                vec![quad(Vec3::Z, [1.0; 3], wall, striped.clone())],
+            ));
+            frame.effects.depth_of_field = Some(DepthOfField {
+                focus_distance,
+                blur: 0.1,
+            });
+            let pixels = rendered(&device, &queue, &frame);
+            let row: Vec<u8> = (24..40).map(|x| pixel(&pixels, x, 32)[0]).collect();
+            row.iter().max().unwrap() - row.iter().min().unwrap()
+        };
+        let sharp = contrast(2.0);
+        let blurred = contrast(20.0);
+        assert!(
+            sharp > 150 && blurred < sharp / 2,
+            "sharp {sharp}, blurred {blurred}"
+        );
+    }
+
+    #[test]
+    fn light_shafts_reach_only_along_clear_paths_to_the_sun() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let beside_sun = |light_shafts, blocked: bool| {
+            let batches = if blocked {
+                let between = Mat4::from_translation(Vec3::new(0.111, 0.0, -1.0))
+                    * Mat4::from_scale(Vec3::splat(0.03));
+                vec![quad(Vec3::Z, [0.0; 3], between, MATTE)]
+            } else {
+                Vec::new()
+            };
+            let frame = Frame {
+                sky: Some(Sky::default()),
+                ..through_lens(frame(dim_sun(Vec3::Z), batches))
+            };
+            let quality = Quality {
+                light_shafts,
+                ..Quality::default()
+            };
+            pixel(
+                &rendered(&device, &queue, &with_quality(frame, quality)),
+                44,
+                32,
+            )[2]
+        };
+        let plain = beside_sun(0.0, false);
+        let clear = beside_sun(2.0, false);
+        assert!(clear > plain + 10, "{plain} {clear}");
+        assert!(beside_sun(2.0, true) < clear, "{clear}");
     }
 
     #[test]
