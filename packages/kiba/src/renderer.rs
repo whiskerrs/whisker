@@ -2118,4 +2118,41 @@ mod tests {
             pixel(&shaded, open.0, open.1)[0].abs_diff(pixel(&plain, open.0, open.1)[0]);
         assert!(open_difference < 4, "{open_difference}");
     }
+
+    #[test]
+    fn ambient_occlusion_leaves_distant_flat_ground_alone_at_any_resolution() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let ground = quad(
+            Vec3::Z,
+            [0.5; 3],
+            Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+                * Mat4::from_scale(Vec3::splat(500.0)),
+            Material::default(),
+        );
+        let projection = Mat4::perspective_rh(1.0, 1.0, 1000.0, 0.1);
+        let view = Mat4::look_at_rh(Vec3::Y * 2.0, Vec3::new(0.0, 1.6, -10.0), Vec3::Y);
+        let mut scene = frame(Sun::UNLIT, vec![ground]);
+        scene.view_projection = projection * view;
+        scene.effects.projection = projection;
+        // Odd sizes, where coordinates rounded through a fraction of the size land on a neighbor.
+        for side in [64.0, 61.0, 55.0, 47.0, 41.0] {
+            let render_scale = side / SIZE as f32;
+            let quality = |ambient_occlusion| Quality {
+                render_scale,
+                ambient_occlusion,
+                ..Quality::default()
+            };
+            let plain = rendered(&device, &queue, &with_quality(scene.clone(), quality(0.0)));
+            let shaded = rendered(&device, &queue, &with_quality(scene.clone(), quality(1.0)));
+            for y in SIZE / 2 + 4..SIZE {
+                let darker = pixel(&plain, 32, y)[0].saturating_sub(pixel(&shaded, 32, y)[0]);
+                assert!(
+                    darker < 4,
+                    "row {y} at scale {render_scale} darkens by {darker}"
+                );
+            }
+        }
+    }
 }

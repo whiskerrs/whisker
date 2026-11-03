@@ -17,10 +17,13 @@ fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
 }
 
-fn view_position(uv: vec2<f32>) -> vec3<f32> {
+// Takes whole texels, because a texel's coordinate sent through a fraction of an odd size can
+// round onto its neighbor and collapse the normal into dark rows.
+fn view_position(texel: vec2<i32>) -> vec3<f32> {
     let size = vec2<i32>(textureDimensions(depth));
-    let texel = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - 1);
-    let stored = textureLoad(depth, texel, 0);
+    let clamped = clamp(texel, vec2<i32>(0), size - 1);
+    let stored = textureLoad(depth, clamped, 0);
+    let uv = (vec2<f32>(clamped) + 0.5) / vec2<f32>(size);
     let ndc = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, stored, 1.0);
     let view = parameters.inverse_projection * ndc;
     return view.xyz / view.w;
@@ -30,15 +33,16 @@ fn view_position(uv: vec2<f32>) -> vec3<f32> {
 fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let size = vec2<f32>(textureDimensions(depth));
     // This pass draws at half the size of the depth it reads.
-    let uv = position.xy * 2.0 / size;
+    let texel = vec2<i32>(position.xy * 2.0);
     // Zero is the far plane under reversed depth, where only the sky is, and it has no position.
-    if textureLoad(depth, vec2<i32>(position.xy * 2.0), 0) <= 0.0 {
+    if textureLoad(depth, texel, 0) <= 0.0 {
         return vec4<f32>(1.0);
     }
-    let here = view_position(uv);
-    let step = 1.0 / size;
-    let across = view_position(uv + vec2<f32>(step.x, 0.0)) - here;
-    let along = view_position(uv + vec2<f32>(0.0, step.y)) - here;
+    let here = view_position(texel);
+    // The last row and column look back instead, since a clamped neighbor would be the texel itself.
+    let inward = select(vec2<i32>(1), vec2<i32>(-1), texel + 1 >= vec2<i32>(size));
+    let across = (view_position(texel + vec2<i32>(inward.x, 0)) - here) * f32(inward.x);
+    let along = (view_position(texel + vec2<i32>(0, inward.y)) - here) * f32(inward.y);
     let normal = normalize(cross(along, across));
     // Interleaved gradient noise spreads the few samples into a pattern the blur can remove.
     let noise = fract(52.9829189 * fract(dot(position.xy, vec2<f32>(0.06711056, 0.00583715)))) * 6.2831853;
@@ -47,7 +51,7 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         let angle = noise + f32(i) * 2.39996323;
         let reach = RADIUS * sqrt((f32(i) + 0.5) / f32(SAMPLES));
         let clip = parameters.projection * vec4<f32>(here + vec3<f32>(cos(angle), sin(angle), 0.0) * reach, 1.0);
-        let other = view_position(vec2<f32>(clip.x, -clip.y) / clip.w * 0.5 + 0.5);
+        let other = view_position(vec2<i32>(floor((vec2<f32>(clip.x, -clip.y) / clip.w * 0.5 + 0.5) * size)));
         let toward = other - here;
         let length_now = length(toward);
         if length_now > 1e-4 && length_now < RADIUS * 2.0 {
