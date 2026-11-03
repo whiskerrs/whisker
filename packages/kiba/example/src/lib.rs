@@ -245,6 +245,7 @@ pub fn app() -> Element {
                 roughness: 0.7,
                 alpha_mode: AlphaMode::Mask { cutoff: 0.5 },
                 double_sided: true,
+                transmission: 0.6,
                 base_color_texture: Some(Texture::from_rgba8(leaf_side, leaf_side, leaf)),
                 ..Material::default()
             },

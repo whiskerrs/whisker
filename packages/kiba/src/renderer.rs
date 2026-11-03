@@ -38,8 +38,8 @@ pub(crate) struct Instance {
     metallic: f32,
     roughness: f32,
     emissive: [f32; 3],
-    /// Opacity, then the cutoff below which a masked surface is absent.
-    opacity: [f32; 2],
+    /// Opacity, the cutoff below which a masked surface is absent, and transmission.
+    opacity: [f32; 3],
 }
 
 impl Instance {
@@ -54,7 +54,7 @@ impl Instance {
             metallic: material.metallic,
             roughness: material.roughness,
             emissive: material.emissive.to_array(),
-            opacity: [material.opacity, cutoff],
+            opacity: [material.opacity, cutoff, material.transmission],
         }
     }
 
@@ -663,7 +663,7 @@ impl SceneRenderer {
             9 => Float32,
             10 => Float32,
             13 => Float32x3,
-            14 => Float32x2,
+            14 => Float32x3,
         ];
         let frame_visibility = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
         let fragment_entry = |binding, ty| wgpu::BindGroupLayoutEntry {
@@ -1817,6 +1817,7 @@ mod tests {
         opacity: 1.0,
         alpha_mode: crate::AlphaMode::Opaque,
         double_sided: false,
+        transmission: 0.0,
         base_color_texture: None,
         metallic_roughness_texture: None,
         normal_texture: None,
@@ -2270,6 +2271,23 @@ mod tests {
         assert!(hidden[0] > 80 && hidden[2] < 30, "{hidden:?}");
         assert!(solid[2] > 80 && solid[0] < 30, "{solid:?}");
         assert!(mixed[0] > 40 && mixed[2] > 40, "{mixed:?}");
+    }
+
+    #[test]
+    fn transmission_lets_sun_behind_a_surface_through() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let backlit = |transmission: f32| {
+            let material = Material {
+                transmission,
+                ..MATTE
+            };
+            let batch = quad(Vec3::Z, [1.0; 3], Mat4::IDENTITY, material);
+            center_of(&device, &queue, &frame(dim_sun(Vec3::Z), vec![batch]))[0]
+        };
+        let opaque = backlit(0.0);
+        assert!(backlit(1.0) > opaque + 20, "{opaque}");
     }
 
     #[test]

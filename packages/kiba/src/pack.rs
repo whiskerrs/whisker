@@ -259,6 +259,7 @@ pub(crate) fn write_model(data: &ModelData) -> Vec<u8> {
         out.u32(mode);
         out.f32(cutoff);
         out.u32(u32::from(material.double_sided));
+        out.f32(material.transmission);
         for texture in [
             &material.base_color_texture,
             &material.metallic_roughness_texture,
@@ -380,7 +381,7 @@ pub(crate) fn read_model(bytes: &[u8]) -> Result<ModelData, String> {
             2 => AlphaMode::Blend,
             _ => return Err("a material's alpha mode is unknown".into()),
         };
-        let double_sided = input.u32()? != 0;
+        let (double_sided, transmission) = (input.u32()? != 0, input.f32()?);
         let texture = |input: &mut Reader<'_>| -> Result<Option<Texture>, String> {
             let slot = checked(input.option()?, textures.len(), "texture")?;
             Ok(slot.map(|slot| textures[slot].clone()))
@@ -393,6 +394,7 @@ pub(crate) fn read_model(bytes: &[u8]) -> Result<ModelData, String> {
             opacity,
             alpha_mode,
             double_sided,
+            transmission,
             base_color_texture: texture(input)?,
             metallic_roughness_texture: texture(input)?,
             normal_texture: texture(input)?,
@@ -524,6 +526,7 @@ mod tests {
                 opacity: 0.75,
                 alpha_mode: AlphaMode::Mask { cutoff: 0.3 },
                 double_sided: true,
+                transmission: 0.4,
                 base_color_texture: Some(texture.clone()),
                 emissive_texture: Some(texture.clone()),
                 ..Material::default()
@@ -582,6 +585,7 @@ mod tests {
         assert_eq!(material.opacity, 0.75);
         assert_eq!(material.alpha_mode, AlphaMode::Mask { cutoff: 0.3 });
         assert!(material.double_sided);
+        assert_eq!(material.transmission, 0.4);
         assert_eq!(material.emissive_texture, material.base_color_texture);
         let clip = &read.rig.as_ref().unwrap().clips["wave"];
         assert_eq!(clip.channels[0].times, vec![0.0, 1.0]);

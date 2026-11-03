@@ -23,7 +23,7 @@ struct SkinInput {
 struct MaskInput {
     @location(3) uv: vec2<f32>,
     // Opacity, then the cutoff below which the surface is absent.
-    @location(14) opacity: vec2<f32>,
+    @location(14) opacity: vec3<f32>,
 }
 
 struct MaskOutput {
@@ -55,13 +55,13 @@ fn vs_skinned(input: VertexInput, skin: SkinInput) -> @builtin(position) vec4<f3
 
 @vertex
 fn vs_masked(input: VertexInput, mask: MaskInput) -> MaskOutput {
-    return MaskOutput(light * transform_of(input) * vec4<f32>(input.position, 1.0), mask.uv, mask.opacity);
+    return MaskOutput(light * transform_of(input) * vec4<f32>(input.position, 1.0), mask.uv, mask.opacity.xy);
 }
 
 @vertex
 fn vs_masked_skinned(input: VertexInput, skin: SkinInput, mask: MaskInput) -> MaskOutput {
     let position = light * transform_of(input) * skin_of(skin) * vec4<f32>(input.position, 1.0);
-    return MaskOutput(position, mask.uv, mask.opacity);
+    return MaskOutput(position, mask.uv, mask.opacity.xy);
 }
 
 @fragment

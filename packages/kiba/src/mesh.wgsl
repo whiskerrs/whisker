@@ -72,8 +72,8 @@ struct VertexOutput {
     @location(4) roughness: f32,
     @location(5) uv: vec2<f32>,
     @location(6) emissive: vec3<f32>,
-    // Opacity, then the cutoff below which a masked surface is absent.
-    @location(7) opacity: vec2<f32>,
+    // Opacity, the cutoff below which a masked surface is absent, and transmission.
+    @location(7) opacity: vec3<f32>,
 }
 
 struct InstanceInput {
@@ -85,7 +85,7 @@ struct InstanceInput {
     @location(9) metallic: f32,
     @location(10) roughness: f32,
     @location(13) emissive: vec3<f32>,
-    @location(14) opacity: vec2<f32>,
+    @location(14) opacity: vec3<f32>,
 }
 
 struct VertexInput {
@@ -178,6 +178,14 @@ fn lit(input: VertexOutput, front: bool, opacity: f32) -> vec3<f32> {
 
     let shadowed = sun_visibility(input.world_position, geometric, input.position.xy);
     var direct = shade(surface, frame.to_sun.xyz, frame.sun_color.rgb * shadowed);
+    let transmission = input.opacity.z;
+    if transmission > 0.0 {
+        let behind = max(dot(-geometric, frame.to_sun.xyz), 0.0);
+        if behind > 0.0 {
+            let through = sun_visibility(input.world_position, -geometric, input.position.xy);
+            direct += diffuse * frame.sun_color.rgb * (transmission * behind * through);
+        }
+    }
     for (var i = 0u; i < u32(frame.shadow_params.w); i++) {
         direct += local_light(surface, frame.lights[i], input.world_position);
     }

@@ -58,6 +58,9 @@ pub struct Material {
     pub alpha_mode: AlphaMode,
     /// Draws back faces too, lit as if they faced the viewer, for leaves, paper, and cloth.
     pub double_sided: bool,
+    /// 0 to 1, the share of sunlight a thin surface lets through to its far side, for leaves, paper,
+    /// and cloth.
+    pub transmission: f32,
     /// sRGB color, multiplied by `base_color`, with opacity in alpha.
     pub base_color_texture: Option<Texture>,
     /// Roughness in green and metallic in blue, multiplied by their factors.
@@ -115,6 +118,7 @@ impl Default for Material {
             opacity: 1.0,
             alpha_mode: AlphaMode::Opaque,
             double_sided: false,
+            transmission: 0.0,
             base_color_texture: None,
             metallic_roughness_texture: None,
             normal_texture: None,
