@@ -1,10 +1,13 @@
 //! Work done ahead of time on a development machine.
 
-use glam::{UVec3, Vec3};
+use std::collections::{BTreeMap, HashMap};
 
-use crate::Model;
-use crate::pack::{MODEL_SECTION, write_model, write_pack};
+use glam::{IVec2, Mat4, UVec3, Vec2, Vec3};
+
+use crate::model::{Lod, ModelData, ModelPart};
+use crate::pack::{MODEL_SECTION, PROBE_SECTION, WORLD_SECTION, Writer, write_model, write_pack};
 use crate::probes::{ProbeData, ProbeVolume};
+use crate::{Material, Mesh, Model, Texture, Vertex};
 
 const RAYS: usize = 256;
 // Light from beyond this is treated as open sky, which keeps far walls from darkening whole valleys.
@@ -204,6 +207,269 @@ pub fn cook_model(model: &Model) -> Result<Vec<u8>, String> {
     Ok(write_pack(&[(MODEL_SECTION, write_model(data))]))
 }
 
+// A simpler mesh takes over at these multiples of a part's radius, when it covers little of the screen.
+const LOD_STEPS: [(f32, f32); 2] = [(10.0, 0.4), (30.0, 0.15)];
+const FAR_RATIO: f32 = 0.1;
+const SMALLEST_SIMPLIFIED_INDICES: usize = 300;
+
+fn simplify(mesh: &Mesh, ratio: f32) -> Option<Mesh> {
+    let data = mesh.data();
+    if data.indices.len() < SMALLEST_SIMPLIFIED_INDICES || data.skin.is_some() {
+        return None;
+    }
+    let adapter = meshopt::VertexDataAdapter::new(
+        bytemuck::cast_slice(&data.vertices),
+        size_of::<Vertex>(),
+        0,
+    )
+    .ok()?;
+    let target = ((data.indices.len() as f32 * ratio) as usize / 3 * 3).max(3);
+    let kept = meshopt::simplify(
+        &data.indices,
+        &adapter,
+        target,
+        // Moving the surface by up to 5% of its size is invisible at the distances that use this.
+        0.05,
+        meshopt::SimplifyOptions::None,
+        None,
+    );
+    if kept.is_empty() || kept.len() >= data.indices.len() {
+        return None;
+    }
+    let mut remap = HashMap::new();
+    let mut vertices = Vec::new();
+    let indices = kept
+        .iter()
+        .map(|&index| {
+            *remap.entry(index).or_insert_with(|| {
+                vertices.push(data.vertices[index as usize]);
+                vertices.len() as u32 - 1
+            })
+        })
+        .collect();
+    Some(Mesh::new(vertices, indices))
+}
+
+/// A single untextured mesh standing in for everything in a cell from far away.
+fn far_stand_in(parts: &[ModelPart]) -> Option<ModelPart> {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for part in parts {
+        let tint = part.material.base_color * average_color(&part.material);
+        let normal_matrix = part.transform.inverse().transpose();
+        let first = vertices.len() as u32;
+        let data = part.mesh.data();
+        vertices.extend(data.vertices.iter().map(|vertex| {
+            Vertex {
+                position: part
+                    .transform
+                    .transform_point3(vertex.position.into())
+                    .to_array(),
+                normal: normal_matrix
+                    .transform_vector3(vertex.normal.into())
+                    .normalize_or_zero()
+                    .to_array(),
+                color: (Vec3::from(vertex.color) * tint).to_array(),
+                uv: vertex.uv,
+            }
+        }));
+        indices.extend(data.indices.iter().map(|index| index + first));
+    }
+    if indices.is_empty() {
+        return None;
+    }
+    let merged = Mesh::new(vertices, indices);
+    Some(ModelPart {
+        mesh: simplify(&merged, FAR_RATIO).unwrap_or(merged),
+        material: Material {
+            roughness: 0.8,
+            ..Material::default()
+        },
+        transform: Mat4::IDENTITY,
+        node: None,
+        skin: None,
+        lods: Vec::new(),
+    })
+}
+
+fn average_color(material: &Material) -> Vec3 {
+    let Some(texture) = &material.base_color_texture else {
+        return Vec3::ONE;
+    };
+    let pixels = &texture.data().pixels;
+    let mut sum = Vec3::ZERO;
+    for pixel in pixels.chunks_exact(4) {
+        let srgb = Vec3::new(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32) / 255.0;
+        sum += srgb.powf(2.2);
+    }
+    sum / (pixels.len() / 4).max(1) as f32
+}
+
+/// Splits `models` into the files of a [`WorldStream`](crate::WorldStream), as (name, contents).
+///
+/// A part belongs to the cell holding its center, whatever its size. Every cell gets simpler meshes
+/// for distance, a far stand-in, and with a positive `probe_spacing` its own sky visibility.
+pub fn cook_world(
+    models: &[Model],
+    cell_size: f32,
+    probe_spacing: f32,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    if cell_size <= 0.0 {
+        return Err("the cell size must be greater than zero".into());
+    }
+    let mut cells: BTreeMap<(i32, i32), Vec<ModelPart>> = BTreeMap::new();
+    for model in models {
+        for part in model.parts() {
+            let center = part
+                .transform
+                .transform_point3(part.mesh.data().bounds_center);
+            let cell = IVec2::new(
+                (center.x / cell_size).floor() as i32,
+                (center.z / cell_size).floor() as i32,
+            );
+            let mut part = part.clone();
+            let radius = part.mesh.data().bounds_radius;
+            let scale = part
+                .transform
+                .to_scale_rotation_translation()
+                .0
+                .max_element();
+            part.lods = LOD_STEPS
+                .iter()
+                .filter_map(|&(step, ratio)| {
+                    Some(Lod {
+                        distance: radius * scale * step,
+                        mesh: simplify(&part.mesh, ratio)?,
+                    })
+                })
+                .collect();
+            cells.entry((cell.x, cell.y)).or_default().push(part);
+        }
+    }
+    if cells.is_empty() {
+        return Err("the models hold no triangles".into());
+    }
+
+    let mut files = Vec::new();
+    let mut index = Writer::default();
+    index.f32(cell_size);
+    let positions: Vec<[i32; 2]> = cells.keys().map(|&(x, z)| [x, z]).collect();
+    index.slice(&positions);
+    files.push((
+        "index.kiba".to_owned(),
+        write_pack(&[(WORLD_SECTION, index.0)]),
+    ));
+    for ((x, z), parts) in cells {
+        let far = far_stand_in(&parts);
+        let data = ModelData { parts, rig: None };
+        let mut sections = vec![(MODEL_SECTION, write_model(&data))];
+        if probe_spacing > 0.0 {
+            let volume = bake_probes(&[Model::from_data(data)], probe_spacing)?;
+            sections.push((
+                PROBE_SECTION,
+                volume.data().expect("just baked").to_section(),
+            ));
+        }
+        files.push((format!("cell_{x}_{z}.kiba"), write_pack(&sections)));
+        let far_data = ModelData {
+            parts: far.into_iter().collect(),
+            rig: None,
+        };
+        files.push((
+            format!("cell_{x}_{z}.far.kiba"),
+            write_pack(&[(MODEL_SECTION, write_model(&far_data))]),
+        ));
+    }
+    Ok(files)
+}
+
+fn terrain_height(at: Vec2) -> f32 {
+    (at.x * 0.013).sin() * 9.0
+        + (at.y * 0.017).cos() * 7.0
+        + (at.dot(Vec2::new(0.04, 0.03))).sin() * 1.5
+}
+
+fn terrain(cell: IVec2, cell_size: f32) -> Mesh {
+    const SIDE: u32 = 64;
+    let step = cell_size / SIDE as f32;
+    let origin = cell.as_vec2() * cell_size;
+    let mut vertices = Vec::new();
+    for z in 0..=SIDE {
+        for x in 0..=SIDE {
+            let at = origin + Vec2::new(x as f32, z as f32) * step;
+            let slope = Vec2::new(
+                terrain_height(at + Vec2::X) - terrain_height(at - Vec2::X),
+                terrain_height(at + Vec2::Y) - terrain_height(at - Vec2::Y),
+            ) / 2.0;
+            vertices.push(Vertex {
+                position: [at.x, terrain_height(at), at.y],
+                normal: Vec3::new(-slope.x, 1.0, -slope.y).normalize().to_array(),
+                color: [1.0; 3],
+                uv: [x as f32 / 8.0, z as f32 / 8.0],
+            });
+        }
+    }
+    let mut indices = Vec::new();
+    for z in 0..SIDE {
+        for x in 0..SIDE {
+            let a = z * (SIDE + 1) + x;
+            let (b, c, d) = (a + 1, a + SIDE + 1, a + SIDE + 2);
+            indices.extend([a, c, b, b, c, d]);
+        }
+    }
+    Mesh::new(vertices, indices)
+}
+
+/// Makes a procedural landscape for measuring streaming, because no authored world exists yet.
+pub fn synthetic_world(cells_per_side: i32, cell_size: f32) -> Model {
+    let rock = Mesh::sphere(1.0);
+    let mut parts = Vec::new();
+    for z in 0..cells_per_side {
+        for x in 0..cells_per_side {
+            let cell = IVec2::new(x, z);
+            let shade = 80 + ((x * 31 + z * 17) % 60) as u8;
+            let pixels = (0..128u32 * 128)
+                .flat_map(|i| {
+                    let grain = (i.wrapping_mul(2654435761) >> 28) as u8 * 3;
+                    [shade + grain, shade + grain / 2, shade / 2, 255]
+                })
+                .collect();
+            parts.push((
+                terrain(cell, cell_size),
+                Material {
+                    base_color_texture: Some(Texture::from_rgba8(128, 128, pixels)),
+                    roughness: 0.9,
+                    ..Material::default()
+                },
+                Mat4::IDENTITY,
+            ));
+            for i in 0..40u32 {
+                let seed = i
+                    .wrapping_add((x * 1000 + z) as u32)
+                    .wrapping_mul(2654435761);
+                let fraction = |shift: u32| ((seed >> shift) & 0xff) as f32 / 255.0;
+                let at = (cell.as_vec2() + Vec2::new(fraction(0), fraction(8))) * cell_size;
+                let size = 0.5 + fraction(16) * 4.0;
+                let position = Vec3::new(at.x, terrain_height(at), at.y);
+                parts.push((
+                    rock.clone(),
+                    Material {
+                        base_color: Vec3::splat(0.3 + fraction(24) * 0.3),
+                        roughness: 0.8,
+                        ..Material::default()
+                    },
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::splat(size),
+                        glam::Quat::IDENTITY,
+                        position,
+                    ),
+                ));
+            }
+        }
+    }
+    Model::new(parts)
+}
+
 /// [`bake_probes`], in the form a game loads with [`ProbeVolume::load`].
 pub fn bake_probes_to_bytes(models: &[Model], spacing: f32) -> Result<Vec<u8>, String> {
     let volume = bake_probes(models, spacing)?;
@@ -288,10 +554,7 @@ fn encode((mean, direction): (f32, Vec3)) -> [u8; 4] {
 
 #[cfg(test)]
 mod tests {
-    use glam::Mat4;
-
     use super::*;
-    use crate::{Material, Mesh};
 
     fn at(volume: &ProbeVolume, position: Vec3) -> [u8; 4] {
         let data = volume.data().expect("cooked");
@@ -326,6 +589,64 @@ mod tests {
         let volume = bake_probes(&[cube], 1.0).expect("bakes");
         let inside = at(&volume, volume.data().unwrap().origin + Vec3::splat(1.0));
         assert!(inside[3] > 64, "{inside:?}");
+    }
+
+    #[test]
+    fn a_world_splits_into_cells_with_simpler_meshes_and_stand_ins() {
+        let far_cube = Mat4::from_translation(Vec3::new(300.0, 0.0, 50.0));
+        let world = Model::new([
+            (Mesh::sphere(1.0), Material::default(), Mat4::IDENTITY),
+            (Mesh::sphere(1.0), Material::default(), far_cube),
+        ]);
+        let files = cook_world(&[world], 100.0, 0.0).expect("cooks");
+        let names: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(names.contains(&"index.kiba"));
+        assert!(names.contains(&"cell_0_0.kiba"));
+        assert!(names.contains(&"cell_3_0.far.kiba"));
+
+        let (_, bytes) = files
+            .iter()
+            .find(|(name, _)| name == "cell_0_0.kiba")
+            .unwrap();
+        let model = Model::from_pack(bytes).expect("valid");
+        let part = &model.parts()[0];
+        assert_eq!(part.lods.len(), 2);
+        let (full, simple) = (
+            part.mesh.data().indices.len(),
+            part.lods[1].mesh.data().indices.len(),
+        );
+        assert!(simple < full / 2, "{simple} of {full}");
+
+        let (_, bytes) = files
+            .iter()
+            .find(|(name, _)| name == "cell_0_0.far.kiba")
+            .unwrap();
+        let far = Model::from_pack(bytes).expect("valid");
+        assert!(far.parts()[0].mesh.data().indices.len() < full);
+    }
+
+    #[test]
+    fn nearby_parts_pick_full_detail_and_far_ones_a_simpler_mesh() {
+        let part = ModelPart {
+            mesh: Mesh::cube(1.0),
+            material: Material::default(),
+            transform: Mat4::IDENTITY,
+            node: None,
+            skin: None,
+            lods: vec![
+                Lod {
+                    distance: 10.0,
+                    mesh: Mesh::plane(1.0),
+                },
+                Lod {
+                    distance: 30.0,
+                    mesh: Mesh::triangle(),
+                },
+            ],
+        };
+        assert_eq!(part.mesh_at(1.0).key(), part.mesh.key());
+        assert_eq!(part.mesh_at(15.0).key(), part.lods[0].mesh.key());
+        assert_eq!(part.mesh_at(40.0).key(), part.lods[1].mesh.key());
     }
 
     #[test]

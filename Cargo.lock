@@ -1655,6 +1655,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "float-cmp"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b09cf3155332e944990140d967ff5eceb70df778b34f77d8075db46e4704e6d8"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "fluent"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2960,6 +2969,7 @@ dependencies = [
  "hecs",
  "image",
  "js-sys",
+ "meshopt",
  "pollster",
  "raw-window-handle",
  "wasm-bindgen",
@@ -3205,6 +3215,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "meshopt"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b87fa02c060ffe367138c480622816cd627418bec30fec71b20725fb9ba10a5"
+dependencies = [
+ "bitflags 2.13.1",
+ "cc",
+ "float-cmp",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

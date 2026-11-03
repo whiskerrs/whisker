@@ -15,6 +15,23 @@ pub(crate) struct ModelPart {
     /// The rig node holding this part, which moves it when animated.
     pub(crate) node: Option<usize>,
     pub(crate) skin: Option<usize>,
+    /// Simpler stand-ins for `mesh`, nearest first, each used from its distance outward.
+    pub(crate) lods: Vec<Lod>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Lod {
+    pub(crate) distance: f32,
+    pub(crate) mesh: Mesh,
+}
+
+impl ModelPart {
+    pub(crate) fn mesh_at(&self, distance: f32) -> &Mesh {
+        self.lods
+            .iter()
+            .rfind(|lod| distance >= lod.distance)
+            .map_or(&self.mesh, |lod| &lod.mesh)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +68,7 @@ impl Model {
                 transform,
                 node: None,
                 skin: None,
+                lods: Vec::new(),
             })
             .collect();
         Self(Arc::new(OnceLock::from(Ok(ModelData { parts, rig: None }))))
@@ -77,8 +95,10 @@ impl Model {
 
     /// Reads a cooked `.kiba` pack already in memory.
     pub fn from_pack(bytes: &[u8]) -> Result<Self, String> {
-        let data = read_model(read_section(bytes, MODEL_SECTION)?)?;
-        Ok(Self(Arc::new(OnceLock::from(Ok(data)))))
+        Ok(Self::from_data(read_model(read_section(
+            bytes,
+            MODEL_SECTION,
+        )?)?))
     }
 
     /// Reports how far loading has come.
@@ -99,6 +119,10 @@ impl Model {
             .collect();
         names.sort_unstable();
         names
+    }
+
+    pub(crate) fn from_data(data: ModelData) -> Self {
+        Self(Arc::new(OnceLock::from(Ok(data))))
     }
 
     pub(crate) fn data(&self) -> Option<&ModelData> {
@@ -299,6 +323,7 @@ mod import {
                         transform,
                         node: Some(index),
                         skin,
+                        lods: Vec::new(),
                     });
                 }
             }

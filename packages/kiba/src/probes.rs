@@ -64,7 +64,7 @@ impl ProbeData {
 ///
 /// Cook it with `kiba-cook`, from models that do not move. It stores what can see the sky rather than
 /// its color, so the [`Sky`](crate::Sky) can change without cooking again. Surfaces outside the box
-/// see the whole sky, and only one volume is used if the world has several.
+/// see the whole sky. A frame uses the first volume holding the camera, so volumes apply only near it.
 #[derive(Clone, Debug)]
 pub struct ProbeVolume(Arc<OnceLock<Result<ProbeData, String>>>);
 
@@ -107,6 +107,14 @@ impl ProbeVolume {
 
     pub(crate) fn data(&self) -> Option<&ProbeData> {
         self.0.get()?.as_ref().ok()
+    }
+
+    /// Whether the volume has loaded and its box holds `point`.
+    pub(crate) fn contains(&self, point: Vec3) -> bool {
+        self.data().is_some_and(|data| {
+            let (min, size) = bounds(data);
+            point.cmpge(min).all() && point.cmple(min + size).all()
+        })
     }
 
     pub(crate) fn key(&self) -> usize {

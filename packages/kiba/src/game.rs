@@ -15,6 +15,7 @@ use crate::input::{InputEvent, Key};
 use crate::probes::ProbeVolume;
 use crate::renderer::{Batch, CASCADES, Frame, Instance, SHADOW_MAP_SIZE, Shadows};
 use crate::sky::Sky;
+use crate::stream::run_streams;
 use crate::{Input, Material, Mesh, Model, Renderer};
 
 const MAX_DELTA_SECONDS: f32 = 0.1;
@@ -198,6 +199,8 @@ pub struct FrameStats {
     pub instances: u32,
     /// Triangles drawn after culling.
     pub triangles: u64,
+    /// Bytes of meshes and textures held on the GPU.
+    pub gpu_bytes: u64,
 }
 
 /// What a callback can see and change.
@@ -371,6 +374,7 @@ impl<C> GameSetup<C> {
             });
         }
         run_animators(&mut self.world, frame_time.delta_seconds());
+        run_streams(&mut self.world);
         run_controllers(&mut self.world, &frame_time, &self.frame_input);
         self.frame_input.end_pass();
         alpha
@@ -476,10 +480,12 @@ impl<C: 'static> RunningGame for Registered<C> {
             render_ms: (rendered - extracted).as_secs_f32() * 1000.0,
             draw_calls: drawn().count() as u32,
             instances: drawn().map(|b| b.instances.len() as u32).sum(),
+            gpu_bytes: 0,
             triangles: drawn()
                 .map(|b| b.instances.len() as u64 * b.mesh.data().indices.len() as u64 / 3)
                 .sum(),
         };
+        setup.stats.gpu_bytes = target.renderer.gpu_bytes();
         schedule_frame(&state.dispatcher, self.id);
     }
 
@@ -662,6 +668,8 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
             .filter(|_| animator.is_some() || parts.iter().any(|part| part.skin.is_some()))
             .map(|rig| rig.posed(animator));
         for part in parts {
+            let center = matrix * part.transform * part.mesh.data().bounds_center.extend(1.0);
+            let mesh = part.mesh_at(center.truncate().distance(eye.translation));
             let palette = posed
                 .as_ref()
                 .zip(part.skin)
@@ -672,7 +680,7 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
                 (None, Some(posed), Some(node)) => posed.nodes[node],
                 _ => part.transform,
             };
-            add(&part.mesh, matrix * within, &part.material, palette);
+            add(mesh, matrix * within, &part.material, palette);
         }
     }
     Frame {
@@ -684,9 +692,9 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
         probes: world
             .query::<&ProbeVolume>()
             .iter()
-            .next()
-            .map(|(_, probes)| probes.clone())
-            .filter(|probes| probes.data().is_some()),
+            .map(|(_, probes)| probes)
+            .find(|probes| probes.contains(eye.translation))
+            .cloned(),
         shadows: shadows.map(|shadows| Shadows {
             casters: casters.map(|batches| batches.into_values().collect()),
             ..shadows

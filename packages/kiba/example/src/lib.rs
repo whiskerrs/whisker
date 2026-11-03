@@ -58,6 +58,43 @@ fn stress(setup: &mut GameSetup<Command>) {
     });
 }
 
+/// Flies back and forth across a 4 km square of cooked cells, reporting cost to the console.
+fn soak(setup: &mut GameSetup<Command>) {
+    let camera = setup
+        .world
+        .spawn((Camera::default(), Transform::default()));
+    setup.world.spawn((Sun::default(),));
+    setup.world.spawn((Sky::default(),));
+    let stream = setup.world.spawn((WorldStream::load(
+        "/world/index.kiba",
+        StreamSettings::default(),
+    ),));
+    let mut frames = 0u32;
+    setup.on_update(move |context| {
+        const SPEED: f32 = 20.0;
+        const SIDE: f32 = 4096.0;
+        const ROW: f32 = 256.0;
+        let travelled = context.time.elapsed_seconds() as f32 * SPEED;
+        let row = (travelled / SIDE).floor();
+        let along = travelled.rem_euclid(SIDE);
+        let x = if row as i32 % 2 == 0 { along } else { SIDE - along };
+        let z = (row * ROW).rem_euclid(SIDE);
+        let eye = Vec3::new(x, 30.0, z);
+        let view = Transform::looking_at(eye, eye + Vec3::new(1.0, -0.2, 0.3), Vec3::Y);
+        if let Ok(mut transform) = context.world.get::<&mut Transform>(camera) {
+            *transform = view;
+        }
+        frames += 1;
+        if frames % 300 == 0 {
+            let loaded = context
+                .world
+                .get::<&WorldStream>(stream)
+                .map_or(0, |stream| stream.loaded_bytes());
+            kiba::log(&format!("{:?} loaded {loaded}", context.stats));
+        }
+    });
+}
+
 #[whisker::main]
 pub fn app() -> Element {
     let turns = signal(0);
@@ -65,6 +102,10 @@ pub fn app() -> Element {
     let game = Game::<Command>::new(move |setup| {
         if cfg!(feature = "stress") {
             stress(setup);
+            return;
+        }
+        if cfg!(feature = "soak") {
+            soak(setup);
             return;
         }
         setup.world.spawn((

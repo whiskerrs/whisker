@@ -8,13 +8,14 @@ use glam::{Mat4, Quat, Vec3};
 
 use crate::animation::{Channel, Clip, Keys, MAX_JOINTS, Pose, Rig, RigNode, Skin};
 use crate::mesh::SkinVertex;
-use crate::model::{ModelData, ModelPart};
+use crate::model::{Lod, ModelData, ModelPart};
 use crate::{Material, Mesh, Texture, Vertex};
 
 const MAGIC: &[u8; 4] = b"KIBA";
 const VERSION: u32 = 2;
 pub(crate) const MODEL_SECTION: &[u8; 4] = b"MODL";
 pub(crate) const PROBE_SECTION: &[u8; 4] = b"PROB";
+pub(crate) const WORLD_SECTION: &[u8; 4] = b"WRLD";
 
 pub(crate) fn is_pack(bytes: &[u8]) -> bool {
     bytes.starts_with(MAGIC)
@@ -203,10 +204,12 @@ pub(crate) fn write_model(data: &ModelData) -> Vec<u8> {
     let mut meshes = Vec::new();
     let mut mesh_slots = HashMap::new();
     for part in &data.parts {
-        mesh_slots.entry(part.mesh.key()).or_insert_with(|| {
-            meshes.push(part.mesh.clone());
-            meshes.len() - 1
-        });
+        for mesh in std::iter::once(&part.mesh).chain(part.lods.iter().map(|lod| &lod.mesh)) {
+            mesh_slots.entry(mesh.key()).or_insert_with(|| {
+                meshes.push(mesh.clone());
+                meshes.len() - 1
+            });
+        }
         let material = &part.material;
         for texture in [
             &material.base_color_texture,
@@ -259,6 +262,11 @@ pub(crate) fn write_model(data: &ModelData) -> Vec<u8> {
         out.mat4(&part.transform);
         out.option(part.node);
         out.option(part.skin);
+        out.u32(part.lods.len() as u32);
+        for lod in &part.lods {
+            out.f32(lod.distance);
+            out.u32(mesh_slots[&lod.mesh.key()] as u32);
+        }
     }
     write_rig(&mut out, data.rig.as_ref());
     out.0
@@ -364,12 +372,24 @@ pub(crate) fn read_model(bytes: &[u8]) -> Result<ModelData, String> {
             metallic_roughness_texture: texture(input)?,
             normal_texture: texture(input)?,
         };
+        let transform = input.mat4()?;
+        let node = input.option()?;
+        let skin = input.option()?;
+        let lods = input.list(|input| {
+            let distance = input.f32()?;
+            let mesh = meshes
+                .get(input.u32()? as usize)
+                .ok_or("a part's mesh is out of range")?
+                .clone();
+            Ok(Lod { distance, mesh })
+        })?;
         Ok(ModelPart {
             mesh,
             material,
-            transform: input.mat4()?,
-            node: input.option()?,
-            skin: input.option()?,
+            transform,
+            node,
+            skin,
+            lods,
         })
     })?;
     let rig = read_rig(&mut input)?;
@@ -480,6 +500,10 @@ mod tests {
             transform,
             node: Some(0),
             skin: None,
+            lods: vec![Lod {
+                distance: 10.0,
+                mesh: Mesh::plane(1.0),
+            }],
         };
         ModelData {
             parts: vec![part(Mat4::IDENTITY), part(Mat4::from_translation(Vec3::X))],
@@ -514,6 +538,8 @@ mod tests {
         let read = read_model(&write_model(&model())).expect("valid");
         assert_eq!(read.parts.len(), 2);
         assert_eq!(read.parts[0].mesh.key(), read.parts[1].mesh.key());
+        assert_eq!(read.parts[0].lods[0].distance, 10.0);
+        assert_eq!(read.parts[0].lods[0].mesh.data().indices.len(), 6);
         assert_eq!(read.parts[0].mesh.data().indices.len(), 36);
         assert_eq!(read.parts[1].transform, Mat4::from_translation(Vec3::X));
         assert_eq!(

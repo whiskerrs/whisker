@@ -28,7 +28,7 @@ required-features = ["cook"]
 # Loads glTF at run time, for development until cooked assets exist.
 gltf = ["dep:gltf", "dep:image"]
 # The ahead-of-time tools, which run on a development machine.
-cook = ["gltf"]
+cook = ["gltf", "dep:meshopt"]
 
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
@@ -36,6 +36,7 @@ glam = { version = "0.30", features = ["bytemuck"] }
 gltf = { version = "1.4", default-features = false, features = ["utils", "names"], optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 hecs = "0.10"
+meshopt = { version = "0.4", optional = true }
 web-time = "1"
 whisker = { path = "../../crates/whisker", version = "0.15.0" }
 

@@ -19,6 +19,8 @@ bench = false
 whisker-config = ["whisker-cng/generate"]
 # Replaces the scene with the instance benchmark in DESIGN.md.
 stress = []
+# Flies across a cooked world served at /world, to measure streaming.
+soak = []
 
 [dependencies]
 whisker-cng = { path = "../../../crates/whisker-cng", version = "0.15.0", default-features = false }

@@ -11,6 +11,7 @@
 //! | A shape | `(Transform::default(), Mesh::cube(1.0), Material::default())` |
 //! | A file | `(Transform::default(), Model::load(asset!("crate.glb")))` |
 //! | Sky light blocked by still models | `(ProbeVolume::load(asset!("scene.kiba")),)`, cooked with `kiba-cook` |
+//! | A large world, loaded around the camera | `(WorldStream::load(asset!("world/index.kiba"), StreamSettings::default()),)`, cooked with `kiba-cook` |
 //! | A file's animation | Add `Animator::new("walk")` next to its `Model` |
 //!
 //! `asset!` is not part of Kiba. It comes from the `whisker-asset` crate, as `whisker_asset::asset!`, and
@@ -104,6 +105,7 @@ mod pack;
 mod probes;
 mod renderer;
 mod sky;
+mod stream;
 mod texture;
 
 #[cfg(target_os = "android")]
@@ -130,6 +132,7 @@ pub use renderer::{Frame, Renderer, SceneRenderer};
 #[doc(hidden)]
 pub use renderer::{log, placeholder_scene};
 pub use sky::Sky;
+pub use stream::{StreamSettings, WorldStream};
 pub use texture::Texture;
 #[doc(hidden)]
 pub use wgpu;
@@ -139,7 +142,8 @@ pub mod prelude {
     pub use crate::{
         Animator, Camera, Context, Entity, FlyCamera, FrameStats, Game, GameSetup, Input,
         Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, Pointer, ProbeVolume,
-        Quat, Sky, Sun, Texture, Time, Transform, Vec2, Vec3, Vertex, Viewport, World,
+        Quat, Sky, StreamSettings, Sun, Texture, Time, Transform, Vec2, Vec3, Vertex, Viewport,
+        World, WorldStream,
     };
 }
 

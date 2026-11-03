@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::{Arc, LazyLock, Weak};
 
 use glam::{Mat4, UVec3, Vec3, Vec4};
@@ -73,6 +74,7 @@ pub struct Frame {
     pub(crate) batches: Vec<Batch>,
 }
 
+const UPLOAD_BYTES_PER_FRAME: u64 = 8 * 1024 * 1024;
 const JOINTS_BINDING_SIZE: u64 = (MAX_JOINTS * size_of::<Mat4>()) as u64;
 pub(crate) const CASCADES: usize = 2;
 pub(crate) const SHADOW_MAP_SIZE: u32 = 1024;
@@ -159,6 +161,7 @@ struct GpuMesh {
     skin: Option<wgpu::Buffer>,
     indices: wgpu::Buffer,
     index_count: u32,
+    bytes: u64,
 }
 
 impl GpuMesh {
@@ -184,6 +187,10 @@ impl GpuMesh {
                 usage: wgpu::BufferUsages::INDEX,
             }),
             index_count: data.indices.len() as u32,
+            bytes: (size_of_val(&*data.vertices)
+                + size_of_val(&*data.indices)
+                + data.skin.as_ref().map_or(0, |skin| size_of_val(&**skin)))
+                as u64,
         }
     }
 }
@@ -191,6 +198,7 @@ impl GpuMesh {
 struct GpuTexture {
     source: Weak<TextureData>,
     view: wgpu::TextureView,
+    bytes: u64,
 }
 
 impl GpuTexture {
@@ -202,6 +210,7 @@ impl GpuTexture {
             .collect();
         Self {
             source: texture.downgrade(),
+            bytes: levels.iter().map(|level| level.pixels.len() as u64).sum(),
             view: upload_mips(device, queue, srgb, &levels),
         }
     }
@@ -802,6 +811,13 @@ impl SceneRenderer {
         }
     }
 
+    /// Bytes of meshes and textures held on the GPU.
+    pub fn gpu_bytes(&self) -> u64 {
+        let meshes = self.meshes.values().map(|mesh| mesh.bytes);
+        let textures = self.textures.values().map(|texture| texture.bytes);
+        meshes.chain(textures).sum()
+    }
+
     /// Draws one frame into `target`, which measures `size` physical pixels.
     pub fn draw(
         &mut self,
@@ -821,16 +837,18 @@ impl SceneRenderer {
             .retain(|_, material| material.sources.iter().all(|s| s.strong_count() > 0));
         self.textures
             .retain(|_, texture| texture.source.strong_count() > 0);
-        for batch in batches {
-            self.meshes
-                .entry(batch.mesh.key())
-                .or_insert_with(|| GpuMesh::new(device, &batch.mesh));
-            self.prepare_material(device, queue, &batch.material);
+        // A streamed cell can bring far more than one frame can upload without a visible hitch, so
+        // what does not fit waits a frame and draws nothing until then.
+        let mut upload_left = UPLOAD_BYTES_PER_FRAME;
+        for batch in batches.iter().chain(casters.clone()) {
+            if upload_left > 0 && !self.meshes.contains_key(&batch.mesh.key()) {
+                let mesh = GpuMesh::new(device, &batch.mesh);
+                upload_left = upload_left.saturating_sub(mesh.bytes);
+                self.meshes.insert(batch.mesh.key(), mesh);
+            }
         }
-        for batch in casters.clone() {
-            self.meshes
-                .entry(batch.mesh.key())
-                .or_insert_with(|| GpuMesh::new(device, &batch.mesh));
+        for batch in batches {
+            self.prepare_material(device, queue, &batch.material, &mut upload_left);
         }
         let joint_offsets = self.upload_joints(device, queue, frame);
         if let Some(volume) = frame.probes.as_ref().filter(|v| v.key() != self.probes_key) {
@@ -904,9 +922,11 @@ impl SceneRenderer {
                 let mut first = next_instance;
                 for batch in &shadows.casters[cascade] {
                     let count = batch.instances.len() as u64;
-                    let mesh = &self.meshes[&batch.mesh.key()];
                     let range = first * stride..(first + count) * stride;
                     first += count;
+                    let Some(mesh) = self.meshes.get(&batch.mesh.key()) else {
+                        continue;
+                    };
                     if count == 0 || mesh.index_count == 0 {
                         continue;
                     }
@@ -953,15 +973,19 @@ impl SceneRenderer {
             let mut first = 0;
             for batch in batches {
                 let count = batch.instances.len() as u64;
-                let mesh = &self.meshes[&batch.mesh.key()];
                 let stride = size_of::<Instance>() as u64;
                 let range = first * stride..(first + count) * stride;
                 first += count;
+                let (Some(mesh), Some(material)) = (
+                    self.meshes.get(&batch.mesh.key()),
+                    self.materials.get(&batch.material.texture_keys()),
+                ) else {
+                    continue;
+                };
                 // Slicing an empty range panics in wgpu.
                 if count == 0 || mesh.index_count == 0 {
                     continue;
                 }
-                let material = &self.materials[&batch.material.texture_keys()];
                 self.bind_skin(
                     &mut pass,
                     batch,
@@ -1089,6 +1113,7 @@ impl SceneRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         material: &Material,
+        upload_left: &mut u64,
     ) {
         let key = material.texture_keys();
         if self.materials.contains_key(&key) {
@@ -1104,9 +1129,14 @@ impl SceneRenderer {
         for (texture, srgb) in slots {
             if let Some(texture) = texture {
                 sources.push(texture.downgrade());
-                self.textures
-                    .entry((texture.key(), srgb))
-                    .or_insert_with(|| GpuTexture::new(device, queue, texture, srgb));
+                if let Entry::Vacant(slot) = self.textures.entry((texture.key(), srgb)) {
+                    if *upload_left == 0 {
+                        return;
+                    }
+                    let uploaded = GpuTexture::new(device, queue, texture, srgb);
+                    *upload_left = upload_left.saturating_sub(uploaded.bytes);
+                    slot.insert(uploaded);
+                }
             }
         }
         let views = [0, 1, 2].map(|slot| {
@@ -1208,6 +1238,11 @@ impl Renderer {
     }
 
     /// Draws at the given physical size, reconfiguring the surface when it changed.
+    pub(crate) fn gpu_bytes(&self) -> u64 {
+        self.scene.gpu_bytes()
+    }
+
+    /// Draws one frame into the surface.
     pub fn render(&mut self, width: u32, height: u32, frame: &Frame) {
         if width == 0 || height == 0 {
             self.config.width = 0;
