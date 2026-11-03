@@ -128,9 +128,9 @@ not let a later pass read them there.
 
 | Tier | Target | Frame time | Longest side | Lowest scale | Features |
 |---|---|---|---|---|---|
-| T0 | Mid-range Android | 33 ms | 1280 px | 0.5 | forward, CPU culling, instancing, probes, two sun cascades, bloom, fog, particles |
-| T1 | High-end phones | 16.7 ms | 1920 px | 0.7 | T0 + half-resolution AO |
-| T2 | Desktop | 16.7 ms | native | 0.7 | T0 + stronger AO |
+| T0 | Mid-range Android | 33 ms | 1280 px | 0.5 | forward, CPU culling, instancing, probes, 16 local lights, two 1024-texel sun cascades, FXAA, bloom, fog, particles |
+| T1 | High-end phones | 16.7 ms | 1920 px | 0.7 | T0 + half-resolution AO, light shafts, three 2048-texel cascades with soft shadows |
+| T2 | Desktop | 16.7 ms | native | 0.7 | T1 + stronger AO and a fourth cascade |
 
 All tiers use the same assets. T0's image is tuned as the product baseline, not as a compromise.
 
@@ -152,10 +152,14 @@ Deferred, with reasons:
 Chrome feature behind a flag **[verified]**.
 - **Temporal upscaling.** It needs motion vectors from every pass, a jittered projection, and history
   rejection. Spatial upscaling is what T0 needs, and whether T1 needs more waits for a device measurement.
-- **Additional shadows.** Kiba has no point or spot light yet; they come when a game asks for them.
-- **SSR and volumetrics.** Nothing in Kiba is glossy and flat enough for screen-space reflections to beat
-  the sky cube yet, and exponential fog stands in for volumetric fog, which would need a compute froxel
-  grid.
+- **Shadows from point and spot lights.** Each needs its own depth map, six for a point light, and the
+  caster pass is already the largest CPU cost per instance (see P6). They come when a game asks for them.
+- **SSR and volumetrics.** Reflection probes cover rooms and streets, and screen-space reflections would
+  add only what moves; exponential fog and screen-space light shafts stand in for volumetric fog, which
+  would need a compute froxel grid.
+- **Motion blur.** Like temporal upscaling, it needs motion vectors from every pass.
+- **Sorting blended surfaces per triangle.** Blended surfaces sort back to front by entity, which is
+  wrong only where two cross; order-independent transparency costs a second pass on every tier.
 
 Every tier uses reversed `Depth32Float` depth, which keeps precision over open-world distances.
 
@@ -164,10 +168,28 @@ Schlick Fresnel. It matches glTF, so cooked assets need no material conversion. 
 per-instance values, so entities that share a mesh and textures stay in one draw call. Normal maps
 derive their tangent frame from screen derivatives, so meshes carry no tangent attribute.
 
-The sun casts shadows through two cascades in one 1024-texel depth array. The near cascade covers the
-first fifth of `Sun::shadow_distance`, entities are culled per cascade, and entities off screen still
-cast. Each cascade snaps to whole texels so that edges do not crawl, and lookups take four rotated
-hardware-filtered taps.
+The sun casts shadows through two to four cascades in one depth array, split between a linear and a
+logarithmic spacing of `Sun::shadow_distance`. Entities are culled per cascade, and entities off screen
+still cast. Each cascade snaps to whole texels so that edges do not crawl, blends into the next over its
+last 15%, and the last fades out. Lookups push off the surface by 1.5 texels along its normal. T0 takes
+four rotated hardware-filtered taps. T1 and T2 use percentage-closer soft shadows: eight taps find the
+average blocker, whose distance sizes a 16-tap disk by the sun's angular radius, so a penumbra widens
+away from contact. Interleaved gradient noise rotates the disk per pixel, trading banding for grain.
+
+Up to 16 `PointLight`s and `SpotLight`s, nearest the camera among those whose range reaches the view, are
+shaded per fragment with an inverse-square falloff windowed to zero at their range. They cast no shadows.
+
+Materials have glTF's alpha modes. Masked surfaces discard below a cutoff and cast shadows with their
+holes. Blended surfaces draw after the sky, back to front by entity, premultiplied so reflections keep
+their strength, and cast no shadow. Double-sided materials light back faces as if they faced the viewer,
+and `transmission` lets the sun behind a thin surface through, shadowed from its far side. Emission is
+added after lighting and lights nothing else, so a lamp pairs it with a `PointLight`.
+
+A `ReflectionProbe` captures the scene around its center into six 128-texel layers once, and again on
+`recapture`, then filters them by roughness into a 64-texel cube of five levels with 64 importance samples
+per texel. Inside its box, lookups are corrected toward the box's walls, which keeps near walls and
+floors in place, and fade to the sky cube at the edges. A frame uses one probe, the first holding the
+camera, so the capture costs nothing per frame after the first.
 
 `Sky` is an analytic gradient, with image-based lighting calculated from it on the GPU: 128 samples per
 texel into a 32-texel radiance cube of five roughness levels and a 16-texel irradiance cube. This
@@ -175,7 +197,10 @@ happens once per change of the sky, so a frame pays only two cube lookups per fr
 out of the cubes, because surfaces receive it directly.
 
 `Sky::from_sun` derives sky colors from the sun's height for a day cycle, and `Fog` fades surfaces into
-the air with distance. Ambient occlusion reads the depth of the main pass at half resolution with eight
+the air with distance. Post-processing adds FXAA on every tier, judged after tone mapping;
+`Camera::depth_of_field`, a thin-lens blur gathered over 24 taps that keeps a blurred foreground spilling
+over a sharp background; and on T1 and T2, light shafts that march 32 steps toward the sun and gather the
+sky seen through gaps. Ambient occlusion reads the depth of the main pass at half resolution with eight
 samples per pixel and is blurred while post-processing reads it. Bloom keeps light above 1.0, halves it
 four times, and adds the chain back up. Particles are CPU-simulated sprites drawn as one instanced draw
 that adds light, so smoke that darkens waits for sorted transparency.
@@ -196,8 +221,10 @@ volume per frame is also capped.
 
 Run-time glTF sits behind the `gltf` feature so that shipped games do not carry its parser. It reads
 binary glTF geometry, vertex colors, material factors, base color, metallic-roughness, and normal
-textures, skins of up to 128 joints, and animation clips, with cubic curves played as straight lines. Occlusion, emission, transparency, double-sided materials, and texture samplers are not
-read yet. Images decode and build mipmaps on the main thread, which D5 allows only for development.
+textures, emission with its strength extension, alpha modes, double-sided materials, skins of up to
+128 joints, and animation clips, with cubic curves played as straight lines. Occlusion textures, texture
+samplers, and transmission are not read yet; glTF's transmission extension is refraction, not the thin
+translucency `Material::transmission` gives. Images decode and build mipmaps on the main thread, which D5 allows only for development.
 
 Distribution uses per-cell `.kiba` packs. Compressed textures are cooked into a separate pack for
 each GPU format, with no run-time transcoding.
@@ -369,6 +396,7 @@ approval first.
 | P3 | Streaming, LOD, HLOD, physics, audio | Moving through a 4 km square for 30 minutes on the reference device holds the memory limit and frame rate |
 | P4 | Tiers, upscaling, VFX, atmosphere, T1/T2 features | Automatic tier selection works per device |
 | P5 | Navmesh and networking as needed | Decided by requests from real games |
+| P6 | Bounce light, local lights, transparency and emission, reflection probes, shadow quality, FXAA, depth of field, light shafts, transmission | Each renders correctly on the Web, and the stress scene settles on a tier within its budget |
 
 ## Phase results
 

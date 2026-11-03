@@ -7,7 +7,7 @@ pub(crate) const MAX_LIGHTS: usize = 16;
 
 /// Light from one point in every direction, used as a component next to a [`Transform`].
 ///
-/// It casts no shadows. `color * intensity` is the light on a white surface facing it from one
+/// It casts no shadows, and changing it every frame costs nothing extra. `color * intensity` is the light on a white surface facing it from one
 /// unit away, in the same scale as [`Sun::color`](crate::Sun::color), and it falls with the square of
 /// the distance, reaching nothing at `range`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -20,7 +20,7 @@ pub struct PointLight {
 }
 
 impl Default for PointLight {
-    /// A warm bulb that lights a small room.
+    /// A warm bulb that lights a small room: intensity 4, reaching 10 units.
     fn default() -> Self {
         Self {
             color: Vec3::new(1.0, 0.85, 0.65),
@@ -33,7 +33,7 @@ impl Default for PointLight {
 /// Light from one point in a cone along its [`Transform`]'s -Z, used as a component next to it.
 ///
 /// It casts no shadows, and its brightness follows [`PointLight`]'s rule. Inside `inner_angle` from
-/// the axis it is full, and it fades to nothing at `outer_angle`, both in radians.
+/// the axis it is full, and it fades to nothing at `outer_angle`, both half-angles in radians.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpotLight {
     /// Linear RGB.
@@ -46,7 +46,7 @@ pub struct SpotLight {
 }
 
 impl Default for SpotLight {
-    /// A white flashlight.
+    /// A white flashlight: intensity 20, reaching 20 units, full within 0.3 radians and gone at 0.5.
     fn default() -> Self {
         Self {
             color: Vec3::ONE,

@@ -15,7 +15,8 @@ const FAR: f32 = 2000.0;
 /// [`Transform`](crate::Transform) at the box's center.
 ///
 /// It captures what is drawn around the center when first used and after
-/// [`recapture`](Self::recapture), so things that move later stay where they were. Inside the box,
+/// [`recapture`](Self::recapture), so things that move later stay where they were, and a model
+/// still loading at that moment is missing until a recapture after its [`LoadState::Ready`](crate::LoadState::Ready). Inside the box,
 /// reflections bend toward its walls, which suits a room or a street. Outside it, surfaces reflect
 /// the [`Sky`](crate::Sky). A frame uses the first probe whose box holds the camera.
 #[derive(Clone, Copy, Debug, PartialEq)]

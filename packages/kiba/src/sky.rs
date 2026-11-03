@@ -34,7 +34,8 @@ impl Default for Sky {
 }
 
 impl Sky {
-    /// The colors of a clear sky with the sun heading along `direction`, from noon through dusk to night.
+    /// The colors of a clear sky with the sun's light heading along `direction`, as in
+    /// [`Sun::direction`](crate::Sun::direction), from noon through dusk to night.
     pub fn from_sun(direction: Vec3) -> Self {
         let noon = Self::default();
         let height = -direction.normalize_or_zero().y;

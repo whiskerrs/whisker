@@ -40,6 +40,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 hecs = "0.10"
 meshopt = { version = "0.4", optional = true }
 rapier3d = { version = "0.22", default-features = false, features = ["dim3", "f32"], optional = true }
+rustc-hash = "2"
 web-time = "1"
 whisker = { path = "../../crates/whisker", version = "0.15.0" }
 

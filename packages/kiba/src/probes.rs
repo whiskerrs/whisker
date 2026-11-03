@@ -70,7 +70,8 @@ impl ProbeData {
 ///
 /// Cook it with `kiba-cook`, from models that do not move. It stores what can see the sky and the
 /// albedo of what cannot, not light, so the [`Sky`](crate::Sky) and [`Sun`](crate::Sun) can change
-/// without cooking again. Surfaces outside the box
+/// without cooking again. Its box is where the cooked models stood, in world units, so spawn those
+/// models with the transforms they were cooked at. Surfaces outside the box
 /// see the whole sky. A frame uses the first volume holding the camera, so volumes apply only near it.
 #[derive(Clone, Debug)]
 pub struct ProbeVolume(Arc<OnceLock<Result<ProbeData, String>>>);

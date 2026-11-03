@@ -108,6 +108,7 @@ pub struct DepthOfField {
 }
 
 impl Default for DepthOfField {
+    /// Focused 5 units away, with a blur of 1% of the view's height.
     fn default() -> Self {
         Self {
             focus_distance: 5.0,
@@ -140,12 +141,13 @@ impl Camera {
 ///
 /// Spawn it alone, as `(Sun::default(),)`. Surfaces are black without a sun, and only one is used
 /// if the world has several. The default is warm white from the upper right behind the camera's
-/// default position, with a dim blue ambient.
+/// default position, with a dim blue ambient, and shadows out to 80 units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sun {
     /// Direction the light travels, of any length.
     pub direction: Vec3,
-    /// Linear RGB light on a surface facing the sun.
+    /// Linear RGB light on a surface facing the sun. About 1 is full daylight and the scale for every
+    /// other light: an emissive of 1 glows as bright as white paper in the sun.
     pub color: Vec3,
     /// Linear RGB light on every surface, whichever way it faces. A [`Sky`] replaces this.
     pub ambient: Vec3,
@@ -709,10 +711,12 @@ fn shown(transform: &Transform, motion: Option<&Interpolated>, alpha: f32) -> Tr
 
 /// A mesh, textures, pipeline, and joint palette, which entities must share to draw as one batch.
 type BatchKey = (usize, [usize; 4], (u8, bool), usize);
+// Every drawn instance hashes its key once per pass, where SipHash's resistance to attack buys nothing.
+type Batches = rustc_hash::FxHashMap<BatchKey, Batch>;
 
 /// Adds one instance to the batch that draws `mesh` with `batch_material`'s textures and pipeline.
 fn add_instance(
-    batches: &mut HashMap<BatchKey, Batch>,
+    batches: &mut Batches,
     mesh: &Mesh,
     batch_material: &Material,
     material: &Material,
@@ -815,7 +819,7 @@ pub(crate) fn extract_frame(
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
     let projection = camera.projection(width as f32 / height as f32);
     let view_projection = projection * view;
-    let mut batches = HashMap::<BatchKey, Batch>::new();
+    let mut batches = Batches::default();
     let frustum = Frustum::new(&view_projection);
     let shadows = cascades(&eye, camera, width as f32 / height as f32, &sun, quality);
     let caster_frustums = shadows.as_ref().map(|shadows| {
@@ -825,8 +829,8 @@ pub(crate) fn extract_frame(
             .map(|cascade| Frustum::new(&cascade.view_projection))
             .collect::<Vec<_>>()
     });
-    let mut casters: Vec<HashMap<BatchKey, Batch>> =
-        vec![HashMap::new(); caster_frustums.as_ref().map_or(0, Vec::len)];
+    let mut casters: Vec<Batches> =
+        vec![Batches::default(); caster_frustums.as_ref().map_or(0, Vec::len)];
     visit_drawn(
         world,
         alpha,
@@ -913,7 +917,7 @@ pub(crate) fn add_capture(frame: &mut Frame, world: &World, alpha: f32) {
     };
     let center = reflection.id.center;
     let frustums = face_view_projections(center).map(|vp| Frustum::new(&vp));
-    let mut faces: [HashMap<BatchKey, Batch>; 6] = Default::default();
+    let mut faces: [Batches; 6] = Default::default();
     visit_drawn(
         world,
         alpha,
