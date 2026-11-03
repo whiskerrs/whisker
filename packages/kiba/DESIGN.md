@@ -502,6 +502,34 @@ stands: an external navmesh crate, and networking left to the game, each when a 
 Native Hosts (iOS, Android, and Desktop) still draw only the placeholder, because every phase was
 measured on the Web. Running a `Game` on them is deferred to the project owner.
 
+### P6
+
+**Built:** one bounce of light, cooked into probe volumes as the color and facing of what hides the sky
+and lit at run time by the current sun and sky; `PointLight` and `SpotLight`; `Material::emissive`,
+`opacity` with `AlphaMode`, `double_sided`, and `transmission`; `ReflectionProbe`; shadow cascades and
+soft shadows by tier; FXAA, `Camera::depth_of_field`, and light shafts. glTF import reads the new material
+fields, and packs moved to version 3, so packs cooked before it must be cooked again.
+
+**Measured** with the `stress` scene at 1280x720 in Chrome on the development Mac, against the commit
+before P6 built the same way. Without throttling both hold T2 at 60 fps; P6 takes 3–5 ms of main-thread
+time, against 3–4 ms, for 22,843 instances against 20,055, because the third and fourth cascades add
+casters. Under a 6x throttle both fall to T0, unlike the P4 run, which stayed at T2; at T0 P6 takes
+17–25 ms against 19 ms and runs at 46–57 fps. The first P6 run was 40% slower at T0, because every instance
+hashed a batch key that now holds textures and pipeline state with SipHash once per pass; FxHash removed
+that. The example shows each feature on the Web with no console errors. Throttling does not slow the GPU,
+so the cost of soft shadows, 16 lights, and the post passes on a phone is unmeasured.
+
+**The exit criterion is met on the stand-in.** Whether the result reads as photorealistic still needs
+authored art and the reference device, as in P2.
+
+**API review:** an agent given only the docs wrote a scene with every P6 feature and a lamp toggled by a
+key, using 26 concepts, and it compiled on the first try. Its guesses were all about scale and defaults.
+Fixed as a result: the docs now state that a `Sun::color` near 1 is daylight and the scale of every other
+light, list the default values of the lights, `Sun`, and `DepthOfField`, say that `Sky::from_sun` takes
+`Sun::direction`, that spot angles are half-angles, that a probe volume's box is where its models were
+cooked, and that a reflection probe misses models still loading until `recapture`. Left as is: no
+constructor returns a matching `Sun` and `Sky`, because `Sky::from_sun(sun.direction)` is one call.
+
 ## Spikes to run first
 
 Each result can change the decisions above.
