@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
 
@@ -51,6 +51,7 @@ pub enum InputEvent {
     PointerGone { id: i32 },
     Wheel(f32),
     FocusLost,
+    Action { name: &'static str, down: bool },
 }
 
 /// A mouse or a touch on the viewport.
@@ -82,6 +83,12 @@ pub struct Input {
     just_released: HashSet<Key>,
     pointers: Vec<Pointer>,
     wheel: f32,
+    bindings: HashMap<&'static str, Vec<Key>>,
+    /// Actions held by [`Game::set_action`](crate::Game::set_action) rather than by a key.
+    held_actions: HashSet<&'static str>,
+    actions_down: HashSet<&'static str>,
+    actions_just_pressed: HashSet<&'static str>,
+    actions_just_released: HashSet<&'static str>,
 }
 
 impl Input {
@@ -98,6 +105,30 @@ impl Input {
     /// Whether `key` came up since the previous callback pass.
     pub fn key_just_released(&self, key: Key) -> bool {
         self.just_released.contains(&key)
+    }
+
+    /// Whether anything bound to `action` is held.
+    pub fn action_down(&self, action: &str) -> bool {
+        self.check_bound(action);
+        self.actions_down.contains(action)
+    }
+
+    /// Whether `action` began since the previous callback pass.
+    pub fn action_just_pressed(&self, action: &str) -> bool {
+        self.check_bound(action);
+        self.actions_just_pressed.contains(action)
+    }
+
+    /// Whether `action` ended since the previous callback pass.
+    pub fn action_just_released(&self, action: &str) -> bool {
+        self.check_bound(action);
+        self.actions_just_released.contains(action)
+    }
+
+    /// 1 while only `positive` is held, -1 while only `negative` is, and otherwise 0.
+    pub fn axis(&self, negative: &str, positive: &str) -> f32 {
+        f32::from(u8::from(self.action_down(positive)))
+            - f32::from(u8::from(self.action_down(negative)))
     }
 
     /// Every mouse and touch currently on the viewport.
@@ -169,10 +200,44 @@ impl Input {
             InputEvent::FocusLost => {
                 let released: Vec<Key> = self.down.drain().collect();
                 self.just_released.extend(released);
+                self.held_actions.clear();
                 for pointer in &mut self.pointers {
                     pointer.just_released |= pointer.pressed;
                     pointer.pressed = false;
                 }
+            }
+            InputEvent::Action { name, down } => {
+                if down {
+                    self.held_actions.insert(name);
+                } else {
+                    self.held_actions.remove(name);
+                }
+            }
+        }
+        self.refresh_actions();
+    }
+
+    pub(crate) fn bind(&mut self, action: &'static str, keys: &[Key]) {
+        self.bindings.insert(action, keys.to_vec());
+    }
+
+    // A misspelled action would otherwise read as never pressed, which looks like a broken key.
+    fn check_bound(&self, action: &str) {
+        debug_assert!(
+            self.bindings.contains_key(action),
+            "action {action:?} was never bound with GameSetup::bind_action"
+        );
+    }
+
+    fn refresh_actions(&mut self) {
+        for (&name, keys) in &self.bindings {
+            let down =
+                self.held_actions.contains(name) || keys.iter().any(|key| self.down.contains(key));
+            if down && self.actions_down.insert(name) {
+                self.actions_just_pressed.insert(name);
+            }
+            if !down && self.actions_down.remove(name) {
+                self.actions_just_released.insert(name);
             }
         }
     }
@@ -180,6 +245,8 @@ impl Input {
     pub(crate) fn end_pass(&mut self) {
         self.just_pressed.clear();
         self.just_released.clear();
+        self.actions_just_pressed.clear();
+        self.actions_just_released.clear();
         self.wheel = 0.0;
         self.pointers.retain(|pointer| !pointer.gone);
         for pointer in &mut self.pointers {
@@ -224,6 +291,50 @@ mod tests {
         input.apply(InputEvent::KeyUp(Key::W));
         assert!(!input.key_down(Key::W));
         assert!(input.key_just_released(Key::W));
+    }
+
+    #[test]
+    fn an_action_follows_any_of_its_keys_and_on_screen_buttons() {
+        let mut input = Input::default();
+        input.bind("jump", &[Key::Space, Key::W]);
+
+        input.apply(InputEvent::KeyDown(Key::Space));
+        assert!(input.action_down("jump") && input.action_just_pressed("jump"));
+        input.end_pass();
+        input.apply(InputEvent::KeyDown(Key::W));
+        assert!(!input.action_just_pressed("jump"));
+        input.apply(InputEvent::KeyUp(Key::Space));
+        assert!(input.action_down("jump") && !input.action_just_released("jump"));
+        input.apply(InputEvent::KeyUp(Key::W));
+        assert!(!input.action_down("jump") && input.action_just_released("jump"));
+
+        input.end_pass();
+        input.apply(InputEvent::Action {
+            name: "jump",
+            down: true,
+        });
+        assert!(input.action_just_pressed("jump"));
+        input.apply(InputEvent::FocusLost);
+        assert!(!input.action_down("jump"));
+    }
+
+    #[test]
+    fn an_axis_cancels_when_both_directions_are_held() {
+        let mut input = Input::default();
+        input.bind("left", &[Key::A]);
+        input.bind("right", &[Key::D]);
+        input.apply(InputEvent::KeyDown(Key::D));
+        assert_eq!(input.axis("left", "right"), 1.0);
+        input.apply(InputEvent::KeyDown(Key::A));
+        assert_eq!(input.axis("left", "right"), 0.0);
+        input.apply(InputEvent::KeyUp(Key::D));
+        assert_eq!(input.axis("left", "right"), -1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "never bound")]
+    fn reading_an_unbound_action_is_caught_in_debug_builds() {
+        Input::default().action_down("jmup");
     }
 
     #[test]

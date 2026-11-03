@@ -216,10 +216,9 @@ impl Animator {
         let step = delta_seconds * self.speed;
         self.time = self.moved(rig, step);
         self.fade_elapsed += delta_seconds;
-        if let Some(previous) = &self.previous {
-            if self.fade_elapsed >= previous.fade_seconds {
-                self.previous = None;
-            }
+        let fade_seconds = self.previous.as_ref().map(|previous| previous.fade_seconds);
+        if fade_seconds.is_some_and(|fade_seconds| self.fade_elapsed >= fade_seconds) {
+            self.previous = None;
         }
     }
 

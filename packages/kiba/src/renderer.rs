@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Weak};
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, UVec3, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::animation::MAX_JOINTS;
 use crate::mesh::{MeshData, SkinVertex, Vertex};
+use crate::probes::{self, ProbeVolume};
 use crate::sky::{Sky, SkyRenderer};
 use crate::texture::{TextureData, mip_chain};
 use crate::{Material, Mesh, Sun, Texture};
@@ -67,6 +68,7 @@ pub struct Frame {
     pub(crate) exposure: f32,
     pub(crate) sun: Sun,
     pub(crate) sky: Option<Sky>,
+    pub(crate) probes: Option<ProbeVolume>,
     pub(crate) shadows: Option<Shadows>,
     pub(crate) batches: Vec<Batch>,
 }
@@ -92,6 +94,7 @@ pub fn placeholder_scene() -> Frame {
         exposure: 1.0,
         sun: Sun::UNLIT,
         sky: None,
+        probes: None,
         shadows: None,
         batches: vec![Batch {
             palette: None,
@@ -111,11 +114,21 @@ struct FrameUniform {
     sun_color: Vec4,
     ambient: Vec4,
     cascades: [Mat4; CASCADES],
+    probe_min: Vec4,
+    probe_scale: Vec4,
     shadow_params: Vec4,
 }
 
 impl From<&Frame> for FrameUniform {
     fn from(frame: &Frame) -> Self {
+        let probe_box = frame
+            .probes
+            .as_ref()
+            .and_then(ProbeVolume::data)
+            .map(|data| {
+                let (min, size) = probes::bounds(data);
+                (min, size, data.spacing)
+            });
         Self {
             view_projection: frame.view_projection,
             // The spare component keeps the uniform to four vectors.
@@ -127,6 +140,9 @@ impl From<&Frame> for FrameUniform {
                 .shadows
                 .as_ref()
                 .map_or([Mat4::IDENTITY; CASCADES], |s| s.view_projections),
+            probe_min: probe_box
+                .map_or(Vec4::ZERO, |(min, _, spacing)| min.extend(spacing.recip())),
+            probe_scale: probe_box.map_or(Vec4::ZERO, |(_, size, _)| size.recip().extend(1.0)),
             shadow_params: Vec4::new(
                 frame.shadows.as_ref().map_or(0.0, |s| s.split),
                 f32::from(u8::from(frame.shadows.is_some())),
@@ -315,6 +331,56 @@ impl SizedTargets {
     }
 }
 
+fn probes_binding(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("kiba probes"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(view),
+        }],
+    })
+}
+
+/// Makes a 3D texture of one byte-per-channel texel per cell, in X, then Y, then Z order.
+pub(crate) fn volume_view(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    dimensions: UVec3,
+    texels: &[[u8; 4]],
+) -> wgpu::TextureView {
+    let size = wgpu::Extent3d {
+        width: dimensions.x,
+        height: dimensions.y,
+        depth_or_array_layers: dimensions.z,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("kiba probes"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D3,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        bytemuck::cast_slice(texels),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(dimensions.x * 4),
+            rows_per_image: Some(dimensions.y),
+        },
+        size,
+    );
+    texture.create_view(&Default::default())
+}
+
 /// Encodes the scene into any render target, on a device owned by the caller.
 pub struct SceneRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -326,6 +392,9 @@ pub struct SceneRenderer {
     sky: SkyRenderer,
     shadow_pipeline: wgpu::RenderPipeline,
     skinned_shadow_pipeline: wgpu::RenderPipeline,
+    probes_layout: wgpu::BindGroupLayout,
+    probes_bindings: wgpu::BindGroup,
+    probes_key: usize,
     joints_layout: wgpu::BindGroupLayout,
     joints: Option<(wgpu::Buffer, wgpu::BindGroup)>,
     shadow_layers: [wgpu::TextureView; CASCADES],
@@ -429,6 +498,13 @@ impl SceneRenderer {
             label: Some("kiba shadow"),
             entries: &[vertex_uniform(false, None)],
         });
+        let probes_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("kiba probes"),
+            entries: &[fragment_entry(
+                0,
+                float_texture(wgpu::TextureViewDimension::D3),
+            )],
+        });
         let pipeline_layout = |label, layouts: &[&wgpu::BindGroupLayout]| {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
@@ -439,7 +515,12 @@ impl SceneRenderer {
         // Both pipelines take the same layout, so bindings carry over when switching between them.
         let mesh_layout = pipeline_layout(
             "kiba mesh",
-            &[&frame_layout, &material_layout, &joints_layout],
+            &[
+                &frame_layout,
+                &material_layout,
+                &joints_layout,
+                &probes_layout,
+            ],
         );
         let shadow_layout = pipeline_layout("kiba shadow", &[&light_layout, &joints_layout]);
         let skin_buffer = wgpu::VertexBufferLayout {
@@ -685,6 +766,13 @@ impl SceneRenderer {
             shadow_bindings,
             meshes: HashMap::new(),
             material_layout,
+            probes_bindings: probes_binding(
+                device,
+                &probes_layout,
+                &volume_view(device, queue, UVec3::ONE, &[[255; 4]]),
+            ),
+            probes_layout,
+            probes_key: 0,
             joints_layout,
             joints: None,
             skinned_pipeline,
@@ -745,6 +833,14 @@ impl SceneRenderer {
                 .or_insert_with(|| GpuMesh::new(device, &batch.mesh));
         }
         let joint_offsets = self.upload_joints(device, queue, frame);
+        if let Some(volume) = &frame.probes {
+            if self.probes_key != volume.key() {
+                let data = volume.data().expect("extraction keeps only loaded volumes");
+                let view = probes::upload(device, queue, data);
+                self.probes_bindings = probes_binding(device, &self.probes_layout, &view);
+                self.probes_key = volume.key();
+            }
+        }
         if self
             .targets
             .as_ref()
@@ -855,6 +951,7 @@ impl SceneRenderer {
                 occlusion_query_set: None,
             });
             pass.set_bind_group(0, &self.frame_bindings, &[]);
+            pass.set_bind_group(3, &self.probes_bindings, &[]);
             let mut first = 0;
             for batch in batches {
                 let count = batch.instances.len() as u64;
@@ -1270,6 +1367,16 @@ mod tests {
         quad(Vec3::Z, [1.0; 3], Mat4::IDENTITY, material)
     }
 
+    /// A surface in front of the far plane, where a sky would draw over it.
+    fn near_surface(material: Material) -> Batch {
+        quad(
+            Vec3::Z,
+            [1.0; 3],
+            Mat4::from_translation(Vec3::Z * 0.5),
+            material,
+        )
+    }
+
     fn solid_quad(color: [f32; 3], depth: f32) -> Batch {
         quad(
             Vec3::Z,
@@ -1286,6 +1393,7 @@ mod tests {
             exposure: 1.0,
             sun,
             sky: None,
+            probes: None,
             shadows: None,
             batches,
         }
@@ -1701,17 +1809,17 @@ mod tests {
         let background = shot(Vec::new(), Some(red));
         assert!(background[0] > 100 && background[1] == 0, "{background:?}");
 
-        let matte = shot(vec![surface(MATTE)], Some(red));
+        let matte = shot(vec![near_surface(MATTE)], Some(red));
         assert!(matte[0] > 100 && matte[1] == 0, "{matte:?}");
         let mirror = Material {
             metallic: 1.0,
             roughness: 0.1,
             ..MATTE
         };
-        let reflecting = shot(vec![surface(mirror)], Some(red));
+        let reflecting = shot(vec![near_surface(mirror)], Some(red));
         assert!(reflecting[0] > 100 && reflecting[1] == 0, "{reflecting:?}");
 
-        assert_eq!(shot(vec![surface(MATTE)], None)[0], 0);
+        assert_eq!(shot(vec![near_surface(MATTE)], None)[0], 0);
     }
 
     #[test]
@@ -1730,8 +1838,9 @@ mod tests {
             ..MATTE
         };
         let tilted = |angle: f32| {
-            let mut batch = surface(mirror.clone());
-            batch.instances = vec![Instance::new(Mat4::from_rotation_x(angle), &mirror)];
+            let mut batch = near_surface(mirror.clone());
+            let placed = Mat4::from_translation(Vec3::Z * 0.5) * Mat4::from_rotation_x(angle);
+            batch.instances = vec![Instance::new(placed, &mirror)];
             let frame = Frame {
                 sky: Some(sky),
                 ..frame(DARK_SUN, vec![batch])
@@ -1787,6 +1896,39 @@ mod tests {
         let background = center_of(&device, &queue, &frame(Sun::UNLIT, Vec::new()));
         assert_ne!(shot(0.0), background);
         assert_eq!(shot(0.8), background);
+    }
+
+    #[test]
+    fn a_probe_volume_darkens_sky_light_only_inside_its_box() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let sky = Sky {
+            zenith: Vec3::splat(0.5),
+            horizon: Vec3::splat(0.5),
+            ground: Vec3::splat(0.5),
+        };
+        let shot = |center: Vec3| {
+            let volume = ProbeVolume::from_data(probes::ProbeData {
+                dimensions: UVec3::splat(3),
+                origin: center - Vec3::splat(0.5),
+                spacing: 0.5,
+                visibility: vec![[128, 128, 128, 26]; 27],
+            });
+            let frame = Frame {
+                sky: Some(sky),
+                probes: Some(volume),
+                ..frame(DARK_SUN, vec![near_surface(MATTE)])
+            };
+            center_of(&device, &queue, &frame)[0]
+        };
+
+        let blocked = shot(Vec3::Z * 0.5);
+        let outside = shot(Vec3::X * 10.0);
+        assert!(
+            u16::from(outside) > u16::from(blocked) * 2,
+            "outside {outside}, blocked {blocked}"
+        );
     }
 
     #[test]

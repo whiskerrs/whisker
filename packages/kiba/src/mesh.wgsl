@@ -11,6 +11,10 @@ struct Frame {
     sun_color: vec4<f32>,
     ambient: vec4<f32>,
     cascades: array<mat4x4<f32>, 2>,
+    // The minimum corner of the probe box, with W as the inverse of the probe spacing.
+    probe_min: vec4<f32>,
+    // The inverse size of the probe box, with W at zero when there is none.
+    probe_scale: vec4<f32>,
     // Split distance, then one when shadows are on, then one when a sky lights the scene.
     shadow_params: vec4<f32>,
 }
@@ -31,6 +35,7 @@ struct Joints {
 }
 
 @group(2) @binding(0) var<uniform> joints: Joints;
+@group(3) @binding(0) var probes: texture_3d<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -126,7 +131,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let mirrored = reflect(-to_camera, normal);
         ambient_reflected = textureSampleLevel(sky_radiance, sky_sampler, mirrored, roughness * SKY_LAST_MIP).rgb;
     }
-    let ambient = diffuse * ambient_diffuse + ambient_specular(reflectance, roughness, n_dot_v) * ambient_reflected;
+    let ambient = diffuse * ambient_diffuse * sky_visibility(input.world_position, normal)
+        + ambient_specular(reflectance, roughness, n_dot_v) * ambient_reflected * sky_visibility(input.world_position, reflect(-to_camera, normal));
     return vec4<f32>((sun + ambient) * frame.camera_position.w, 1.0);
 }
 
@@ -154,6 +160,21 @@ const SHADOW_TAPS = array<vec2<f32>, 4>(
     vec2<f32>(0.75, 0.25),
     vec2<f32>(-0.25, 0.75),
 );
+
+fn sky_visibility(position: vec3<f32>, direction: vec3<f32>) -> f32 {
+    if frame.probe_scale.w == 0.0 {
+        return 1.0;
+    }
+    let uvw = (position - frame.probe_min.xyz) * frame.probe_scale.xyz;
+    if any(uvw < vec3<f32>(0.0)) || any(uvw > vec3<f32>(1.0)) {
+        return 1.0;
+    }
+    let probe = textureSampleLevel(probes, sky_sampler, uvw, 0.0);
+    let visible = saturate(probe.a + dot(probe.rgb * 2.0 - 1.0, direction));
+    // Fading out over the outermost probes keeps the edge of the box from showing on surfaces.
+    let inward = min(uvw, 1.0 - uvw) / frame.probe_scale.xyz;
+    return mix(1.0, visible, saturate(min(inward.x, min(inward.y, inward.z)) * frame.probe_min.w));
+}
 
 fn sun_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {
     if frame.shadow_params.y == 0.0 {

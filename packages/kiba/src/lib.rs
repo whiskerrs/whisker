@@ -10,6 +10,7 @@
 //! | A background and light from all around | `(Sky::default(),)` |
 //! | A shape | `(Transform::default(), Mesh::cube(1.0), Material::default())` |
 //! | A file | `(Transform::default(), Model::load(asset!("crate.glb")))` |
+//! | Sky light blocked by still models | `(ProbeVolume::load(asset!("scene.kiba")),)`, cooked with `kiba-cook` |
 //! | A file's animation | Add `Animator::new("walk")` next to its `Model` |
 //!
 //! Your own structs are components too, and mutable game state belongs in them, because each
@@ -46,10 +47,13 @@
 
 mod animation;
 mod controller;
+#[cfg(feature = "cook")]
+pub mod cook;
 mod game;
 mod input;
 mod mesh;
 mod model;
+mod probes;
 mod renderer;
 mod sky;
 mod texture;
@@ -73,6 +77,7 @@ pub use mesh::{Material, Mesh, Vertex};
 #[cfg(feature = "gltf")]
 pub use model::ModelError;
 pub use model::{LoadState, Model};
+pub use probes::ProbeVolume;
 pub use renderer::{Frame, Renderer, SceneRenderer};
 #[doc(hidden)]
 pub use renderer::{log, placeholder_scene};
@@ -85,8 +90,8 @@ pub use wgpu;
 pub mod prelude {
     pub use crate::{
         Animator, Camera, Context, Entity, FlyCamera, FrameStats, Game, GameSetup, Input,
-        Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, Pointer, Quat, Sky, Sun,
-        Texture, Time, Transform, Vec2, Vec3, Vertex, Viewport, World,
+        Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, Pointer, ProbeVolume,
+        Quat, Sky, Sun, Texture, Time, Transform, Vec2, Vec3, Vertex, Viewport, World,
     };
 }
 

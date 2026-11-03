@@ -11,7 +11,8 @@ use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 
 use crate::animation::{Animator, run_animators};
 use crate::controller::run_controllers;
-use crate::input::InputEvent;
+use crate::input::{InputEvent, Key};
+use crate::probes::ProbeVolume;
 use crate::renderer::{Batch, CASCADES, Frame, Instance, SHADOW_MAP_SIZE, Shadows};
 use crate::sky::Sky;
 use crate::{Input, Material, Mesh, Model, Renderer};
@@ -282,6 +283,13 @@ impl<C> GameSetup<C> {
     /// on change, because each write schedules UI work.
     pub fn on_update(&mut self, callback: impl FnMut(&mut Context<'_>) + 'static) {
         self.on_update.push(Box::new(callback));
+    }
+
+    /// Names something the player does, and the keys that do it, for
+    /// [`Input::action_down`] and its relatives. Binding a name again replaces its keys.
+    pub fn bind_action(&mut self, action: &'static str, keys: &[Key]) {
+        self.frame_input.bind(action, keys);
+        self.fixed_input.bind(action, keys);
     }
 
     /// Sets how many times per second `on_fixed_update` runs. The default is 60.
@@ -581,6 +589,7 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
             exposure: 1.0,
             sun,
             sky: None,
+            probes: None,
             shadows: None,
             batches: Vec::new(),
         };
@@ -669,6 +678,12 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
         exposure: camera.exposure,
         sun,
         sky: world.query::<&Sky>().iter().next().map(|(_, sky)| *sky),
+        probes: world
+            .query::<&ProbeVolume>()
+            .iter()
+            .next()
+            .map(|(_, probes)| probes.clone())
+            .filter(|probes| probes.data().is_some()),
         shadows: shadows.map(|shadows| Shadows {
             casters: casters.map(|batches| batches.into_values().collect()),
             ..shadows
@@ -722,6 +737,16 @@ impl<C: 'static> Game<C> {
             id,
             _commands: PhantomData,
         }
+    }
+
+    /// Holds or releases an action from outside the keyboard, such as an on-screen button.
+    ///
+    /// Does nothing after the game is removed.
+    pub fn set_action(self, action: &'static str, down: bool) {
+        let Some(game) = find(self.id) else {
+            return;
+        };
+        game.input(InputEvent::Action { name: action, down });
     }
 
     /// Queues a command for the next update callback. Does nothing after the game is removed.

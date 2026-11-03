@@ -78,6 +78,7 @@ pub fn app() -> Element {
         ));
         setup.world.spawn((Sun::default(),));
         setup.world.spawn((Sky::default(),));
+        setup.world.spawn((ProbeVolume::load(whisker_asset::asset!("robot.kiba")),));
 
         let sphere = Mesh::sphere(0.22);
         for column in 0..5 {
@@ -147,6 +148,7 @@ pub fn app() -> Element {
             },
         ));
 
+        setup.bind_action("boost", &[Key::B, Key::Space]);
         setup.on_command(|context, command| match command {
             Command::Boost => {
                 for (_, spin) in context.world.query_mut::<&mut Spin>() {
@@ -156,6 +158,11 @@ pub fn app() -> Element {
         });
         setup.on_update(move |context| {
             let delta = context.time.delta_seconds();
+            if context.input.action_just_pressed("boost") {
+                for (_, spin) in context.world.query_mut::<&mut Spin>() {
+                    spin.speed *= 2.0;
+                }
+            }
             for (_, (transform, spin)) in context.world.query_mut::<(&mut Transform, &mut Spin)>() {
                 spin.angle += spin.speed * delta;
                 transform.rotation = Quat::from_rotation_y(spin.angle);

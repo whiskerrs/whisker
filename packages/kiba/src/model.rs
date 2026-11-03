@@ -3,6 +3,7 @@ use std::sync::{Arc, OnceLock};
 use glam::Mat4;
 
 use crate::animation::Rig;
+use crate::renderer::log;
 use crate::{Material, Mesh};
 
 #[derive(Clone, Debug)]
@@ -83,6 +84,46 @@ impl Model {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn read_file(url: String, finish: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+    use wasm_bindgen::JsCast;
+
+    wasm_bindgen_futures::spawn_local(async move {
+        let fetched = async {
+            let window = web_sys::window().ok_or("no window")?;
+            let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&url))
+                .await
+                .map_err(|error| format!("{url}: {error:?}"))?
+                .unchecked_into::<web_sys::Response>();
+            if !response.ok() {
+                return Err(format!("{url}: HTTP {}", response.status()));
+            }
+            let buffer = response.array_buffer().map_err(|e| format!("{e:?}"))?;
+            let buffer = wasm_bindgen_futures::JsFuture::from(buffer)
+                .await
+                .map_err(|e| format!("{e:?}"))?;
+            Ok::<_, String>(js_sys::Uint8Array::new(&buffer).to_vec())
+        };
+        finish(fetched.await);
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn read_file(
+    path: String,
+    finish: impl FnOnce(Result<Vec<u8>, String>) + Send + 'static,
+) {
+    std::thread::spawn(move || {
+        finish(std::fs::read(&path).map_err(|error| format!("{path}: {error}")));
+    });
+}
+
+pub(crate) fn report_failure(reason: Option<&String>) {
+    if let Some(reason) = reason {
+        log(&format!("failed to load: {reason}"));
+    }
+}
+
 #[cfg(feature = "gltf")]
 pub use import::ModelError;
 
@@ -94,10 +135,10 @@ mod import {
 
     use glam::{Mat4, Quat, Vec3};
 
-    use super::{Model, ModelData, ModelPart};
+    use super::log;
+    use super::{Model, ModelData, ModelPart, read_file, report_failure};
     use crate::animation::{Channel, Clip, Keys, MAX_JOINTS, Pose, Rig, RigNode, Skin};
     use crate::mesh::SkinVertex;
-    use crate::renderer::log;
     use crate::{Material, Mesh, Texture, Vertex};
 
     /// Why a file could not become a [`Model`].
@@ -131,9 +172,7 @@ mod import {
                             .map(|model| model.data().expect("just parsed").clone())
                             .map_err(|error| error.to_string())
                     });
-                    if let Err(reason) = &parsed {
-                        log(&format!("failed to load a model: {reason}"));
-                    }
+                    report_failure(parsed.as_ref().err());
                     let _ = state.set(parsed);
                 }
             };
@@ -188,37 +227,6 @@ mod import {
             };
             Ok(Model(Arc::new(OnceLock::from(Ok(data)))))
         }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn read_file(url: String, finish: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
-        use wasm_bindgen::JsCast;
-
-        wasm_bindgen_futures::spawn_local(async move {
-            let fetched = async {
-                let window = web_sys::window().ok_or("no window")?;
-                let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&url))
-                    .await
-                    .map_err(|error| format!("{url}: {error:?}"))?
-                    .unchecked_into::<web_sys::Response>();
-                if !response.ok() {
-                    return Err(format!("{url}: HTTP {}", response.status()));
-                }
-                let buffer = response.array_buffer().map_err(|e| format!("{e:?}"))?;
-                let buffer = wasm_bindgen_futures::JsFuture::from(buffer)
-                    .await
-                    .map_err(|e| format!("{e:?}"))?;
-                Ok::<_, String>(js_sys::Uint8Array::new(&buffer).to_vec())
-            };
-            finish(fetched.await);
-        });
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn read_file(path: String, finish: impl FnOnce(Result<Vec<u8>, String>) + Send + 'static) {
-        std::thread::spawn(move || {
-            finish(std::fs::read(&path).map_err(|error| format!("{path}: {error}")));
-        });
     }
 
     struct Importer<'a> {

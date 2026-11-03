@@ -19,9 +19,16 @@ ios = { manifest = "Package.swift" }
 web = { manifest = "web/Cargo.toml" }
 desktop = { manifest = "desktop/Cargo.toml" }
 
+[[bin]]
+name = "kiba-cook"
+path = "src/bin/kiba-cook.rs"
+required-features = ["cook"]
+
 [features]
 # Loads glTF at run time, for development until cooked assets exist.
 gltf = ["dep:gltf", "dep:image"]
+# The ahead-of-time tools, which run on a development machine.
+cook = ["gltf"]
 
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
