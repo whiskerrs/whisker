@@ -10,12 +10,18 @@ struct Frame {
     to_sun: vec4<f32>,
     sun_color: vec4<f32>,
     ambient: vec4<f32>,
-    cascades: array<mat4x4<f32>, 2>,
+    cascades: array<mat4x4<f32>, 4>,
+    // Where each cascade ends.
+    shadow_ends: vec4<f32>,
+    // Each cascade's texel width and depth range, in world units.
+    shadow_scales: array<vec4<f32>, 4>,
+    // One for soft shadows, then the tangent of the sun's angular radius.
+    shadow_shape: vec4<f32>,
     // The minimum corner of the probe box, with W as the inverse of the probe spacing.
     probe_min: vec4<f32>,
     // The inverse size of the probe box, with W at zero when there is none.
     probe_scale: vec4<f32>,
-    // Split distance, then one when shadows are on, then one when a sky lights the scene, then the light count.
+    // The cascade count, then one when shadows are on, then one when a sky lights the scene, then the light count.
     shadow_params: vec4<f32>,
     // The color of the air, with W as its density.
     fog: vec4<f32>,
@@ -170,7 +176,7 @@ fn lit(input: VertexOutput, front: bool, opacity: f32) -> vec3<f32> {
     let diffuse = base_color * (1.0 - metallic) * opacity;
     let surface = Surface(normal, to_camera, n_dot_v, alpha, diffuse, reflectance);
 
-    let shadowed = sun_visibility(input.world_position, geometric);
+    let shadowed = sun_visibility(input.world_position, geometric, input.position.xy);
     var direct = shade(surface, frame.to_sun.xyz, frame.sun_color.rgb * shadowed);
     for (var i = 0u; i < u32(frame.shadow_params.w); i++) {
         direct += local_light(surface, frame.lights[i], input.world_position);
@@ -249,6 +255,18 @@ const SHADOW_TAPS = array<vec2<f32>, 4>(
     vec2<f32>(-0.25, 0.75),
 );
 
+// Points spread evenly over a unit disk, for soft shadows.
+const DISK = array<vec2<f32>, 16>(
+    vec2<f32>(-0.942, -0.399), vec2<f32>(0.946, -0.769), vec2<f32>(-0.094, -0.929), vec2<f32>(0.345, 0.294),
+    vec2<f32>(-0.916, 0.458), vec2<f32>(-0.815, -0.879), vec2<f32>(-0.383, 0.277), vec2<f32>(0.975, 0.756),
+    vec2<f32>(0.443, -0.975), vec2<f32>(0.537, -0.474), vec2<f32>(-0.265, -0.419), vec2<f32>(0.792, 0.191),
+    vec2<f32>(-0.242, 0.997), vec2<f32>(-0.814, 0.914), vec2<f32>(0.200, 0.786), vec2<f32>(0.144, -0.141),
+);
+// In texels, so a penumbra stays within what the blocker search can see.
+const LARGEST_PENUMBRA: f32 = 8.0;
+// The share of each cascade over which it hands over to the next, so the seam does not show.
+const CASCADE_BLEND: f32 = 0.15;
+
 fn sky_visibility(position: vec3<f32>, direction: vec3<f32>) -> f32 {
     if frame.probe_scale.w == 0.0 {
         return 1.0;
@@ -300,25 +318,77 @@ fn bounce_light(position: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     return bounce.rgb * bounce.rgb * arriving * (1.0 - sky_visibility(position, normal));
 }
 
-fn sun_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {
+fn sun_visibility(position: vec3<f32>, normal: vec3<f32>, pixel: vec2<f32>) -> f32 {
     if frame.shadow_params.y == 0.0 {
         return 1.0;
     }
+    let count = i32(frame.shadow_params.x);
     let distance = length(position - frame.camera_position.xyz);
-    let cascade = select(1i, 0i, distance < frame.shadow_params.x);
-    // Pushing the lookup off the surface removes self-shadowing without detaching contact shadows.
-    let offset = normalize(normal) * 0.02 * (1.0 + f32(cascade) * 3.0);
+    var cascade = 0;
+    while cascade < count - 1 && distance > frame.shadow_ends[cascade] {
+        cascade++;
+    }
+    let end = frame.shadow_ends[cascade];
+    if distance > end {
+        return 1.0;
+    }
+    // Interleaved gradient noise turns each pixel's filter differently, trading banding for grain.
+    let turn = fract(52.9829189 * fract(dot(pixel, vec2<f32>(0.06711056, 0.00583715)))) * 6.2831853;
+    var lit = cascade_visibility(cascade, position, normal, turn);
+    let start = select(0.0, frame.shadow_ends[max(cascade - 1, 0)], cascade > 0);
+    let blend_from = end - (end - start) * CASCADE_BLEND;
+    if distance > blend_from {
+        let toward_next = (distance - blend_from) / (end - blend_from);
+        // The last cascade fades out instead, so shadows do not stop at a visible line.
+        var next = 1.0;
+        if cascade < count - 1 {
+            next = cascade_visibility(cascade + 1, position, normal, turn);
+        }
+        lit = mix(lit, next, toward_next);
+    }
+    return lit;
+}
+
+fn cascade_visibility(cascade: i32, position: vec3<f32>, normal: vec3<f32>, turn: f32) -> f32 {
+    let scale = frame.shadow_scales[cascade];
+    // Pushing the lookup off the surface by more than a texel removes self-shadowing without detaching contact shadows.
+    let offset = normalize(normal) * scale.x * 1.5;
     let clip = frame.cascades[cascade] * vec4<f32>(position + offset, 1.0);
     let uv = clip.xy * vec2<f32>(0.5, -0.5) + 0.5;
     if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || clip.z > 1.0 {
         return 1.0;
     }
-    let texel = 1.0 / vec2<f32>(textureDimensions(shadow_map));
-    var lit = 0.0;
-    for (var i = 0; i < 4; i++) {
-        lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + SHADOW_TAPS[i] * texel, cascade, clip.z);
+    let size = vec2<f32>(textureDimensions(shadow_map));
+    let texel = 1.0 / size;
+    if frame.shadow_shape.x == 0.0 {
+        var lit = 0.0;
+        for (var i = 0; i < 4; i++) {
+            lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + SHADOW_TAPS[i] * texel, cascade, clip.z);
+        }
+        return lit / 4.0;
     }
-    return lit / 4.0;
+    let rotation = mat2x2<f32>(cos(turn), sin(turn), -sin(turn), cos(turn));
+    // Averaging what lies between the surface and the sun sizes the penumbra, which widens with that gap.
+    var blockers = 0.0;
+    var found = 0.0;
+    for (var i = 0; i < 8; i++) {
+        let at = vec2<i32>((uv + rotation * DISK[i * 2] * LARGEST_PENUMBRA * texel) * size);
+        let depth = textureLoad(shadow_map, clamp(at, vec2<i32>(0), vec2<i32>(size) - 1), cascade, 0);
+        if depth < clip.z {
+            blockers += depth;
+            found += 1.0;
+        }
+    }
+    if found == 0.0 {
+        return 1.0;
+    }
+    let gap = (clip.z - blockers / found) * scale.y;
+    let radius = clamp(gap * frame.shadow_shape.y * 2.0 / scale.x, 1.0, LARGEST_PENUMBRA);
+    var lit = 0.0;
+    for (var i = 0; i < 16; i++) {
+        lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + rotation * DISK[i] * radius * texel, cascade, clip.z);
+    }
+    return lit / 16.0;
 }
 
 fn ggx(n_dot_h: f32, alpha: f32) -> f32 {

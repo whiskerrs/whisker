@@ -2,11 +2,11 @@
 /// different set of assets.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {
-    /// Mid-range phones: 30 fps, up to 1280 pixels on the long side, with bloom.
+    /// Mid-range phones: 30 fps, up to 1280 pixels on the long side, with bloom and two shadow cascades.
     T0,
-    /// High-end phones: 60 fps, up to 1920 pixels, adding ambient occlusion.
+    /// High-end phones: 60 fps, up to 1920 pixels, adding ambient occlusion and three cascades of soft shadows.
     T1,
-    /// Desktops: 60 fps at any size, with stronger ambient occlusion.
+    /// Desktops: 60 fps at any size, with stronger ambient occlusion and four cascades of soft shadows.
     #[default]
     T2,
 }
@@ -51,6 +51,10 @@ pub(crate) struct Quality {
     pub(crate) render_scale: f32,
     pub(crate) bloom: f32,
     pub(crate) ambient_occlusion: f32,
+    pub(crate) shadow_cascades: usize,
+    /// Texels per side of each cascade's shadow map.
+    pub(crate) shadow_map_size: u32,
+    pub(crate) soft_shadows: bool,
 }
 
 impl Default for Quality {
@@ -59,6 +63,9 @@ impl Default for Quality {
             render_scale: 1.0,
             bloom: 0.0,
             ambient_occlusion: 0.0,
+            shadow_cascades: 2,
+            shadow_map_size: 1024,
+            soft_shadows: false,
         }
     }
 }
@@ -165,10 +172,18 @@ impl Governor {
             Tier::T1 => (0.04, 0.6),
             Tier::T2 => (0.05, 0.9),
         };
+        let (shadow_cascades, shadow_map_size, soft_shadows) = match self.tier {
+            Tier::T0 => (2, 1024, false),
+            Tier::T1 => (3, 2048, true),
+            Tier::T2 => (4, 2048, true),
+        };
         Quality {
             render_scale: self.scale().min(cap),
             bloom,
             ambient_occlusion,
+            shadow_cascades,
+            shadow_map_size,
+            soft_shadows,
         }
     }
 

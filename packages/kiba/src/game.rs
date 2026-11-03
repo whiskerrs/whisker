@@ -18,7 +18,7 @@ use crate::particles::{extract_particles, run_particles};
 use crate::probes::ProbeVolume;
 use crate::quality::{Governor, Quality, Tier};
 use crate::reflection::{Reflection, ReflectionId, ReflectionProbe, face_view_projections};
-use crate::renderer::{Batch, CASCADES, Effects, Frame, Instance, SHADOW_MAP_SIZE, Shadows};
+use crate::renderer::{Batch, Cascade, Effects, Frame, Instance, Shadows};
 use crate::sky::{Fog, Sky};
 use crate::stream::run_streams;
 use crate::{AlphaMode, Input, Material, Mesh, Model, Renderer};
@@ -127,7 +127,8 @@ pub struct Sun {
     pub color: Vec3,
     /// Linear RGB light on every surface, whichever way it faces. A [`Sky`] replaces this.
     pub ambient: Vec3,
-    /// How far from the camera surfaces receive shadows. Zero turns shadows off.
+    /// How far from the camera surfaces receive shadows, fading out over the last stretch. Zero turns
+    /// shadows off.
     pub shadow_distance: f32,
 }
 
@@ -137,7 +138,7 @@ impl Default for Sun {
             direction: Vec3::new(-0.5, -1.0, -0.7),
             color: Vec3::new(1.0, 0.95, 0.85),
             ambient: Vec3::new(0.12, 0.14, 0.18),
-            shadow_distance: 40.0,
+            shadow_distance: 80.0,
         }
     }
 }
@@ -525,7 +526,8 @@ impl<C: 'static> RunningGame for Registered<C> {
 
         let updated = Instant::now();
         setup.governor.update(real_delta);
-        let mut frame = extract_frame(&setup.world, width, height, alpha);
+        let quality = setup.governor.quality(width, height);
+        let mut frame = extract_frame(&setup.world, width, height, alpha, &quality);
         if frame
             .effects
             .reflection
@@ -534,7 +536,6 @@ impl<C: 'static> RunningGame for Registered<C> {
         {
             add_capture(&mut frame, &setup.world, alpha);
         }
-        frame.effects.quality = setup.governor.quality(width, height);
         let extracted = Instant::now();
         target.renderer.render(width, height, &frame);
         let rendered = Instant::now();
@@ -571,12 +572,18 @@ impl<C: 'static> RunningGame for Registered<C> {
     }
 }
 
-// Slices the view so that nearby surfaces get most of the shadow map's resolution.
-const CASCADE_SPLIT_FRACTION: f32 = 0.2;
+// Weighs cascade ends toward even ratios over even steps, so nearby surfaces get most of the resolution.
+const CASCADE_SPLIT_LAMBDA: f32 = 0.75;
 // Reaches past the view so that tall casters outside it still reach the map.
 const CASTER_MARGIN: f32 = 100.0;
 
-fn cascades(eye: &Transform, camera: &Camera, aspect: f32, sun: &Sun) -> Option<Shadows> {
+fn cascades(
+    eye: &Transform,
+    camera: &Camera,
+    aspect: f32,
+    sun: &Sun,
+    quality: &Quality,
+) -> Option<Shadows> {
     let direction = sun.direction.try_normalize()?;
     if sun.shadow_distance <= 0.0 {
         return None;
@@ -586,12 +593,12 @@ fn cascades(eye: &Transform, camera: &Camera, aspect: f32, sun: &Sun) -> Option<
     let corner_reach = Vec3::new(tan_x, tan_y, 1.0).length();
     let forward = eye.rotation * Vec3::NEG_Z;
     let far = sun.shadow_distance.min(camera.far);
-    let split = far * CASCADE_SPLIT_FRACTION;
     let up = if direction.y.abs() > 0.99 {
         Vec3::Z
     } else {
         Vec3::Y
     };
+    let map_size = quality.shadow_map_size;
 
     let slice = |start: f32, end: f32| {
         let middle = (start + end) / 2.0;
@@ -603,7 +610,7 @@ fn cascades(eye: &Transform, camera: &Camera, aspect: f32, sun: &Sun) -> Option<
 
         let rotation = Mat4::look_to_rh(Vec3::ZERO, direction, up);
         // Snapping to whole shadow texels keeps edges from crawling as the camera moves.
-        let texel = 2.0 * radius / SHADOW_MAP_SIZE as f32;
+        let texel = 2.0 * radius / map_size as f32;
         let light_space = rotation.transform_point3(center);
         let snapped = (light_space / texel).round() * texel;
         let light_view = Mat4::from_translation(-snapped) * rotation;
@@ -615,12 +622,30 @@ fn cascades(eye: &Transform, camera: &Camera, aspect: f32, sun: &Sun) -> Option<
             -radius - CASTER_MARGIN,
             radius,
         );
-        projection * light_view
+        Cascade {
+            view_projection: projection * light_view,
+            end,
+            texel,
+            depth_range: 2.0 * radius + CASTER_MARGIN,
+        }
+    };
+    let count = quality
+        .shadow_cascades
+        .clamp(1, crate::renderer::MAX_CASCADES);
+    let near = camera.near;
+    let end = |i: usize| {
+        let fraction = i as f32 / count as f32;
+        let even_ratio = near * (far / near).powf(fraction);
+        let even_step = near + (far - near) * fraction;
+        CASCADE_SPLIT_LAMBDA * even_ratio + (1.0 - CASCADE_SPLIT_LAMBDA) * even_step
     };
     Some(Shadows {
-        view_projections: [slice(camera.near, split), slice(split, far)],
-        split,
-        casters: Default::default(),
+        cascades: (0..count)
+            .map(|i| slice(end(i).max(near), end(i + 1)))
+            .collect(),
+        map_size,
+        soft: quality.soft_shadows,
+        casters: vec![Vec::new(); count],
     })
 }
 
@@ -737,7 +762,13 @@ fn visit_drawn(
     }
 }
 
-pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) -> Frame {
+pub(crate) fn extract_frame(
+    world: &World,
+    width: u32,
+    height: u32,
+    alpha: f32,
+    quality: &Quality,
+) -> Frame {
     let sun = world
         .query::<&Sun>()
         .iter()
@@ -764,11 +795,16 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
     let view_projection = projection * view;
     let mut batches = HashMap::<BatchKey, Batch>::new();
     let frustum = Frustum::new(&view_projection);
-    let shadows = cascades(&eye, camera, width as f32 / height as f32, &sun);
-    let caster_frustums = shadows
-        .as_ref()
-        .map(|shadows| shadows.view_projections.each_ref().map(Frustum::new));
-    let mut casters: [HashMap<BatchKey, Batch>; CASCADES] = Default::default();
+    let shadows = cascades(&eye, camera, width as f32 / height as f32, &sun, quality);
+    let caster_frustums = shadows.as_ref().map(|shadows| {
+        shadows
+            .cascades
+            .iter()
+            .map(|cascade| Frustum::new(&cascade.view_projection))
+            .collect::<Vec<_>>()
+    });
+    let mut casters: Vec<HashMap<BatchKey, Batch>> =
+        vec![HashMap::new(); caster_frustums.as_ref().map_or(0, Vec::len)];
     visit_drawn(
         world,
         alpha,
@@ -817,12 +853,15 @@ pub(crate) fn extract_frame(world: &World, width: u32, height: u32, alpha: f32) 
             .find(|probes| probes.contains(eye.translation))
             .cloned(),
         shadows: shadows.map(|shadows| Shadows {
-            casters: casters.map(|batches| batches.into_values().collect()),
+            casters: casters
+                .into_iter()
+                .map(|batches| batches.into_values().collect())
+                .collect(),
             ..shadows
         }),
         batches: batches.into_values().collect(),
         effects: Effects {
-            quality: Quality::default(),
+            quality: *quality,
             projection,
             camera_right: eye.rotation * Vec3::X,
             camera_up: eye.rotation * Vec3::Y,
@@ -1035,10 +1074,16 @@ mod tests {
     #[test]
     fn the_frame_carries_the_sun_of_the_world_or_darkness() {
         let mut world = world_with_camera_at(Vec3::Z);
-        assert_eq!(extract_frame(&world, 100, 100, 1.0).sun, Sun::DARK);
+        assert_eq!(
+            extract_frame(&world, 100, 100, 1.0, &Quality::default()).sun,
+            Sun::DARK
+        );
 
         world.spawn((Sun::default(),));
-        assert_eq!(extract_frame(&world, 100, 100, 1.0).sun, Sun::default());
+        assert_eq!(
+            extract_frame(&world, 100, 100, 1.0, &Quality::default()).sun,
+            Sun::default()
+        );
     }
 
     #[test]
@@ -1051,7 +1096,9 @@ mod tests {
         }
         world.spawn((at(Vec3::Z * 5.0), SpotLight::default()));
 
-        let lights = extract_frame(&world, 100, 100, 1.0).effects.lights;
+        let lights = extract_frame(&world, 100, 100, 1.0, &Quality::default())
+            .effects
+            .lights;
         assert_eq!(lights.len(), MAX_LIGHTS);
         assert_eq!(lights[0].center(), Vec3::Z * 5.0);
         assert!(lights.iter().all(|light| light.center().z < 50.0));
@@ -1065,7 +1112,7 @@ mod tests {
             ReflectionProbe::new(Vec3::splat(4.0)),
         ));
         assert!(
-            extract_frame(&world, 100, 100, 1.0)
+            extract_frame(&world, 100, 100, 1.0, &Quality::default())
                 .effects
                 .reflection
                 .is_none()
@@ -1076,7 +1123,7 @@ mod tests {
             ReflectionProbe::new(Vec3::splat(4.0)),
         ));
         world.spawn((Transform::at(Vec3::Z * 9.0 + Vec3::X), Mesh::cube(0.5)));
-        let mut frame = extract_frame(&world, 100, 100, 1.0);
+        let mut frame = extract_frame(&world, 100, 100, 1.0, &Quality::default());
         let reflection = frame
             .effects
             .reflection
@@ -1089,6 +1136,28 @@ mod tests {
         let faces = frame.effects.reflection.unwrap().faces.unwrap();
         let counts = faces.map(|batches| batches.len());
         assert_eq!(counts, [1, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn cascades_follow_the_tier_and_end_at_the_shadow_distance() {
+        let mut world = world_with_camera_at(Vec3::Z * 10.0);
+        world.spawn((Sun::default(),));
+        for (cascades, size) in [(2, 1024), (4, 2048)] {
+            let quality = Quality {
+                shadow_cascades: cascades,
+                shadow_map_size: size,
+                ..Quality::default()
+            };
+            let frame = extract_frame(&world, 100, 100, 1.0, &quality);
+            let shadows = frame.shadows.expect("the sun casts");
+            let ends: Vec<f32> = shadows.cascades.iter().map(|c| c.end).collect();
+            assert_eq!(ends.len(), cascades);
+            assert_eq!(shadows.casters.len(), cascades);
+            assert!(ends.windows(2).all(|pair| pair[0] < pair[1]), "{ends:?}");
+            assert!((ends[cascades - 1] - Sun::default().shadow_distance).abs() < 1e-3);
+            // Nearby surfaces get much finer texels than distant ones.
+            assert!(shadows.cascades[0].texel * 4.0 < shadows.cascades[cascades - 1].texel);
+        }
     }
 
     #[test]
@@ -1106,7 +1175,7 @@ mod tests {
         };
         world.spawn((entity, model));
 
-        let frame = extract_frame(&world, 100, 100, 1.0);
+        let frame = extract_frame(&world, 100, 100, 1.0, &Quality::default());
 
         assert_eq!(frame.batches.len(), 1);
         let origins: Vec<Vec3> = frame.batches[0]
@@ -1136,7 +1205,7 @@ mod tests {
         };
         world.spawn((Transform::default(), mesh, rough));
 
-        let mut counts: Vec<usize> = extract_frame(&world, 100, 100, 1.0)
+        let mut counts: Vec<usize> = extract_frame(&world, 100, 100, 1.0, &Quality::default())
             .batches
             .iter()
             .map(|batch| batch.instances.len())
@@ -1220,7 +1289,7 @@ mod tests {
             Mesh::triangle(),
         ));
 
-        let frame = extract_frame(&world, 100, 100, 0.25);
+        let frame = extract_frame(&world, 100, 100, 0.25, &Quality::default());
 
         assert_eq!(frame.batches[0].instances[0].origin(), [0.5, 0.0, 0.0]);
     }
@@ -1236,7 +1305,9 @@ mod tests {
                 },
                 Mesh::cube(1.0),
             ));
-            extract_frame(&world, 100, 100, 1.0).batches.len()
+            extract_frame(&world, 100, 100, 1.0, &Quality::default())
+                .batches
+                .len()
         };
 
         assert_eq!(count_at(Vec3::ZERO), 1);
@@ -1264,18 +1335,31 @@ mod tests {
             Mesh::cube(1.0),
         ));
 
-        assert_eq!(extract_frame(&world, 100, 100, 1.0).batches.len(), 1);
+        assert_eq!(
+            extract_frame(&world, 100, 100, 1.0, &Quality::default())
+                .batches
+                .len(),
+            1
+        );
     }
 
     #[test]
     fn nothing_is_drawn_without_a_camera_or_a_size() {
         let mut world = World::new();
         world.spawn((Transform::default(), Mesh::triangle()));
-        assert!(extract_frame(&world, 100, 100, 1.0).batches.is_empty());
+        assert!(
+            extract_frame(&world, 100, 100, 1.0, &Quality::default())
+                .batches
+                .is_empty()
+        );
 
         let mut world = world_with_camera_at(Vec3::Z);
         world.spawn((Transform::default(), Mesh::triangle()));
-        assert!(extract_frame(&world, 0, 100, 1.0).batches.is_empty());
+        assert!(
+            extract_frame(&world, 0, 100, 1.0, &Quality::default())
+                .batches
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1287,7 +1371,7 @@ mod tests {
         world.spawn((Transform::default(), Mesh::triangle()));
         world.spawn((Transform::default(),));
 
-        let mut counts: Vec<usize> = extract_frame(&world, 100, 100, 1.0)
+        let mut counts: Vec<usize> = extract_frame(&world, 100, 100, 1.0, &Quality::default())
             .batches
             .iter()
             .map(|batch| batch.instances.len())
@@ -1317,7 +1401,7 @@ mod tests {
             let mut world = world_with_camera_at(eye);
             world.spawn((Transform::default(), Mesh::triangle()));
 
-            let clip = extract_frame(&world, 100, 100, 1.0)
+            let clip = extract_frame(&world, 100, 100, 1.0, &Quality::default())
                 .view_projection
                 .project_point3(Vec3::ZERO);
 
@@ -1330,7 +1414,7 @@ mod tests {
         let height_at = |distance: f32| {
             let mut world = world_with_camera_at(Vec3::Z * distance);
             world.spawn((Transform::default(), Mesh::triangle()));
-            extract_frame(&world, 100, 100, 1.0)
+            extract_frame(&world, 100, 100, 1.0, &Quality::default())
                 .view_projection
                 .project_point3(Vec3::Y)
                 .y
