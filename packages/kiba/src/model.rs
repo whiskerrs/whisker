@@ -49,7 +49,7 @@ mod import {
 
     use super::Model;
     use crate::renderer::log;
-    use crate::{Material, Mesh, Vertex};
+    use crate::{Material, Mesh, Texture, Vertex};
 
     /// Why a file could not become a [`Model`].
     #[derive(Debug)]
@@ -70,8 +70,9 @@ mod import {
     impl Model {
         /// Reads the default scene of a binary glTF file.
         ///
-        /// Takes geometry, vertex colors, and material factors. Textures, transparency,
-        /// and non-triangle primitives are not supported and are left out with a log line.
+        /// Takes geometry, vertex colors, and base color, metallic-roughness, and normal
+        /// materials. Other textures and non-triangle primitives are left out with a log line.
+        /// Decoding images blocks the caller, and textures ignore their glTF sampler.
         pub fn from_glb(bytes: &[u8]) -> Result<Self, ModelError> {
             let gltf = gltf::Gltf::from_slice(bytes).map_err(|e| error(e.to_string()))?;
             let mut scenes = gltf.scenes();
@@ -82,14 +83,15 @@ mod import {
             let mut importer = Importer {
                 blob: gltf.blob.as_deref(),
                 meshes: HashMap::new(),
+                images: HashMap::new(),
                 parts: Vec::new(),
-                textures_ignored: false,
+                unsupported_textures: false,
             };
             for node in scene.nodes() {
                 importer.visit(&node, Mat4::IDENTITY)?;
             }
-            if importer.textures_ignored {
-                log("glTF textures are not supported yet and were ignored");
+            if importer.unsupported_textures {
+                log("ignored glTF occlusion or emissive textures, or a second UV set");
             }
             Ok(Model::new(importer.parts))
         }
@@ -98,8 +100,9 @@ mod import {
     struct Importer<'a> {
         blob: Option<&'a [u8]>,
         meshes: HashMap<(usize, usize, bool), Mesh>,
+        images: HashMap<usize, Texture>,
         parts: Vec<(Mesh, Material, Mat4)>,
-        textures_ignored: bool,
+        unsupported_textures: bool,
     }
 
     impl Importer<'_> {
@@ -122,7 +125,7 @@ mod import {
                             read
                         }
                     };
-                    let material = self.read_material(&primitive.material());
+                    let material = self.read_material(&primitive.material())?;
                     self.parts.push((part_mesh, material, transform));
                 }
             }
@@ -132,17 +135,50 @@ mod import {
             Ok(())
         }
 
-        fn read_material(&mut self, material: &gltf::Material<'_>) -> Material {
+        fn read_material(&mut self, material: &gltf::Material<'_>) -> Result<Material, ModelError> {
             let pbr = material.pbr_metallic_roughness();
-            self.textures_ignored |= pbr.base_color_texture().is_some()
-                || pbr.metallic_roughness_texture().is_some()
-                || material.normal_texture().is_some();
+            let base = pbr.base_color_texture();
+            let metal_rough = pbr.metallic_roughness_texture();
+            let normal = material.normal_texture();
+            self.unsupported_textures |= material.occlusion_texture().is_some()
+                || material.emissive_texture().is_some()
+                || base.as_ref().is_some_and(|t| t.tex_coord() != 0)
+                || metal_rough.as_ref().is_some_and(|t| t.tex_coord() != 0)
+                || normal.as_ref().is_some_and(|t| t.tex_coord() != 0);
             let [r, g, b, _] = pbr.base_color_factor();
-            Material {
+            Ok(Material {
                 base_color: Vec3::new(r, g, b),
                 metallic: pbr.metallic_factor(),
                 roughness: pbr.roughness_factor(),
+                base_color_texture: base.map(|t| self.read_image(&t.texture())).transpose()?,
+                metallic_roughness_texture: metal_rough
+                    .map(|t| self.read_image(&t.texture()))
+                    .transpose()?,
+                normal_texture: normal.map(|t| self.read_image(&t.texture())).transpose()?,
+            })
+        }
+
+        fn read_image(&mut self, texture: &gltf::Texture<'_>) -> Result<Texture, ModelError> {
+            let source = texture.source();
+            if let Some(image) = self.images.get(&source.index()) {
+                return Ok(image.clone());
             }
+            let gltf::image::Source::View { view, .. } = source.source() else {
+                return Err(error("external images are not supported"));
+            };
+            let blob = self
+                .blob
+                .ok_or_else(|| error("the file has no binary chunk"))?;
+            let bytes = blob
+                .get(view.offset()..view.offset() + view.length())
+                .ok_or_else(|| error("an image is outside the binary chunk"))?;
+            let decoded = image::load_from_memory(bytes)
+                .map_err(|e| error(e.to_string()))?
+                .into_rgba8();
+            let (width, height) = decoded.dimensions();
+            let image = Texture::from_rgba8(width, height, decoded.into_raw());
+            self.images.insert(source.index(), image.clone());
+            Ok(image)
         }
     }
 
@@ -173,6 +209,10 @@ mod import {
         if indices.iter().any(|&i| i as usize >= positions.len()) {
             return Err(error("a primitive's index is out of range"));
         }
+        let uvs: Option<Vec<[f32; 2]>> = reader
+            .read_tex_coords(0)
+            .map(|uvs| uvs.into_f32().collect());
+        let uv_at = |i: usize| uvs.as_ref().and_then(|u| u.get(i)).map_or([0.0; 2], |u| *u);
         let color_at = |i: usize| {
             colors
                 .as_ref()
@@ -190,6 +230,7 @@ mod import {
                         position: *position,
                         normal: *normal,
                         color: color_at(i),
+                        uv: uv_at(i),
                     })
                     .collect();
                 (vertices, indices)
@@ -204,6 +245,7 @@ mod import {
                         position: positions[i as usize],
                         normal,
                         color: color_at(i as usize),
+                        uv: uv_at(i as usize),
                     }));
                 }
                 let count = vertices.len() as u32;
@@ -282,7 +324,7 @@ mod import {
         #[test]
         fn material_factors_are_read() {
             let model = load(r#"{"mesh":0}"#, "0", true);
-            let material = model.parts()[0].material;
+            let material = &model.parts()[0].material;
             assert_eq!(material.base_color, Vec3::new(0.5, 0.25, 1.0));
             assert_eq!(material.metallic, 0.75);
             assert_eq!(material.roughness, 0.2);

@@ -14,6 +14,10 @@ struct Frame {
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
+@group(1) @binding(0) var base_color_texture: texture_2d<f32>;
+@group(1) @binding(1) var metallic_roughness_texture: texture_2d<f32>;
+@group(1) @binding(2) var normal_texture: texture_2d<f32>;
+@group(1) @binding(3) var material_sampler: sampler;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -22,6 +26,7 @@ struct VertexOutput {
     @location(2) base_color: vec3<f32>,
     @location(3) metallic: f32,
     @location(4) roughness: f32,
+    @location(5) uv: vec2<f32>,
 }
 
 @vertex
@@ -29,13 +34,14 @@ fn vs_main(
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
-    @location(3) column0: vec4<f32>,
-    @location(4) column1: vec4<f32>,
-    @location(5) column2: vec4<f32>,
-    @location(6) column3: vec4<f32>,
-    @location(7) base_color: vec3<f32>,
-    @location(8) metallic: f32,
-    @location(9) roughness: f32,
+    @location(3) uv: vec2<f32>,
+    @location(4) column0: vec4<f32>,
+    @location(5) column1: vec4<f32>,
+    @location(6) column2: vec4<f32>,
+    @location(7) column3: vec4<f32>,
+    @location(8) base_color: vec3<f32>,
+    @location(9) metallic: f32,
+    @location(10) roughness: f32,
 ) -> VertexOutput {
     let transform = mat4x4<f32>(column0, column1, column2, column3);
     let basis = mat3x3<f32>(column0.xyz, column1.xyz, column2.xyz);
@@ -53,12 +59,16 @@ fn vs_main(
     output.base_color = color * base_color;
     output.metallic = metallic;
     output.roughness = roughness;
+    output.uv = uv;
     return output;
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let normal = normalize(input.normal);
+    let normal = mapped_normal(normalize(input.normal), input.world_position, input.uv);
+    let metal_rough = textureSample(metallic_roughness_texture, material_sampler, input.uv);
+    let metallic = input.metallic * metal_rough.b;
+    let base_color = input.base_color * textureSample(base_color_texture, material_sampler, input.uv).rgb;
     let to_camera = normalize(frame.camera_position.xyz - input.world_position);
     let to_sun = frame.to_sun.xyz;
     let halfway = normalize(to_camera + to_sun);
@@ -67,10 +77,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let n_dot_h = max(dot(normal, halfway), 0.0);
     let v_dot_h = max(dot(to_camera, halfway), 0.0);
 
-    let roughness = clamp(input.roughness, MIN_ROUGHNESS, 1.0);
+    let roughness = clamp(input.roughness * metal_rough.g, MIN_ROUGHNESS, 1.0);
     let alpha = roughness * roughness;
-    let reflectance = mix(vec3<f32>(DIELECTRIC_REFLECTANCE), input.base_color, input.metallic);
-    let diffuse = input.base_color * (1.0 - input.metallic);
+    let reflectance = mix(vec3<f32>(DIELECTRIC_REFLECTANCE), base_color, metallic);
+    let diffuse = base_color * (1.0 - metallic);
 
     let specular = ggx(n_dot_h, alpha) * visibility(n_dot_l, n_dot_v, alpha) * fresnel(reflectance, v_dot_h);
     // Sun.color is the light leaving a white diffuse surface, so diffuse carries no 1/PI and specular gains PI.
@@ -81,6 +91,23 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(linear_to_srgb(lit), 1.0);
     }
     return vec4<f32>(lit, 1.0);
+}
+
+// Derives the tangent frame from screen derivatives, so meshes need no tangent attribute.
+fn mapped_normal(normal: vec3<f32>, position: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    let dp_x = dpdx(position);
+    let dp_y = dpdy(position);
+    let duv_x = dpdx(uv);
+    let duv_y = dpdy(uv);
+    let across_y = cross(dp_y, normal);
+    let across_x = cross(normal, dp_x);
+    // Framebuffer Y points down, which negates this frame relative to the usual y-up derivation.
+    let along_u = -(across_y * duv_x.x + across_x * duv_y.x);
+    let along_v = -(across_y * duv_x.y + across_x * duv_y.y);
+    // The floor keeps a mesh without texture coordinates from dividing by zero.
+    let scale = inverseSqrt(max(max(dot(along_u, along_u), dot(along_v, along_v)), 1e-20));
+    let mapped = textureSample(normal_texture, material_sampler, uv).xyz * 2.0 - 1.0;
+    return normalize(mapped.x * along_u * scale - mapped.y * along_v * scale + mapped.z * normal);
 }
 
 fn ggx(n_dot_h: f32, alpha: f32) -> f32 {

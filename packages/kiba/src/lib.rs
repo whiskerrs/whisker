@@ -7,6 +7,7 @@ mod game;
 mod mesh;
 mod model;
 mod renderer;
+mod texture;
 
 #[cfg(target_os = "android")]
 mod android;
@@ -25,14 +26,15 @@ pub use model::ModelError;
 #[doc(hidden)]
 pub use renderer::placeholder_scene;
 pub use renderer::{Frame, Renderer, SceneRenderer};
+pub use texture::Texture;
 #[doc(hidden)]
 pub use wgpu;
 
 /// Commonly used items.
 pub mod prelude {
     pub use crate::{
-        Camera, Entity, Game, GameSetup, Material, Mesh, Model, Quat, Sun, Time, Transform, Vec3,
-        Vertex, Viewport, World,
+        Camera, Entity, Game, GameSetup, Material, Mesh, Model, Quat, Sun, Texture, Time,
+        Transform, Vec3, Vertex, Viewport, World,
     };
 }
 

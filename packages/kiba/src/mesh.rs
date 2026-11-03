@@ -3,6 +3,8 @@ use std::sync::{Arc, Weak};
 
 use glam::Vec3;
 
+use crate::Texture;
+
 /// One corner of a [`Mesh`].
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -13,6 +15,8 @@ pub struct Vertex {
     pub normal: [f32; 3],
     /// Linear RGB color.
     pub color: [f32; 3],
+    /// Texture coordinates, with (0, 0) at the top left of an image.
+    pub uv: [f32; 2],
 }
 
 #[derive(Debug)]
@@ -24,7 +28,7 @@ pub(crate) struct MeshData {
 /// How the surface of a [`Mesh`] reflects light, used as a component next to it.
 ///
 /// A mesh without one uses the default, a white non-metal of medium roughness.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Material {
     /// Linear RGB color, multiplied by the vertex colors.
     pub base_color: Vec3,
@@ -32,6 +36,23 @@ pub struct Material {
     pub metallic: f32,
     /// 0 for a mirror finish and 1 for fully matte.
     pub roughness: f32,
+    /// sRGB color, multiplied by `base_color`.
+    pub base_color_texture: Option<Texture>,
+    /// Roughness in green and metallic in blue, multiplied by their factors.
+    pub metallic_roughness_texture: Option<Texture>,
+    /// Surface direction in glTF's tangent space: +X along U, +Y against V, and +Z out.
+    pub normal_texture: Option<Texture>,
+}
+
+impl Material {
+    pub(crate) fn texture_keys(&self) -> [usize; 3] {
+        [
+            &self.base_color_texture,
+            &self.metallic_roughness_texture,
+            &self.normal_texture,
+        ]
+        .map(|texture| texture.as_ref().map_or(0, Texture::key))
+    }
 }
 
 impl Default for Material {
@@ -40,6 +61,9 @@ impl Default for Material {
             base_color: Vec3::ONE,
             metallic: 0.0,
             roughness: 0.5,
+            base_color_texture: None,
+            metallic_roughness_texture: None,
+            normal_texture: None,
         }
     }
 }
@@ -85,11 +109,17 @@ impl Mesh {
         let mut indices = Vec::with_capacity(36);
         for (normal, u, v) in FACES {
             let first = vertices.len() as u32;
-            for corner in [-u - v, u - v, u + v, v - u] {
+            for (corner, uv) in [
+                (-u - v, [0.0, 1.0]),
+                (u - v, [1.0, 1.0]),
+                (u + v, [1.0, 0.0]),
+                (v - u, [0.0, 0.0]),
+            ] {
                 vertices.push(Vertex {
                     position: ((normal + corner) * half).to_array(),
                     normal: normal.to_array(),
                     color: [1.0; 3],
+                    uv,
                 });
             }
             indices.extend([0, 1, 2, 0, 2, 3].map(|offset| first + offset));
@@ -115,6 +145,7 @@ impl Mesh {
                     position: (normal * radius).to_array(),
                     normal: normal.to_array(),
                     color: [1.0; 3],
+                    uv: [segment as f32 / SEGMENTS as f32, ring as f32 / RINGS as f32],
                 });
             }
         }
@@ -134,6 +165,26 @@ impl Mesh {
         Self::new(vertices, indices)
     }
 
+    /// Creates a white square in the XZ plane, facing +Y, with one image across it.
+    pub fn plane(size: f32) -> Self {
+        let half = size / 2.0;
+        let corner = |x: f32, z: f32, uv| Vertex {
+            position: [x * half, 0.0, z * half],
+            normal: [0.0, 1.0, 0.0],
+            color: [1.0; 3],
+            uv,
+        };
+        Self::new(
+            vec![
+                corner(-1.0, 1.0, [0.0, 1.0]),
+                corner(1.0, 1.0, [1.0, 1.0]),
+                corner(1.0, -1.0, [1.0, 0.0]),
+                corner(-1.0, -1.0, [0.0, 0.0]),
+            ],
+            vec![0, 1, 2, 0, 2, 3],
+        )
+    }
+
     /// Creates a triangle in the XY plane, facing +Z.
     pub fn triangle() -> Self {
         Self::new(
@@ -142,16 +193,19 @@ impl Mesh {
                     position: [0.0, 0.6, 0.0],
                     normal: [0.0, 0.0, 1.0],
                     color: [1.0, 0.25, 0.25],
+                    uv: [0.5, 0.0],
                 },
                 Vertex {
                     position: [-0.6, -0.6, 0.0],
                     normal: [0.0, 0.0, 1.0],
                     color: [0.25, 1.0, 0.25],
+                    uv: [0.0, 1.0],
                 },
                 Vertex {
                     position: [0.6, -0.6, 0.0],
                     normal: [0.0, 0.0, 1.0],
                     color: [0.25, 0.25, 1.0],
+                    uv: [1.0, 1.0],
                 },
             ],
             vec![0, 1, 2],

@@ -256,12 +256,13 @@ fn extract_frame(world: &World, width: u32, height: u32) -> Frame {
     };
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
     let view_projection = camera.projection(width as f32 / height as f32) * view;
-    let mut batches = HashMap::<usize, Batch>::new();
+    let mut batches = HashMap::<(usize, [usize; 3]), Batch>::new();
     let mut add = |mesh: &Mesh, transform: Mat4, material: &Material| {
         batches
-            .entry(mesh.key())
+            .entry((mesh.key(), material.texture_keys()))
             .or_insert_with(|| Batch {
                 mesh: mesh.clone(),
+                material: material.clone(),
                 instances: Vec::new(),
             })
             .instances
@@ -435,6 +436,32 @@ mod tests {
             origins,
             [Vec3::new(1.0, 1.0, 0.0), Vec3::new(2.0, 1.0, 0.0)]
         );
+    }
+
+    #[test]
+    fn different_textures_split_a_batch_and_other_factors_do_not() {
+        let mut world = world_with_camera_at(Vec3::Z);
+        let mesh = Mesh::cube(1.0);
+        let textured = Material {
+            base_color_texture: Some(crate::Texture::from_rgba8(1, 1, vec![255; 4])),
+            ..Material::default()
+        };
+        world.spawn((Transform::default(), mesh.clone(), textured));
+        world.spawn((Transform::default(), mesh.clone()));
+        let rough = Material {
+            roughness: 1.0,
+            ..Material::default()
+        };
+        world.spawn((Transform::default(), mesh, rough));
+
+        let mut counts: Vec<usize> = extract_frame(&world, 100, 100)
+            .batches
+            .iter()
+            .map(|batch| batch.instances.len())
+            .collect();
+        counts.sort_unstable();
+
+        assert_eq!(counts, [1, 2]);
     }
 
     #[test]

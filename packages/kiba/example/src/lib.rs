@@ -37,10 +37,35 @@ pub fn app() -> Element {
                         base_color,
                         metallic,
                         roughness,
+                        ..Material::default()
                     },
                 ));
             }
         }
+
+        let side = 256;
+        let checker = (0..side * side)
+            .flat_map(|i: u32| {
+                let shade = if (i % side / 32 + i / side / 32) % 2 == 0 {
+                    200
+                } else {
+                    70
+                };
+                [shade, shade, shade, 255]
+            })
+            .collect();
+        setup.world.spawn((
+            Transform {
+                translation: Vec3::new(0.0, -0.85, 0.0),
+                ..Transform::default()
+            },
+            Mesh::plane(8.0),
+            Material {
+                base_color_texture: Some(Texture::from_rgba8(side, side, checker)),
+                roughness: 0.8,
+                ..Material::default()
+            },
+        ));
 
         let robot = setup.world.spawn((
             Transform::default(),
@@ -54,6 +79,7 @@ pub fn app() -> Element {
                 base_color: Vec3::new(0.95, 0.95, 0.95),
                 metallic: 1.0,
                 roughness: 0.2,
+                ..Material::default()
             },
         ));
 

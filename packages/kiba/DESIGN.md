@@ -133,8 +133,9 @@ The tier is chosen by a benchmark at startup and maintained with dynamic resolut
 Every tier uses reversed `Depth32Float` depth, which keeps precision over open-world distances.
 
 Every tier shades with the metallic-roughness model: GGX, height-correlated Smith visibility, and
-Schlick Fresnel. It matches glTF, so cooked assets need no material conversion. Materials are
-per-instance values, so entities that share a mesh stay in one draw call. Output is not yet tone
+Schlick Fresnel. It matches glTF, so cooked assets need no material conversion. Material factors are
+per-instance values, so entities that share a mesh and textures stay in one draw call. Normal maps
+derive their tangent frame from screen derivatives, so meshes carry no tangent attribute. Output is not yet tone
 mapped, so highlights clip at display white.
 
 ### D8. The world is delivered in cells and controlled by memory budgets
@@ -145,8 +146,9 @@ content is replaced with HLOD and impostors. Upload volume per frame is also cap
 ### D9. Assets are cooked, and run-time glTF is for development only
 
 Run-time glTF sits behind the `gltf` feature so that shipped games do not carry its parser. It reads
-binary glTF geometry, vertex colors, and material factors. Textures, transparency, emission, and
-double-sided materials are not read yet.
+binary glTF geometry, vertex colors, material factors, and base color, metallic-roughness, and normal
+textures. Occlusion, emission, transparency, double-sided materials, and texture samplers are not
+read yet. Images decode and build mipmaps on the main thread, which D5 allows only for development.
 
 Distribution uses per-cell `.kiba` packs. Compressed textures are cooked into a separate pack for
 each GPU format, with no run-time transcoding.

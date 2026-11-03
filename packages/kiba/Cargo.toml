@@ -21,12 +21,13 @@ desktop = { manifest = "desktop/Cargo.toml" }
 
 [features]
 # Loads glTF at run time, for development until cooked assets exist.
-gltf = ["dep:gltf"]
+gltf = ["dep:gltf", "dep:image"]
 
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
 glam = { version = "0.30", features = ["bytemuck"] }
 gltf = { version = "1.4", default-features = false, features = ["utils"], optional = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 hecs = "0.10"
 web-time = "1"
 whisker = { path = "../../crates/whisker", version = "0.15.0" }

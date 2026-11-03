@@ -5,7 +5,8 @@ use glam::{Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::mesh::{MeshData, Vertex};
-use crate::{Material, Mesh, Sun};
+use crate::texture::{TextureData, mip_chain};
+use crate::{Material, Mesh, Sun, Texture};
 
 const CLEAR_COLOR: [f64; 3] = [0.02, 0.02, 0.04];
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -43,6 +44,8 @@ impl Instance {
 #[derive(Clone, Debug)]
 pub(crate) struct Batch {
     pub(crate) mesh: Mesh,
+    /// Supplies the textures, which every instance shares.
+    pub(crate) material: Material,
     pub(crate) instances: Vec<Instance>,
 }
 
@@ -65,6 +68,7 @@ pub fn placeholder_scene() -> Frame {
         sun: Sun::UNLIT,
         batches: vec![Batch {
             mesh: TRIANGLE.clone(),
+            material: Material::default(),
             instances: vec![Instance::new(Mat4::IDENTITY, &Material::default())],
         }],
     }
@@ -119,6 +123,92 @@ impl GpuMesh {
     }
 }
 
+struct GpuTexture {
+    source: Weak<TextureData>,
+    view: wgpu::TextureView,
+}
+
+impl GpuTexture {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, texture: &Texture, srgb: bool) -> Self {
+        let limit = device.limits().max_texture_dimension_2d;
+        let levels: Vec<_> = mip_chain(texture.data(), srgb)
+            .into_iter()
+            .skip_while(|level| level.width.max(level.height) > limit)
+            .collect();
+        Self {
+            source: texture.downgrade(),
+            view: upload_mips(device, queue, srgb, &levels),
+        }
+    }
+}
+
+fn upload_mips(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    srgb: bool,
+    levels: &[crate::texture::MipLevel],
+) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("kiba texture"),
+        size: wgpu::Extent3d {
+            width: levels[0].width,
+            height: levels[0].height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: levels.len() as u32,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: if srgb {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        },
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    for (mip_level, level) in levels.iter().enumerate() {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: mip_level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &level.pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(level.width * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: level.width,
+                height: level.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    texture.create_view(&Default::default())
+}
+
+fn solid_view(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    srgb: bool,
+    pixel: [u8; 4],
+) -> wgpu::TextureView {
+    let level = crate::texture::MipLevel {
+        width: 1,
+        height: 1,
+        pixels: pixel.to_vec(),
+    };
+    upload_mips(device, queue, srgb, &[level])
+}
+
+struct GpuMaterial {
+    sources: Vec<Weak<TextureData>>,
+    bindings: wgpu::BindGroup,
+}
+
 struct DepthTarget {
     size: (u32, u32),
     view: wgpu::TextureView,
@@ -154,13 +244,18 @@ pub struct SceneRenderer {
     frame_uniform: wgpu::Buffer,
     frame_bindings: wgpu::BindGroup,
     meshes: HashMap<usize, GpuMesh>,
+    material_layout: wgpu::BindGroupLayout,
+    material_sampler: wgpu::Sampler,
+    default_views: [wgpu::TextureView; 3],
+    textures: HashMap<(usize, bool), GpuTexture>,
+    materials: HashMap<[usize; 3], GpuMaterial>,
     instances: Option<wgpu::Buffer>,
     depth: Option<DepthTarget>,
 }
 
 impl SceneRenderer {
     /// Prepares the pipeline for targets of `format`.
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         // Encoding in the shader gives the same output on backends without an sRGB surface format.
         let encode_srgb = !format.is_srgb();
         let constants = [("ENCODE_SRGB", f64::from(u8::from(encode_srgb)))];
@@ -180,19 +275,20 @@ impl SceneRenderer {
                             0 => Float32x3,
                             1 => Float32x3,
                             2 => Float32x3,
+                            3 => Float32x2,
                         ],
                     },
                     wgpu::VertexBufferLayout {
                         array_stride: size_of::<Instance>() as u64,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &wgpu::vertex_attr_array![
-                            3 => Float32x4,
                             4 => Float32x4,
                             5 => Float32x4,
                             6 => Float32x4,
-                            7 => Float32x3,
-                            8 => Float32,
+                            7 => Float32x4,
+                            8 => Float32x3,
                             9 => Float32,
+                            10 => Float32,
                         ],
                     },
                 ],
@@ -243,7 +339,6 @@ impl SceneRenderer {
             }
         };
         Self {
-            pipeline,
             clear_color: wgpu::Color {
                 r: channel(CLEAR_COLOR[0]),
                 g: channel(CLEAR_COLOR[1]),
@@ -253,8 +348,27 @@ impl SceneRenderer {
             frame_uniform,
             frame_bindings,
             meshes: HashMap::new(),
+            material_layout: pipeline.get_bind_group_layout(1),
+            material_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("kiba material"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Linear,
+                anisotropy_clamp: 4,
+                ..Default::default()
+            }),
+            default_views: [
+                solid_view(device, queue, true, [255; 4]),
+                solid_view(device, queue, false, [255; 4]),
+                solid_view(device, queue, false, [128, 128, 255, 255]),
+            ],
+            textures: HashMap::new(),
+            materials: HashMap::new(),
             instances: None,
             depth: None,
+            pipeline,
         }
     }
 
@@ -269,10 +383,15 @@ impl SceneRenderer {
     ) {
         let batches = &frame.batches;
         self.meshes.retain(|_, mesh| mesh.source.strong_count() > 0);
+        self.materials
+            .retain(|_, material| material.sources.iter().all(|s| s.strong_count() > 0));
+        self.textures
+            .retain(|_, texture| texture.source.strong_count() > 0);
         for batch in batches {
             self.meshes
                 .entry(batch.mesh.key())
                 .or_insert_with(|| GpuMesh::new(device, &batch.mesh));
+            self.prepare_material(device, queue, &batch.material);
         }
         if self.depth.as_ref().is_none_or(|depth| depth.size != size) {
             self.depth = Some(DepthTarget::new(device, size));
@@ -340,6 +459,8 @@ impl SceneRenderer {
                 if count == 0 || mesh.index_count == 0 {
                     continue;
                 }
+                let material = &self.materials[&batch.material.texture_keys()];
+                pass.set_bind_group(1, &material.bindings, &[]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_vertex_buffer(1, instances.slice(range));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -347,6 +468,65 @@ impl SceneRenderer {
             }
         }
         queue.submit([encoder.finish()]);
+    }
+
+    fn prepare_material(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        material: &Material,
+    ) {
+        let key = material.texture_keys();
+        if self.materials.contains_key(&key) {
+            return;
+        }
+        // Only base color is sRGB, and an image may fill several slots.
+        let slots = [
+            (&material.base_color_texture, true),
+            (&material.metallic_roughness_texture, false),
+            (&material.normal_texture, false),
+        ];
+        let mut sources = Vec::new();
+        for (texture, srgb) in slots {
+            if let Some(texture) = texture {
+                sources.push(texture.downgrade());
+                self.textures
+                    .entry((texture.key(), srgb))
+                    .or_insert_with(|| GpuTexture::new(device, queue, texture, srgb));
+            }
+        }
+        let views = [0, 1, 2].map(|slot| {
+            let (texture, srgb) = slots[slot];
+            texture
+                .as_ref()
+                .map_or(&self.default_views[slot], |texture| {
+                    &self.textures[&(texture.key(), srgb)].view
+                })
+        });
+        let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("kiba material"),
+            layout: &self.material_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(views[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(views[1]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(views[2]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                },
+            ],
+        });
+        self.materials
+            .insert(key, GpuMaterial { sources, bindings });
     }
 }
 
@@ -398,7 +578,7 @@ impl Renderer {
             alpha_mode: capabilities.alpha_modes[0],
             view_formats: Vec::new(),
         };
-        let scene = SceneRenderer::new(&device, format);
+        let scene = SceneRenderer::new(&device, &queue, format);
         let info = adapter.get_info();
         log(&format!(
             "using {:?} on {} as {format:?}",
@@ -504,7 +684,7 @@ mod tests {
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
-        SceneRenderer::new(device, format).draw(device, queue, &view, (SIZE, SIZE), frame);
+        SceneRenderer::new(device, queue, format).draw(device, queue, &view, (SIZE, SIZE), frame);
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -551,17 +731,16 @@ mod tests {
         [pixels[at], pixels[at + 1], pixels[at + 2]]
     }
 
-    fn instance(transform: Mat4, material: Material) -> Instance {
-        Instance::new(transform, &material)
-    }
-
-    fn quad(normal: Vec3, color: [f32; 3], instance: Instance) -> Batch {
-        let vertex = |x, y| Vertex {
+    fn quad(normal: Vec3, color: [f32; 3], transform: Mat4, material: Material) -> Batch {
+        let material_for_instance = material.clone();
+        let vertex = |x: f32, y: f32| Vertex {
             position: [x, y, 0.0],
             normal: normal.to_array(),
             color,
+            uv: [(x + 1.0) / 2.0, (1.0 - y) / 2.0],
         };
         Batch {
+            material,
             mesh: Mesh::new(
                 vec![
                     vertex(-1.0, -1.0),
@@ -571,22 +750,20 @@ mod tests {
                 ],
                 vec![0, 1, 2, 0, 2, 3],
             ),
-            instances: vec![instance],
+            instances: vec![Instance::new(transform, &material_for_instance)],
         }
     }
 
     fn surface(material: Material) -> Batch {
-        quad(Vec3::Z, [1.0; 3], instance(Mat4::IDENTITY, material))
+        quad(Vec3::Z, [1.0; 3], Mat4::IDENTITY, material)
     }
 
     fn solid_quad(color: [f32; 3], depth: f32) -> Batch {
         quad(
             Vec3::Z,
             color,
-            instance(
-                Mat4::from_translation(Vec3::new(0.0, 0.0, depth)),
-                Material::default(),
-            ),
+            Mat4::from_translation(Vec3::new(0.0, 0.0, depth)),
+            Material::default(),
         )
     }
 
@@ -621,6 +798,9 @@ mod tests {
         base_color: Vec3::ONE,
         metallic: 0.0,
         roughness: 1.0,
+        base_color_texture: None,
+        metallic_roughness_texture: None,
+        normal_texture: None,
     };
 
     #[test]
@@ -670,6 +850,7 @@ mod tests {
                 base_color: Vec3::X,
                 metallic,
                 roughness: 0.2,
+                ..Material::default()
             };
             center_of(
                 &device,
@@ -712,9 +893,10 @@ mod tests {
             base_color: Vec3::new(1.0, 0.0, 1.0),
             metallic: 1.0,
             roughness: 1.0,
+            ..Material::default()
         };
         // Yellow vertices under a magenta base color and a yellow sun leave only red.
-        let batch = quad(Vec3::Z, [1.0, 1.0, 0.0], instance(Mat4::IDENTITY, material));
+        let batch = quad(Vec3::Z, [1.0, 1.0, 0.0], Mat4::IDENTITY, material);
 
         let center = center_of(&device, &queue, &frame(sun, vec![batch]));
 
@@ -732,12 +914,14 @@ mod tests {
         let stretched = quad(
             Vec3::new(1.0, 1.0, 0.0).normalize(),
             [1.0; 3],
-            instance(Mat4::from_scale(Vec3::new(1.0, 3.0, 1.0)), MATTE),
+            Mat4::from_scale(Vec3::new(1.0, 3.0, 1.0)),
+            MATTE,
         );
         let corrected = quad(
             Vec3::new(1.0, 1.0 / 3.0, 0.0).normalize(),
             [1.0; 3],
-            instance(Mat4::IDENTITY, MATTE),
+            Mat4::IDENTITY,
+            MATTE,
         );
 
         let actual = center_of(&device, &queue, &frame(sun, vec![stretched]));
@@ -773,12 +957,140 @@ mod tests {
             Mat4::from_rotation_y(std::f32::consts::PI) * Mat4::from_scale(Vec3::splat(0.5));
         let batch = Batch {
             mesh: Mesh::triangle(),
-            instances: vec![instance(turned, Material::default())],
+            material: Material::default(),
+            instances: vec![Instance::new(turned, &Material::default())],
         };
 
         let center = center_of(&device, &queue, &frame(Sun::UNLIT, vec![batch]));
 
         assert!(center[0] < 64);
+    }
+
+    #[test]
+    fn the_base_color_texture_is_sampled_at_the_uv_coordinates() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let image = Texture::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]);
+        let center = |x: f32| {
+            let material = Material {
+                base_color_texture: Some(image.clone()),
+                ..MATTE
+            };
+            let batch = quad(
+                Vec3::Z,
+                [1.0; 3],
+                Mat4::from_translation(Vec3::new(x, 0.0, 0.0)),
+                material,
+            );
+            center_of(&device, &queue, &frame(Sun::UNLIT, vec![batch]))
+        };
+
+        let left = center(0.5);
+        assert!(left[0] > left[1], "{left:?}");
+        let right = center(-0.5);
+        assert!(right[1] > right[0], "{right:?}");
+    }
+
+    #[test]
+    fn the_metallic_roughness_texture_scales_the_factors() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let center = |pixel: [u8; 4]| {
+            let material = Material {
+                base_color: Vec3::X,
+                metallic: 1.0,
+                roughness: 1.0,
+                metallic_roughness_texture: Some(Texture::from_rgba8(1, 1, pixel.to_vec())),
+                ..Material::default()
+            };
+            center_of(
+                &device,
+                &queue,
+                &frame(dim_sun(Vec3::NEG_Z), vec![surface(material)]),
+            )
+        };
+
+        assert_eq!(
+            center([0, 255, 255, 255])[1],
+            0,
+            "blue should keep it metal"
+        );
+        assert!(
+            center([0, 255, 0, 255])[1] > 0,
+            "no blue should remove metal"
+        );
+        assert!(center([0, 64, 255, 255])[0] > center([0, 255, 255, 255])[0]);
+    }
+
+    #[test]
+    fn the_normal_texture_follows_gltf_tangent_axes() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let lit = |pixel: [u8; 4], direction: Vec3| {
+            let material = Material {
+                normal_texture: Some(Texture::from_rgba8(1, 1, pixel.to_vec())),
+                ..MATTE
+            };
+            center_of(
+                &device,
+                &queue,
+                &frame(dim_sun(direction), vec![surface(material)]),
+            )[0] > 0
+        };
+
+        // On this quad, U runs along +X and V along -Y, so tangent +Y is world +Y.
+        let to_right = [255, 128, 128, 255];
+        assert!(lit(to_right, Vec3::NEG_X));
+        assert!(!lit(to_right, Vec3::X));
+        let to_top = [128, 255, 128, 255];
+        assert!(lit(to_top, Vec3::NEG_Y));
+        assert!(!lit(to_top, Vec3::Y));
+    }
+
+    #[test]
+    fn dropped_textures_release_their_gpu_copy() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let mut scene = SceneRenderer::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);
+        let material = Material {
+            base_color_texture: Some(Texture::from_rgba8(1, 1, vec![255; 4])),
+            ..Material::default()
+        };
+        let drawn = frame(Sun::UNLIT, vec![surface(material)]);
+
+        scene.draw(&device, &queue, &view, (SIZE, SIZE), &drawn);
+        assert_eq!(scene.textures.len(), 1);
+        assert_eq!(scene.materials.len(), 1);
+
+        drop(drawn);
+        scene.draw(
+            &device,
+            &queue,
+            &view,
+            (SIZE, SIZE),
+            &frame(Sun::UNLIT, Vec::new()),
+        );
+        assert!(scene.textures.is_empty());
+        assert!(scene.materials.is_empty());
     }
 
     #[test]
@@ -801,12 +1113,13 @@ mod tests {
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
-        let mut scene = SceneRenderer::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+        let mut scene = SceneRenderer::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);
         let drawn = frame(
             Sun::UNLIT,
             vec![Batch {
                 mesh: Mesh::triangle(),
-                instances: vec![instance(Mat4::IDENTITY, Material::default())],
+                material: Material::default(),
+                instances: vec![Instance::new(Mat4::IDENTITY, &Material::default())],
             }],
         );
 
