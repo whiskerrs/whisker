@@ -12,6 +12,8 @@
 //! | A file | `(Transform::default(), Model::load(asset!("crate.glb")))` |
 //! | Sky light blocked by still models | `(ProbeVolume::load(asset!("scene.kiba")),)`, cooked with `kiba-cook` |
 //! | A large world, loaded around the camera | `(WorldStream::load(asset!("world/index.kiba"), StreamSettings::default()),)`, cooked with `kiba-cook` |
+//! | Sound | `Sound::load(asset!("step.ogg"))`, held by a callback, then `.play()` |
+//! | Physics, with the `physics` feature | `(Physics::default(),)` once, then `(Transform::default(), RigidBody::new(BodyKind::Dynamic), Collider::Ball(0.5))` |
 //! | A file's animation | Add `Animator::new("walk")` next to its `Model` |
 //!
 //! `asset!` is not part of Kiba. It comes from the `whisker-asset` crate, as `whisker_asset::asset!`, and
@@ -94,6 +96,7 @@
 //! ```
 
 mod animation;
+mod audio;
 mod controller;
 #[cfg(feature = "cook")]
 pub mod cook;
@@ -102,6 +105,8 @@ mod input;
 mod mesh;
 mod model;
 mod pack;
+#[cfg(feature = "physics")]
+mod physics;
 mod probes;
 mod renderer;
 mod sky;
@@ -114,6 +119,9 @@ mod android;
 mod ios;
 
 pub use animation::Animator;
+#[doc(hidden)]
+pub use audio::resume_audio;
+pub use audio::{Playback, Sound};
 pub use controller::{FlyCamera, OrbitCamera};
 pub use game::{Camera, Context, FrameStats, Game, GameSetup, Interpolated, Sun, Time, Transform};
 #[doc(hidden)]
@@ -127,6 +135,8 @@ pub use mesh::{Material, Mesh, Vertex};
 #[cfg(feature = "gltf")]
 pub use model::ModelError;
 pub use model::{LoadState, Model};
+#[cfg(feature = "physics")]
+pub use physics::{BodyKind, Collider, Physics, RayHit, RigidBody};
 pub use probes::ProbeVolume;
 pub use renderer::{Frame, Renderer, SceneRenderer};
 #[doc(hidden)]
@@ -141,10 +151,12 @@ pub use wgpu;
 pub mod prelude {
     pub use crate::{
         Animator, Camera, Context, Entity, FlyCamera, FrameStats, Game, GameSetup, Input,
-        Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, Pointer, ProbeVolume,
-        Quat, Sky, StreamSettings, Sun, Texture, Time, Transform, Vec2, Vec3, Vertex, Viewport,
-        World, WorldStream,
+        Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera, Playback, Pointer,
+        ProbeVolume, Quat, Sky, Sound, StreamSettings, Sun, Texture, Time, Transform, Vec2, Vec3,
+        Vertex, Viewport, World, WorldStream,
     };
+    #[cfg(feature = "physics")]
+    pub use crate::{BodyKind, Collider, Physics, RayHit, RigidBody};
 }
 
 /// A surface that shows a [`Game`]: `Viewport(game: game, style: css!(...))`.

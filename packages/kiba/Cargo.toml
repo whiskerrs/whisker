@@ -29,6 +29,8 @@ required-features = ["cook"]
 gltf = ["dep:gltf", "dep:image"]
 # The ahead-of-time tools, which run on a development machine.
 cook = ["gltf", "dep:meshopt"]
+# Simulates rigid bodies with Rapier, which adds about 220 KB gzipped to wasm.
+physics = ["dep:rapier3d"]
 
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
@@ -37,6 +39,7 @@ gltf = { version = "1.4", default-features = false, features = ["utils", "names"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 hecs = "0.10"
 meshopt = { version = "0.4", optional = true }
+rapier3d = { version = "0.22", default-features = false, features = ["dim3", "f32"], optional = true }
 web-time = "1"
 whisker = { path = "../../crates/whisker", version = "0.15.0" }
 
@@ -45,7 +48,21 @@ pollster = "0.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { version = "25.0.2", default-features = false, features = ["webgpu", "wgsl"] }
-web-sys = { version = "0.3", features = ["console", "Response", "Window"] }
+web-sys = { version = "0.3", features = [
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioContext",
+    "AudioDestinationNode",
+    "AudioListener",
+    "AudioNode",
+    "AudioParam",
+    "GainNode",
+    "PannerNode",
+    "PanningModelType",
+    "Response",
+    "Window",
+    "console",
+] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

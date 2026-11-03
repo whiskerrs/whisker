@@ -10,6 +10,7 @@ use web_time::Instant;
 use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 
 use crate::animation::{Animator, run_animators};
+use crate::audio::{resume_audio, set_listener};
 use crate::controller::run_controllers;
 use crate::input::{InputEvent, Key};
 use crate::probes::ProbeVolume;
@@ -309,6 +310,12 @@ impl<C> GameSetup<C> {
     }
 
     fn apply_input(&mut self, event: InputEvent) {
+        if matches!(
+            event,
+            InputEvent::PointerDown { .. } | InputEvent::KeyDown(_)
+        ) {
+            resume_audio();
+        }
         self.frame_input.apply(event);
         self.fixed_input.apply(event);
     }
@@ -359,6 +366,8 @@ impl<C> GameSetup<C> {
                     alpha: 1.0,
                 });
             }
+            #[cfg(feature = "physics")]
+            crate::physics::run_physics(&mut self.world, self.fixed_delta);
             self.fixed_input.end_pass();
         }
 
@@ -375,6 +384,18 @@ impl<C> GameSetup<C> {
         }
         run_animators(&mut self.world, frame_time.delta_seconds());
         run_streams(&mut self.world);
+        if let Some((_, (eye, _))) = self
+            .world
+            .query_mut::<(&Transform, &Camera)>()
+            .into_iter()
+            .next()
+        {
+            set_listener(
+                eye.translation,
+                eye.rotation * Vec3::NEG_Z,
+                eye.rotation * Vec3::Y,
+            );
+        }
         run_controllers(&mut self.world, &frame_time, &self.frame_input);
         self.frame_input.end_pass();
         alpha
