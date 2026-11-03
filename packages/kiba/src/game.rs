@@ -168,6 +168,23 @@ impl Time {
     }
 }
 
+/// Cost of the previous frame on the CPU. GPU time is not included.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FrameStats {
+    /// Milliseconds spent in commands, fixed updates, and updates.
+    pub update_ms: f32,
+    /// Milliseconds spent collecting what to draw, including culling.
+    pub extract_ms: f32,
+    /// Milliseconds spent encoding and submitting GPU work.
+    pub render_ms: f32,
+    /// Separate draw calls, one per mesh and texture set.
+    pub draw_calls: u32,
+    /// Instances drawn after culling.
+    pub instances: u32,
+    /// Triangles drawn after culling.
+    pub triangles: u64,
+}
+
 /// What a callback can see and change.
 pub struct Context<'a> {
     /// The entities of this game.
@@ -178,6 +195,8 @@ pub struct Context<'a> {
     pub input: &'a Input,
     /// Viewport size in physical pixels, zero before the first frame.
     pub viewport: (u32, u32),
+    /// Cost of the previous frame.
+    pub stats: FrameStats,
 }
 
 type Callback = Box<dyn FnMut(&mut Context<'_>)>;
@@ -200,6 +219,7 @@ pub struct GameSetup<C> {
     frame_input: Input,
     fixed_input: Input,
     viewport: (u32, u32),
+    stats: FrameStats,
 }
 
 impl<C> GameSetup<C> {
@@ -216,6 +236,7 @@ impl<C> GameSetup<C> {
             frame_input: Input::default(),
             fixed_input: Input::default(),
             viewport: (0, 0),
+            stats: FrameStats::default(),
         }
     }
 
@@ -257,6 +278,7 @@ impl<C> GameSetup<C> {
     /// Runs one frame of simulation and returns how far drawing is between the last two fixed steps.
     fn advance(&mut self, delta_seconds: f32, commands: Vec<C>) -> f32 {
         let viewport = self.viewport;
+        let stats = self.stats;
         self.elapsed += f64::from(delta_seconds);
         let frame_time = Time {
             delta_seconds,
@@ -268,6 +290,7 @@ impl<C> GameSetup<C> {
                 time: frame_time,
                 input: &self.frame_input,
                 viewport,
+                stats,
             };
             if let Some(callback) = &mut self.on_command {
                 callback(&mut context, command);
@@ -293,6 +316,7 @@ impl<C> GameSetup<C> {
                     time,
                     input: &self.fixed_input,
                     viewport,
+                    stats,
                 });
             }
             self.fixed_input.end_pass();
@@ -304,6 +328,7 @@ impl<C> GameSetup<C> {
                 time: frame_time,
                 input: &self.frame_input,
                 viewport,
+                stats,
             });
         }
         run_controllers(&mut self.world, &frame_time, &self.frame_input);
@@ -393,8 +418,23 @@ impl<C: 'static> RunningGame for Registered<C> {
         setup.viewport = (width, height);
         let alpha = setup.advance(delta_seconds, commands);
 
+        let updated = Instant::now();
         let frame = extract_frame(&setup.world, width, height, alpha);
+        let extracted = Instant::now();
         target.renderer.render(width, height, &frame);
+        let rendered = Instant::now();
+        setup.stats = FrameStats {
+            update_ms: (updated - now).as_secs_f32() * 1000.0,
+            extract_ms: (extracted - updated).as_secs_f32() * 1000.0,
+            render_ms: (rendered - extracted).as_secs_f32() * 1000.0,
+            draw_calls: frame.batches.len() as u32,
+            instances: frame.batches.iter().map(|b| b.instances.len() as u32).sum(),
+            triangles: frame
+                .batches
+                .iter()
+                .map(|b| b.instances.len() as u64 * b.mesh.data().indices.len() as u64 / 3)
+                .sum(),
+        };
         schedule_frame(&state.dispatcher, self.id);
     }
 

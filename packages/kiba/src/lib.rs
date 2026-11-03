@@ -17,7 +17,7 @@ mod android;
 mod ios;
 
 pub use controller::{FlyCamera, OrbitCamera};
-pub use game::{Camera, Context, Game, GameSetup, Interpolated, Sun, Time, Transform};
+pub use game::{Camera, Context, FrameStats, Game, GameSetup, Interpolated, Sun, Time, Transform};
 #[doc(hidden)]
 pub use game::{attach_renderer, detach_renderer, send_input};
 pub use glam::{Mat4, Quat, Vec2, Vec3};
@@ -26,12 +26,12 @@ pub use hecs::{Entity, World};
 pub use input::InputEvent;
 pub use input::{Input, Key, Pointer};
 pub use mesh::{Material, Mesh, Vertex};
-pub use model::Model;
 #[cfg(feature = "gltf")]
 pub use model::ModelError;
-#[doc(hidden)]
-pub use renderer::placeholder_scene;
+pub use model::{LoadState, Model};
 pub use renderer::{Frame, Renderer, SceneRenderer};
+#[doc(hidden)]
+pub use renderer::{log, placeholder_scene};
 pub use texture::Texture;
 #[doc(hidden)]
 pub use wgpu;
@@ -39,9 +39,9 @@ pub use wgpu;
 /// Commonly used items.
 pub mod prelude {
     pub use crate::{
-        Camera, Context, Entity, FlyCamera, Game, GameSetup, Input, Interpolated, Key, Material,
-        Mesh, Model, OrbitCamera, Pointer, Quat, Sun, Texture, Time, Transform, Vec2, Vec3, Vertex,
-        Viewport, World,
+        Camera, Context, Entity, FlyCamera, FrameStats, Game, GameSetup, Input, Interpolated, Key,
+        LoadState, Material, Mesh, Model, OrbitCamera, Pointer, Quat, Sun, Texture, Time,
+        Transform, Vec2, Vec3, Vertex, Viewport, World,
     };
 }
 

@@ -37,7 +37,10 @@ pollster = "0.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { version = "25.0.2", default-features = false, features = ["webgpu", "wgsl"] }
-web-sys = { version = "0.3", features = ["console"] }
+web-sys = { version = "0.3", features = ["console", "Response", "Window"] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 wgpu = { version = "25.0.2", default-features = false, features = ["metal", "wgsl"] }

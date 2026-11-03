@@ -88,10 +88,10 @@ UI is layered as siblings of `Viewport`.
 An ECS is adopted because many similar objects and streaming are assumed. The schedule has the
 fixed order `input → fixed_update → update → extract → render`.
 
-`bevy_ecs` also works standalone **[verified]**, but the configuration with the smaller API and wasm
-size is tried first. In exchange, `extract` cannot rely on `bevy_ecs`'s built-in change detection.
-P1 compares their size and the work to implement change detection, and switches if `hecs` falls
-short.
+`bevy_ecs` also works standalone **[verified]**, but `hecs` stays. For the same spawn-and-query wasm,
+`hecs` 0.10 is 18 KB gzipped and `bevy_ecs` 0.16 is 51 KB **[verified]**. `extract` walks every entity
+each frame without change detection, which costs about 1.5 ms for 10,000 entities and leaves no need
+for `bevy_ecs`'s built-in tracking.
 
 ### D5. Game logic and rendering run on the main thread
 
@@ -187,17 +187,22 @@ load.
 
 ## Target API
 
-This is what a Whisker app author writes. It is the target shape: `Game`, `GameSetup::on_update`,
-`Game::send`, `Transform`, `Camera`, `Sun`, `Mesh`, `Material`, `Model`, and `Viewport` exist today,
-with `Model::from_glb(include_bytes!(...))` in place of a cooked asset. Hook names are finalized in P1.
+This is what a Whisker app author writes today. A cooked `.kiba` asset replaces the `.glb` once
+`kiba-cook` exists. Mutable game state lives in components, not in variables shared between callbacks,
+because each callback owns its captures.
 
 ```rust
 use kiba::prelude::*;
 use whisker::prelude::*;
+use whisker_asset::asset;
 
 #[derive(Clone, Copy)]
 enum Command {
     Boost,
+}
+
+struct Spin {
+    speed: f32,
 }
 
 #[whisker::main]
@@ -205,28 +210,31 @@ pub fn app() -> Element {
     let turns = signal(0);
 
     let game = Game::<Command>::new(move |setup| {
-        let world = &mut setup.world;
-        world.spawn((
+        setup.world.spawn((
             Camera::default(),
-            Transform::looking_at(Vec3::new(0.0, 1.5, 4.0), Vec3::ZERO, Vec3::Y),
+            Transform::default(),
+            OrbitCamera::default(),
         ));
-        world.spawn((Sun::default(),));
-        let crate_id = world.spawn((Transform::default(), Model::load(asset!("crate.kiba"))));
+        setup.world.spawn((Sun::default(),));
+        setup.world.spawn((
+            Transform::default(),
+            Model::load(asset!("crate.glb")),
+            Spin { speed: 1.0 },
+        ));
 
-        let mut speed = 1.0;
-        let mut angle = 0.0;
-        setup.on_update(move |world, time, commands| {
-            for command in commands {
-                match command {
-                    Command::Boost => speed *= 2.0,
+        setup.on_command(|context, command| match command {
+            Command::Boost => {
+                for (_, spin) in context.world.query_mut::<&mut Spin>() {
+                    spin.speed *= 2.0;
                 }
             }
-            angle += speed * time.delta_seconds();
-            world
-                .get::<&mut Transform>(crate_id)
-                .expect("the crate is never despawned")
-                .rotation = Quat::from_rotation_y(angle);
-
+        });
+        let mut angle = 0.0;
+        setup.on_update(move |context| {
+            for (_, (transform, spin)) in context.world.query_mut::<(&mut Transform, &Spin)>() {
+                angle += spin.speed * context.time.delta_seconds();
+                transform.rotation = Quat::from_rotation_y(angle);
+            }
             let completed = (angle / std::f32::consts::TAU) as i32;
             if completed != turns.get_untracked() {
                 turns.set(completed);
@@ -320,8 +328,8 @@ Each result can change the decisions above. They run at the start of P1.
    Native Hosts do not run a `Game` yet.
 3. **Tab memory limit** [unverified]: Increase allocation on the reference device and measure where
    context loss and tab discard occur.
-4. **Wasm size** [unverified]: Measure the release-optimized value of the current 1.6 MB (gzipped),
-   and the increase from `hecs` and Rapier.
+4. **Wasm size** [partly verified]: The example is about 0.9 MB gzipped without `gltf` content and
+   1.12 MB with it. `hecs` adds 18 KB. Rapier is measured in P3.
 5. **Hot reload** [unverified]: Check the behavior when editing `Game::new`'s closure. Web uses side
    modules **[verified]**, so also confirm whether the thread-local registry refers to the same
    object after a patch.

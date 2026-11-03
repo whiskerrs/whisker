@@ -17,11 +17,52 @@ struct Orbit {
     angle: f32,
 }
 
+/// 10,000 instances that all move each frame, reporting cost to the console.
+fn stress(setup: &mut GameSetup<Command>) {
+    setup.world.spawn((
+        Camera::default(),
+        Transform::looking_at(Vec3::new(0.0, 60.0, 90.0), Vec3::ZERO, Vec3::Y),
+    ));
+    setup.world.spawn((Sun::default(),));
+    let cube = Mesh::cube(0.6);
+    for x in 0..100 {
+        for z in 0..100 {
+            setup.world.spawn((
+                Transform {
+                    translation: Vec3::new(x as f32 - 50.0, 0.0, z as f32 - 50.0),
+                    ..Transform::default()
+                },
+                cube.clone(),
+                Material {
+                    base_color: Vec3::new(x as f32 / 100.0, 0.4, z as f32 / 100.0),
+                    roughness: 0.4,
+                    ..Material::default()
+                },
+            ));
+        }
+    }
+    let mut frames = 0;
+    setup.on_update(move |context| {
+        let rotation = Quat::from_rotation_y(context.time.elapsed_seconds() as f32);
+        for (_, (transform, _)) in context.world.query_mut::<(&mut Transform, &Mesh)>() {
+            transform.rotation = rotation;
+        }
+        frames += 1;
+        if frames % 120 == 0 {
+            kiba::log(&format!("{:?}", context.stats));
+        }
+    });
+}
+
 #[whisker::main]
 pub fn app() -> Element {
     let turns = signal(0);
 
     let game = Game::<Command>::new(move |setup| {
+        if cfg!(feature = "stress") {
+            stress(setup);
+            return;
+        }
         setup.world.spawn((
             Camera::default(),
             Transform::default(),
@@ -87,8 +128,7 @@ pub fn app() -> Element {
                 angle: 0.0,
             },
             Transform::default(),
-            Model::from_glb(include_bytes!("../assets/robot.glb"))
-                .expect("the robot is a valid file"),
+            Model::load(whisker_asset::asset!("robot.glb")),
         ));
         setup.world.spawn((
             Orbit { angle: 0.0 },

@@ -17,8 +17,11 @@ bench = false
 
 [features]
 whisker-config = ["whisker-cng/generate"]
+# Replaces the scene with the instance benchmark in DESIGN.md.
+stress = []
 
 [dependencies]
 whisker-cng = { path = "../../../crates/whisker-cng", version = "0.15.0", default-features = false }
 whisker = { workspace = true }
+whisker-asset = { path = "../../whisker-asset" }
 kiba = { path = "..", features = ["gltf"] }

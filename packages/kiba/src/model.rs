@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use glam::Mat4;
 
@@ -15,25 +15,47 @@ pub(crate) struct ModelPart {
 ///
 /// Clones share their meshes, so entities using one model draw as instances.
 #[derive(Clone, Debug)]
-pub struct Model(Arc<[ModelPart]>);
+pub struct Model(Arc<OnceLock<Result<Vec<ModelPart>, String>>>);
+
+/// How far a [`Model::load`] has come.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoadState {
+    /// Still loading. The model draws nothing until it is ready.
+    Loading,
+    /// Loaded and drawing.
+    Ready,
+    /// Failed for the given reason. The model draws nothing.
+    Failed(String),
+}
 
 impl Model {
     /// Creates a model from meshes, each with its material and its transform within the model.
     pub fn new(parts: impl IntoIterator<Item = (Mesh, Material, Mat4)>) -> Self {
-        Self(
-            parts
-                .into_iter()
-                .map(|(mesh, material, transform)| ModelPart {
-                    mesh,
-                    material,
-                    transform,
-                })
-                .collect(),
-        )
+        let parts = parts
+            .into_iter()
+            .map(|(mesh, material, transform)| ModelPart {
+                mesh,
+                material,
+                transform,
+            })
+            .collect();
+        Self(Arc::new(OnceLock::from(Ok(parts))))
+    }
+
+    /// Reports how far loading has come.
+    pub fn load_state(&self) -> LoadState {
+        match self.0.get() {
+            None => LoadState::Loading,
+            Some(Ok(_)) => LoadState::Ready,
+            Some(Err(reason)) => LoadState::Failed(reason.clone()),
+        }
     }
 
     pub(crate) fn parts(&self) -> &[ModelPart] {
-        &self.0
+        match self.0.get() {
+            Some(Ok(parts)) => parts,
+            _ => &[],
+        }
     }
 }
 
@@ -44,6 +66,7 @@ pub use import::ModelError;
 mod import {
     use std::collections::HashMap;
     use std::fmt;
+    use std::sync::{Arc, OnceLock};
 
     use glam::{Mat4, Vec3};
 
@@ -68,6 +91,30 @@ mod import {
     }
 
     impl Model {
+        /// Starts loading a binary glTF file and returns at once.
+        ///
+        /// `location` is a URL on the Web and a path elsewhere, as `asset!` gives. Check
+        /// [`Model::load_state`] to learn about progress and failures, which are also logged.
+        pub fn load(location: impl Into<String>) -> Self {
+            let state = Arc::new(OnceLock::new());
+            let finish = {
+                let state = state.clone();
+                move |result: Result<Vec<u8>, String>| {
+                    let parsed = result.and_then(|bytes| {
+                        Model::from_glb(&bytes)
+                            .map(|model| model.parts().to_vec())
+                            .map_err(|error| error.to_string())
+                    });
+                    if let Err(reason) = &parsed {
+                        log(&format!("failed to load a model: {reason}"));
+                    }
+                    let _ = state.set(parsed);
+                }
+            };
+            read_file(location.into(), finish);
+            Model(state)
+        }
+
         /// Reads the default scene of a binary glTF file.
         ///
         /// Takes geometry, vertex colors, and base color, metallic-roughness, and normal
@@ -95,6 +142,37 @@ mod import {
             }
             Ok(Model::new(importer.parts))
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn read_file(url: String, finish: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+        use wasm_bindgen::JsCast;
+
+        wasm_bindgen_futures::spawn_local(async move {
+            let fetched = async {
+                let window = web_sys::window().ok_or("no window")?;
+                let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&url))
+                    .await
+                    .map_err(|error| format!("{url}: {error:?}"))?
+                    .unchecked_into::<web_sys::Response>();
+                if !response.ok() {
+                    return Err(format!("{url}: HTTP {}", response.status()));
+                }
+                let buffer = response.array_buffer().map_err(|e| format!("{e:?}"))?;
+                let buffer = wasm_bindgen_futures::JsFuture::from(buffer)
+                    .await
+                    .map_err(|e| format!("{e:?}"))?;
+                Ok::<_, String>(js_sys::Uint8Array::new(&buffer).to_vec())
+            };
+            finish(fetched.await);
+        });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_file(path: String, finish: impl FnOnce(Result<Vec<u8>, String>) + Send + 'static) {
+        std::thread::spawn(move || {
+            finish(std::fs::read(&path).map_err(|error| format!("{path}: {error}")));
+        });
     }
 
     struct Importer<'a> {
@@ -373,6 +451,18 @@ mod import {
             for vertex in &model.parts()[0].mesh.data().vertices {
                 assert_eq!(vertex.normal, [0.0, 0.0, 1.0]);
             }
+        }
+
+        #[test]
+        fn loading_reports_progress_and_failure_without_panicking() {
+            let model = Model::load("/nonexistent/model.glb");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while model.load_state() == crate::LoadState::Loading {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            assert!(matches!(model.load_state(), crate::LoadState::Failed(_)));
+            assert!(model.parts().is_empty());
         }
 
         #[test]

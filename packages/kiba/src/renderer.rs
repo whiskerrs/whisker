@@ -697,7 +697,7 @@ impl Renderer {
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn log(message: &str) {
+pub fn log(message: &str) {
     #[link(name = "log")]
     unsafe extern "C" {
         fn __android_log_write(
@@ -713,12 +713,12 @@ pub(crate) fn log(message: &str) {
 }
 
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-pub(crate) fn log(message: &str) {
+pub fn log(message: &str) {
     eprintln!("kiba: {message}");
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn log(message: &str) {
+pub fn log(message: &str) {
     web_sys::console::log_1(&format!("kiba: {message}").into());
 }
 
