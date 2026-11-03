@@ -833,13 +833,11 @@ impl SceneRenderer {
                 .or_insert_with(|| GpuMesh::new(device, &batch.mesh));
         }
         let joint_offsets = self.upload_joints(device, queue, frame);
-        if let Some(volume) = &frame.probes {
-            if self.probes_key != volume.key() {
-                let data = volume.data().expect("extraction keeps only loaded volumes");
-                let view = probes::upload(device, queue, data);
-                self.probes_bindings = probes_binding(device, &self.probes_layout, &view);
-                self.probes_key = volume.key();
-            }
+        if let Some(volume) = frame.probes.as_ref().filter(|v| v.key() != self.probes_key) {
+            let data = volume.data().expect("extraction keeps only loaded volumes");
+            let view = probes::upload(device, queue, data);
+            self.probes_bindings = probes_binding(device, &self.probes_layout, &view);
+            self.probes_key = volume.key();
         }
         if self
             .targets

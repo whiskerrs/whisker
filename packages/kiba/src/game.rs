@@ -287,6 +287,9 @@ impl<C> GameSetup<C> {
 
     /// Names something the player does, and the keys that do it, for
     /// [`Input::action_down`] and its relatives. Binding a name again replaces its keys.
+    ///
+    /// Reading an action that was never bound panics in debug builds and reads as released in
+    /// release builds.
     pub fn bind_action(&mut self, action: &'static str, keys: &[Key]) {
         self.frame_input.bind(action, keys);
         self.fixed_input.bind(action, keys);
@@ -741,7 +744,9 @@ impl<C: 'static> Game<C> {
 
     /// Holds or releases an action from outside the keyboard, such as an on-screen button.
     ///
-    /// Does nothing after the game is removed.
+    /// Bind the action first with [`GameSetup::bind_action`], with no keys if a button is its only
+    /// source. Release it on touch cancel too, or it stays held. Does nothing after the game is
+    /// removed.
     pub fn set_action(self, action: &'static str, down: bool) {
         let Some(game) = find(self.id) else {
             return;

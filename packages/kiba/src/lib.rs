@@ -13,6 +13,9 @@
 //! | Sky light blocked by still models | `(ProbeVolume::load(asset!("scene.kiba")),)`, cooked with `kiba-cook` |
 //! | A file's animation | Add `Animator::new("walk")` next to its `Model` |
 //!
+//! `asset!` is not part of Kiba. It comes from the `whisker-asset` crate, as `whisker_asset::asset!`, and
+//! checks at compile time that the file exists in your crate's `assets/` directory.
+//!
 //! Your own structs are components too, and mutable game state belongs in them, because each
 //! callback owns what it captures. Query them from callbacks with `context.world.query_mut`.
 //!
@@ -44,6 +47,49 @@
 //! ```
 //!
 //! The camera looks along -Z, with +Y up and +X to its right.
+//!
+//! # Recipes
+//!
+//! A character that moves in fixed steps, with a camera that follows what is drawn. `spawn` returns
+//! the [`Entity`], which callbacks can capture because it is `Copy`:
+//!
+//! ```ignore
+//! let hero = setup.world.spawn((
+//!     Transform::default(),
+//!     Interpolated::default(),
+//!     Model::load(asset!("hero.glb")),
+//!     Animator::new("idle"),
+//! ));
+//! let camera = setup.world.spawn((Camera::default(), Transform::default()));
+//! setup.bind_action("forward", &[Key::W, Key::Up]);
+//! setup.bind_action("jump", &[Key::Space]);
+//! setup.on_fixed_update(move |context| {
+//!     let walking = context.input.action_down("forward");
+//!     let step = if walking { 2.0 * context.time.delta_seconds() } else { 0.0 };
+//!     let mut hero = context.world.query_one_mut::<(&mut Transform, &mut Animator)>(hero).unwrap();
+//!     hero.0.translation.z -= step;
+//!     let clip = if walking { "walk" } else { "idle" };
+//!     if hero.1.clip() != clip {
+//!         hero.1.play(clip, 0.2);
+//!     }
+//! });
+//! setup.on_update(move |context| {
+//!     let target = context.drawn_transform(hero).translation;
+//!     let eye = target + Vec3::new(0.0, 2.0, 5.0);
+//!     let view = Transform::looking_at(eye, target, Vec3::Y);
+//!     *context.world.query_one_mut::<&mut Transform>(camera).unwrap() = view;
+//! });
+//! ```
+//!
+//! An on-screen button that holds the action, with the touch events of Whisker's elements:
+//!
+//! ```ignore
+//! View(
+//!     on_touchstart: move |_| game.set_action("jump", true),
+//!     on_touchend: move |_| game.set_action("jump", false),
+//!     on_touchcancel: move |_| game.set_action("jump", false),
+//! ) { Text(value: "Jump") }
+//! ```
 
 mod animation;
 mod controller;

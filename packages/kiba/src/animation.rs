@@ -187,6 +187,9 @@ impl Animator {
     }
 
     /// Switches to `clip` from its start, fading from the current pose over `fade_seconds`.
+    ///
+    /// Naming the clip already playing restarts it, so compare with [`Animator::clip`] first when
+    /// calling this every frame.
     pub fn play(&mut self, clip: impl Into<String>, fade_seconds: f32) {
         self.previous = (fade_seconds > 0.0).then(|| PreviousClip {
             clip: std::mem::take(&mut self.clip),

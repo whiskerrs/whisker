@@ -345,6 +345,33 @@ follow an interpolated entity without jitter, and the missing import. Callbacks 
 drew no complaints. Shared state between callbacks was a trap found while writing the example: a
 captured `Copy` value silently forks, so the guide now directs state into components.
 
+### P2
+
+**Built:** two-cascade sun shadows, `Sky` with GPU-calculated image-based lighting, skinning and blended
+animation clips through `Animator`, input actions with on-screen sources, and `kiba-cook`, which traces
+rays through still models into a `ProbeVolume` of sky visibility.
+
+Light cooking is sky visibility only, not baked bounce light or color. Probes store what can see the sky,
+so a sky can change without a second cook, and one bounce or per-texel lightmaps are not implemented.
+Only one volume applies at a time, until cells bring their own in P3.
+
+**Measured** the same way as P1: 10,000 moving cubes that all cast shadows, under a `Sky` (240,660
+triangles, three draw calls because shadow passes now count) hold 60 fps with about 4 ms of main-thread
+time, and about 10 ms under a 6x CPU throttle. Throttling does not slow the GPU, so the cost of shadow
+passes, two cube lookups, and a 3D texture lookup per fragment on a phone is unmeasured. Skinning was
+checked with Khronos's CesiumMan, one character, and not measured at scale.
+
+**The exit criterion is not met by this stand-in.** Whether a static outdoor scene looks photorealistic
+needs authored art and a judgment on the reference device. The renderer has the features it needs, and
+this judgment is deferred to the project owner. Native Hosts still draw only the placeholder.
+
+**API review:** an agent given only the docs wrote a game with a walking character, a follow camera,
+on-screen jump, and probes, using 15 Kiba concepts and `kiba::prelude::*`. Every Kiba call compiled the
+first time. All four compile failures came from `asset!`, whose crate and `assets/` rule were undocumented.
+It also found a trap: an action pressed only through `Game::set_action` must still be bound, or reading it
+panics in debug builds. Fixed as a result: documented `asset!`, the binding rule, and clip restarts, and
+added crate-level recipes for a character with a follow camera and for an on-screen button.
+
 ## Spikes to run first
 
 Each result can change the decisions above. They run at the start of P1.
