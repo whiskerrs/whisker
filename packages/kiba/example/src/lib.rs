@@ -185,6 +185,66 @@ pub fn app() -> Element {
             },
             ParticleEmitter::default(),
         ));
+
+        let lamp = Vec3::new(-1.6, -0.3, 0.6);
+        setup.world.spawn((
+            Transform {
+                scale: Vec3::splat(0.4),
+                ..Transform::at(lamp)
+            },
+            Mesh::sphere(0.22),
+            Material {
+                emissive: Vec3::new(6.0, 3.0, 1.2),
+                ..Material::default()
+            },
+        ));
+        setup.world.spawn((
+            Transform::at(lamp),
+            PointLight {
+                color: Vec3::new(1.0, 0.5, 0.2),
+                intensity: 1.5,
+                range: 4.0,
+            },
+        ));
+        setup.world.spawn((
+            Transform {
+                translation: Vec3::new(0.0, -0.35, 0.9),
+                rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                ..Transform::default()
+            },
+            Mesh::plane(1.0),
+            Material {
+                base_color: Vec3::new(0.6, 0.85, 1.0),
+                roughness: 0.05,
+                opacity: 0.2,
+                alpha_mode: AlphaMode::Blend,
+                double_sided: true,
+                ..Material::default()
+            },
+        ));
+        let leaf_side = 64;
+        let leaf = (0..leaf_side * leaf_side)
+            .flat_map(|i: u32| {
+                let at = Vec2::new((i % leaf_side) as f32, (i / leaf_side) as f32) / leaf_side as f32;
+                let inside = (at - Vec2::splat(0.5)).length() < 0.45
+                    && ((at.x * 40.0).sin() + (at.y * 40.0).sin()) > -1.2;
+                [70, 140, 40, if inside { 255 } else { 0 }]
+            })
+            .collect();
+        setup.world.spawn((
+            Transform {
+                translation: Vec3::new(1.5, 0.6, -0.8),
+                ..Transform::default()
+            },
+            Mesh::plane(1.2),
+            Material {
+                roughness: 0.7,
+                alpha_mode: AlphaMode::Mask { cutoff: 0.5 },
+                double_sided: true,
+                base_color_texture: Some(Texture::from_rgba8(leaf_side, leaf_side, leaf)),
+                ..Material::default()
+            },
+        ));
         setup.world.spawn((
             Orbit { angle: 0.0 },
             Transform::default(),
