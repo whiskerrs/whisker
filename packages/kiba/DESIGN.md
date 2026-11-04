@@ -741,6 +741,36 @@ Blend, what a partial `Pose` keeps, and the units of `Pointer::delta`. `Transfor
 public and `EulerRot` is re-exported. Left open: a pointer does not say whether it is a mouse or a
 touch, and a game cannot release the pointer lock.
 
+**Touch, and how the HUD talks to the game:** the original's phone pad (a stick on the left 45%, a
+camera drag elsewhere, the skill discs as buttons, a sound toggle, a turn-sideways prompt) cost 280
+lines in `hud/touch.rs` and 190 changed lines elsewhere. Checked at 844×390 with synthetic touch
+pointers: stick and camera drag at once, a button held while its finger slides off and released
+where it lifts, switching back on a key, and the sound toggle's round trip.
+
+- With the grain: the game writes signals in `on_update` and the HUD reads them; buttons reach the
+  game through `Game::set_action`, whose edges survive a tap shorter than a frame; Whisker's
+  `TouchEvent` carries `pointer_id` and `pointer_type`, so `on_capture_touchstart` at the app's
+  root tells a finger from a mouse without asking Kiba; and an interactive HUD node is the DOM's
+  hit target too, so the canvas never sees the same finger.
+- Against it, each worked around in the game:
+  - The pad needs the `Game` to call `set_action`, and the game's setup needs the pad, so the pad
+    takes the `Game` after both exist.
+  - Actions are digital. The stick's tilt and the camera drag go through signals the game reads
+    untracked, and the game resets the drag it took.
+  - Whisker has no pointer capture for an app: a finger's later events go to whatever lies under it.
+    Every finger is followed at the HUD's root by its id, and a button only claims a finger as it
+    lands.
+  - Whisker's `pointer_events: None` removes a whole subtree from hit testing, unlike CSS, so the
+    HUD's root switches between `Auto` and `None` with the mode rather than enabling the buttons.
+  - Whisker's Web host writes `visibility: visible` on every node, so a hidden parent does not hide
+    its children; the crosshair hid that way and showed in melee forms until it used `display`.
+  - A mouse press is a `pointerdown`, which has no `on_` handler, so only `on_click` notices the
+    mouse coming back.
+  - Kiba asked for a pointer lock on every finger; it asks only for a mouse now.
+- Unverified: a real phone. Whisker's Web host sets no `touch-action` on its nodes, so a browser
+  may claim a drag that starts on the HUD and cancel it. Safe-area insets and the fullscreen button
+  are left out. A button's pressed look comes back through the game one frame late.
+
 ## Spikes to run first
 
 Each result can change the decisions above.
