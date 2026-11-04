@@ -3071,9 +3071,13 @@ name = "kiba-example"
 version = "0.1.0"
 dependencies = [
  "kiba",
+ "serde",
+ "serde_json",
+ "web-time",
  "whisker",
  "whisker-asset",
  "whisker-cng",
+ "whisker-svg",
 ]
 
 [[package]]
