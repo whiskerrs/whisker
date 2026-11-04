@@ -25,6 +25,8 @@ soak = []
 showcase = []
 # Replaces the scene with the water slime of the slime game, drawn with material shaders.
 slime = []
+# Replaces the scene with the whole slime game, from assets converted by slime/cook.sh.
+slime-game = []
 
 [dependencies]
 whisker-cng = { path = "../../../crates/whisker-cng", version = "0.15.0", default-features = false }

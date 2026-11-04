@@ -2,3 +2,7 @@
 /showcase/models/
 /assets/showcase/
 /showcase/bounds.rs
+# Converted from the slime checkout by slime/cook.sh.
+/slime/build/
+/slime/convert/target/
+/assets/slime/

@@ -7,6 +7,8 @@ use whisker::runtime::view::Element;
 mod showcase;
 #[cfg(feature = "slime")]
 mod slime;
+#[cfg(feature = "slime-game")]
+mod slime_game;
 
 #[derive(Clone, Copy)]
 enum Command {
@@ -107,11 +109,13 @@ pub fn app() -> Element {
     return showcase::app();
     #[cfg(feature = "slime")]
     return slime::app();
-    #[cfg(not(any(feature = "showcase", feature = "slime")))]
+    #[cfg(feature = "slime-game")]
+    return slime_game::app();
+    #[cfg(not(any(feature = "showcase", feature = "slime", feature = "slime-game")))]
     scene()
 }
 
-#[cfg_attr(any(feature = "showcase", feature = "slime"), allow(dead_code))]
+#[cfg_attr(any(feature = "showcase", feature = "slime", feature = "slime-game"), allow(dead_code))]
 fn scene() -> Element {
     let turns = signal(0);
 

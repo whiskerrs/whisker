@@ -307,8 +307,9 @@ Sasebo, onto Kiba, using the game's own assets. It is the first full game built 
 claim that Kiba is general-purpose.
 
 - **Kiba learns no slime formats.** slime's runtime files (`.owa` props, `.owk` characters, height tiles,
-  and city cells) are read by a converter that belongs to the game, at `packages/kiba/slime/`. The
-  converter writes glTF and inputs for `kiba-cook`. Converted assets stay out of git and are read from the
+  and city cells) are read by a converter that belongs to the game, `example/slime/convert`. The
+  converter writes glTF and inputs for `kiba-cook`. The game is the example's `slime-game` feature,
+  because the repository's workspace lists its members by hand. Converted assets stay out of git and are read from the
   slime checkout.
 - **Look, not technique.** slime renders with deferred shading, TAA, GTAO, SSR, and volumetrics. The
   port matches the look with Kiba's forward+ tiers and material shaders, and it does not port those
