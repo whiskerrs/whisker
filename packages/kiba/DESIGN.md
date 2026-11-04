@@ -580,7 +580,10 @@ Each result can change the decisions above.
    Native Hosts do not run a `Game` yet.
 3. **Tab memory limit** [deferred]: Increase allocation on the reference device and measure where
    context loss and tab discard occur. A desktop's limit says nothing about a phone's, so this waits
-   for the device. The P3 soak shows the budgets keep Kiba's own use near 0.5 GB.
+   for the device. The P3 soak shows the budgets keep Kiba's own use near 0.5 GB. Measured on the Web
+   on the development Mac (Apple Metal 3, 32 GB): wasm memory grew to the 4 GB wasm32 ceiling, and 24 GB
+   of WebGPU buffers allocated without an out-of-memory error or a lost device, so the desktop shows no
+   limit below either budget and gives the phone nothing to calibrate against.
 4. **Wasm size** [verified on Web]: The example is about 0.9 MB gzipped without `gltf` content and
    1.12 MB with it. `hecs` adds 18 KB, and Rapier about 222 KB. After P4 the example is 1.22 MB with `gltf`, well within
    the 20 MB download budget.
