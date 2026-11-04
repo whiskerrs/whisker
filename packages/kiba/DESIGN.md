@@ -687,6 +687,60 @@ Left as is, each found while writing the slime:
 - Additive light needs `emissive / opacity`.
 - `Viewport`'s props are documented only in the crate guide.
 
+### P8
+
+#### M1: the forest meadow and its boss
+
+**Built:** the example's `slime-game` feature plays the forest meadow and the fight with Elmgard from
+slime's own assets. `slime/cook.sh` runs the converter and `kiba-cook`; its output is git-ignored, so the
+feature builds only after it has run. The port has four layers:
+
+- **Rules and logic** are slime's `gameplay` crate and walk-mode frame logic, copied with import paths
+  changed: about 10,200 lines with their tests. The logic writes everything slime handed its renderer
+  and page into one `Output` each frame.
+- **Drawing** turns `Output` into entities: about 1,500 lines of Rust and 860 of WGSL.
+  - The hero and boss are posed joint by joint through `Pose`, toon shaded with an inverted-hull outline,
+    and flash and dissolve through `Restyle` parameters.
+  - The slime body reuses the P7 shaders and gains its bubbles.
+  - Every effect is ported from slime's effect shaders, one entity per effect: telegraphs, ripples and the
+    magic circle, slash and wind arcs, drops, mist, glints, leaves, rock shards, the water sword and its
+    trail, and the water figure.
+- **The HUD** is rebuilt in Whisker from slime's page, about 1,800 lines, fed by the game's HUD JSON. Its
+  sound cues play through `Sound` at the original's volumes.
+- **Lighting** takes the original's 15:30 sun, its stylized sky, and a lower exposure.
+
+Building it changed the engine in nine commits, each for a gap another game would hit:
+
+- `Pose` and the Model and Animator methods that sample and read it, with rig node names in packs.
+- `Restyle`, one shader over every part of a model, and `Pixel::front_facing` for outlines.
+- Mouse buttons and function keys as `Key`s.
+- `GameSetup::lock_pointer`, `Input::pointer_locked`, and locked movement through `Pointer::delta`,
+  found inside the shadow root Whisker mounts the canvas in.
+- `Context::pixel_ratio`, so UI over the viewport can lay out in layout pixels.
+- `Material::casts_shadow`, for bubbles the sun shines through.
+
+**Not matched,** for lack of an engine feature:
+
+- Audio has no playback rate, effects bus, master gain, or synthesis. The original's pitch variation and
+  reverb are gone, and its 11 synthesized cues, its wind, and its music are silent.
+- Effects draw one entity each, with no instancing, and pass per-vertex data only through color and uv.
+- Post effects are Whisker overlays: the hurt edge and the ultimate's tint are gradients, without
+  desaturation.
+- The HUD's ring and tick gradients do not animate, and off-center radial gradients are approximated.
+
+**Measured:** not yet. The Browser pane used here draws frames only while the session's window is in
+view, so frame times are pending a run in a visible browser with F3, which logs them.
+
+**Unverified:** pointer lock. The Browser pane refuses `requestPointerLock` for any page, the original
+included, so mouse look is checked only by the test of `PointerMotion`.
+
+**API review:** a fresh agent, reading only the docs, wrote a toon character with an outline, a
+glowing effect, and mouse look in two compile attempts across 22 concepts. Its guesses became docs:
+that `vertex` runs before skinning, how to drop a pixel and shade unlit, how to add light under
+Blend, what a partial `Pose` keeps, and the units of `Pointer::delta`. `Transform::matrix` became
+public and `EulerRot` is re-exported. Left open: a pointer does not say whether it is a mouse or a
+touch, and a game cannot release the pointer lock.
+
 ## Spikes to run first
 
 Each result can change the decisions above.
