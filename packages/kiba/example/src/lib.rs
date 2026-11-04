@@ -3,6 +3,9 @@ use whisker::css::PositionKind;
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
+#[cfg(feature = "showcase")]
+mod showcase;
+
 #[derive(Clone, Copy)]
 enum Command {
     Boost,
@@ -98,6 +101,14 @@ fn soak(setup: &mut GameSetup<Command>) {
 
 #[whisker::main]
 pub fn app() -> Element {
+    #[cfg(feature = "showcase")]
+    return showcase::app();
+    #[cfg(not(feature = "showcase"))]
+    scene()
+}
+
+#[cfg_attr(feature = "showcase", allow(dead_code))]
+fn scene() -> Element {
     let turns = signal(0);
 
     let game = Game::<Command>::new(move |setup| {

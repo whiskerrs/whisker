@@ -21,6 +21,8 @@ whisker-config = ["whisker-cng/generate"]
 stress = []
 # Flies across a cooked world served at /world, to measure streaming.
 soak = []
+# Replaces the scene with the Meshy-built world in showcase/.
+showcase = []
 
 [dependencies]
 whisker-cng = { path = "../../../crates/whisker-cng", version = "0.15.0", default-features = false }
