@@ -221,9 +221,11 @@ fn listen_for_input(
         }),
         // Escape releases the lock without a key event, so held buttons are let go here.
         Listener::new(document_target, "pointerlockchange", move |_| {
-            if !locked() {
+            let now = locked();
+            if !now {
                 unlock_send(InputEvent::FocusLost);
             }
+            unlock_send(InputEvent::PointerLock(now));
         }),
         pointer("pointerup", |id, position| InputEvent::PointerUp {
             id,

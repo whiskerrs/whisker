@@ -68,6 +68,7 @@ pub enum InputEvent {
     },
     Wheel(f32),
     FocusLost,
+    PointerLock(bool),
     Action {
         name: &'static str,
         down: bool,
@@ -109,6 +110,7 @@ pub struct Input {
     actions_down: HashSet<&'static str>,
     actions_just_pressed: HashSet<&'static str>,
     actions_just_released: HashSet<&'static str>,
+    pointer_locked: bool,
 }
 
 impl Input {
@@ -175,6 +177,12 @@ impl Input {
         now - before
     }
 
+    /// Whether the pointer is locked to the viewport, as [`GameSetup::lock_pointer`](crate::GameSetup::lock_pointer)
+    /// asks, so that the mouse's movement is mouse look rather than hovering.
+    pub fn pointer_locked(&self) -> bool {
+        self.pointer_locked
+    }
+
     /// Wheel movement, positive when scrolling away from the user.
     pub fn wheel(&self) -> f32 {
         self.wheel
@@ -234,6 +242,7 @@ impl Input {
                     pointer.pressed = false;
                 }
             }
+            InputEvent::PointerLock(locked) => self.pointer_locked = locked,
             InputEvent::Action { name, down } => {
                 if down {
                     self.held_actions.insert(name);
@@ -327,11 +336,13 @@ mod tests {
         let position = Vec2::new(10.0, 20.0);
         input.apply(InputEvent::PointerMove { id: 1, position });
         input.end_pass();
+        input.apply(InputEvent::PointerLock(true));
         input.apply(InputEvent::PointerMotion {
             id: 1,
             delta: Vec2::new(3.0, -4.0),
         });
 
+        assert!(input.pointer_locked());
         let pointer = input.pointers()[0];
         assert_eq!(
             (pointer.position, pointer.delta),
