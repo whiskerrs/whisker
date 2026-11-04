@@ -162,6 +162,7 @@ impl Model {
     }
 
     /// Where `node` is within the model in `pose`, to attach something to a hand or read where a head is.
+    /// Multiply by the entity's [`Transform::matrix`](crate::Transform::matrix) for the world.
     pub fn node_matrix(&self, pose: &Pose, node: usize) -> Option<Mat4> {
         self.rig()?.node_matrices(&pose.nodes).get(node).copied()
     }

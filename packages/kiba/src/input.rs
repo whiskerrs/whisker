@@ -84,7 +84,7 @@ pub struct Pointer {
     pub id: i32,
     /// Physical pixels from the viewport's top left.
     pub position: Vec2,
-    /// Movement since the previous callback.
+    /// Movement since the previous callback, in physical pixels.
     pub delta: Vec2,
     /// Whether the button or finger is down.
     pub pressed: bool,

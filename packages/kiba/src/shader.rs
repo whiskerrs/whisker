@@ -8,8 +8,8 @@ use std::sync::Arc;
 /// any material, so shadows, lights, sky, fog, and exposure still apply:
 ///
 /// ```wgsl
-/// // In the entity's space, before its Transform. Kiba keeps the normal you return, so a vertex
-/// // that bends the surface returns its new normal too.
+/// // In the entity's space, before its Transform and, for a skinned mesh, before its joints move it.
+/// // Kiba keeps the normal you return, so a vertex that bends the surface returns its new normal too.
 /// struct Geometry { position: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, color: vec3<f32> }
 /// fn vertex(geometry: Geometry) -> Geometry
 ///
@@ -58,6 +58,11 @@ use std::sync::Arc;
 /// A refracting surface that must fade at its edge instead keeps an opacity of 1 and blends toward
 /// `scene_color(pixel.screen_uv)` where it is clear. Fog applies to `emissive` as to all light, so a
 /// distant surface fogs the scene color it passes through a second time.
+///
+/// WGSL's `discard` is not available, so a surface drops a pixel with an opacity of 0 under
+/// [`AlphaMode::Mask`](crate::AlphaMode::Mask); an inverted-hull outline is a double-sided mask that does
+/// so where `front_facing` is true. To shade a surface by its own rules instead of Kiba's lighting, set a
+/// black `base_color` and a roughness of 1 and write the color into `emissive`.
 ///
 /// Blended surfaces do not see one another this way. Kiba's own functions share the module, so a name
 /// that clashes with one fails to compile. A shader that fails to compile is logged with the compiler's

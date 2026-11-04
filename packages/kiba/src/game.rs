@@ -65,7 +65,8 @@ impl Transform {
         }
     }
 
-    pub(crate) fn matrix(&self) -> Mat4 {
+    /// The matrix that places a point of the entity's space in the world.
+    pub fn matrix(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
 
@@ -327,6 +328,9 @@ impl<C> GameSetup<C> {
 
     /// Hides the mouse and keeps it on the viewport from each click until Escape, for mouse look. The
     /// mouse's [`Pointer::delta`](crate::Pointer::delta) keeps reporting movement while its position stays put.
+    ///
+    /// The click that locks the pointer also arrives as [`Key::MouseLeft`], before
+    /// [`Input::pointer_locked`](crate::Input::pointer_locked) turns true.
     pub fn lock_pointer(&mut self) {
         self.pointer_lock = true;
     }

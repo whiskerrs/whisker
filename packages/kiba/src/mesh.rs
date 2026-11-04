@@ -93,6 +93,10 @@ pub enum AlphaMode {
     /// Blended over what is behind, for glass and water. Reflections stay at full strength, it casts
     /// no shadow, and surfaces are sorted back to front by their entity's position, so one that
     /// crosses another can draw in the wrong order.
+    ///
+    /// It is not additive: `emissive` is scaled by opacity, so an opacity of 0 hides a glow too. A
+    /// [`Shader`](crate::Shader) adds light by keeping an opacity of 1, a black `base_color`, and a
+    /// `metallic` of 1, and adding its glow to `scene_color(pixel.screen_uv)`.
     Blend,
 }
 

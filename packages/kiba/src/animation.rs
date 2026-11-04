@@ -13,7 +13,8 @@ pub(crate) const MAX_JOINTS: usize = 128;
 /// Where each node of a [`Model`]'s rig sits relative to its parent, for a game that builds poses itself.
 ///
 /// Fill one from [`Model::rest_pose`] and [`Model::sample`], blend with [`Transform::lerp`], change any
-/// node, and add it to the model's entity, which then draws in it instead of its [`Animator`]'s.
+/// node, and add it to the model's entity, which then draws in it instead of its [`Animator`]'s. An
+/// `Animator` beside it keeps advancing, and nodes past the end of `nodes` keep their rest pose.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Pose {
     /// One per node, indexed as [`Model::node`] names them.
