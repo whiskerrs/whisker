@@ -110,7 +110,14 @@ fn listen_for_input(
     let document_target: web_sys::EventTarget = document.clone().into();
     let locked = {
         let canvas: web_sys::Element = canvas.clone().into();
-        move || document.pointer_lock_element().as_ref() == Some(&canvas)
+        // Inside a shadow root the document reports the shadow host, so ask the canvas's own root.
+        move || {
+            let locked = match canvas.get_root_node().dyn_into::<web_sys::ShadowRoot>() {
+                Ok(root) => root.pointer_lock_element(),
+                Err(_) => document.pointer_lock_element(),
+            };
+            locked.as_ref() == Some(&canvas)
+        }
     };
 
     // A second mouse button arrives as a pointermove whose `buttons` changed, not as a pointerdown.
