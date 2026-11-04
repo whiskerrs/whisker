@@ -44,9 +44,29 @@ fn model(name: &str) -> Model {
     }
 }
 
+/// A footprint the walker cannot enter: a box on the ground turned by `yaw`.
+struct Solid {
+    center: Vec2,
+    half: Vec2,
+    yaw: f32,
+}
+
+/// How much of a model's footprint blocks walking, as a share of its bounds.
+fn solidity(name: &str) -> f32 {
+    match name {
+        "grass" | "fern" | "river_rocks" | "pipe_bridge" | "mountain" => 0.0,
+        "oak" => 0.15,
+        "spruce" => 0.12,
+        "utility_pole" => 0.2,
+        "boulder" => 0.8,
+        _ => 0.9,
+    }
+}
+
 /// Places models standing on the ground, scaled to a height, sharing one load per name.
 struct Placer {
     loaded: Vec<(&'static str, Model)>,
+    solids: Vec<Solid>,
 }
 
 impl Placer {
@@ -59,6 +79,14 @@ impl Placer {
         let center = Vec3::new(low[0] + high[0], 0.0, low[2] + high[2]) / 2.0 * scale;
         let rotation = Quat::from_rotation_y(yaw);
         let lift = Vec3::Y * -low[1] * scale;
+        let share = solidity(name);
+        if share > 0.0 {
+            self.solids.push(Solid {
+                center: Vec2::new(at.x, at.z),
+                half: Vec2::new(high[0] - low[0], high[2] - low[2]) / 2.0 * scale * share,
+                yaw,
+            });
+        }
         let model = match self.loaded.iter().find(|(n, _)| *n == name) {
             Some((_, model)) => model.clone(),
             None => {
@@ -521,7 +549,7 @@ struct Place {
 fn night() -> Place {
     let direction = Vec3::new(-0.3, -0.5, 0.8);
     Place {
-        eye: Vec3::new(5.0, 2.0, 12.0),
+        eye: Vec3::new(5.0, EYE, 12.0),
         look: Vec3::new(11.0, 3.0, -30.0),
         sun: Sun {
             direction,
@@ -544,7 +572,7 @@ fn day() -> Place {
     let direction = Vec3::new(0.35, -0.75, 0.55);
     let sky = Sky::from_sun(direction);
     Place {
-        eye: Vec3::new(3.0, 1.8, FOREST_Z + 26.0),
+        eye: Vec3::new(3.0, EYE, FOREST_Z + 26.0),
         look: Vec3::new(14.0, 3.0, FOREST_Z - 20.0),
         sun: Sun {
             direction,
@@ -574,6 +602,78 @@ fn go(world: &mut World, place: Place) {
     }
 }
 
+const EYE: f32 = 1.7;
+
+/// Walks the camera on the ground: W, A, S, D to move, Shift to run, Space to jump, drag to look.
+#[derive(Default)]
+struct Walker {
+    rising: f32,
+}
+
+fn floor(x: f32) -> f32 {
+    if (WEST_BANK..EAST_BANK).contains(&x) {
+        -1.1
+    } else {
+        0.0
+    }
+}
+
+fn walk(context: &mut Context<'_>, solids: &[Solid]) {
+    const RADIUS: f32 = 0.35;
+    let input = context.input;
+    let delta = context.time.delta_seconds().min(0.1);
+    for (_, (transform, walker)) in context.world.query_mut::<(&mut Transform, &mut Walker)>() {
+        let drag = input.drag();
+        let facing = transform.rotation * Vec3::NEG_Z;
+        let yaw = (-facing.x).atan2(-facing.z) - drag.x * 0.004;
+        let pitch = (facing.y.clamp(-1.0, 1.0).asin() - drag.y * 0.004).clamp(-1.5, 1.5);
+        transform.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+
+        let axis = |positive, negative| {
+            f32::from(u8::from(input.key_down(positive)))
+                - f32::from(u8::from(input.key_down(negative)))
+        };
+        let heading = Vec2::new(axis(Key::D, Key::A), axis(Key::S, Key::W)).normalize_or_zero();
+        let running = input.key_down(Key::ShiftLeft) || input.key_down(Key::ShiftRight);
+        let speed = if running { 9.0 } else { 4.0 };
+        let step = Vec2::from_angle(-yaw).rotate(heading) * speed * delta;
+        let mut at = Vec2::new(transform.translation.x, transform.translation.z) + step;
+        for solid in solids {
+            let turn = Vec2::from_angle(solid.yaw);
+            let local = turn.rotate(at - solid.center);
+            let closest = local.clamp(-solid.half, solid.half);
+            let out = local - closest;
+            let push = if out.length() >= RADIUS {
+                continue;
+            } else if out.length() > 1e-4 {
+                out.normalize() * (RADIUS - out.length())
+            } else {
+                let room = solid.half - local.abs();
+                if room.x < room.y {
+                    Vec2::new(local.x.signum() * (room.x + RADIUS), 0.0)
+                } else {
+                    Vec2::new(0.0, local.y.signum() * (room.y + RADIUS))
+                }
+            };
+            at += Vec2::from_angle(-solid.yaw).rotate(push);
+        }
+        at = at.clamp(Vec2::splat(-650.0), Vec2::splat(650.0));
+
+        let ground = floor(at.x);
+        let mut feet = transform.translation.y - EYE;
+        if feet <= ground + 0.01 && input.key_just_pressed(Key::Space) {
+            walker.rising = 6.0;
+        }
+        walker.rising -= 20.0 * delta;
+        feet += walker.rising * delta;
+        if feet <= ground {
+            feet = ground;
+            walker.rising = 0.0;
+        }
+        transform.translation = Vec3::new(at.x, feet + EYE, at.y);
+    }
+}
+
 pub fn app() -> Element {
     let game = Game::<Command>::new(|setup| {
         let world = &mut setup.world;
@@ -584,15 +684,19 @@ pub fn app() -> Element {
                 ..Camera::default()
             },
             Transform::looking_at(start.eye, start.look, Vec3::Y),
-            FlyCamera {
-                speed: 6.0,
-                ..FlyCamera::default()
-            },
+            Walker::default(),
         ));
         world.spawn((start.sun,));
         world.spawn((start.sky,));
         world.spawn((start.fog,));
-        let mut placer = Placer { loaded: Vec::new() };
+        let mut placer = Placer {
+            loaded: Vec::new(),
+            solids: vec![Solid {
+                center: Vec2::new(RIVER_X - 3.4, -20.0),
+                half: Vec2::new(0.1, 30.0),
+                yaw: 0.0,
+            }],
+        };
         factory(world, &mut placer);
         forest(world, &mut placer);
         river(world);
@@ -603,6 +707,8 @@ pub fn app() -> Element {
                 ReflectionProbe::new(Vec3::new(44.0, 16.0, 70.0)),
             ));
         }
+        let solids = std::mem::take(&mut placer.solids);
+        setup.on_update(move |context| walk(context, &solids));
         let mut captured = false;
         setup.on_update(move |context| {
             if captured {
@@ -649,7 +755,7 @@ pub fn app() -> Element {
                 {button("昼の森", Command::Forest)}
             }
             Text(
-                value: "WASD / QE で移動、ドラッグで視点",
+                value: "WASD で歩く、Shift で走る、Space でジャンプ、ドラッグで視点",
                 style: css!(position: PositionKind::Absolute, left: px(16), bottom: px(16), color: Color::hex(0xffffff)),
             )
         }
