@@ -63,6 +63,9 @@ pub struct Material {
     /// 0 to 1, the share of sunlight a thin surface lets through to its far side, for leaves, paper,
     /// and cloth.
     pub transmission: f32,
+    /// Whether the surface throws a shadow, for things the sun should light through, such as the
+    /// bubbles inside a clear body.
+    pub casts_shadow: bool,
     /// sRGB color, multiplied by `base_color`, with opacity in alpha.
     pub base_color_texture: Option<Texture>,
     /// Roughness in green and metallic in blue, multiplied by their factors.
@@ -175,6 +178,7 @@ impl Default for Material {
             alpha_mode: AlphaMode::Opaque,
             double_sided: false,
             transmission: 0.0,
+            casts_shadow: true,
             base_color_texture: None,
             metallic_roughness_texture: None,
             normal_texture: None,

@@ -892,6 +892,7 @@ pub(crate) fn extract_frame(
         |mesh, transform, material, palette| {
             // Only a masked caster needs its textures, so the others share batches across materials.
             let caster = match material.alpha_mode {
+                _ if !material.casts_shadow => None,
                 AlphaMode::Blend => None,
                 AlphaMode::Mask { .. } => Some(material.clone()),
                 AlphaMode::Opaque => Some(Material {
@@ -1253,6 +1254,26 @@ mod tests {
             // Nearby surfaces get much finer texels than distant ones.
             assert!(shadows.cascades[0].texel * 4.0 < shadows.cascades[cascades - 1].texel);
         }
+    }
+
+    #[test]
+    fn a_surface_that_casts_no_shadow_is_drawn_but_not_into_shadow_maps() {
+        let mut world = world_with_camera_at(Vec3::Z * 10.0);
+        world.spawn((Sun::default(),));
+        world.spawn((
+            Transform::default(),
+            Mesh::cube(1.0),
+            Material {
+                casts_shadow: false,
+                ..Material::default()
+            },
+        ));
+
+        let frame = extract_frame(&world, 100, 100, 1.0, &Quality::default());
+
+        assert_eq!(frame.batches.len(), 1);
+        let shadows = frame.shadows.expect("the sun casts");
+        assert!(shadows.casters.iter().all(Vec::is_empty));
     }
 
     #[test]

@@ -500,6 +500,7 @@ mod import {
                 },
                 double_sided: material.double_sided(),
                 transmission: 0.0,
+                casts_shadow: true,
                 base_color_texture: base.map(|t| self.read_image(&t.texture())).transpose()?,
                 metallic_roughness_texture: metal_rough
                     .map(|t| self.read_image(&t.texture()))

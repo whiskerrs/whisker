@@ -2283,6 +2283,7 @@ mod tests {
         alpha_mode: crate::AlphaMode::Opaque,
         double_sided: false,
         transmission: 0.0,
+        casts_shadow: true,
         base_color_texture: None,
         metallic_roughness_texture: None,
         normal_texture: None,
