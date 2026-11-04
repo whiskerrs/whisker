@@ -74,7 +74,7 @@ pub struct Material {
     /// WGSL that moves the vertices and colors the surface in place of Kiba's own.
     pub shader: Option<Shader>,
     /// Values `shader` reads with `parameter(index)`. Entities whose parameters differ draw
-    /// separately, so give many entities the same values where you can.
+    /// separately, so give many entities the same values where you can. Changes show the next frame.
     pub parameters: [Vec4; 8],
 }
 
@@ -280,7 +280,8 @@ impl Mesh {
         Self::new(vertices, indices)
     }
 
-    /// Creates a white square with sides of `size` in the XZ plane, facing +Y, with one image across it.
+    /// Creates a white square with sides of `size` in the XZ plane, centered on the origin and facing
+    /// +Y, with one image across it from uv (0, 0) at its -X, -Z corner.
     pub fn plane(size: f32) -> Self {
         let half = size / 2.0;
         let corner = |x: f32, z: f32, uv| Vertex {

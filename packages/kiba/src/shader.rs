@@ -8,7 +8,8 @@ use std::sync::Arc;
 /// any material, so shadows, lights, sky, fog, and exposure still apply:
 ///
 /// ```wgsl
-/// // In the entity's space, before its Transform. Positions and normals both may change.
+/// // In the entity's space, before its Transform. Kiba keeps the normal you return, so a vertex
+/// // that bends the surface returns its new normal too.
 /// struct Geometry { position: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, color: vec3<f32> }
 /// fn vertex(geometry: Geometry) -> Geometry
 ///
@@ -18,7 +19,7 @@ use std::sync::Arc;
 ///     opacity: f32,           // used as the material's AlphaMode says
 ///     metallic: f32,
 ///     roughness: f32,
-///     emissive: vec3<f32>,    // added after lighting, in the scale of Sun::color
+///     emissive: vec3<f32>,    // added after lighting, in the scale of Sun::color, times opacity under Blend
 ///     normal: vec3<f32>,      // world space, unit length, toward the viewer
 /// }
 /// struct Pixel {
@@ -35,7 +36,7 @@ use std::sync::Arc;
 ///
 /// | Function | Returns |
 /// |---|---|
-/// | `time() -> f32` | Seconds since the game started |
+/// | `time() -> f32` | Seconds since the game started, the clock of [`Time::elapsed_seconds`](crate::Time::elapsed_seconds) |
 /// | `parameter(index: u32) -> vec4<f32>` | [`Material::parameters`](crate::Material::parameters)`[index]`, for `index` below 8 |
 /// | `to_sun() -> vec3<f32>`, `sun_color() -> vec3<f32>` | The [`Sun`](crate::Sun)'s unit direction toward it and its color |
 /// | `sky_color(direction: vec3<f32>) -> vec3<f32>` | The light arriving from `direction`, from the [`Sky`](crate::Sky) or the sun's ambient |
@@ -53,6 +54,9 @@ use std::sync::Arc;
 ///
 /// A blended surface's reflections are not scaled by its opacity, so one whose clear parts must vanish,
 /// such as a ripple or a decal, sets a black `base_color` with a `metallic` of 1, which reflects nothing.
+/// A refracting surface that must fade at its edge instead keeps an opacity of 1 and blends toward
+/// `scene_color(pixel.screen_uv)` where it is clear. Fog applies to `emissive` as to all light, so a
+/// distant surface fogs the scene color it passes through a second time.
 ///
 /// Blended surfaces do not see one another this way. Kiba's own functions share the module, so a name
 /// that clashes with one fails to compile. A shader that fails to compile is logged with the compiler's
@@ -105,7 +109,7 @@ impl Shader {
         }))
     }
 
-    /// Widens the sphere that culls entities by `scale`, for a `vertex` that moves past the mesh's
+    /// Widens the sphere around the mesh that culls entities by `scale`, for a `vertex` that moves past the mesh's
     /// bounds; an entity is otherwise hidden while only its moved part is in view.
     pub fn bounds_scale(self, scale: f32) -> Self {
         Self(Arc::new(ShaderData {

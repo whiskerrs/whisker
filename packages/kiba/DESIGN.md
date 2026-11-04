@@ -604,6 +604,64 @@ light, list the default values of the lights, `Sun`, and `DepthOfField`, say tha
 cooked, and that a reflection probe misses models still loading until `recapture`. Left as is: no
 constructor returns a matching `Sun` and `Sky`, because `Sky::from_sun(sun.direction)` is one call.
 
+### P7
+
+**Built:** `Shader` with `vertex` and `surface` hooks, `Material::shader` and eight `parameters`, the
+WGSL helpers, the scene behind blended surfaces, shader shadows, `bounds_scale`, and the fallback to the
+plain material while a shader compiles or after it fails. The example's `slime` feature ports the water
+slime of the `slime` game, using about 540 lines of Rust and 230 of WGSL in the example alone. It has
+three parts:
+
+- The body melts into a puddle at rest, gathers into a ball to move, and drips, splats, and trails.
+- Ground ripples spread where it lands.
+- A tinted shadow carries moving caustics.
+
+Building it changed the engine once. A blended black metal still reflected the sky at grazing angles, so
+reflectance at grazing angles now follows head-on reflectance as in Filament.
+
+**Measured** with that example at 1280x720 in Chrome on the development Mac. With the slime walking and
+jumping, it holds T2 at 60 fps with or without a 6x CPU throttle. It uses 15–40 draw calls, 19,000–28,000
+triangles, and under 1.5 ms of main-thread time, and the console shows no errors. Copying the color and
+depth behind takes no main-thread time worth measuring. Throttling does not slow the GPU, so the cost on
+a phone of the copy, the second pass, and a 128x64 sphere moved per vertex is unmeasured.
+
+**The exit criterion is met:** the slime is written in game code alone and runs on the Web.
+
+**API review:** an agent given only the docs wrote a game with three shaders using 27 concepts:
+
+- a wobbling jelly,
+- a refracting puddle with rings,
+- a blended spot of light.
+
+Its Rust compiled on the first try, and all three shaders passed validation unchanged.
+
+Its guesses were about these:
+
+- Mesh layout.
+- Whether emission is scaled by opacity.
+- Whether fog applies to the scene behind.
+- Whether moved vertices keep their normals.
+- The clock behind `time()`.
+- How a refracting surface can also fade at its edge.
+
+Fixed as a result: `Mesh::plane` states its origin and uv corners, and `Shader` states that:
+
+- the normal a `vertex` returns is kept;
+- `emissive` is scaled by opacity under Blend;
+- `time()` is the clock of `Time::elapsed_seconds`;
+- fog applies to emission;
+- a refracting surface fades by blending toward the unbent scene color.
+
+`parameters` say that changes show the next frame.
+
+Left as is, each found while writing the slime:
+
+- Blended surfaces sort by entity origin. The ripples and shadow sit their entities 1 m below the ground
+  and lift their vertices back so they draw behind the body.
+- Blended surfaces do not see one another through `scene_color`.
+- Additive light needs `emissive / opacity`.
+- `Viewport`'s props are documented only in the crate guide.
+
 ## Spikes to run first
 
 Each result can change the decisions above.
