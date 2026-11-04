@@ -266,6 +266,40 @@ load.
 | Editor | Not built. Blender + cook + debug overlay + hot reload | Out of scope |
 | Platform | Web, iOS, Android, and Desktop Hosts provided in P0 | P0 |
 
+### D11. Games shape their own look through material shaders, not render passes
+
+A game whose look is its identity, such as a water creature that bends what is behind it, needs code of
+its own on the GPU. Unreal Engine gives that through materials: a node graph that fills fixed inputs of a
+fixed pipeline, World Position Offset to move vertices and Refraction to read the scene behind
+**[verified]**. Few of its games add render passes. Kiba takes the same shape, in text:
+
+- A `Shader` is WGSL that a `Material` names. It may define `vertex`, which moves a vertex in the
+  entity's space, and `surface`, which turns the material's inputs at a pixel into a surface's color,
+  opacity, roughness, metalness, emission, and normal. Kiba shades the result as it shades any
+  material, so tiers, shadows, lights, probes, fog, and exposure stay consistent. WGSL text rather than
+  a node graph, because Kiba has no editor and AI writes text well.
+- `Material::parameters` hands eight vectors to the shader per material, so a game drives the shape
+  every frame without new code; entities whose parameters differ draw separately.
+- A blended surface's shader can read the scene behind it, its color and its depth, copied once after
+  opaque surfaces and the sky. That covers refraction, water depth, soft edges, and projected decals.
+  Blended surfaces do not see each other through it. The copy is made only in frames that draw a
+  blended surface with a shader, so a game without one pays nothing.
+- A shader's vertex movement reaches its shadow, and `Shader::bounds_scale` widens culling for a
+  vertex that moves past the mesh's bounds.
+- A shader that fails to compile is logged and drawn as the plain material, so a typo does not stop
+  the game.
+
+Left out, with reasons:
+
+- **Render passes from games.** They would bypass tier selection and the per-tier budgets, and the
+  material inputs above cover what the slime game draws with passes of its own.
+- **A final-color hook.** A surface writes emission with zero base color to replace what lighting
+  would add, which keeps fog and exposure correct without exposing them.
+- **A decal component.** A cube whose shader projects the scene's depth into it is a decal, so the
+  component would add a name, not an ability.
+- **Gameplay frameworks** such as Unreal's Gameplay Ability System. Combat rules belong to games and
+  libraries, as D10 decides for AI and networking.
+
 ## Target API
 
 This is what a Whisker app author writes today. A shipped game loads a `.kiba` pack cooked by
@@ -401,6 +435,7 @@ approval first.
 | P4 | Tiers, upscaling, VFX, atmosphere, T1/T2 features | Automatic tier selection works per device |
 | P5 | Navmesh and networking as needed | Decided by requests from real games |
 | P6 | Bounce light, local lights, transparency and emission, reflection probes, shadow quality, FXAA, depth of field, light shafts, transmission | Each renders correctly on the Web, and the stress scene settles on a tier within its budget |
+| P7 | Material shaders, material parameters, the scene behind blended surfaces (D11) | The water slime of the `slime` game, its body, ground ripples, and the light it focuses on the ground, is written in game code alone and runs on the Web |
 
 ## Phase results
 

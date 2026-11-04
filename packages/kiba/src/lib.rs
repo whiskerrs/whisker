@@ -163,6 +163,7 @@ mod probes;
 mod quality;
 mod reflection;
 mod renderer;
+mod shader;
 mod sky;
 mod stream;
 mod texture;
@@ -182,7 +183,7 @@ pub use game::{
 };
 #[doc(hidden)]
 pub use game::{attach_renderer, detach_renderer, send_input};
-pub use glam::{Mat4, Quat, Vec2, Vec3};
+pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 pub use hecs::{Entity, World};
 #[doc(hidden)]
 pub use input::InputEvent;
@@ -201,6 +202,7 @@ pub use reflection::ReflectionProbe;
 pub use renderer::{Frame, Renderer, SceneRenderer};
 #[doc(hidden)]
 pub use renderer::{log, placeholder_scene};
+pub use shader::Shader;
 pub use sky::{Fog, Sky};
 pub use stream::{StreamSettings, WorldStream};
 pub use texture::Texture;
@@ -212,9 +214,9 @@ pub mod prelude {
     pub use crate::{
         AlphaMode, Animator, Camera, Context, DepthOfField, Entity, FlyCamera, Fog, FrameStats,
         Game, GameSetup, Input, Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera,
-        ParticleEmitter, Playback, PointLight, Pointer, ProbeVolume, Quat, ReflectionProbe, Sky,
-        Sound, SpotLight, StreamSettings, Sun, Texture, Tier, Time, Transform, Vec2, Vec3, Vertex,
-        Viewport, World, WorldStream,
+        ParticleEmitter, Playback, PointLight, Pointer, ProbeVolume, Quat, ReflectionProbe, Shader,
+        Sky, Sound, SpotLight, StreamSettings, Sun, Texture, Tier, Time, Transform, Vec2, Vec3,
+        Vec4, Vertex, Viewport, World, WorldStream,
     };
     #[cfg(feature = "physics")]
     pub use crate::{BodyKind, Collider, Physics, RayHit, RigidBody};

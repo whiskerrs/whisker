@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::future::Future;
 use std::sync::{Arc, LazyLock, Weak};
+use std::task::{Context, Poll, Waker};
 
 use glam::{Mat4, UVec3, Vec3, Vec4};
 use wgpu::util::DeviceExt;
@@ -15,7 +17,7 @@ use crate::quality::Quality;
 use crate::reflection::{Reflection, ReflectionTextures, face_view_projections};
 use crate::sky::{Fog, Sky, SkyRenderer};
 use crate::texture::{TextureData, mip_chain};
-use crate::{AlphaMode, DepthOfField, Material, Mesh, Sun, Texture};
+use crate::{AlphaMode, DepthOfField, Material, Mesh, Shader, Sun, Texture};
 
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.02,
@@ -106,10 +108,38 @@ pub(crate) struct Effects {
     /// Point and spot lights, at most [`MAX_LIGHTS`].
     pub(crate) lights: Vec<LightUniform>,
     pub(crate) reflection: Option<Reflection>,
+    /// Seconds since the game started, for shaders.
+    pub(crate) time: f32,
 }
 
 const UPLOAD_BYTES_PER_FRAME: u64 = 8 * 1024 * 1024;
 const JOINTS_BINDING_SIZE: u64 = (MAX_JOINTS * size_of::<Mat4>()) as u64;
+const PARAMETERS_BINDING_SIZE: u64 = size_of::<[Vec4; 8]>() as u64;
+// The frame, one slot for each layer of a reflection capture, then one for each shadow cascade.
+const FRAME_SLOTS: u64 = 1 + 6 + MAX_CASCADES as u64;
+const CASCADE_SLOT: u64 = 7;
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+    0 => Float32x3,
+    1 => Float32x3,
+    2 => Float32x3,
+    3 => Float32x2,
+];
+const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
+    4 => Float32x4,
+    5 => Float32x4,
+    6 => Float32x4,
+    7 => Float32x4,
+    8 => Float32x3,
+    9 => Float32,
+    10 => Float32,
+    13 => Float32x3,
+    14 => Float32x3,
+];
+const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![11 => Uint16x4, 12 => Float32x4];
+const DEFAULT_VERTEX: &str = "fn vertex(geometry: Geometry) -> Geometry { return geometry; }";
+const DEFAULT_SURFACE: &str =
+    "fn surface(surface: Surface, pixel: Pixel) -> Surface { return surface; }";
 pub(crate) const MAX_CASCADES: usize = 4;
 
 #[derive(Clone, Debug)]
@@ -181,6 +211,9 @@ struct FrameUniform {
     reflection_max: Vec4,
     /// Where the probe captured from, with W as the width over which it fades in at the box's edge.
     reflection_center: Vec4,
+    inverse_view_projection: Mat4,
+    /// Seconds since the game started, then the inverse width and height of the view in pixels.
+    screen: Vec4,
 }
 
 // The real sun's, about a quarter of a degree, so a penumbra grows a centimeter for every two meters.
@@ -252,6 +285,8 @@ impl From<&Frame> for FrameUniform {
                 r.id.center
                     .extend((r.id.size.min_element() * REFLECTION_FADE).max(1e-3))
             }),
+            inverse_view_projection: frame.view_projection.inverse(),
+            screen: Vec4::new(frame.effects.time, 0.0, 1.0, 1.0),
         }
     }
 }
@@ -266,6 +301,14 @@ impl FrameUniform {
             view_projection,
             camera_position: center.extend(1.0),
             reflection_min: Vec4::ZERO,
+            ..*self
+        }
+    }
+
+    /// What a shader's shadow draws with in one cascade.
+    fn cascade(&self, view_projection: Mat4) -> Self {
+        Self {
+            view_projection,
             ..*self
         }
     }
@@ -526,13 +569,277 @@ impl ShadowMaps {
     }
 }
 
+/// Copies of what opaque surfaces and the sky drew, which blended shaders read.
+struct Behind {
+    size: (u32, u32),
+    color: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    depth: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+}
+
+impl Behind {
+    fn new(device: &wgpu::Device, size: (u32, u32)) -> Self {
+        let image = |label, format| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            })
+        };
+        let color = image("kiba behind color", HDR_FORMAT);
+        let depth = image("kiba behind depth", DEPTH_FORMAT);
+        Self {
+            size,
+            color_view: color.create_view(&Default::default()),
+            depth_view: depth.create_view(&Default::default()),
+            color,
+            depth,
+        }
+    }
+
+    fn copy(&self, encoder: &mut wgpu::CommandEncoder, targets: &SizedTargets) {
+        let extent = wgpu::Extent3d {
+            width: self.size.0,
+            height: self.size.1,
+            depth_or_array_layers: 1,
+        };
+        encoder.copy_texture_to_texture(
+            targets.hdr_texture.as_image_copy(),
+            self.color.as_image_copy(),
+            extent,
+        );
+        encoder.copy_texture_to_texture(
+            targets.depth_texture.as_image_copy(),
+            self.depth.as_image_copy(),
+            extent,
+        );
+    }
+}
+
+/// Whether a shader module or pipeline compiled, which on the Web is known only frames later.
+enum Check {
+    Passed,
+    Failed,
+    #[cfg(target_arch = "wasm32")]
+    Waiting(std::pin::Pin<Box<dyn Future<Output = Option<wgpu::Error>>>>),
+}
+
+impl Check {
+    /// Runs `make` and catches what it reports, so a game's broken shader does not stop the frame.
+    fn of<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, Self) {
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let made = make();
+        let mut check = Check::settled(Box::pin(device.pop_error_scope()));
+        check.poll();
+        (made, check)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn settled(future: std::pin::Pin<Box<dyn Future<Output = Option<wgpu::Error>>>>) -> Self {
+        Check::Waiting(future)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn settled(mut future: std::pin::Pin<Box<impl Future<Output = Option<wgpu::Error>>>>) -> Self {
+        // wgpu-core validates while it creates, so the scope is already resolved.
+        match future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        {
+            Poll::Ready(Some(error)) => {
+                log(&format!("kiba: a shader failed to compile: {error}"));
+                Check::Failed
+            }
+            Poll::Ready(None) | Poll::Pending => Check::Passed,
+        }
+    }
+
+    fn poll(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if let Check::Waiting(future) = self {
+            match future
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+            {
+                Poll::Ready(Some(error)) => {
+                    log(&format!("kiba: a shader failed to compile: {error}"));
+                    *self = Check::Failed;
+                }
+                Poll::Ready(None) => *self = Check::Passed,
+                Poll::Pending => {}
+            }
+        }
+    }
+
+    fn passed(&self) -> bool {
+        matches!(self, Check::Passed)
+    }
+}
+
+/// The mesh shader with a game's `vertex` and `surface`, or Kiba's own where the game has none.
+fn mesh_source(shader: Option<&Shader>) -> String {
+    let source = shader.map_or("", |shader| shader.data().source.as_str());
+    let defines = |name: &str| {
+        source.match_indices("fn").any(|(at, _)| {
+            source[at + 2..]
+                .trim_start()
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.trim_start().starts_with('('))
+        })
+    };
+    let mut assembled = String::from(include_str!("mesh.wgsl"));
+    for (name, fallback) in [("vertex", DEFAULT_VERTEX), ("surface", DEFAULT_SURFACE)] {
+        if !defines(name) {
+            assembled.push('\n');
+            assembled.push_str(fallback);
+        }
+    }
+    assembled.push('\n');
+    assembled.push_str(source);
+    assembled
+}
+
+fn mesh_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+    PipelineKey {
+        skinned,
+        mode,
+        double_sided,
+        ..
+    }: PipelineKey,
+    shadow: bool,
+) -> wgpu::RenderPipeline {
+    let premultiplied = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    };
+    let blended = mode == BLENDED;
+    let buffers = [
+        wgpu::VertexBufferLayout {
+            array_stride: size_of::<Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &VERTEX_ATTRIBUTES,
+        },
+        wgpu::VertexBufferLayout {
+            array_stride: size_of::<Instance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &INSTANCE_ATTRIBUTES,
+        },
+        wgpu::VertexBufferLayout {
+            array_stride: size_of::<SkinVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &SKIN_ATTRIBUTES,
+        },
+    ];
+    let color = [Some(wgpu::ColorTargetState {
+        format: HDR_FORMAT,
+        blend: blended.then_some(wgpu::BlendState {
+            color: premultiplied,
+            alpha: premultiplied,
+        }),
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
+    let fragment = if shadow {
+        (mode == MASKED).then_some("fs_shadow_masked")
+    } else {
+        Some(["fs_main", "fs_masked", "fs_blended"][usize::from(mode)])
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(if shadow {
+            "kiba shader shadow"
+        } else {
+            "kiba mesh"
+        }),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some(if skinned { "vs_skinned" } else { "vs_main" }),
+            compilation_options: Default::default(),
+            buffers: &buffers[..if skinned { 3 } else { 2 }],
+        },
+        fragment: fragment.map(|entry| wgpu::FragmentState {
+            module,
+            entry_point: Some(entry),
+            compilation_options: Default::default(),
+            targets: if shadow { &[] } else { &color },
+        }),
+        primitive: wgpu::PrimitiveState {
+            cull_mode: (!double_sided).then_some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(if shadow {
+            wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: Default::default(),
+                bias: SHADOW_BIAS,
+            }
+        } else {
+            wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: !blended,
+                depth_compare: DEPTH_COMPARE,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }
+        }),
+        multisample: Default::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
+const SHADOW_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: 2,
+    slope_scale: 2.0,
+    clamp: 0.0,
+};
+
+/// Which joint palette and which shader parameters each batch binds, as offsets into one buffer each.
+struct DrawOffsets {
+    joints: HashMap<usize, u32>,
+    parameters: HashMap<u64, u32>,
+}
+
+#[derive(Clone, Copy)]
 struct FrameSources<'a> {
     uniform: &'a wgpu::Buffer,
     shadow_maps: &'a wgpu::TextureView,
+    behind: &'a Behind,
     shadow_sampler: &'a wgpu::Sampler,
     sky: &'a SkyRenderer,
     sky_sampler: &'a wgpu::Sampler,
     reflection: &'a ReflectionTextures,
+}
+
+fn frame_bindings_without_shadows(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sources: &FrameSources<'_>,
+    no_shadow: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    frame_bindings(
+        device,
+        layout,
+        &FrameSources {
+            shadow_maps: no_shadow,
+            ..*sources
+        },
+    )
 }
 
 fn frame_bindings(
@@ -576,6 +883,14 @@ fn frame_bindings(
                 binding: 6,
                 resource: wgpu::BindingResource::TextureView(&sources.reflection.cube_view()),
             },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::TextureView(&sources.behind.color_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: wgpu::BindingResource::TextureView(&sources.behind.depth_view),
+            },
         ],
     })
 }
@@ -590,6 +905,8 @@ struct PipelineKey {
     /// Opaque, [`MASKED`], or [`BLENDED`].
     mode: u8,
     double_sided: bool,
+    /// The game's shader, or zero for Kiba's own.
+    shader: u64,
 }
 
 impl PipelineKey {
@@ -598,6 +915,7 @@ impl PipelineKey {
             skinned: false,
             mode: 0,
             double_sided: false,
+            shader: 0,
         }; 12];
         let mut i = 0;
         while i < 12 {
@@ -605,6 +923,7 @@ impl PipelineKey {
                 skinned: i & 1 != 0,
                 mode: (i / 4) as u8,
                 double_sided: i & 2 != 0,
+                shader: 0,
             };
             i += 1;
         }
@@ -617,7 +936,17 @@ impl PipelineKey {
             skinned,
             mode,
             double_sided,
+            shader: material.shader.as_ref().map_or(0, Shader::key),
         }
+    }
+
+    fn of_batch(batch: &Batch) -> Self {
+        let posed = batch.palette.is_some() && batch.mesh.data().skin.is_some();
+        Self::of(&batch.material, posed)
+    }
+
+    fn builtin(self) -> Self {
+        Self { shader: 0, ..self }
     }
 }
 
@@ -625,6 +954,16 @@ impl PipelineKey {
 pub struct SceneRenderer {
     pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
     shadow_pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
+    mesh_layout: wgpu::PipelineLayout,
+    /// Each game shader's module, by [`Shader::key`].
+    shader_modules: HashMap<u64, (wgpu::ShaderModule, Check)>,
+    /// Pipelines of game shaders, the second element telling a shadow's from a view's.
+    shader_pipelines: HashMap<(PipelineKey, bool), (wgpu::RenderPipeline, Check)>,
+    behind: Behind,
+    /// The frame bindings for drawing shaders' shadows, which cannot bind the map they draw into.
+    shadow_frame_bindings: wgpu::BindGroup,
+    no_shadow: wgpu::TextureView,
+    parameters: Option<wgpu::Buffer>,
     post: PostPasses,
     particles: ParticlePass,
     frame_uniform: wgpu::Buffer,
@@ -655,17 +994,6 @@ pub struct SceneRenderer {
 impl SceneRenderer {
     /// Prepares the pipeline for targets of `format`.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        let instance_attributes = wgpu::vertex_attr_array![
-            4 => Float32x4,
-            5 => Float32x4,
-            6 => Float32x4,
-            7 => Float32x4,
-            8 => Float32x3,
-            9 => Float32,
-            10 => Float32,
-            13 => Float32x3,
-            14 => Float32x3,
-        ];
         let frame_visibility = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
         let fragment_entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
@@ -708,6 +1036,15 @@ impl SceneRenderer {
                 fragment_entry(4, float_texture(wgpu::TextureViewDimension::Cube)),
                 fragment_entry(5, filtering),
                 fragment_entry(6, float_texture(wgpu::TextureViewDimension::Cube)),
+                fragment_entry(7, float_texture(wgpu::TextureViewDimension::D2)),
+                fragment_entry(
+                    8,
+                    wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                ),
             ],
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -732,10 +1069,19 @@ impl SceneRenderer {
         };
         let joints_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kiba joints"),
-            entries: &[vertex_uniform(
-                true,
-                wgpu::BufferSize::new(JOINTS_BINDING_SIZE),
-            )],
+            entries: &[
+                vertex_uniform(true, wgpu::BufferSize::new(JOINTS_BINDING_SIZE)),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: frame_visibility,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(PARAMETERS_BINDING_SIZE),
+                    },
+                    count: None,
+                },
+            ],
         });
         let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kiba shadow"),
@@ -770,31 +1116,24 @@ impl SceneRenderer {
             "kiba masked shadow",
             &[&light_layout, &joints_layout, &material_layout],
         );
-        let skin_buffer = wgpu::VertexBufferLayout {
-            array_stride: size_of::<SkinVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![11 => Uint16x4, 12 => Float32x4],
-        };
-        let shader = device.create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("kiba mesh"),
+            source: wgpu::ShaderSource::Wgsl(mesh_source(None).into()),
+        });
         let vertex_buffer = wgpu::VertexBufferLayout {
             array_stride: size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![
-                0 => Float32x3,
-                1 => Float32x3,
-                2 => Float32x3,
-                3 => Float32x2,
-            ],
+            attributes: &VERTEX_ATTRIBUTES,
         };
         let instance_buffer = wgpu::VertexBufferLayout {
             array_stride: size_of::<Instance>() as u64,
             step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &instance_attributes,
+            attributes: &INSTANCE_ATTRIBUTES,
         };
-        let premultiplied = wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-            operation: wgpu::BlendOperation::Add,
+        let skin_buffer = wgpu::VertexBufferLayout {
+            array_stride: size_of::<SkinVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &SKIN_ATTRIBUTES,
         };
         let plain_buffers = [vertex_buffer.clone(), instance_buffer.clone()];
         let skinned_buffers = [
@@ -802,57 +1141,15 @@ impl SceneRenderer {
             instance_buffer.clone(),
             skin_buffer.clone(),
         ];
-        let mut pipelines = HashMap::new();
-        for key @ PipelineKey {
-            skinned,
-            mode,
-            double_sided,
-        } in PipelineKey::ALL
-        {
-            let blended = mode == BLENDED;
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("kiba mesh"),
-                layout: Some(&mesh_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(if skinned { "vs_skinned" } else { "vs_main" }),
-                    compilation_options: Default::default(),
-                    buffers: if skinned {
-                        &skinned_buffers
-                    } else {
-                        &plain_buffers
-                    },
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(["fs_main", "fs_masked", "fs_blended"][usize::from(mode)]),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: blended.then_some(wgpu::BlendState {
-                            color: premultiplied,
-                            alpha: premultiplied,
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: (!double_sided).then_some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: !blended,
-                    depth_compare: DEPTH_COMPARE,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                multiview: None,
-                cache: None,
-            });
-            pipelines.insert(key, pipeline);
-        }
+        let pipelines = PipelineKey::ALL
+            .into_iter()
+            .map(|key| {
+                (
+                    key,
+                    mesh_pipeline(device, &mesh_layout, &shader, key, false),
+                )
+            })
+            .collect();
         let shadow_shader = device.create_shader_module(wgpu::include_wgsl!("shadow.wgsl"));
         let shadow_vertex = wgpu::VertexBufferLayout {
             attributes: &wgpu::vertex_attr_array![0 => Float32x3],
@@ -863,6 +1160,7 @@ impl SceneRenderer {
             skinned,
             mode,
             double_sided,
+            ..
         } in PipelineKey::ALL
         {
             if mode == BLENDED {
@@ -914,11 +1212,7 @@ impl SceneRenderer {
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::LessEqual,
                     stencil: Default::default(),
-                    bias: wgpu::DepthBiasState {
-                        constant: 2,
-                        slope_scale: 2.0,
-                        clamp: 0.0,
-                    },
+                    bias: SHADOW_BIAS,
                 }),
                 multisample: Default::default(),
                 multiview: None,
@@ -937,10 +1231,9 @@ impl SceneRenderer {
         let frame_stride = (size_of::<FrameUniform>() as u64).next_multiple_of(u64::from(
             device.limits().min_uniform_buffer_offset_alignment,
         ));
-        // The frame, then one slot for each layer of a reflection capture.
         let frame_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("kiba frame"),
-            size: frame_stride * 7,
+            size: frame_stride * FRAME_SLOTS,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -953,19 +1246,28 @@ impl SceneRenderer {
             mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let frame_bindings = frame_bindings(
-            device,
-            &frame_layout,
-            &FrameSources {
-                uniform: &frame_uniform,
-                shadow_maps: &shadow_maps.array,
-                shadow_sampler: &shadow_sampler,
-                sky: &sky,
-                sky_sampler: &sky_sampler,
-                reflection: &reflection,
-            },
-        );
+        let behind = Behind::new(device, (1, 1));
+        let no_shadow = ShadowMaps::new(device, &light_layout, 1, 1).array;
+        let sources = FrameSources {
+            uniform: &frame_uniform,
+            shadow_maps: &shadow_maps.array,
+            behind: &behind,
+            shadow_sampler: &shadow_sampler,
+            sky: &sky,
+            sky_sampler: &sky_sampler,
+            reflection: &reflection,
+        };
+        let frame_bindings = frame_bindings(device, &frame_layout, &sources);
+        let shadow_frame_bindings =
+            frame_bindings_without_shadows(device, &frame_layout, &sources, &no_shadow);
         Self {
+            mesh_layout,
+            shader_modules: HashMap::new(),
+            shader_pipelines: HashMap::new(),
+            behind,
+            shadow_frame_bindings,
+            no_shadow,
+            parameters: None,
             frame_uniform,
             frame_stride,
             frame_bindings,
@@ -1012,6 +1314,71 @@ impl SceneRenderer {
             particles: ParticlePass::new(device),
             pipelines,
         }
+    }
+
+    fn rebuild_frame_bindings(&mut self, device: &wgpu::Device) {
+        let sources = FrameSources {
+            uniform: &self.frame_uniform,
+            shadow_maps: &self.shadow_maps.array,
+            behind: &self.behind,
+            shadow_sampler: &self.shadow_sampler,
+            sky: &self.sky,
+            sky_sampler: &self.sky_sampler,
+            reflection: &self.reflection,
+        };
+        self.frame_bindings = frame_bindings(device, &self.frame_layout, &sources);
+        self.shadow_frame_bindings =
+            frame_bindings_without_shadows(device, &self.frame_layout, &sources, &self.no_shadow);
+    }
+
+    /// Compiles the shaders this frame's batches name, and learns which earlier ones compiled.
+    fn prepare_shaders(&mut self, device: &wgpu::Device, frame: &Frame) {
+        let casters = frame
+            .shadows
+            .iter()
+            .flat_map(|s| s.casters.iter().flatten());
+        let faces = frame
+            .effects
+            .reflection
+            .iter()
+            .flat_map(|r| r.faces.iter().flat_map(|faces| faces.iter().flatten()));
+        let drawn = frame
+            .batches
+            .iter()
+            .chain(faces)
+            .map(|batch| (batch, false));
+        for (batch, shadow) in drawn.chain(casters.map(|batch| (batch, true))) {
+            let Some(shader) = &batch.material.shader else {
+                continue;
+            };
+            let (module, _) = self.shader_modules.entry(shader.key()).or_insert_with(|| {
+                Check::of(device, || {
+                    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("kiba game shader"),
+                        source: wgpu::ShaderSource::Wgsl(mesh_source(Some(shader)).into()),
+                    })
+                })
+            });
+            let key = PipelineKey::of_batch(batch);
+            if let Entry::Vacant(slot) = self.shader_pipelines.entry((key, shadow)) {
+                slot.insert(Check::of(device, || {
+                    mesh_pipeline(device, &self.mesh_layout, module, key, shadow)
+                }));
+            }
+        }
+        for (_, check) in self.shader_modules.values_mut() {
+            check.poll();
+        }
+        for (_, check) in self.shader_pipelines.values_mut() {
+            check.poll();
+        }
+    }
+
+    /// The game shader's pipeline for `key` once it has compiled.
+    fn shader_pipeline(&self, key: PipelineKey, shadow: bool) -> Option<&wgpu::RenderPipeline> {
+        let (_, module) = self.shader_modules.get(&key.shader)?;
+        let (pipeline, check) = self.shader_pipelines.get(&(key, shadow))?;
+        (module.passed() && check.passed()).then_some(pipeline)
     }
 
     /// Whether the frame must carry what to draw into reflection probe `id`.
@@ -1073,7 +1440,8 @@ impl SceneRenderer {
             }
             self.prepare_material(device, queue, &batch.material, &mut upload_left);
         }
-        let joint_offsets = self.upload_joints(device, queue, frame);
+        self.prepare_shaders(device, frame);
+        let offsets = self.upload_per_draw(device, queue, frame);
         if let Some(volume) = frame.probes.as_ref().filter(|v| v.key() != self.probes_key) {
             let data = volume.data().expect("extraction keeps only loaded volumes");
             let views = probes::upload(device, queue, data);
@@ -1089,6 +1457,20 @@ impl SceneRenderer {
             .is_none_or(|targets| !targets.matches(internal_size, &quality))
         {
             self.targets = Some(self.post.targets(device, internal_size, &quality));
+        }
+        if let Some(shadows) = &frame.shadows
+            && (shadows.map_size, shadows.cascades.len()) != self.shadow_maps.shape
+        {
+            let shape = (shadows.map_size, shadows.cascades.len());
+            self.shadow_maps = ShadowMaps::new(device, &self.light_layout, shape.0, shape.1);
+            self.rebuild_frame_bindings(device);
+        }
+        let sees_behind = batches.iter().any(|batch| {
+            batch.material.alpha_mode == AlphaMode::Blend && batch.material.shader.is_some()
+        });
+        if sees_behind && self.behind.size != internal_size {
+            self.behind = Behind::new(device, internal_size);
+            self.rebuild_frame_bindings(device);
         }
         let targets = self.targets.as_ref().expect("allocated above");
         let post_view = PostView {
@@ -1121,8 +1503,22 @@ impl SceneRenderer {
         }
         let instances = self.instances.as_ref().expect("allocated above");
         queue.write_buffer(instances, 0, bytes);
-        let uniform = FrameUniform::from(frame);
+        let mut uniform = FrameUniform::from(frame);
+        uniform.screen.z = 1.0 / internal_size.0 as f32;
+        uniform.screen.w = 1.0 / internal_size.1 as f32;
         queue.write_buffer(&self.frame_uniform, 0, bytemuck::bytes_of(&uniform));
+        for (cascade, slice) in frame
+            .shadows
+            .iter()
+            .flat_map(|s| s.cascades.iter())
+            .enumerate()
+        {
+            queue.write_buffer(
+                &self.frame_uniform,
+                self.frame_stride * (CASCADE_SLOT + cascade as u64),
+                bytemuck::bytes_of(&uniform.cascade(slice.view_projection)),
+            );
+        }
         if let Some((id, _)) = capture {
             for (layer, view_projection) in face_view_projections(id.center).into_iter().enumerate()
             {
@@ -1134,24 +1530,6 @@ impl SceneRenderer {
             }
         }
 
-        if let Some(shadows) = &frame.shadows
-            && (shadows.map_size, shadows.cascades.len()) != self.shadow_maps.shape
-        {
-            let shape = (shadows.map_size, shadows.cascades.len());
-            self.shadow_maps = ShadowMaps::new(device, &self.light_layout, shape.0, shape.1);
-            self.frame_bindings = frame_bindings(
-                device,
-                &self.frame_layout,
-                &FrameSources {
-                    uniform: &self.frame_uniform,
-                    shadow_maps: &self.shadow_maps.array,
-                    shadow_sampler: &self.shadow_sampler,
-                    sky: &self.sky,
-                    sky_sampler: &self.sky_sampler,
-                    reflection: &self.reflection,
-                },
-            );
-        }
         self.sky.prepare(device, queue, frame);
         self.particles.prepare(
             device,
@@ -1184,9 +1562,9 @@ impl SceneRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                pass.set_bind_group(0, &self.shadow_maps.bindings[cascade], &[]);
                 let stride = size_of::<Instance>() as u64;
                 let mut first = next_instance;
+                let cascade_offset = (self.frame_stride * (CASCADE_SLOT + cascade as u64)) as u32;
                 for batch in &shadows.casters[cascade] {
                     let count = batch.instances.len() as u64;
                     let range = first * stride..(first + count) * stride;
@@ -1197,21 +1575,28 @@ impl SceneRenderer {
                     if count == 0 || mesh.index_count == 0 {
                         continue;
                     }
-                    if PipelineKey::of(&batch.material, false).mode == MASKED {
-                        let Some(material) = self.materials.get(&batch.material.texture_keys())
-                        else {
+                    let key = PipelineKey::of_batch(batch);
+                    let material = self.materials.get(&batch.material.texture_keys());
+                    // A game shader's shadow draws with the mesh layout, so every group is set again.
+                    if let Some(pipeline) = self.shader_pipeline(key, true) {
+                        let Some(material) = material else {
                             continue;
                         };
-                        pass.set_bind_group(2, &material.bindings, &[]);
+                        pass.set_bind_group(0, &self.shadow_frame_bindings, &[cascade_offset]);
+                        pass.set_bind_group(1, &material.bindings, &[]);
+                        pass.set_bind_group(3, &self.probes_bindings, &[]);
+                        self.bind_skin(&mut pass, batch, mesh, &offsets, 2, pipeline);
+                    } else {
+                        pass.set_bind_group(0, &self.shadow_maps.bindings[cascade], &[]);
+                        if key.mode == MASKED {
+                            let Some(material) = material else {
+                                continue;
+                            };
+                            pass.set_bind_group(2, &material.bindings, &[]);
+                        }
+                        let pipeline = &self.shadow_pipelines[&key.builtin()];
+                        self.bind_skin(&mut pass, batch, mesh, &offsets, 1, pipeline);
                     }
-                    self.bind_skin(
-                        &mut pass,
-                        batch,
-                        mesh,
-                        &joint_offsets,
-                        1,
-                        &self.shadow_pipelines,
-                    );
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_vertex_buffer(1, instances.slice(range));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -1252,13 +1637,7 @@ impl SceneRenderer {
                     let count = batch.instances.len() as u64;
                     let range = next_instance * stride..(next_instance + count) * stride;
                     next_instance += count;
-                    self.draw_batch(
-                        &mut pass,
-                        batch,
-                        instances.slice(range),
-                        count,
-                        &joint_offsets,
-                    );
+                    self.draw_batch(&mut pass, batch, instances.slice(range), count, &offsets);
                 }
             }
             self.reflection.finish(
@@ -1270,26 +1649,39 @@ impl SceneRenderer {
             );
             self.reflection.captured = Some(id);
         }
-        {
+        let store_depth = |kept: bool| {
+            if kept {
+                wgpu::StoreOp::Store
+            } else {
+                wgpu::StoreOp::Discard
+            }
+        };
+        let main_pass = |encoder: &mut wgpu::CommandEncoder, first: bool| {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("kiba main"),
+                label: Some(if first { "kiba main" } else { "kiba blended" }),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &targets.hdr,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(CLEAR_COLOR),
+                        load: if first {
+                            wgpu::LoadOp::Clear(CLEAR_COLOR)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &targets.depth,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(DEPTH_CLEAR),
-                        store: if post_view.reads_depth(&quality) {
-                            wgpu::StoreOp::Store
+                        load: if first {
+                            wgpu::LoadOp::Clear(DEPTH_CLEAR)
                         } else {
-                            wgpu::StoreOp::Discard
+                            wgpu::LoadOp::Load
                         },
+                        store: store_depth(
+                            post_view.reads_depth(&quality) || (first && sees_behind),
+                        ),
                     }),
                     stencil_ops: None,
                 }),
@@ -1298,9 +1690,13 @@ impl SceneRenderer {
             });
             pass.set_bind_group(0, &self.frame_bindings, &[0]);
             pass.set_bind_group(3, &self.probes_bindings, &[]);
-            let stride = size_of::<Instance>() as u64;
+            pass.forget_lifetime()
+        };
+        let stride = size_of::<Instance>() as u64;
+        let mut blended = Vec::new();
+        {
+            let mut pass = main_pass(&mut encoder, true);
             let mut first = 0;
-            let mut blended = Vec::new();
             for batch in batches {
                 let count = batch.instances.len() as u64;
                 let range = first * stride..(first + count) * stride;
@@ -1314,26 +1710,21 @@ impl SceneRenderer {
                     }
                     continue;
                 }
-                self.draw_batch(
-                    &mut pass,
-                    batch,
-                    instances.slice(range),
-                    count,
-                    &joint_offsets,
-                );
+                self.draw_batch(&mut pass, batch, instances.slice(range), count, &offsets);
             }
             if frame.sky.is_some() {
                 self.sky.draw(&mut pass);
                 pass.set_bind_group(0, &self.frame_bindings, &[0]);
             }
-            // Blending needs what is behind drawn first, so these go one at a time from the farthest.
-            blended.sort_by(|a, b| b.0.total_cmp(&a.0));
-            for (_, batch, at) in blended {
-                let slice = instances.slice(at * stride..(at + 1) * stride);
-                self.draw_batch(&mut pass, batch, slice, 1, &joint_offsets);
+            if !sees_behind {
+                self.draw_blended(&mut pass, &mut blended, instances, &offsets, frame);
             }
-            self.particles
-                .draw(&mut pass, frame.effects.particles.len());
+        }
+        // Only a frame whose blended shaders read the scene pays for a second pass and the copy.
+        if sees_behind {
+            self.behind.copy(&mut encoder, targets);
+            let mut pass = main_pass(&mut encoder, false);
+            self.draw_blended(&mut pass, &mut blended, instances, &offsets, frame);
         }
         self.post.encode(
             &mut encoder,
@@ -1346,13 +1737,31 @@ impl SceneRenderer {
         queue.submit([encoder.finish()]);
     }
 
+    /// Draws blended surfaces from the farthest, because blending needs what is behind drawn first, then particles.
+    fn draw_blended(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        blended: &mut [(f32, &Batch, u64)],
+        instances: &wgpu::Buffer,
+        offsets: &DrawOffsets,
+        frame: &Frame,
+    ) {
+        let stride = size_of::<Instance>() as u64;
+        blended.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for &(_, batch, at) in blended.iter() {
+            let slice = instances.slice(at * stride..(at + 1) * stride);
+            self.draw_batch(pass, batch, slice, 1, offsets);
+        }
+        self.particles.draw(pass, frame.effects.particles.len());
+    }
+
     fn draw_batch(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         batch: &Batch,
         instances: wgpu::BufferSlice<'_>,
         count: u64,
-        joint_offsets: &HashMap<usize, u32>,
+        offsets: &DrawOffsets,
     ) {
         let (Some(mesh), Some(material)) = (
             self.meshes.get(&batch.mesh.key()),
@@ -1364,7 +1773,12 @@ impl SceneRenderer {
         if count == 0 || mesh.index_count == 0 {
             return;
         }
-        self.bind_skin(pass, batch, mesh, joint_offsets, 2, &self.pipelines);
+        let key = PipelineKey::of_batch(batch);
+        // A shader that has not compiled, or never will, draws as the plain material.
+        let pipeline = self
+            .shader_pipeline(key, false)
+            .unwrap_or(&self.pipelines[&key.builtin()]);
+        self.bind_skin(pass, batch, mesh, offsets, 2, pipeline);
         pass.set_bind_group(1, &material.bindings, &[]);
         pass.set_vertex_buffer(0, mesh.vertices.slice(..));
         pass.set_vertex_buffer(1, instances);
@@ -1372,13 +1786,14 @@ impl SceneRenderer {
         pass.draw_indexed(0..mesh.index_count, 0, 0..count as u32);
     }
 
-    /// Copies every batch's joint matrices into one buffer, returning each palette's offset.
-    fn upload_joints(
+    /// Copies every batch's joint matrices and shader parameters into one buffer each, returning where
+    /// each landed.
+    fn upload_per_draw(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &Frame,
-    ) -> HashMap<usize, u32> {
+    ) -> DrawOffsets {
         let align = u64::from(device.limits().min_uniform_buffer_offset_alignment) as usize;
         let casters = frame
             .shadows
@@ -1389,69 +1804,111 @@ impl SceneRenderer {
             .reflection
             .iter()
             .flat_map(|r| r.faces.iter().flat_map(|faces| faces.iter().flatten()));
-        let mut offsets = HashMap::new();
-        let mut bytes = Vec::new();
-        for palette in frame
-            .batches
-            .iter()
-            .chain(casters)
-            .chain(faces)
-            .filter_map(|b| b.palette.as_ref())
-        {
-            offsets.entry(palette.as_ptr() as usize).or_insert_with(|| {
-                bytes.resize(bytes.len().next_multiple_of(align), 0);
-                let offset = bytes.len() as u32;
-                bytes.extend_from_slice(bytemuck::cast_slice(palette));
-                offset
-            });
+        let mut offsets = DrawOffsets {
+            joints: HashMap::new(),
+            parameters: HashMap::from([(0, 0)]),
+        };
+        let mut joint_bytes = Vec::new();
+        let mut parameter_bytes = vec![0; PARAMETERS_BINDING_SIZE as usize];
+        let append = |bytes: &mut Vec<u8>, data: &[u8]| {
+            bytes.resize(bytes.len().next_multiple_of(align), 0);
+            let offset = bytes.len() as u32;
+            bytes.extend_from_slice(data);
+            offset
+        };
+        for batch in frame.batches.iter().chain(casters).chain(faces) {
+            if let Some(palette) = &batch.palette {
+                offsets
+                    .joints
+                    .entry(palette.as_ptr() as usize)
+                    .or_insert_with(|| append(&mut joint_bytes, bytemuck::cast_slice(palette)));
+            }
+            offsets
+                .parameters
+                .entry(batch.material.shader_key())
+                .or_insert_with(|| {
+                    append(
+                        &mut parameter_bytes,
+                        bytemuck::cast_slice(&batch.material.parameters),
+                    )
+                });
         }
         // The shader binds a full-size array at every offset, even for a short palette.
-        let needed = bytes.len() as u64 + JOINTS_BINDING_SIZE;
-        if self
-            .joints
-            .as_ref()
-            .is_none_or(|(buffer, _)| buffer.size() < needed)
-        {
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("kiba joints"),
-                size: needed.next_power_of_two(),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+        let joints_needed = joint_bytes.len() as u64 + JOINTS_BINDING_SIZE;
+        let parameters_needed = parameter_bytes.len() as u64;
+        let grow = |buffer: Option<&wgpu::Buffer>, needed: u64, label| {
+            buffer
+                .filter(|buffer| buffer.size() >= needed)
+                .is_none()
+                .then(|| {
+                    device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(label),
+                        size: needed.next_power_of_two(),
+                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    })
+                })
+        };
+        let new_joints = grow(
+            self.joints.as_ref().map(|(buffer, _)| buffer),
+            joints_needed,
+            "kiba joints",
+        );
+        let new_parameters = grow(
+            self.parameters.as_ref(),
+            parameters_needed,
+            "kiba parameters",
+        );
+        if new_joints.is_some() || new_parameters.is_some() {
+            let joints = new_joints
+                .unwrap_or_else(|| self.joints.take().map(|(buffer, _)| buffer).expect("kept"));
+            if let Some(parameters) = new_parameters {
+                self.parameters = Some(parameters);
+            }
+            let parameters = self.parameters.as_ref().expect("allocated above");
+            let binding = |binding, buffer, size| wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(size),
+                }),
+            };
             let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("kiba joints"),
                 layout: &self.joints_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(JOINTS_BINDING_SIZE),
-                    }),
-                }],
+                entries: &[
+                    binding(0, &joints, JOINTS_BINDING_SIZE),
+                    binding(1, parameters, PARAMETERS_BINDING_SIZE),
+                ],
             });
-            self.joints = Some((buffer, bindings));
+            self.joints = Some((joints, bindings));
         }
-        let (buffer, _) = self.joints.as_ref().expect("allocated above");
-        queue.write_buffer(buffer, 0, &bytes);
+        let (joints, _) = self.joints.as_ref().expect("allocated above");
+        queue.write_buffer(joints, 0, &joint_bytes);
+        let parameters = self.parameters.as_ref().expect("allocated above");
+        queue.write_buffer(parameters, 0, &parameter_bytes);
         offsets
     }
 
-    /// Selects the pipeline for `batch`, whose group `slot` always needs some joint binding.
+    /// Selects `pipeline` for `batch`, whose group `slot` always needs some joint and parameter binding.
     fn bind_skin(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         batch: &Batch,
         mesh: &GpuMesh,
-        offsets: &HashMap<usize, u32>,
+        offsets: &DrawOffsets,
         slot: u32,
-        pipelines: &HashMap<PipelineKey, wgpu::RenderPipeline>,
+        pipeline: &wgpu::RenderPipeline,
     ) {
         let (_, bindings) = self.joints.as_ref().expect("allocated each frame");
         let posed = batch.palette.as_ref().zip(mesh.skin.as_ref());
-        let offset = posed.map_or(0, |(palette, _)| offsets[&(palette.as_ptr() as usize)]);
-        pass.set_bind_group(slot, bindings, &[offset]);
-        pass.set_pipeline(&pipelines[&PipelineKey::of(&batch.material, posed.is_some())]);
+        let joints = posed.map_or(0, |(palette, _)| {
+            offsets.joints[&(palette.as_ptr() as usize)]
+        });
+        let parameters = offsets.parameters[&batch.material.shader_key()];
+        pass.set_bind_group(slot, bindings, &[joints, parameters]);
+        pass.set_pipeline(pipeline);
         if let Some((_, skin)) = posed {
             pass.set_vertex_buffer(2, skin.slice(..));
         }
@@ -1830,6 +2287,8 @@ mod tests {
         metallic_roughness_texture: None,
         normal_texture: None,
         emissive_texture: None,
+        shader: None,
+        parameters: [Vec4::ZERO; 8],
     };
 
     #[test]
@@ -3011,5 +3470,151 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn shaded(source: &str, material: Material) -> Material {
+        Material {
+            shader: Some(Shader::new(source)),
+            ..material
+        }
+    }
+
+    #[test]
+    fn a_shader_moves_vertices_and_colors_the_surface() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let source = "
+            fn vertex(geometry: Geometry) -> Geometry {
+                var moved = geometry;
+                moved.position += parameter(0u).xyz;
+                return moved;
+            }
+            fn surface(surface: Surface, pixel: Pixel) -> Surface {
+                var colored = surface;
+                colored.emissive = parameter(1u).rgb;
+                return colored;
+            }";
+        let mut material = shaded(source, MATTE);
+        material.parameters[0] = Vec4::new(-8.0, -8.0, 0.0, 0.0);
+        material.parameters[1] = Vec4::new(0.0, 1.0, 0.0, 0.0);
+        // A small square in a corner, which the shader moves to the middle.
+        let corner =
+            Mat4::from_translation(Vec3::new(0.8, 0.8, 0.5)) * Mat4::from_scale(Vec3::splat(0.1));
+        let center = |material: Material| {
+            center_of(
+                &device,
+                &queue,
+                &frame(DARK_SUN, vec![quad(Vec3::Z, [1.0; 3], corner, material)]),
+            )
+        };
+        let unmoved = center(MATTE);
+        assert!(unmoved[1] < 50, "{unmoved:?}");
+        let moved = center(material);
+        assert!(moved[1] > 150 && moved[0] == 0, "{moved:?}");
+    }
+
+    #[test]
+    fn a_blended_shader_sees_the_color_and_place_of_what_is_behind() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let behind = quad(
+            Vec3::Z,
+            [1.0; 3],
+            Mat4::from_translation(Vec3::Z * 0.2),
+            Material {
+                emissive: Vec3::new(1.0, 0.0, 0.0),
+                ..MATTE
+            },
+        );
+        let glass = shaded(
+            "fn surface(surface: Surface, pixel: Pixel) -> Surface {
+                var seen = surface;
+                seen.base_color = vec3<f32>(0.0);
+                seen.opacity = 1.0;
+                let near = abs(scene_position(pixel.screen_uv).z - 0.2) < 0.05;
+                seen.emissive = vec3<f32>(0.0, select(0.0, 1.0, near), scene_color(pixel.screen_uv).r);
+                return seen;
+            }",
+            Material {
+                alpha_mode: AlphaMode::Blend,
+                ..MATTE
+            },
+        );
+        let center = center_of(
+            &device,
+            &queue,
+            &frame(DARK_SUN, vec![behind, near_surface(glass)]),
+        );
+        assert!(
+            center[0] == 0 && center[1] > 150 && center[2] > 150,
+            "{center:?}"
+        );
+    }
+
+    #[test]
+    fn a_shader_that_fails_to_compile_draws_as_the_plain_material() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let green = Material {
+            emissive: Vec3::new(0.0, 1.0, 0.0),
+            ..MATTE
+        };
+        let broken = shaded(
+            "fn surface(surface: Surface, pixel: Pixel) -> Surface { return missing; }",
+            green.clone(),
+        );
+        let plain = center_of(&device, &queue, &frame(DARK_SUN, vec![near_surface(green)]));
+        let fallback = center_of(
+            &device,
+            &queue,
+            &frame(DARK_SUN, vec![near_surface(broken)]),
+        );
+        assert_eq!(fallback, plain);
+    }
+
+    #[test]
+    fn a_shader_moves_its_shadow_with_its_vertices() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let ground_brightness = |shader: Option<Shader>| {
+            let mut world = hecs::World::new();
+            world.spawn((
+                crate::Camera::default(),
+                crate::Transform::looking_at(Vec3::Y, Vec3::ZERO, Vec3::Z),
+            ));
+            world.spawn((Sun {
+                direction: Vec3::NEG_Y,
+                ..Sun::default()
+            },));
+            world.spawn((crate::Transform::default(), Mesh::plane(20.0)));
+            let mut material = Material {
+                shader,
+                ..Material::default()
+            };
+            material.parameters[0] = Vec4::new(-60.0, 0.0, 0.0, 0.0);
+            // Far to the side, where only the shader brings it over the ground in view.
+            world.spawn((
+                crate::Transform::at(Vec3::new(60.0, 5.0, 0.0)),
+                Mesh::cube(4.0),
+                material,
+            ));
+            let frame = crate::game::extract_frame(&world, SIZE, SIZE, 1.0, &Quality::default());
+            center_of(&device, &queue, &frame)[0]
+        };
+        let shader = Shader::new(
+            "fn vertex(geometry: Geometry) -> Geometry {
+                var moved = geometry;
+                moved.position += parameter(0u).xyz;
+                return moved;
+            }",
+        )
+        .bounds_scale(40.0);
+        let lit = ground_brightness(None);
+        let shadowed = ground_brightness(Some(shader));
+        assert!(lit > shadowed + 32, "lit {lit}, shadowed {shadowed}");
     }
 }

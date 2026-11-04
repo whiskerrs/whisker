@@ -457,6 +457,7 @@ mod import {
                 emissive_texture: emissive
                     .map(|t| self.read_image(&t.texture()))
                     .transpose()?,
+                ..Material::default()
             })
         }
 

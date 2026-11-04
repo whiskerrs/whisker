@@ -1,9 +1,11 @@
 use std::f32::consts::{PI, TAU};
 use std::sync::{Arc, Weak};
 
-use glam::Vec3;
+use std::hash::{Hash, Hasher};
 
-use crate::Texture;
+use glam::{Vec3, Vec4};
+
+use crate::{Shader, Texture};
 
 const SKINNED_BOUNDS_MARGIN: f32 = 2.0;
 
@@ -69,6 +71,11 @@ pub struct Material {
     pub normal_texture: Option<Texture>,
     /// sRGB color, multiplied by `emissive`.
     pub emissive_texture: Option<Texture>,
+    /// WGSL that moves the vertices and colors the surface in place of Kiba's own.
+    pub shader: Option<Shader>,
+    /// Values `shader` reads with `parameter(index)`. Entities whose parameters differ draw
+    /// separately, so give many entities the same values where you can.
+    pub parameters: [Vec4; 8],
 }
 
 /// How a [`Material`]'s opacity shows what is behind it.
@@ -106,6 +113,19 @@ impl Material {
         };
         (mode, self.double_sided)
     }
+
+    /// Zero without a shader, and otherwise the same only for the same shader and parameters.
+    pub(crate) fn shader_key(&self) -> u64 {
+        let Some(shader) = &self.shader else {
+            return 0;
+        };
+        let mut hasher = rustc_hash::FxHasher::default();
+        shader.key().hash(&mut hasher);
+        for parameter in self.parameters {
+            parameter.to_array().map(f32::to_bits).hash(&mut hasher);
+        }
+        hasher.finish().max(1)
+    }
 }
 
 impl Default for Material {
@@ -123,6 +143,8 @@ impl Default for Material {
             metallic_roughness_texture: None,
             normal_texture: None,
             emissive_texture: None,
+            shader: None,
+            parameters: [Vec4::ZERO; 8],
         }
     }
 }

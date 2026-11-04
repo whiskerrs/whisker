@@ -50,6 +50,8 @@ pub(crate) struct SizedTargets {
     size: (u32, u32),
     pub(crate) depth: wgpu::TextureView,
     pub(crate) hdr: wgpu::TextureView,
+    pub(crate) depth_texture: wgpu::Texture,
+    pub(crate) hdr_texture: wgpu::Texture,
     bloom_views: Vec<wgpu::TextureView>,
     // The scene, then each bloom level in turn.
     bloom_sources: Vec<wgpu::BindGroup>,
@@ -323,10 +325,11 @@ impl PostPasses {
         };
         let drawn_and_read =
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
-        let depth = image("kiba depth", size, 1, DEPTH_FORMAT, drawn_and_read)
-            .create_view(&Default::default());
-        let hdr =
-            image("kiba hdr", size, 1, HDR_FORMAT, drawn_and_read).create_view(&Default::default());
+        let copied = drawn_and_read | wgpu::TextureUsages::COPY_SRC;
+        let depth_texture = image("kiba depth", size, 1, DEPTH_FORMAT, copied);
+        let depth = depth_texture.create_view(&Default::default());
+        let hdr_texture = image("kiba hdr", size, 1, HDR_FORMAT, copied);
+        let hdr = hdr_texture.create_view(&Default::default());
 
         let half = ((size.0 / 2).max(1), (size.1 / 2).max(1));
         let levels = BLOOM_LEVELS.min(u32::BITS - half.0.max(half.1).leading_zeros());
@@ -403,6 +406,8 @@ impl PostPasses {
             size,
             depth,
             hdr,
+            depth_texture,
+            hdr_texture,
             bloom_views,
             bloom_sources,
             occlusion,

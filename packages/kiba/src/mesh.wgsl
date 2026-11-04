@@ -31,6 +31,9 @@ struct Frame {
     reflection_max: vec4<f32>,
     // Where the probe captured from, with W as the width over which it fades in at the box's edge.
     reflection_center: vec4<f32>,
+    inverse_view_projection: mat4x4<f32>,
+    // Seconds since the game started, then the inverse width and height of the view in pixels.
+    screen: vec4<f32>,
 }
 
 struct Light {
@@ -49,6 +52,9 @@ struct Light {
 @group(0) @binding(4) var sky_irradiance: texture_cube<f32>;
 @group(0) @binding(5) var sky_sampler: sampler;
 @group(0) @binding(6) var reflection: texture_cube<f32>;
+// What opaque surfaces and the sky drew, for blended surfaces to see through.
+@group(0) @binding(7) var behind_color: texture_2d<f32>;
+@group(0) @binding(8) var behind_depth: texture_depth_2d;
 @group(1) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(1) @binding(1) var metallic_roughness_texture: texture_2d<f32>;
 @group(1) @binding(2) var normal_texture: texture_2d<f32>;
@@ -59,7 +65,12 @@ struct Joints {
     matrices: array<mat4x4<f32>, 128>,
 }
 
+struct Parameters {
+    values: array<vec4<f32>, 8>,
+}
+
 @group(2) @binding(0) var<uniform> joints: Joints;
+@group(2) @binding(1) var<uniform> parameters: Parameters;
 @group(3) @binding(0) var probes: texture_3d<f32>;
 @group(3) @binding(1) var probe_bounce: texture_3d<f32>;
 
@@ -74,6 +85,11 @@ struct VertexOutput {
     @location(6) emissive: vec3<f32>,
     // Opacity, the cutoff below which a masked surface is absent, and transmission.
     @location(7) opacity: vec3<f32>,
+    @location(8) entity_position: vec3<f32>,
+    // The rows of the matrix from world space into the entity's.
+    @location(9) @interpolate(flat) to_entity0: vec4<f32>,
+    @location(10) @interpolate(flat) to_entity1: vec4<f32>,
+    @location(11) @interpolate(flat) to_entity2: vec4<f32>,
 }
 
 struct InstanceInput {
@@ -95,28 +111,118 @@ struct VertexInput {
     @location(3) uv: vec2<f32>,
 }
 
-fn place_vertex(vertex: VertexInput, instance: InstanceInput, transform: mat4x4<f32>) -> VertexOutput {
+struct Geometry {
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    uv: vec2<f32>,
+    color: vec3<f32>,
+}
+
+struct Surface {
+    base_color: vec3<f32>,
+    opacity: f32,
+    metallic: f32,
+    roughness: f32,
+    emissive: vec3<f32>,
+    normal: vec3<f32>,
+}
+
+struct Pixel {
+    world_position: vec3<f32>,
+    entity_position: vec3<f32>,
+    uv: vec2<f32>,
+    screen_uv: vec2<f32>,
+    to_camera: vec3<f32>,
+}
+
+var<private> world_to_entity: mat4x4<f32>;
+
+fn time() -> f32 {
+    return frame.screen.x;
+}
+
+fn parameter(index: u32) -> vec4<f32> {
+    return parameters.values[min(index, 7u)];
+}
+
+fn to_sun() -> vec3<f32> {
+    return frame.to_sun.xyz;
+}
+
+fn sun_color() -> vec3<f32> {
+    return frame.sun_color.rgb;
+}
+
+fn sky_color(direction: vec3<f32>) -> vec3<f32> {
+    if frame.shadow_params.z == 0.0 {
+        return frame.ambient.rgb;
+    }
+    return textureSampleLevel(sky_radiance, sky_sampler, direction, 0.0).rgb;
+}
+
+fn to_entity(world: vec3<f32>) -> vec3<f32> {
+    return (world_to_entity * vec4<f32>(world, 1.0)).xyz;
+}
+
+fn scene_color(screen_uv: vec2<f32>) -> vec3<f32> {
+    // The copy already carries the exposure, which lighting applies again to emission.
+    return textureSampleLevel(behind_color, sky_sampler, screen_uv, 0.0).rgb / frame.camera_position.w;
+}
+
+fn scene_position(screen_uv: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(behind_depth));
+    let texel = clamp(vec2<i32>(screen_uv * size), vec2<i32>(0), vec2<i32>(size) - 1);
+    // Reversed depth puts the sky at zero, which the floor turns into a point very far away.
+    let depth = max(textureLoad(behind_depth, texel, 0), 1e-7);
+    let clip = vec4<f32>(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, depth, 1.0);
+    let world = frame.inverse_view_projection * clip;
+    return world.xyz / world.w;
+}
+
+// Inverts an affine matrix without shear, which every Transform is, and WGSL has no inverse.
+fn inverse_placement(transform: mat4x4<f32>) -> mat4x4<f32> {
+    let x = transform[0].xyz / dot(transform[0].xyz, transform[0].xyz);
+    let y = transform[1].xyz / dot(transform[1].xyz, transform[1].xyz);
+    let z = transform[2].xyz / dot(transform[2].xyz, transform[2].xyz);
+    let t = transform[3].xyz;
+    return transpose(mat4x4<f32>(
+        vec4<f32>(x, -dot(x, t)),
+        vec4<f32>(y, -dot(y, t)),
+        vec4<f32>(z, -dot(z, t)),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
+    ));
+}
+
+fn place_vertex(input: VertexInput, instance: InstanceInput, skin: mat4x4<f32>) -> VertexOutput {
+    let entity = mat4x4<f32>(instance.column0, instance.column1, instance.column2, instance.column3);
+    world_to_entity = inverse_placement(entity);
+    let moved = vertex(Geometry(input.position, input.normal, input.uv, input.color));
+    let transform = entity * skin;
     let basis = mat3x3<f32>(transform[0].xyz, transform[1].xyz, transform[2].xyz);
     let squared_scale = vec3<f32>(dot(basis[0], basis[0]), dot(basis[1], basis[1]), dot(basis[2], basis[2]));
     var output: VertexOutput;
-    let world_position = transform * vec4<f32>(vertex.position, 1.0);
+    let world_position = transform * vec4<f32>(moved.position, 1.0);
     output.position = frame.view_projection * world_position;
     output.world_position = world_position.xyz;
     // Equals the inverse transpose for a matrix without shear, which every Transform is, and WGSL has no inverse.
-    output.normal = basis * (vertex.normal / squared_scale);
-    output.base_color = vertex.color * instance.base_color;
+    output.normal = basis * (moved.normal / squared_scale);
+    output.base_color = moved.color * instance.base_color;
     output.metallic = instance.metallic;
     output.roughness = instance.roughness;
-    output.uv = vertex.uv;
+    output.uv = moved.uv;
     output.emissive = instance.emissive;
     output.opacity = instance.opacity;
+    output.entity_position = (skin * vec4<f32>(moved.position, 1.0)).xyz;
+    let rows = transpose(world_to_entity);
+    output.to_entity0 = rows[0];
+    output.to_entity1 = rows[1];
+    output.to_entity2 = rows[2];
     return output;
 }
 
 @vertex
 fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
-    let transform = mat4x4<f32>(instance.column0, instance.column1, instance.column2, instance.column3);
-    return place_vertex(vertex, instance, transform);
+    return place_vertex(vertex, instance, mat4x4<f32>(vec4<f32>(1.0, 0.0, 0.0, 0.0), vec4<f32>(0.0, 1.0, 0.0, 0.0), vec4<f32>(0.0, 0.0, 1.0, 0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0)));
 }
 
 @vertex
@@ -126,55 +232,81 @@ fn vs_skinned(
     @location(11) joint_indices: vec4<u32>,
     @location(12) weights: vec4<f32>,
 ) -> VertexOutput {
-    let transform = mat4x4<f32>(instance.column0, instance.column1, instance.column2, instance.column3);
     let skin = joints.matrices[joint_indices.x] * weights.x
         + joints.matrices[joint_indices.y] * weights.y
         + joints.matrices[joint_indices.z] * weights.z
         + joints.matrices[joint_indices.w] * weights.w;
-    return place_vertex(vertex, instance, transform * skin);
+    return place_vertex(vertex, instance, skin);
 }
 
 @fragment
 fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return vec4<f32>(lit(input, front, 1.0), 1.0);
+    return vec4<f32>(lit(input, front, surface_of(input, front), 1.0), 1.0);
 }
 
 @fragment
 fn fs_masked(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    if opacity_of(input) < input.opacity.y {
+    let surface = surface_of(input, front);
+    if surface.opacity < input.opacity.y {
         discard;
     }
-    return vec4<f32>(lit(input, front, 1.0), 1.0);
+    return vec4<f32>(lit(input, front, surface, 1.0), 1.0);
 }
 
 // Premultiplied, so that what the surface reflects keeps its strength however clear the surface is.
 @fragment
 fn fs_blended(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let opacity = opacity_of(input);
-    return vec4<f32>(lit(input, front, opacity), opacity);
+    let surface = surface_of(input, front);
+    let opacity = saturate(surface.opacity);
+    return vec4<f32>(lit(input, front, surface, opacity), opacity);
 }
 
-fn opacity_of(input: VertexOutput) -> f32 {
-    return textureSample(base_color_texture, material_sampler, input.uv).a * input.opacity.x;
+// Casts a masked shader's shadow with the holes its surface makes.
+@fragment
+fn fs_shadow_masked(input: VertexOutput, @builtin(front_facing) front: bool) {
+    if surface_of(input, front).opacity < input.opacity.y {
+        discard;
+    }
+}
+
+// What the material and its textures make of the pixel, passed through the shader's `surface`.
+fn surface_of(input: VertexOutput, front: bool) -> Surface {
+    world_to_entity = transpose(mat4x4<f32>(input.to_entity0, input.to_entity1, input.to_entity2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
+    // A back face seen through a double-sided material is lit as the side facing the viewer.
+    let geometric = normalize(input.normal) * select(-1.0, 1.0, front);
+    let base = textureSample(base_color_texture, material_sampler, input.uv);
+    let metal_rough = textureSample(metallic_roughness_texture, material_sampler, input.uv);
+    var material: Surface;
+    material.base_color = input.base_color * base.rgb;
+    material.opacity = base.a * input.opacity.x;
+    material.metallic = input.metallic * metal_rough.b;
+    material.roughness = input.roughness * metal_rough.g;
+    material.emissive = input.emissive * textureSample(emissive_texture, material_sampler, input.uv).rgb;
+    material.normal = mapped_normal(geometric, input.world_position, input.uv);
+    let pixel = Pixel(
+        input.world_position,
+        input.entity_position,
+        input.uv,
+        input.position.xy * frame.screen.zw,
+        normalize(frame.camera_position.xyz - input.world_position),
+    );
+    return surface(material, pixel);
 }
 
 // Scales only what the surface itself sends back by `opacity`, and fades it into the fog.
-fn lit(input: VertexOutput, front: bool, opacity: f32) -> vec3<f32> {
-    // A back face seen through a double-sided material is lit as the side facing the viewer.
-    let facing = select(-1.0, 1.0, front);
-    let geometric = normalize(input.normal) * facing;
-    let normal = mapped_normal(geometric, input.world_position, input.uv);
-    let metal_rough = textureSample(metallic_roughness_texture, material_sampler, input.uv);
-    let metallic = input.metallic * metal_rough.b;
-    let base_color = input.base_color * textureSample(base_color_texture, material_sampler, input.uv).rgb;
+fn lit(input: VertexOutput, front: bool, material: Surface, opacity: f32) -> vec3<f32> {
+    let geometric = normalize(input.normal) * select(-1.0, 1.0, front);
+    let normal = normalize(material.normal);
+    let metallic = material.metallic;
+    let base_color = material.base_color;
     let to_camera = normalize(frame.camera_position.xyz - input.world_position);
     let n_dot_v = max(dot(normal, to_camera), 1e-4);
 
-    let roughness = clamp(input.roughness * metal_rough.g, MIN_ROUGHNESS, 1.0);
+    let roughness = clamp(material.roughness, MIN_ROUGHNESS, 1.0);
     let alpha = roughness * roughness;
     let reflectance = mix(vec3<f32>(DIELECTRIC_REFLECTANCE), base_color, metallic);
     let diffuse = base_color * (1.0 - metallic) * opacity;
-    let surface = Surface(normal, to_camera, n_dot_v, alpha, diffuse, reflectance);
+    let surface = Shading(normal, to_camera, n_dot_v, alpha, diffuse, reflectance);
 
     let shadowed = sun_visibility(input.world_position, geometric, input.position.xy);
     var direct = shade(surface, frame.to_sun.xyz, frame.sun_color.rgb * shadowed);
@@ -200,12 +332,12 @@ fn lit(input: VertexOutput, front: bool, opacity: f32) -> vec3<f32> {
     let reflected = probe_reflection(input.world_position, mirrored, roughness, sky_reflected);
     let ambient = diffuse * (ambient_diffuse * sky_visibility(input.world_position, normal) + bounce_light(input.world_position, normal))
         + ambient_specular(reflectance, roughness, n_dot_v) * reflected;
-    let glow = input.emissive * textureSample(emissive_texture, material_sampler, input.uv).rgb * opacity;
+    let glow = material.emissive * opacity;
     let air = 1.0 - exp(-length(frame.camera_position.xyz - input.world_position) * frame.fog.w);
     return mix(direct + ambient + glow, frame.fog.rgb * opacity, air) * frame.camera_position.w;
 }
 
-struct Surface {
+struct Shading {
     normal: vec3<f32>,
     to_camera: vec3<f32>,
     n_dot_v: f32,
@@ -215,7 +347,7 @@ struct Surface {
 }
 
 // Light colors are the light leaving a white diffuse surface, so diffuse carries no 1/PI and specular gains PI.
-fn shade(surface: Surface, to_light: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
+fn shade(surface: Shading, to_light: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
     let halfway = normalize(surface.to_camera + to_light);
     let n_dot_l = max(dot(surface.normal, to_light), 0.0);
     let n_dot_h = max(dot(surface.normal, halfway), 0.0);
@@ -224,7 +356,7 @@ fn shade(surface: Surface, to_light: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
     return (surface.diffuse + specular * PI) * light * n_dot_l;
 }
 
-fn local_light(surface: Surface, light: Light, position: vec3<f32>) -> vec3<f32> {
+fn local_light(surface: Shading, light: Light, position: vec3<f32>) -> vec3<f32> {
     let offset = light.position.xyz - position;
     let distance_squared = max(dot(offset, offset), 1e-4);
     let to_light = offset * inverseSqrt(distance_squared);

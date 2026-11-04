@@ -21,7 +21,7 @@ use crate::reflection::{Reflection, ReflectionId, ReflectionProbe, face_view_pro
 use crate::renderer::{Batch, Cascade, Effects, Frame, Instance, Shadows};
 use crate::sky::{Fog, Sky};
 use crate::stream::run_streams;
-use crate::{AlphaMode, Input, Material, Mesh, Model, Renderer};
+use crate::{AlphaMode, Input, Material, Mesh, Model, Renderer, Shader};
 
 const MAX_DELTA_SECONDS: f32 = 0.1;
 const DEFAULT_FIXED_HZ: f32 = 60.0;
@@ -556,6 +556,7 @@ impl<C: 'static> RunningGame for Registered<C> {
         setup.governor.update(real_delta);
         let quality = setup.governor.quality(width, height);
         let mut frame = extract_frame(&setup.world, width, height, alpha, &quality);
+        frame.effects.time = setup.elapsed as f32;
         if frame
             .effects
             .reflection
@@ -692,8 +693,9 @@ impl Frustum {
         self.0.iter().all(|plane| plane.dot(center) >= -radius)
     }
 
-    fn contains(&self, mesh: &Mesh, transform: &Mat4) -> bool {
+    fn contains(&self, mesh: &Mesh, transform: &Mat4, material: &Material) -> bool {
         let data = mesh.data();
+        let reach = material.shader.as_ref().map_or(1.0, Shader::culling_scale);
         let center = transform.transform_point3(data.bounds_center);
         let scale = transform
             .x_axis
@@ -702,7 +704,7 @@ impl Frustum {
             .max(transform.y_axis.truncate().length_squared())
             .max(transform.z_axis.truncate().length_squared())
             .sqrt();
-        self.contains_sphere(center, data.bounds_radius * scale)
+        self.contains_sphere(center, data.bounds_radius * scale * reach)
     }
 }
 
@@ -713,8 +715,9 @@ fn shown(transform: &Transform, motion: Option<&Interpolated>, alpha: f32) -> Tr
     }
 }
 
-/// A mesh, textures, pipeline, and joint palette, which entities must share to draw as one batch.
-type BatchKey = (usize, [usize; 4], (u8, bool), usize);
+/// A mesh, textures, pipeline, joint palette, and shader with its parameters, which entities must
+/// share to draw as one batch.
+type BatchKey = (usize, [usize; 4], (u8, bool), usize, u64);
 // Every drawn instance hashes its key once per pass, where SipHash's resistance to attack buys nothing.
 type Batches = rustc_hash::FxHashMap<BatchKey, Batch>;
 
@@ -735,6 +738,7 @@ fn add_instance(
             batch_material.texture_keys(),
             batch_material.pipeline_key(),
             owner,
+            batch_material.shader_key(),
         ))
         .or_insert_with(|| Batch {
             mesh: mesh.clone(),
@@ -846,6 +850,8 @@ pub(crate) fn extract_frame(
                 AlphaMode::Mask { .. } => Some(material.clone()),
                 AlphaMode::Opaque => Some(Material {
                     double_sided: material.double_sided,
+                    shader: material.shader.clone(),
+                    parameters: material.parameters,
                     ..Material::default()
                 }),
             };
@@ -854,7 +860,7 @@ pub(crate) fn extract_frame(
                 let Some(caster) = caster.as_ref() else {
                     break;
                 };
-                if frustum.contains(mesh, &transform) {
+                if frustum.contains(mesh, &transform, material) {
                     add_instance(
                         &mut casters[cascade],
                         mesh,
@@ -865,7 +871,7 @@ pub(crate) fn extract_frame(
                     );
                 }
             }
-            if frustum.contains(mesh, &transform) {
+            if frustum.contains(mesh, &transform, material) {
                 add_instance(&mut batches, mesh, material, material, transform, palette);
             }
         },
@@ -910,6 +916,7 @@ pub(crate) fn extract_frame(
                 })
                 .find(|id| id.contains(eye.translation))
                 .map(|id| Reflection { id, faces: None }),
+            time: 0.0,
         },
     }
 }
@@ -932,7 +939,7 @@ pub(crate) fn add_capture(frame: &mut Frame, world: &World, alpha: f32) {
                 return;
             }
             for (face, frustum) in frustums.iter().enumerate() {
-                if frustum.contains(mesh, &transform) {
+                if frustum.contains(mesh, &transform, material) {
                     add_instance(
                         &mut faces[face],
                         mesh,

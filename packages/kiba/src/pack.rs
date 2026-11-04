@@ -399,6 +399,7 @@ pub(crate) fn read_model(bytes: &[u8]) -> Result<ModelData, String> {
             metallic_roughness_texture: texture(input)?,
             normal_texture: texture(input)?,
             emissive_texture: texture(input)?,
+            ..Material::default()
         };
         let transform = input.mat4()?;
         let node = input.option()?;
