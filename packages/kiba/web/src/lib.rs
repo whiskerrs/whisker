@@ -196,7 +196,10 @@ fn listen_for_input(
             let event: web_sys::PointerEvent = event.unchecked_into();
             // Capture keeps a drag alive when it leaves the canvas or crosses overlaid UI.
             let _ = capture_target.set_pointer_capture(event.pointer_id());
-            if lock_game.get().is_some_and(kiba::wants_pointer_lock) && !down_locked() {
+            if event.pointer_type() == "mouse"
+                && lock_game.get().is_some_and(kiba::wants_pointer_lock)
+                && !down_locked()
+            {
                 capture_target.request_pointer_lock();
             }
             down_send(InputEvent::PointerDown {
