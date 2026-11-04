@@ -160,6 +160,15 @@ fn sky_color(direction: vec3<f32>) -> vec3<f32> {
     return textureSampleLevel(sky_radiance, sky_sampler, direction, 0.0).rgb;
 }
 
+fn sunlight(world: vec3<f32>) -> f32 {
+    return sun_visibility(world, frame.to_sun.xyz, vec2<f32>(0.0));
+}
+
+fn to_screen(world: vec3<f32>) -> vec2<f32> {
+    let clip = frame.view_projection * vec4<f32>(world, 1.0);
+    return vec2<f32>(0.5, -0.5) * clip.xy / clip.w + 0.5;
+}
+
 fn to_entity(world: vec3<f32>) -> vec3<f32> {
     return (world_to_entity * vec4<f32>(world, 1.0)).xyz;
 }
@@ -542,7 +551,12 @@ fn visibility(n_dot_l: f32, n_dot_v: f32, alpha: f32) -> f32 {
 }
 
 fn fresnel(reflectance: vec3<f32>, v_dot_h: f32) -> vec3<f32> {
-    return reflectance + (vec3<f32>(1.0) - reflectance) * pow(1.0 - v_dot_h, 5.0);
+    return reflectance + (vec3<f32>(grazing(reflectance)) - reflectance) * pow(1.0 - v_dot_h, 5.0);
+}
+
+// Filament's link from head-on to grazing reflectance, so a surface of zero reflectance reflects nothing.
+fn grazing(reflectance: vec3<f32>) -> f32 {
+    return saturate(dot(reflectance, vec3<f32>(50.0 * 0.33)));
 }
 
 // Karis's analytic fit of the split-sum BRDF, which keeps metals from going black under ambient light.
@@ -550,5 +564,5 @@ fn ambient_specular(reflectance: vec3<f32>, roughness: f32, n_dot_v: f32) -> vec
     let r = roughness * vec4<f32>(-1.0, -0.0275, -0.572, 0.022) + vec4<f32>(1.0, 0.0425, 1.04, -0.04);
     let a004 = min(r.x * r.x, pow(2.0, -9.28 * n_dot_v)) * r.x + r.y;
     let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
-    return reflectance * ab.x + vec3<f32>(ab.y);
+    return reflectance * ab.x + vec3<f32>(ab.y * grazing(reflectance));
 }

@@ -2805,10 +2805,16 @@ mod tests {
             roughness: 0.1,
             ..MATTE
         };
-        let reflecting = shot(vec![near_surface(mirror)], Some(red));
+        let reflecting = shot(vec![near_surface(mirror.clone())], Some(red));
         assert!(reflecting[0] > 100 && reflecting[1] == 0, "{reflecting:?}");
 
         assert_eq!(shot(vec![near_surface(MATTE)], None)[0], 0);
+
+        let black_metal = Material {
+            base_color: Vec3::ZERO,
+            ..mirror
+        };
+        assert_eq!(shot(vec![near_surface(black_metal)], Some(red)), [0, 0, 0]);
     }
 
     #[test]

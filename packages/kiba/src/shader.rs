@@ -39,6 +39,8 @@ use std::sync::Arc;
 /// | `parameter(index: u32) -> vec4<f32>` | [`Material::parameters`](crate::Material::parameters)`[index]`, for `index` below 8 |
 /// | `to_sun() -> vec3<f32>`, `sun_color() -> vec3<f32>` | The [`Sun`](crate::Sun)'s unit direction toward it and its color |
 /// | `sky_color(direction: vec3<f32>) -> vec3<f32>` | The light arriving from `direction`, from the [`Sky`](crate::Sky) or the sun's ambient |
+/// | `sunlight(world: vec3<f32>) -> f32` | The share of the sun's light reaching a world position past shadows, from 0 to 1 |
+/// | `to_screen(world: vec3<f32>) -> vec2<f32>` | Where a world position shows, in the units of `Pixel::screen_uv` |
 /// | `to_entity(world: vec3<f32>) -> vec3<f32>` | A world position in the entity's space, as [`Transform`](crate::Transform) places it |
 ///
 /// A surface whose material uses [`AlphaMode::Blend`](crate::AlphaMode::Blend) may also see the
@@ -48,6 +50,9 @@ use std::sync::Arc;
 /// |---|---|
 /// | `scene_color(screen_uv: vec2<f32>) -> vec3<f32>` | The color behind, in the scale of `emissive`, so refraction is `emissive = scene_color(bent_uv)` with an opacity of 1 and a black base color |
 /// | `scene_position(screen_uv: vec2<f32>) -> vec3<f32>` | The world position behind, so `to_entity(scene_position(pixel.screen_uv))` projects a decal drawn on a double-sided cube |
+///
+/// A blended surface's reflections are not scaled by its opacity, so one whose clear parts must vanish,
+/// such as a ripple or a decal, sets a black `base_color` with a `metallic` of 1, which reflects nothing.
 ///
 /// Blended surfaces do not see one another this way. Kiba's own functions share the module, so a name
 /// that clashes with one fails to compile. A shader that fails to compile is logged with the compiler's
