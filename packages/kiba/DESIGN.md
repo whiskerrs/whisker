@@ -199,8 +199,8 @@ out of the cubes, because surfaces receive it directly.
 `Sky::from_sun` derives sky colors from the sun's height for a day cycle, and `Fog` fades surfaces into
 the air with distance. Post-processing adds FXAA on every tier, judged after tone mapping;
 `Camera::depth_of_field`, a thin-lens blur gathered over 24 taps that keeps a blurred foreground spilling
-over a sharp background; and on T1 and T2, light shafts that march 32 steps toward the sun and gather the
-sky seen through gaps. Ambient occlusion reads the depth of the main pass at half resolution with eight
+over a sharp background; and on T1 and T2, light shafts that march 32 steps toward the sun and glow in the
+sun's color as much as the way is clear, so a dim moon cannot wash out a dark sky. Ambient occlusion reads the depth of the main pass at half resolution with eight
 samples per pixel and is blurred while post-processing reads it. Bloom keeps light above 1.0, halves it
 four times, and adds the chain back up. Particles are CPU-simulated sprites drawn as one instanced draw
 that adds light, so smoke that darkens waits for sorted transparency.

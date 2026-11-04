@@ -16,6 +16,7 @@ struct PostUniform {
     output_size: Vec4,
     focus: Vec4,
     sun: Vec4,
+    sun_color: Vec4,
     inverse_projection: Mat4,
 }
 
@@ -24,6 +25,7 @@ pub(crate) struct PostView {
     pub(crate) projection: Mat4,
     pub(crate) view_projection: Mat4,
     pub(crate) to_sun: Vec3,
+    pub(crate) sun_color: Vec3,
     pub(crate) depth_of_field: Option<DepthOfField>,
 }
 
@@ -476,6 +478,7 @@ impl PostPasses {
                 output_size: Vec4::new(output_size.0 as f32, output_size.1 as f32, 0.0, 0.0),
                 focus,
                 sun,
+                sun_color: view.sun_color.extend(0.0),
                 inverse_projection: projection.inverse(),
             }),
         );

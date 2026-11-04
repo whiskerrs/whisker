@@ -1095,6 +1095,7 @@ impl SceneRenderer {
             projection: frame.effects.projection,
             view_projection: frame.view_projection,
             to_sun: -frame.sun.direction.normalize_or(Vec3::NEG_Y),
+            sun_color: frame.sun.color,
             depth_of_field: frame.effects.depth_of_field,
         };
 
@@ -2869,6 +2870,34 @@ mod tests {
         let clear = beside_sun(2.0, false);
         assert!(clear > plain + 10, "{plain} {clear}");
         assert!(beside_sun(2.0, true) < clear, "{clear}");
+    }
+
+    #[test]
+    fn light_shafts_glow_with_the_sun_not_the_sky() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let faint = Sun {
+            color: Vec3::splat(0.005),
+            ..dim_sun(Vec3::Z)
+        };
+        let beside_sun = |light_shafts| {
+            let frame = Frame {
+                sky: Some(Sky::default()),
+                ..through_lens(frame(faint, Vec::new()))
+            };
+            let quality = Quality {
+                light_shafts,
+                ..Quality::default()
+            };
+            pixel(
+                &rendered(&device, &queue, &with_quality(frame, quality)),
+                44,
+                32,
+            )[2]
+        };
+        let (plain, shafted) = (beside_sun(0.0), beside_sun(2.0));
+        assert!(shafted <= plain + 2, "{plain} {shafted}");
     }
 
     #[test]

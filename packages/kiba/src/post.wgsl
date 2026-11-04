@@ -10,6 +10,8 @@ struct Parameters {
     focus: vec4<f32>,
     // The sun's place on screen, then the strength of its shafts, zero for none.
     sun: vec4<f32>,
+    // Linear RGB light of the sun, which colors its shafts.
+    sun_color: vec4<f32>,
     inverse_projection: mat4x4<f32>,
 }
 
@@ -154,23 +156,25 @@ fn focused(uv: vec2<f32>, sharp: vec3<f32>, screen: vec2<f32>) -> vec3<f32> {
     return sum / weight;
 }
 
-// Steps toward the sun, adding the sky seen through gaps, so light streams past what stands in front of it.
+// Glows around the sun as much as the way to it is clear, so its light streams past what stands in front of it.
+// The glow takes the sun's color rather than the sky's, so a dim moon cannot wash a dark sky out.
 fn shafts(uv: vec2<f32>) -> vec3<f32> {
     let sun = parameters.sun.xy;
     let size = vec2<f32>(depth_size());
     let step = (sun - uv) / f32(SHAFT_TAPS);
-    var light = vec3<f32>(0.0);
+    var clear = 0.0;
     var at = uv;
     for (var i = 0u; i < SHAFT_TAPS; i++) {
         at += step;
         if all(at >= vec2<f32>(0.0)) && all(at <= vec2<f32>(1.0)) && textureLoad(depth, vec2<i32>(at * size), 0) <= 0.0 {
-            let near_sun = exp(-length((at - sun) * vec2<f32>(size.x / size.y, 1.0)) * 6.0);
-            light += min(textureSampleLevel(scene, linear_sampler, at, 0.0).rgb, vec3<f32>(8.0)) * near_sun;
+            clear += 1.0;
         }
     }
+    let glow = exp(-length((uv - sun) * vec2<f32>(size.x / size.y, 1.0)) * 5.0);
     // Fades out as the sun leaves the screen, where its gaps can no longer be seen.
     let off_screen = length(max(abs(sun - 0.5) - 0.5, vec2<f32>(0.0)));
-    return light / f32(SHAFT_TAPS) * parameters.sun.z * saturate(1.0 - off_screen * 4.0);
+    return clear / f32(SHAFT_TAPS) * glow * parameters.sun_color.rgb * 2.0 * parameters.sun.z
+        * saturate(1.0 - off_screen * 4.0);
 }
 
 // Narkowicz's fit of the ACES curve, cheap enough for the lowest tier.
