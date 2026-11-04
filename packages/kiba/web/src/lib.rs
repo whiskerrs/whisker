@@ -22,7 +22,7 @@ async fn create_renderer(canvas: web_sys::HtmlCanvasElement) -> Result<Renderer,
     Renderer::new(&instance, surface).await
 }
 
-fn resize_to_display(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
+fn resize_to_display(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32, f32) {
     let scale = web_sys::window()
         .expect("kiba requires a window")
         .device_pixel_ratio();
@@ -32,7 +32,7 @@ fn resize_to_display(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
         canvas.set_width(width);
         canvas.set_height(height);
     }
-    (width, height)
+    (width, height, scale as f32)
 }
 
 struct Listener {

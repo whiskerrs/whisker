@@ -256,6 +256,8 @@ pub struct Context<'a> {
     pub input: &'a Input,
     /// Viewport size in physical pixels, zero before the first frame.
     pub viewport: (u32, u32),
+    /// Physical pixels per layout pixel, for sizing UI drawn over the viewport.
+    pub pixel_ratio: f32,
     /// Cost of the previous frame.
     pub stats: FrameStats,
     alpha: f32,
@@ -296,6 +298,7 @@ pub struct GameSetup<C> {
     frame_input: Input,
     fixed_input: Input,
     viewport: (u32, u32),
+    pixel_ratio: f32,
     stats: FrameStats,
     governor: Governor,
     pointer_lock: bool,
@@ -315,6 +318,7 @@ impl<C> GameSetup<C> {
             frame_input: Input::default(),
             fixed_input: Input::default(),
             viewport: (0, 0),
+            pixel_ratio: 1.0,
             stats: FrameStats::default(),
             governor: Governor::default(),
             pointer_lock: false,
@@ -395,6 +399,7 @@ impl<C> GameSetup<C> {
     /// Runs one frame of simulation and returns how far drawing is between the last two fixed steps.
     fn advance(&mut self, delta_seconds: f32, commands: Vec<C>) -> f32 {
         let viewport = self.viewport;
+        let pixel_ratio = self.pixel_ratio;
         let stats = self.stats;
         self.elapsed += f64::from(delta_seconds);
         let frame_time = Time {
@@ -407,6 +412,7 @@ impl<C> GameSetup<C> {
                 time: frame_time,
                 input: &self.frame_input,
                 viewport,
+                pixel_ratio,
                 stats,
                 alpha: 1.0,
                 governor: &mut self.governor,
@@ -435,6 +441,7 @@ impl<C> GameSetup<C> {
                     time,
                     input: &self.fixed_input,
                     viewport,
+                    pixel_ratio,
                     stats,
                     alpha: 1.0,
                     governor: &mut self.governor,
@@ -452,6 +459,7 @@ impl<C> GameSetup<C> {
                 time: frame_time,
                 input: &self.frame_input,
                 viewport,
+                pixel_ratio,
                 stats,
                 alpha,
                 governor: &mut self.governor,
@@ -480,7 +488,7 @@ impl<C> GameSetup<C> {
 
 struct RenderTarget {
     renderer: Renderer,
-    size: Box<dyn FnMut() -> (u32, u32)>,
+    size: Box<dyn FnMut() -> (u32, u32, f32)>,
 }
 
 struct GameState<C> {
@@ -558,8 +566,9 @@ impl<C: 'static> RunningGame for Registered<C> {
         for event in state.input.take() {
             setup.apply_input(event);
         }
-        let (width, height) = (target.size)();
+        let (width, height, pixel_ratio) = (target.size)();
         setup.viewport = (width, height);
+        setup.pixel_ratio = pixel_ratio;
         let alpha = setup.advance(delta_seconds, commands);
 
         let updated = Instant::now();
@@ -1102,7 +1111,11 @@ impl<C> From<Game<C>> for whisker::Signal<String> {
 
 /// Connects a Host's render target to a game and starts its frames.
 #[doc(hidden)]
-pub fn attach_renderer(id: i64, renderer: Renderer, size: impl FnMut() -> (u32, u32) + 'static) {
+pub fn attach_renderer(
+    id: i64,
+    renderer: Renderer,
+    size: impl FnMut() -> (u32, u32, f32) + 'static,
+) {
     if let Some(game) = find(id) {
         game.attach(RenderTarget {
             renderer,
