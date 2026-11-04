@@ -23,6 +23,8 @@ stress = []
 soak = []
 # Replaces the scene with the Meshy-built world in showcase/.
 showcase = []
+# Replaces the scene with the water slime of the slime game, drawn with material shaders.
+slime = []
 
 [dependencies]
 whisker-cng = { path = "../../../crates/whisker-cng", version = "0.15.0", default-features = false }
