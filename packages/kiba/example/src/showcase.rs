@@ -345,16 +345,20 @@ fn factory(world: &mut World, placer: &mut Placer) {
         (far + 30.0, -45.0, 40.0),
     ] {
         placer.place(world, "smokestack", Vec3::new(x, 0.0, z), h, 0.0);
-        let mut smoke = ParticleEmitter::default();
-        smoke.rate = 25.0;
-        smoke.lifetime = 9.0;
-        smoke.speed = 2.0;
-        smoke.spread = 0.15;
-        smoke.gravity = Vec3::new(0.6, 0.15, 0.0);
-        smoke.size = (1.5, 7.0);
-        smoke.color = (Vec3::splat(0.025), Vec3::splat(0.01));
-        smoke.capacity = 400;
-        world.spawn((Transform::at(Vec3::new(x, h, z)), smoke));
+        world.spawn((
+            Transform::at(Vec3::new(x, h, z)),
+            ParticleEmitter {
+                rate: 25.0,
+                lifetime: 9.0,
+                speed: 2.0,
+                spread: 0.15,
+                gravity: Vec3::new(0.6, 0.15, 0.0),
+                size: (1.5, 7.0),
+                color: (Vec3::splat(0.025), Vec3::splat(0.01)),
+                capacity: 400,
+                ..ParticleEmitter::default()
+            },
+        ));
     }
 }
 

@@ -192,7 +192,7 @@ pub use mesh::{AlphaMode, Material, Mesh, Vertex};
 #[cfg(feature = "gltf")]
 pub use model::ModelError;
 pub use model::{LoadState, Model};
-pub use particles::ParticleEmitter;
+pub use particles::{ParticleEmitter, Sprites};
 #[cfg(feature = "physics")]
 pub use physics::{BodyKind, Collider, Physics, RayHit, RigidBody};
 pub use probes::ProbeVolume;

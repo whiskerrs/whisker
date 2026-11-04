@@ -25,6 +25,15 @@ struct Particle {
 /// Good for fire, sparks, and magic. Sprites do not shadow or sort, and add to what is behind them, so
 /// they cannot show smoke that darkens. Simulation runs on the CPU, so keep thousands, not millions.
 /// The default is a small campfire flame, which shows without a [`Sky`](crate::Sky).
+///
+/// ```
+/// # use kiba::prelude::*;
+/// let embers = ParticleEmitter {
+///     rate: 20.0,
+///     lifetime: 3.0,
+///     ..ParticleEmitter::default()
+/// };
+/// ```
 #[derive(Clone, Debug)]
 pub struct ParticleEmitter {
     /// Sprites per second. Zero leaves only [`ParticleEmitter::burst`].
@@ -43,9 +52,26 @@ pub struct ParticleEmitter {
     pub color: (Vec3, Vec3),
     /// The most alive at once, past which births are dropped.
     pub capacity: usize,
+    /// The sprites alive now, which Kiba advances; leave it at its default.
+    pub sprites: Sprites,
+}
+
+/// The live sprites of one [`ParticleEmitter`].
+#[derive(Clone, Debug)]
+pub struct Sprites {
     particles: Vec<Particle>,
     owed: f32,
     seed: u32,
+}
+
+impl Default for Sprites {
+    fn default() -> Self {
+        Self {
+            particles: Vec::new(),
+            owed: 0.0,
+            seed: 0x9E37_79B9,
+        }
+    }
 }
 
 impl Default for ParticleEmitter {
@@ -60,9 +86,7 @@ impl Default for ParticleEmitter {
             size: (0.12, 0.02),
             color: (Vec3::new(6.0, 2.5, 0.6), Vec3::new(1.5, 0.2, 0.05)),
             capacity: 2000,
-            particles: Vec::new(),
-            owed: 0.0,
-            seed: 0x9E37_79B9,
+            sprites: Sprites::default(),
         }
     }
 }
@@ -70,14 +94,16 @@ impl Default for ParticleEmitter {
 impl ParticleEmitter {
     /// Releases `count` sprites at the next update.
     pub fn burst(&mut self, count: u32) {
-        self.owed += count as f32;
+        self.sprites.owed += count as f32;
     }
 
     /// How many are alive.
     pub fn alive(&self) -> usize {
-        self.particles.len()
+        self.sprites.particles.len()
     }
+}
 
+impl Sprites {
     fn next_random(&mut self) -> f32 {
         // Xorshift, because effects need speed and variety rather than quality.
         self.seed ^= self.seed << 13;
@@ -85,35 +111,38 @@ impl ParticleEmitter {
         self.seed ^= self.seed << 5;
         self.seed as f32 / u32::MAX as f32
     }
+}
 
+impl ParticleEmitter {
     fn advance(&mut self, transform: &Transform, delta_seconds: f32) {
-        let gravity = self.gravity;
-        let lifetime = self.lifetime;
-        self.particles.retain_mut(|particle| {
+        let (gravity, lifetime, spread, speed) =
+            (self.gravity, self.lifetime, self.spread, self.speed);
+        let sprites = &mut self.sprites;
+        sprites.particles.retain_mut(|particle| {
             particle.age += delta_seconds;
             particle.velocity += gravity * delta_seconds;
             particle.position += particle.velocity * delta_seconds;
             particle.age < lifetime
         });
-        self.owed += self.rate * delta_seconds;
-        while self.owed >= 1.0 {
-            self.owed -= 1.0;
-            if self.particles.len() >= self.capacity {
+        sprites.owed += self.rate * delta_seconds;
+        while sprites.owed >= 1.0 {
+            sprites.owed -= 1.0;
+            if sprites.particles.len() >= self.capacity {
                 continue;
             }
-            let angle = self.next_random() * std::f32::consts::TAU;
-            let outward = self.next_random().sqrt() * self.spread;
+            let angle = sprites.next_random() * std::f32::consts::TAU;
+            let outward = sprites.next_random().sqrt() * spread;
             let local = Vec3::new(angle.cos() * outward, 1.0, angle.sin() * outward).normalize();
-            self.particles.push(Particle {
+            sprites.particles.push(Particle {
                 position: transform.translation,
-                velocity: transform.rotation * local * self.speed,
+                velocity: transform.rotation * local * speed,
                 age: 0.0,
             });
         }
     }
 
     fn instances(&self) -> impl Iterator<Item = ParticleInstance> + '_ {
-        self.particles.iter().map(|particle| {
+        self.sprites.particles.iter().map(|particle| {
             let life = (particle.age / self.lifetime).clamp(0.0, 1.0);
             let color = self.color.0.lerp(self.color.1, life);
             ParticleInstance {
