@@ -375,6 +375,10 @@ This document is complete when every phase row has its implementation, a Web mea
 review recorded under [Phase results](#phase-results); every spike has a result; every open question
 is answered; and no **[assumed]** or **[unverified]** label is left without a deferral reason.
 
+**Status: complete.** On 2026-11-04 the project owner accepted the deferrals that need a phone as these
+items' results: spike 1, spike 3 beyond its desktop measurement, and the exit criteria that name the
+reference device. They run once a reference device is chosen.
+
 All measurements use the Web. The stand-in for the reference device is Chrome on the development Mac,
 with a 6x CPU throttle and an internal resolution capped at 1280 px on the long side. It proves CPU
 headroom and correctness only, because throttling does not slow the GPU. Each criterion below that
