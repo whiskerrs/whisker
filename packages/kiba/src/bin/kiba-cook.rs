@@ -3,7 +3,7 @@
 use std::process::ExitCode;
 
 const USAGE: &str = "usage:
-  kiba-cook model <output.kiba> <model.glb>
+  kiba-cook model <output.kiba> [--max-texture <pixels>] <model.glb>
   kiba-cook world <directory> <cell size> <probe spacing, or 0 for none> <model.glb>...
   kiba-cook synthetic-world <directory> <cells per side> <cell size> <probe spacing>
   kiba-cook probes <output.kiba> [--spacing <units>] <model.glb>...";
@@ -14,10 +14,17 @@ fn run(arguments: &[String]) -> Result<String, String> {
         return Err(USAGE.into());
     };
     if command == "model" {
-        let [input] = rest else {
-            return Err(USAGE.into());
+        let (max_texture, input) = match rest {
+            [flag, value, input] if flag == "--max-texture" => (
+                value
+                    .parse()
+                    .map_err(|_| format!("{value} is not a whole number"))?,
+                input,
+            ),
+            [input] => (u32::MAX, input),
+            _ => return Err(USAGE.into()),
         };
-        let bytes = kiba::cook::cook_model(&read_glb(input)?)?;
+        let bytes = kiba::cook::cook_model(&read_glb(input)?, max_texture)?;
         return write(output, &bytes);
     }
     if command == "world" {

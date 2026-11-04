@@ -249,10 +249,43 @@ fn mean_color(texture: &Texture) -> Vec3 {
 }
 
 /// Writes `model` as a cooked pack, in the form a game loads with
-/// [`Model::load`](crate::Model::load).
-pub fn cook_model(model: &Model) -> Result<Vec<u8>, String> {
-    let data = model.data().ok_or("the model is not loaded")?;
-    Ok(write_pack(&[(MODEL_SECTION, write_model(data))]))
+/// [`Model::load`](crate::Model::load), with textures shrunk to at most `max_texture` pixels a side.
+pub fn cook_model(model: &Model, max_texture: u32) -> Result<Vec<u8>, String> {
+    let mut data = model.data().ok_or("the model is not loaded")?.clone();
+    let mut shrunk = HashMap::new();
+    for part in &mut data.parts {
+        let material = &mut part.material;
+        for texture in [
+            &mut material.base_color_texture,
+            &mut material.metallic_roughness_texture,
+            &mut material.normal_texture,
+            &mut material.emissive_texture,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *texture = shrunk
+                .entry(texture.key())
+                .or_insert_with(|| shrink(texture, max_texture))
+                .clone();
+        }
+    }
+    Ok(write_pack(&[(MODEL_SECTION, write_model(&data))]))
+}
+
+fn shrink(texture: &Texture, max_side: u32) -> Texture {
+    let data = texture.data();
+    let scale = max_side as f32 / data.width.max(data.height) as f32;
+    if scale >= 1.0 {
+        return texture.clone();
+    }
+    let width = ((data.width as f32 * scale).round() as u32).max(1);
+    let height = ((data.height as f32 * scale).round() as u32).max(1);
+    let image = image::RgbaImage::from_raw(data.width, data.height, data.pixels.clone())
+        .expect("a texture holds width times height pixels");
+    let resized =
+        image::imageops::resize(&image, width, height, image::imageops::FilterType::Triangle);
+    Texture::from_rgba8(width, height, resized.into_raw())
 }
 
 // A simpler mesh takes over at these multiples of a part's radius, when it covers little of the screen.
@@ -633,6 +666,35 @@ mod tests {
 
     fn model(mesh: Mesh, transform: Mat4) -> Model {
         Model::new([(mesh, Material::default(), transform)])
+    }
+
+    #[test]
+    fn a_cooked_model_shrinks_large_textures_and_keeps_small_ones() {
+        let texture = |side: u32| {
+            Some(Texture::from_rgba8(
+                side,
+                side,
+                vec![200; (side * side * 4) as usize],
+            ))
+        };
+        let cooked = cook_model(
+            &Model::new([(
+                Mesh::cube(1.0),
+                Material {
+                    base_color_texture: texture(64),
+                    normal_texture: texture(8),
+                    ..Material::default()
+                },
+                Mat4::IDENTITY,
+            )]),
+            16,
+        )
+        .unwrap();
+        let read = Model::from_pack(&cooked).unwrap();
+        let material = &read.parts()[0].material;
+        let side = |texture: &Option<Texture>| texture.as_ref().unwrap().data().width;
+        assert_eq!(side(&material.base_color_texture), 16);
+        assert_eq!(side(&material.normal_texture), 8);
     }
 
     #[test]
