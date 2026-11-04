@@ -300,6 +300,29 @@ Left out, with reasons:
 - **Gameplay frameworks** such as Unreal's Gameplay Ability System. Combat rules belong to games and
   libraries, as D10 decides for AI and networking.
 
+### D12. The whole slime game is ported as a game built on Kiba, and only its gaps reach the engine
+
+P7 showed one effect. P8 ports the whole `slime` game, an open-world action game set in the real city of
+Sasebo, onto Kiba, using the game's own assets. It is the first full game built on Kiba, so it tests the
+claim that Kiba is general-purpose.
+
+- **Kiba learns no slime formats.** slime's runtime files (`.owa` props, `.owk` characters, height tiles,
+  and city cells) are read by a converter that belongs to the game, at `packages/kiba/slime/`. The
+  converter writes glTF and inputs for `kiba-cook`. Converted assets stay out of git and are read from the
+  slime checkout.
+- **Look, not technique.** slime renders with deferred shading, TAA, GTAO, SSR, and volumetrics. The
+  port matches the look with Kiba's forward+ tiers and material shaders, and it does not port those
+  passes.
+- **The engine changes only for a gap the port hits**, one commit each, judged by whether another game
+  would need the same thing.
+- **Milestones**, each playable on the Web:
+  - **M1:** the forest meadow and its boss. This covers the sword mage and slime forms, combo, skill,
+    ultimate, just dodge, Elmgard's AI and BREAK, the HUD, sound, and effects.
+  - **M2:** Sasebo streamed around the player.
+  - **M3:** traffic, crowds, touch and gamepad controls, and the world reveal.
+- **Not ported:** content the original does not have either, namely roaming monsters and online PvP.
+  Generation that spends credits (Meshy, ElevenLabs) is not run again.
+
 ## Target API
 
 This is what a Whisker app author writes today. A shipped game loads a `.kiba` pack cooked by
@@ -411,7 +434,7 @@ is answered; and no **[assumed]** or **[unverified]** label is left without a de
 
 **Status: complete.** On 2026-11-04 the project owner accepted the deferrals that need a phone as these
 items' results: spike 1, spike 3 beyond its desktop measurement, and the exit criteria that name the
-reference device. They run once a reference device is chosen.
+reference device. They run once a reference device is chosen. P8 was added afterwards and is in progress.
 
 All measurements use the Web. The stand-in for the reference device is Chrome on the development Mac,
 with a 6x CPU throttle and an internal resolution capped at 1280 px on the long side. It proves CPU
@@ -436,6 +459,7 @@ approval first.
 | P5 | Navmesh and networking as needed | Decided by requests from real games |
 | P6 | Bounce light, local lights, transparency and emission, reflection probes, shadow quality, FXAA, depth of field, light shafts, transmission | Each renders correctly on the Web, and the stress scene settles on a tier within its budget |
 | P7 | Material shaders, material parameters, the scene behind blended surfaces (D11) | The water slime of the `slime` game, its body, ground ripples, and the light it focuses on the ground, is written in game code alone and runs on the Web |
+| P8 | The slime game ported whole onto Kiba (D12) | Each of M1–M3 plays on the Web as the original does, from slime's assets, with no slime-specific code in `kiba` |
 
 ## Phase results
 
