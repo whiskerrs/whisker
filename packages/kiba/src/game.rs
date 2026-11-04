@@ -298,6 +298,7 @@ pub struct GameSetup<C> {
     viewport: (u32, u32),
     stats: FrameStats,
     governor: Governor,
+    pointer_lock: bool,
 }
 
 impl<C> GameSetup<C> {
@@ -316,7 +317,14 @@ impl<C> GameSetup<C> {
             viewport: (0, 0),
             stats: FrameStats::default(),
             governor: Governor::default(),
+            pointer_lock: false,
         }
+    }
+
+    /// Hides the mouse and keeps it on the viewport from each click until Escape, for mouse look. The
+    /// mouse's [`Pointer::delta`](crate::Pointer::delta) keeps reporting movement while its position stays put.
+    pub fn lock_pointer(&mut self) {
+        self.pointer_lock = true;
     }
 
     /// Keeps the game at one [`Tier`] from the start, for a known device. [`Context::set_tier`] does the
@@ -490,6 +498,7 @@ trait RunningGame {
     fn detach(&self);
     fn frame(&self);
     fn input(&self, event: InputEvent);
+    fn wants_pointer_lock(&self) -> bool;
     fn as_any(self: Rc<Self>) -> Rc<dyn std::any::Any>;
 }
 
@@ -595,6 +604,13 @@ impl<C: 'static> RunningGame for Registered<C> {
 
     fn input(&self, event: InputEvent) {
         self.state.input.borrow_mut().push(event);
+    }
+
+    fn wants_pointer_lock(&self) -> bool {
+        self.state
+            .setup
+            .try_borrow()
+            .is_ok_and(|setup| setup.pointer_lock)
     }
 
     fn as_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
@@ -1109,6 +1125,12 @@ pub fn send_input(id: i64, event: InputEvent) {
     if let Some(game) = find(id) {
         game.input(event);
     }
+}
+
+/// Whether a Host should lock the pointer to its viewport when it is clicked.
+#[doc(hidden)]
+pub fn wants_pointer_lock(id: i64) -> bool {
+    find(id).is_some_and(|game| game.wants_pointer_lock())
 }
 
 #[cfg(test)]

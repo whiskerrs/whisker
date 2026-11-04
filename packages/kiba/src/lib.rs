@@ -182,7 +182,7 @@ pub use game::{
     Camera, Context, DepthOfField, FrameStats, Game, GameSetup, Interpolated, Sun, Time, Transform,
 };
 #[doc(hidden)]
-pub use game::{attach_renderer, detach_renderer, send_input};
+pub use game::{attach_renderer, detach_renderer, send_input, wants_pointer_lock};
 pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 pub use hecs::{Entity, World};
 #[doc(hidden)]

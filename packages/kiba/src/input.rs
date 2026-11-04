@@ -46,13 +46,32 @@ keys! {
 pub enum InputEvent {
     KeyDown(Key),
     KeyUp(Key),
-    PointerDown { id: i32, position: Vec2 },
-    PointerMove { id: i32, position: Vec2 },
-    PointerUp { id: i32, position: Vec2 },
-    PointerGone { id: i32 },
+    PointerDown {
+        id: i32,
+        position: Vec2,
+    },
+    PointerMove {
+        id: i32,
+        position: Vec2,
+    },
+    PointerUp {
+        id: i32,
+        position: Vec2,
+    },
+    /// Movement of a locked pointer, whose position stays put.
+    PointerMotion {
+        id: i32,
+        delta: Vec2,
+    },
+    PointerGone {
+        id: i32,
+    },
     Wheel(f32),
     FocusLost,
-    Action { name: &'static str, down: bool },
+    Action {
+        name: &'static str,
+        down: bool,
+    },
 }
 
 /// A mouse or a touch on the viewport.
@@ -184,6 +203,14 @@ impl Input {
                 pointer.delta += position - pointer.position;
                 pointer.position = position;
             }
+            InputEvent::PointerMotion { id, delta } => {
+                let position = self
+                    .pointers
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map_or(Vec2::ZERO, |p| p.position);
+                self.pointer(id, position).delta += delta;
+            }
             InputEvent::PointerUp { id, position } => {
                 let pointer = self.pointer(id, position);
                 pointer.position = position;
@@ -292,6 +319,24 @@ mod tests {
         input.apply(InputEvent::KeyUp(Key::W));
         assert!(!input.key_down(Key::W));
         assert!(input.key_just_released(Key::W));
+    }
+
+    #[test]
+    fn a_locked_pointer_moves_without_changing_position() {
+        let mut input = Input::default();
+        let position = Vec2::new(10.0, 20.0);
+        input.apply(InputEvent::PointerMove { id: 1, position });
+        input.end_pass();
+        input.apply(InputEvent::PointerMotion {
+            id: 1,
+            delta: Vec2::new(3.0, -4.0),
+        });
+
+        let pointer = input.pointers()[0];
+        assert_eq!(
+            (pointer.position, pointer.delta),
+            (position, Vec2::new(3.0, -4.0))
+        );
     }
 
     #[test]

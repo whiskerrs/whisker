@@ -106,6 +106,12 @@ fn listen_for_input(
     };
     let canvas_target: web_sys::EventTarget = canvas.clone().into();
     let window_target: web_sys::EventTarget = window.clone().into();
+    let document = window.document().expect("kiba requires a document");
+    let document_target: web_sys::EventTarget = document.clone().into();
+    let locked = {
+        let canvas: web_sys::Element = canvas.clone().into();
+        move || document.pointer_lock_element().as_ref() == Some(&canvas)
+    };
 
     // A second mouse button arrives as a pointermove whose `buttons` changed, not as a pointerdown.
     let sync_buttons = {
@@ -156,6 +162,14 @@ fn listen_for_input(
     };
 
     let capture_target = canvas.clone();
+    let lock_game = current_game.clone();
+    let down_locked = locked.clone();
+    let move_send = send.clone();
+    let move_position = position.clone();
+    let move_buttons = sync_buttons.clone();
+    let move_locked = locked.clone();
+    let move_window = window.clone();
+    let unlock_send = send.clone();
     let down_send = send.clone();
     let down_position = position.clone();
     let down_buttons = sync_buttons.clone();
@@ -175,6 +189,9 @@ fn listen_for_input(
             let event: web_sys::PointerEvent = event.unchecked_into();
             // Capture keeps a drag alive when it leaves the canvas or crosses overlaid UI.
             let _ = capture_target.set_pointer_capture(event.pointer_id());
+            if lock_game.get().is_some_and(kiba::wants_pointer_lock) && !down_locked() {
+                capture_target.request_pointer_lock();
+            }
             down_send(InputEvent::PointerDown {
                 id: event.pointer_id(),
                 position: down_position(&event),
@@ -184,9 +201,29 @@ fn listen_for_input(
         Listener::new(canvas_target.clone(), "contextmenu", |event| {
             event.prevent_default();
         }),
-        pointer("pointermove", |id, position| InputEvent::PointerMove {
-            id,
-            position,
+        // A locked pointer's position is frozen, so only its movement says where the mouse went.
+        Listener::new(canvas_target.clone(), "pointermove", move |event| {
+            let event: web_sys::PointerEvent = event.unchecked_into();
+            let id = event.pointer_id();
+            move_send(if move_locked() {
+                let scale = move_window.device_pixel_ratio() as f32;
+                InputEvent::PointerMotion {
+                    id,
+                    delta: Vec2::new(event.movement_x() as f32, event.movement_y() as f32) * scale,
+                }
+            } else {
+                InputEvent::PointerMove {
+                    id,
+                    position: move_position(&event),
+                }
+            });
+            move_buttons(&event);
+        }),
+        // Escape releases the lock without a key event, so held buttons are let go here.
+        Listener::new(document_target, "pointerlockchange", move |_| {
+            if !locked() {
+                unlock_send(InputEvent::FocusLost);
+            }
         }),
         pointer("pointerup", |id, position| InputEvent::PointerUp {
             id,
