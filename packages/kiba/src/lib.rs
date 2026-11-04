@@ -173,7 +173,7 @@ mod android;
 #[cfg(target_vendor = "apple")]
 mod ios;
 
-pub use animation::Animator;
+pub use animation::{Animator, Pose};
 #[doc(hidden)]
 pub use audio::resume_audio;
 pub use audio::{Playback, Sound};
@@ -214,9 +214,9 @@ pub mod prelude {
     pub use crate::{
         AlphaMode, Animator, Camera, Context, DepthOfField, Entity, FlyCamera, Fog, FrameStats,
         Game, GameSetup, Input, Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera,
-        ParticleEmitter, Playback, PointLight, Pointer, ProbeVolume, Quat, ReflectionProbe, Shader,
-        Sky, Sound, SpotLight, StreamSettings, Sun, Texture, Tier, Time, Transform, Vec2, Vec3,
-        Vec4, Vertex, Viewport, World, WorldStream,
+        ParticleEmitter, Playback, PointLight, Pointer, Pose, ProbeVolume, Quat, ReflectionProbe,
+        Shader, Sky, Sound, SpotLight, StreamSettings, Sun, Texture, Tier, Time, Transform, Vec2,
+        Vec3, Vec4, Vertex, Viewport, World, WorldStream,
     };
     #[cfg(feature = "physics")]
     pub use crate::{BodyKind, Collider, Physics, RayHit, RigidBody};

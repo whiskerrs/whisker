@@ -9,7 +9,7 @@ use hecs::World;
 use web_time::Instant;
 use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 
-use crate::animation::{Animator, run_animators};
+use crate::animation::{Animator, Pose, run_animators};
 use crate::audio::{resume_audio, set_listener};
 use crate::controller::run_controllers;
 use crate::input::{InputEvent, Key};
@@ -65,16 +65,17 @@ impl Transform {
         }
     }
 
-    fn lerp(&self, target: &Self, alpha: f32) -> Self {
-        Self {
-            translation: self.translation.lerp(target.translation, alpha),
-            rotation: self.rotation.slerp(target.rotation, alpha),
-            scale: self.scale.lerp(target.scale, alpha),
-        }
+    pub(crate) fn matrix(&self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
 
-    fn matrix(&self) -> Mat4 {
-        Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
+    /// The way from `self` at 0 to `other` at 1, turning along the shorter arc.
+    pub fn lerp(&self, other: &Self, amount: f32) -> Self {
+        Self {
+            translation: self.translation.lerp(other.translation, amount),
+            rotation: self.rotation.slerp(other.rotation, amount),
+            scale: self.scale.lerp(other.scale, amount),
+        }
     }
 }
 
@@ -768,16 +769,27 @@ fn visit_drawn(
             None,
         );
     }
-    for (_, (transform, motion, model, animator)) in world
-        .query::<(&Transform, Option<&Interpolated>, &Model, Option<&Animator>)>()
+    for (_, (transform, motion, model, animator, pose)) in world
+        .query::<(
+            &Transform,
+            Option<&Interpolated>,
+            &Model,
+            Option<&Animator>,
+            Option<&Pose>,
+        )>()
         .iter()
     {
         let matrix = shown(transform, motion, alpha).matrix();
         let parts = model.parts();
         let rig = model.data().and_then(|data| data.rig.as_ref());
         let posed = rig
-            .filter(|_| animator.is_some() || parts.iter().any(|part| part.skin.is_some()))
-            .map(|rig| rig.posed(animator));
+            .filter(|_| {
+                animator.is_some() || pose.is_some() || parts.iter().any(|part| part.skin.is_some())
+            })
+            .map(|rig| match pose {
+                Some(pose) => rig.posed(&pose.nodes),
+                None => rig.posed(&rig.animated(animator)),
+            });
         for part in parts {
             let center = matrix * part.transform * part.mesh.data().bounds_center.extend(1.0);
             let mesh = part.mesh_at(center.truncate().distance(eye));

@@ -2,7 +2,7 @@ use std::sync::{Arc, OnceLock};
 
 use glam::Mat4;
 
-use crate::animation::Rig;
+use crate::animation::{Pose, Rig};
 use crate::pack::{MODEL_SECTION, is_pack, read_model, read_section};
 use crate::renderer::log;
 use crate::{Material, Mesh};
@@ -121,6 +121,55 @@ impl Model {
         names
     }
 
+    /// The index in a [`Pose`] of the node named `name` in the model's file, once loaded.
+    pub fn node(&self, name: &str) -> Option<usize> {
+        self.rig()?
+            .nodes
+            .iter()
+            .position(|node| node.name.as_deref() == Some(name))
+    }
+
+    /// The node `node` hangs from, if any.
+    pub fn node_parent(&self, node: usize) -> Option<usize> {
+        self.rig()?.nodes.get(node)?.parent
+    }
+
+    /// How many seconds `clip` lasts, once loaded.
+    pub fn clip_duration(&self, clip: &str) -> Option<f32> {
+        Some(self.rig()?.clips.get(clip)?.duration)
+    }
+
+    /// The pose of the model's file, with no clip playing, once loaded.
+    pub fn rest_pose(&self) -> Option<Pose> {
+        Some(Pose {
+            nodes: self.rig()?.rest(),
+        })
+    }
+
+    /// Moves the nodes `clip` animates to where they are `seconds` in, held at its ends, and leaves the
+    /// others as they are. Returns whether the clip exists.
+    pub fn sample(&self, clip: &str, seconds: f32, pose: &mut Pose) -> bool {
+        let Some(rig) = self.rig() else {
+            return false;
+        };
+        let Some(clip) = rig.clips.get(clip) else {
+            return false;
+        };
+        pose.nodes
+            .resize(rig.nodes.len(), crate::Transform::default());
+        rig.sample_into(clip, seconds.clamp(0.0, clip.duration), &mut pose.nodes);
+        true
+    }
+
+    /// Where `node` is within the model in `pose`, to attach something to a hand or read where a head is.
+    pub fn node_matrix(&self, pose: &Pose, node: usize) -> Option<Mat4> {
+        self.rig()?.node_matrices(&pose.nodes).get(node).copied()
+    }
+
+    fn rig(&self) -> Option<&Rig> {
+        self.data()?.rig.as_ref()
+    }
+
     pub(crate) fn from_data(data: ModelData) -> Self {
         Self(Arc::new(OnceLock::from(Ok(data))))
     }
@@ -199,7 +248,8 @@ mod import {
 
     use super::log;
     use super::{Model, ModelData, ModelPart};
-    use crate::animation::{Channel, Clip, Keys, MAX_JOINTS, Pose, Rig, RigNode, Skin};
+    use crate::Transform;
+    use crate::animation::{Channel, Clip, Keys, MAX_JOINTS, Rig, RigNode, Skin};
     use crate::mesh::SkinVertex;
     use crate::{AlphaMode, Material, Mesh, Texture, Vertex};
 
@@ -291,8 +341,9 @@ mod import {
             let index = self.nodes.len();
             self.node_indices.insert(node.index(), index);
             self.nodes.push(RigNode {
+                name: node.name().map(str::to_owned),
                 parent: parent_index,
-                rest: Pose {
+                rest: Transform {
                     translation: translation.into(),
                     rotation: Quat::from_array(rotation),
                     scale: scale.into(),
@@ -771,7 +822,7 @@ mod import {
                 .expect("rig");
             assert_eq!(rig.clips["slide"].duration, 1.0);
             let animator = crate::Animator::new("slide");
-            let posed = rig.posed(Some(&animator));
+            let posed = rig.posed(&rig.animated(Some(&animator)));
             assert_eq!(posed.palettes[0].len(), 1);
         }
 

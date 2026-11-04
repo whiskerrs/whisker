@@ -4,38 +4,28 @@ use std::sync::Arc;
 use glam::{Mat4, Quat, Vec3};
 use hecs::World;
 
-use crate::Model;
 use crate::model::ModelData;
+use crate::{Model, Transform};
 
 /// The most joints one skin can have, which fixes the size of its GPU uniform.
 pub(crate) const MAX_JOINTS: usize = 128;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Pose {
-    pub(crate) translation: Vec3,
-    pub(crate) rotation: Quat,
-    pub(crate) scale: Vec3,
-}
-
-impl Pose {
-    fn blend(&self, other: &Self, amount: f32) -> Self {
-        Self {
-            translation: self.translation.lerp(other.translation, amount),
-            rotation: self.rotation.slerp(other.rotation, amount),
-            scale: self.scale.lerp(other.scale, amount),
-        }
-    }
-
-    fn matrix(&self) -> Mat4 {
-        Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
-    }
+/// Where each node of a [`Model`]'s rig sits relative to its parent, for a game that builds poses itself.
+///
+/// Fill one from [`Model::rest_pose`] and [`Model::sample`], blend with [`Transform::lerp`], change any
+/// node, and add it to the model's entity, which then draws in it instead of its [`Animator`]'s.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pose {
+    /// One per node, indexed as [`Model::node`] names them.
+    pub nodes: Vec<Transform>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct RigNode {
+    pub(crate) name: Option<String>,
     /// Always earlier in the node list than this node.
     pub(crate) parent: Option<usize>,
-    pub(crate) rest: Pose,
+    pub(crate) rest: Transform,
 }
 
 #[derive(Clone, Debug)]
@@ -98,7 +88,7 @@ impl Channel {
         (next - 1, next, amount)
     }
 
-    fn apply(&self, time: f32, pose: &mut Pose) {
+    fn apply(&self, time: f32, pose: &mut Transform) {
         let (a, b, amount) = self.span(time);
         match &self.keys {
             Keys::Translation(keys) => pose.translation = keys[a].lerp(keys[b], amount),
@@ -109,15 +99,27 @@ impl Channel {
 }
 
 impl Rig {
-    fn sample(&self, clip: Option<&Clip>, time: f32) -> Vec<Pose> {
-        let mut poses: Vec<Pose> = self.nodes.iter().map(|node| node.rest).collect();
-        for channel in clip.iter().flat_map(|clip| &clip.channels) {
+    pub(crate) fn rest(&self) -> Vec<Transform> {
+        self.nodes.iter().map(|node| node.rest).collect()
+    }
+
+    /// Sets the nodes `clip` moves to where they are at `time`, leaving the others as they are.
+    pub(crate) fn sample_into(&self, clip: &Clip, time: f32, poses: &mut [Transform]) {
+        for channel in &clip.channels {
             channel.apply(time, &mut poses[channel.node]);
+        }
+    }
+
+    fn sample(&self, clip: Option<&Clip>, time: f32) -> Vec<Transform> {
+        let mut poses = self.rest();
+        if let Some(clip) = clip {
+            self.sample_into(clip, time, &mut poses);
         }
         poses
     }
 
-    pub(crate) fn posed(&self, animator: Option<&Animator>) -> PosedRig {
+    /// The pose `animator` shows now, mid-fade included.
+    pub(crate) fn animated(&self, animator: Option<&Animator>) -> Vec<Transform> {
         let mut poses = self.sample(
             animator.and_then(|a| self.clips.get(&a.clip)),
             animator.map_or(0.0, |a| a.time),
@@ -126,14 +128,25 @@ impl Rig {
             let from = self.sample(self.clips.get(&previous.clip), previous.time);
             let amount = (animator.fade_elapsed / previous.fade_seconds).min(1.0);
             for (pose, from) in poses.iter_mut().zip(&from) {
-                *pose = from.blend(pose, amount);
+                *pose = from.lerp(pose, amount);
             }
         }
-        let mut nodes: Vec<Mat4> = Vec::with_capacity(poses.len());
-        for (node, pose) in self.nodes.iter().zip(&poses) {
+        poses
+    }
+
+    /// Each node's matrix within the model.
+    pub(crate) fn node_matrices(&self, poses: &[Transform]) -> Vec<Mat4> {
+        let mut nodes: Vec<Mat4> = Vec::with_capacity(self.nodes.len());
+        for (i, node) in self.nodes.iter().enumerate() {
+            let pose = poses.get(i).unwrap_or(&node.rest);
             let parent = node.parent.map_or(Mat4::IDENTITY, |parent| nodes[parent]);
             nodes.push(parent * pose.matrix());
         }
+        nodes
+    }
+
+    pub(crate) fn posed(&self, poses: &[Transform]) -> PosedRig {
+        let nodes = self.node_matrices(poses);
         let palettes = self
             .skins
             .iter()
@@ -212,6 +225,25 @@ impl Animator {
         self.finished
     }
 
+    /// Seconds into the clip playing now.
+    pub fn time(&self) -> f32 {
+        self.time
+    }
+
+    /// Moves to `seconds` into the clip playing now, as the next frame shows it.
+    pub fn seek(&mut self, seconds: f32) {
+        self.time = seconds.max(0.0);
+        self.finished = false;
+    }
+
+    /// The pose this plays on `model` now, mid-fade included, or `None` before the model loads.
+    pub fn pose(&self, model: &Model) -> Option<Pose> {
+        let rig = model.data()?.rig.as_ref()?;
+        Some(Pose {
+            nodes: rig.animated(Some(self)),
+        })
+    }
+
     fn advance(&mut self, data: &ModelData, delta_seconds: f32) {
         let Some(rig) = &data.rig else {
             return;
@@ -250,8 +282,8 @@ pub(crate) fn run_animators(world: &mut World, delta_seconds: f32) {
 mod tests {
     use super::*;
 
-    fn rest() -> Pose {
-        Pose {
+    fn rest() -> Transform {
+        Transform {
             translation: Vec3::ZERO,
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
@@ -281,12 +313,14 @@ mod tests {
         Rig {
             nodes: vec![
                 RigNode {
+                    name: None,
                     parent: None,
                     rest: rest(),
                 },
                 RigNode {
+                    name: None,
                     parent: Some(0),
-                    rest: Pose {
+                    rest: Transform {
                         translation: Vec3::Y,
                         ..rest()
                     },
@@ -308,7 +342,44 @@ mod tests {
     }
 
     fn child_origin(animator: &Animator) -> Vec3 {
-        rig().posed(Some(animator)).nodes[1].transform_point3(Vec3::ZERO)
+        {
+            let rig = rig();
+            rig.posed(&rig.animated(Some(animator)))
+        }
+        .nodes[1]
+            .transform_point3(Vec3::ZERO)
+    }
+
+    #[test]
+    fn a_game_samples_clips_into_a_pose_and_reads_where_nodes_are() {
+        let mut data = data();
+        data.rig.as_mut().unwrap().nodes[1].name = Some("hand".into());
+        let model = Model::from_data(data);
+        let hand = model.node("hand").unwrap();
+        assert_eq!(model.node_parent(hand), Some(0));
+        assert_eq!(model.clip_duration("slide"), Some(2.0));
+
+        let mut pose = model.rest_pose().unwrap();
+        assert!(model.sample("slide", 1.0, &mut pose));
+        assert!(!model.sample("missing", 1.0, &mut pose));
+        let at = model
+            .node_matrix(&pose, hand)
+            .unwrap()
+            .transform_point3(Vec3::ZERO);
+        assert!(at.abs_diff_eq(Vec3::new(1.0, 1.0, 0.0), 1e-5));
+
+        let mut halfway = model.rest_pose().unwrap();
+        halfway.nodes[0] = pose.nodes[0].lerp(&halfway.nodes[0], 0.5);
+        assert!(
+            halfway.nodes[0]
+                .translation
+                .abs_diff_eq(Vec3::X * 0.5, 1e-5)
+        );
+
+        let mut animator = Animator::new("slide");
+        animator.seek(1.0);
+        assert_eq!(animator.time(), 1.0);
+        assert_eq!(animator.pose(&model), Some(pose));
     }
 
     #[test]
@@ -320,12 +391,20 @@ mod tests {
 
     #[test]
     fn joint_matrices_are_identity_at_the_bind_pose_and_move_with_the_joint() {
-        let posed = rig().posed(None);
+        let posed = {
+            let rig = rig();
+            rig.posed(&rig.animated(None))
+        };
         assert!(posed.palettes[0][0].abs_diff_eq(Mat4::IDENTITY, 1e-5));
 
         let mut animator = Animator::new("slide");
         animator.advance(&data(), 1.0);
-        let moved = rig().posed(Some(&animator)).palettes[0][0].transform_point3(Vec3::ZERO);
+        let moved = {
+            let rig = rig();
+            rig.posed(&rig.animated(Some(&animator)))
+        }
+        .palettes[0][0]
+            .transform_point3(Vec3::ZERO);
         assert!(moved.abs_diff_eq(Vec3::X, 1e-5));
     }
 

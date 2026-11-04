@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use bytemuck::Pod;
 use glam::{Mat4, Quat, Vec3};
 
-use crate::animation::{Channel, Clip, Keys, MAX_JOINTS, Pose, Rig, RigNode, Skin};
+use crate::Transform;
+use crate::animation::{Channel, Clip, Keys, MAX_JOINTS, Rig, RigNode, Skin};
 use crate::mesh::SkinVertex;
 use crate::model::{Lod, ModelData, ModelPart};
 use crate::{AlphaMode, Material, Mesh, Texture, Vertex};
@@ -332,6 +333,11 @@ fn write_rig(out: &mut Writer, rig: Option<&Rig>) {
             }
         }
     }
+    // Node names come last, so packs cooked before them still read.
+    out.u32(rig.nodes.len() as u32);
+    for node in &rig.nodes {
+        out.text(node.name.as_deref().unwrap_or(""));
+    }
 }
 
 pub(crate) fn read_model(bytes: &[u8]) -> Result<ModelData, String> {
@@ -444,8 +450,9 @@ fn read_rig(input: &mut Reader<'_>) -> Result<Option<Rig>, String> {
         }
         at += 1;
         Ok(RigNode {
+            name: None,
             parent,
-            rest: Pose {
+            rest: Transform {
                 translation: input.vec3()?,
                 rotation: input.quat()?,
                 scale: input.vec3()?,
@@ -506,6 +513,16 @@ fn read_rig(input: &mut Reader<'_>) -> Result<Option<Rig>, String> {
         })?;
         Ok((name, Clip { duration, channels }))
     })?;
+    let mut nodes = nodes;
+    if input.at < input.bytes.len() {
+        let names = input.list(|input| input.text())?;
+        if names.len() != nodes.len() {
+            return Err("a rig has the wrong number of node names".to_string());
+        }
+        for (node, name) in nodes.iter_mut().zip(names) {
+            node.name = (!name.is_empty()).then_some(name);
+        }
+    }
     Ok(Some(Rig {
         nodes,
         skins,
@@ -544,8 +561,9 @@ mod tests {
             parts: vec![part(Mat4::IDENTITY), part(Mat4::from_translation(Vec3::X))],
             rig: Some(Rig {
                 nodes: vec![RigNode {
+                    name: Some("root".to_string()),
                     parent: None,
-                    rest: Pose {
+                    rest: Transform {
                         translation: Vec3::Y,
                         rotation: Quat::IDENTITY,
                         scale: Vec3::ONE,
@@ -602,9 +620,21 @@ mod tests {
     #[test]
     fn every_truncation_of_a_model_is_an_error_rather_than_a_panic() {
         let bytes = write_model(&model());
-        for length in 0..bytes.len() {
+        // Ending just before the node names is a pack cooked before them.
+        let names = 4 + 4 + "root".len();
+        for length in (0..bytes.len()).filter(|&length| length != bytes.len() - names) {
             assert!(read_model(&bytes[..length]).is_err(), "length {length}");
         }
+    }
+
+    #[test]
+    fn a_pack_without_node_names_reads_as_unnamed_nodes() {
+        let bytes = write_model(&model());
+        let names = 4 + 4 + "root".len();
+        let old = read_model(&bytes[..bytes.len() - names]).unwrap();
+        assert_eq!(old.rig.unwrap().nodes[0].name, None);
+        let new = read_model(&bytes).unwrap();
+        assert_eq!(new.rig.unwrap().nodes[0].name.as_deref(), Some("root"));
     }
 
     #[test]
