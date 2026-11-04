@@ -93,6 +93,42 @@ pub enum AlphaMode {
     Blend,
 }
 
+/// Draws every part of a [`Model`](crate::Model)'s entity with one shader, keeping each part's
+/// colors and textures, for toon shading, outlines, hit flashes, and dissolves.
+///
+/// Add a second entity with the same model, pose, and an outline `Restyle` to draw the model twice.
+#[derive(Clone, Debug)]
+pub struct Restyle {
+    pub shader: Shader,
+    /// Replaces every part's [`Material::parameters`].
+    pub parameters: [Vec4; 8],
+    /// Replaces every part's [`Material::alpha_mode`] when set.
+    pub alpha_mode: Option<AlphaMode>,
+    /// Replaces every part's [`Material::double_sided`] when set.
+    pub double_sided: Option<bool>,
+}
+
+impl Restyle {
+    pub fn new(shader: Shader) -> Self {
+        Self {
+            shader,
+            parameters: [Vec4::ZERO; 8],
+            alpha_mode: None,
+            double_sided: None,
+        }
+    }
+
+    pub(crate) fn apply(&self, material: &Material) -> Material {
+        Material {
+            shader: Some(self.shader.clone()),
+            parameters: self.parameters,
+            alpha_mode: self.alpha_mode.unwrap_or(material.alpha_mode),
+            double_sided: self.double_sided.unwrap_or(material.double_sided),
+            ..material.clone()
+        }
+    }
+}
+
 impl Material {
     pub(crate) fn texture_keys(&self) -> [usize; 4] {
         [

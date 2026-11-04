@@ -28,6 +28,7 @@ use std::sync::Arc;
 ///     uv: vec2<f32>,
 ///     screen_uv: vec2<f32>,        // (0, 0) at the top left of the view, (1, 1) at the bottom right
 ///     to_camera: vec3<f32>,        // unit length
+///     front_facing: bool,          // false on a back face, which only double-sided materials draw
 /// }
 /// fn surface(surface: Surface, pixel: Pixel) -> Surface
 /// ```

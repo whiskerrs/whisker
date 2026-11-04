@@ -3560,6 +3560,37 @@ mod tests {
     }
 
     #[test]
+    fn a_double_sided_shader_tells_back_faces_from_front_faces() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let sided = shaded(
+            "fn surface(surface: Surface, pixel: Pixel) -> Surface {
+                var seen = surface;
+                seen.base_color = vec3<f32>(0.0);
+                seen.emissive = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), pixel.front_facing);
+                return seen;
+            }",
+            Material {
+                double_sided: true,
+                ..MATTE
+            },
+        );
+        let center = |turn: Mat4| {
+            center_of(
+                &device,
+                &queue,
+                &frame(DARK_SUN, vec![quad(Vec3::Z, [1.0; 3], turn, sided.clone())]),
+            )
+        };
+        let nearer = Mat4::from_translation(Vec3::Z * 0.5);
+        let front = center(nearer);
+        assert!(front[1] > 150 && front[0] == 0, "{front:?}");
+        let back = center(nearer * Mat4::from_rotation_y(std::f32::consts::PI));
+        assert!(back[0] > 150 && back[1] == 0, "{back:?}");
+    }
+
+    #[test]
     fn a_shader_that_fails_to_compile_draws_as_the_plain_material() {
         let Some((device, queue)) = gpu() else {
             return;

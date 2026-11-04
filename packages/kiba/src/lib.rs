@@ -189,7 +189,7 @@ pub use hecs::{Entity, World};
 pub use input::InputEvent;
 pub use input::{Input, Key, Pointer};
 pub use lights::{PointLight, SpotLight};
-pub use mesh::{AlphaMode, Material, Mesh, Vertex};
+pub use mesh::{AlphaMode, Material, Mesh, Restyle, Vertex};
 #[cfg(feature = "gltf")]
 pub use model::ModelError;
 pub use model::{LoadState, Model};
@@ -215,8 +215,8 @@ pub mod prelude {
         AlphaMode, Animator, Camera, Context, DepthOfField, Entity, FlyCamera, Fog, FrameStats,
         Game, GameSetup, Input, Interpolated, Key, LoadState, Material, Mesh, Model, OrbitCamera,
         ParticleEmitter, Playback, PointLight, Pointer, Pose, ProbeVolume, Quat, ReflectionProbe,
-        Shader, Sky, Sound, SpotLight, StreamSettings, Sun, Texture, Tier, Time, Transform, Vec2,
-        Vec3, Vec4, Vertex, Viewport, World, WorldStream,
+        Restyle, Shader, Sky, Sound, SpotLight, StreamSettings, Sun, Texture, Tier, Time,
+        Transform, Vec2, Vec3, Vec4, Vertex, Viewport, World, WorldStream,
     };
     #[cfg(feature = "physics")]
     pub use crate::{BodyKind, Collider, Physics, RayHit, RigidBody};

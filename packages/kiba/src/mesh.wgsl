@@ -133,6 +133,7 @@ struct Pixel {
     uv: vec2<f32>,
     screen_uv: vec2<f32>,
     to_camera: vec3<f32>,
+    front_facing: bool,
 }
 
 var<private> world_to_entity: mat4x4<f32>;
@@ -298,6 +299,7 @@ fn surface_of(input: VertexOutput, front: bool) -> Surface {
         input.uv,
         input.position.xy * frame.screen.zw,
         normalize(frame.camera_position.xyz - input.world_position),
+        front,
     );
     return surface(material, pixel);
 }

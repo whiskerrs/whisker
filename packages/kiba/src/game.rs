@@ -21,7 +21,7 @@ use crate::reflection::{Reflection, ReflectionId, ReflectionProbe, face_view_pro
 use crate::renderer::{Batch, Cascade, Effects, Frame, Instance, Shadows};
 use crate::sky::{Fog, Sky};
 use crate::stream::run_streams;
-use crate::{AlphaMode, Input, Material, Mesh, Model, Renderer, Shader};
+use crate::{AlphaMode, Input, Material, Mesh, Model, Renderer, Restyle, Shader};
 
 const MAX_DELTA_SECONDS: f32 = 0.1;
 const DEFAULT_FIXED_HZ: f32 = 60.0;
@@ -769,13 +769,14 @@ fn visit_drawn(
             None,
         );
     }
-    for (_, (transform, motion, model, animator, pose)) in world
+    for (_, (transform, motion, model, animator, pose, restyle)) in world
         .query::<(
             &Transform,
             Option<&Interpolated>,
             &Model,
             Option<&Animator>,
             Option<&Pose>,
+            Option<&Restyle>,
         )>()
         .iter()
     {
@@ -803,7 +804,15 @@ fn visit_drawn(
                 (None, Some(posed), Some(node)) => posed.nodes[node],
                 _ => part.transform,
             };
-            visit(mesh, matrix * within, &part.material, palette);
+            match restyle {
+                Some(restyle) => visit(
+                    mesh,
+                    matrix * within,
+                    &restyle.apply(&part.material),
+                    palette,
+                ),
+                None => visit(mesh, matrix * within, &part.material, palette),
+            }
         }
     }
 }
@@ -1238,6 +1247,50 @@ mod tests {
             origins,
             [Vec3::new(1.0, 1.0, 0.0), Vec3::new(2.0, 1.0, 0.0)]
         );
+    }
+
+    #[test]
+    fn a_restyle_redraws_every_part_with_its_shader_and_keeps_their_textures() {
+        let mut world = world_with_camera_at(Vec3::Z * 10.0);
+        let texture = crate::Texture::from_rgba8(1, 1, vec![255; 4]);
+        let model = Model::new(vec![(
+            Mesh::triangle(),
+            Material {
+                base_color_texture: Some(texture.clone()),
+                ..Material::default()
+            },
+            Mat4::IDENTITY,
+        )]);
+        let shader = Shader::new("fn surface(s: Surface, p: Pixel) -> Surface { return s; }");
+        world.spawn((Transform::default(), model.clone()));
+        world.spawn((
+            Transform::default(),
+            model,
+            Restyle {
+                alpha_mode: Some(AlphaMode::Mask { cutoff: 0.5 }),
+                ..Restyle::new(shader.clone())
+            },
+        ));
+
+        let frame = extract_frame(&world, 100, 100, 1.0, &Quality::default());
+
+        assert_eq!(frame.batches.len(), 2);
+        let restyled = frame
+            .batches
+            .iter()
+            .find(|batch| batch.material.shader.is_some())
+            .unwrap();
+        assert_eq!(
+            restyled.material.shader_key(),
+            Restyle::new(shader)
+                .apply(&Material::default())
+                .shader_key()
+        );
+        assert_eq!(
+            restyled.material.alpha_mode,
+            AlphaMode::Mask { cutoff: 0.5 }
+        );
+        assert_eq!(restyled.material.texture_keys()[0], texture.key());
     }
 
     #[test]
