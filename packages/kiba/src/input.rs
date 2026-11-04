@@ -4,7 +4,7 @@ use glam::Vec2;
 
 macro_rules! keys {
     ($($key:ident => $code:literal,)*) => {
-        /// A physical key, named for its position on a US layout.
+        /// A physical key, named for its position on a US layout, or a mouse button.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         #[allow(missing_docs)]
         pub enum Key {
@@ -37,6 +37,7 @@ keys! {
     ShiftLeft => "ShiftLeft", ShiftRight => "ShiftRight",
     ControlLeft => "ControlLeft", ControlRight => "ControlRight",
     AltLeft => "AltLeft", AltRight => "AltRight",
+    MouseLeft => "Mouse0", MouseMiddle => "Mouse1", MouseRight => "Mouse2",
 }
 
 /// What a Host reports. Positions are physical pixels from the viewport's top left.
@@ -291,6 +292,19 @@ mod tests {
         input.apply(InputEvent::KeyUp(Key::W));
         assert!(!input.key_down(Key::W));
         assert!(input.key_just_released(Key::W));
+    }
+
+    #[test]
+    fn mouse_buttons_are_held_and_bound_like_keys() {
+        let mut input = Input::default();
+        input.bind("attack", &[Key::J, Key::MouseLeft]);
+        input.apply(InputEvent::KeyDown(Key::MouseLeft));
+        input.end_pass();
+        input.apply(InputEvent::KeyDown(Key::MouseRight));
+
+        assert!(input.action_down("attack") && !input.action_just_pressed("attack"));
+        assert!(input.key_down(Key::MouseRight) && input.key_just_pressed(Key::MouseRight));
+        assert_eq!(Key::from_code("Mouse2"), Some(Key::MouseRight));
     }
 
     #[test]

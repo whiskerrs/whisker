@@ -107,12 +107,39 @@ fn listen_for_input(
     let canvas_target: web_sys::EventTarget = canvas.clone().into();
     let window_target: web_sys::EventTarget = window.clone().into();
 
+    // A second mouse button arrives as a pointermove whose `buttons` changed, not as a pointerdown.
+    let sync_buttons = {
+        let send = send.clone();
+        let held = Rc::new(Cell::new(0u16));
+        move |event: &web_sys::PointerEvent| {
+            if event.pointer_type() != "mouse" {
+                return;
+            }
+            let now = event.buttons();
+            let changed = held.replace(now) ^ now;
+            for (bit, key) in [
+                (1, Key::MouseLeft),
+                (2, Key::MouseRight),
+                (4, Key::MouseMiddle),
+            ] {
+                if changed & bit != 0 {
+                    send(if now & bit != 0 {
+                        InputEvent::KeyDown(key)
+                    } else {
+                        InputEvent::KeyUp(key)
+                    });
+                }
+            }
+        }
+    };
     let pointer = |kind: &'static str, to_event: fn(i32, Vec2) -> InputEvent| {
         let send = send.clone();
         let position = position.clone();
+        let sync_buttons = sync_buttons.clone();
         Listener::new(canvas_target.clone(), kind, move |event| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             send(to_event(event.pointer_id(), position(&event)));
+            sync_buttons(&event);
         })
     };
     let key = |kind: &'static str, to_event: fn(Key) -> InputEvent| {
@@ -131,6 +158,7 @@ fn listen_for_input(
     let capture_target = canvas.clone();
     let down_send = send.clone();
     let down_position = position.clone();
+    let down_buttons = sync_buttons.clone();
     let wheel_send = send.clone();
     let blur_send = send.clone();
     let gone = |kind: &'static str| {
@@ -151,6 +179,10 @@ fn listen_for_input(
                 id: event.pointer_id(),
                 position: down_position(&event),
             });
+            down_buttons(&event);
+        }),
+        Listener::new(canvas_target.clone(), "contextmenu", |event| {
+            event.prevent_default();
         }),
         pointer("pointermove", |id, position| InputEvent::PointerMove {
             id,
