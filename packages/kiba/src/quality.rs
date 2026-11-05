@@ -67,6 +67,8 @@ pub(crate) struct Quality {
     pub(crate) antialias: bool,
     /// Strength of the sun's rays through gaps in what stands in front of the sky.
     pub(crate) light_shafts: f32,
+    /// Scales the distances at which models switch to simpler meshes.
+    pub(crate) lod_reach: f32,
 }
 
 impl Default for Quality {
@@ -80,6 +82,7 @@ impl Default for Quality {
             soft_shadows: false,
             antialias: false,
             light_shafts: 0.0,
+            lod_reach: 1.0,
         }
     }
 }
@@ -239,6 +242,12 @@ impl Governor {
             Tier::T1 => (3, 2048, true),
             Tier::T2 => (4, 2048, true),
         };
+        // Phones are bound by vertices before pixels once resolution is at its cap.
+        let lod_reach = match self.tier {
+            Tier::T0 => 0.33,
+            Tier::T1 => 0.6,
+            Tier::T2 => 1.0,
+        };
         Quality {
             render_scale: self.scale().min(cap),
             bloom,
@@ -248,6 +257,7 @@ impl Governor {
             soft_shadows,
             antialias: true,
             light_shafts,
+            lod_reach,
         }
     }
 
@@ -428,6 +438,22 @@ mod tests {
         assert_eq!(governor.quality(640, 480).render_scale, 1.0);
         governor.lock(Tier::T2);
         assert_eq!(governor.quality(2560, 1440).render_scale, 1.0);
+    }
+
+    #[test]
+    fn lower_tiers_switch_to_simpler_meshes_sooner() {
+        let mut governor = Governor::default();
+        let reach = |governor: &mut Governor, tier| {
+            governor.lock(tier);
+            governor.quality(100, 100).lod_reach
+        };
+        let (t0, t1, t2) = (
+            reach(&mut governor, Tier::T0),
+            reach(&mut governor, Tier::T1),
+            reach(&mut governor, Tier::T2),
+        );
+        assert!(t0 < t1 && t1 < t2);
+        assert_eq!(t2, 1.0);
     }
 
     #[test]

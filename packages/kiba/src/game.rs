@@ -779,6 +779,7 @@ fn visit_drawn(
     world: &World,
     alpha: f32,
     eye: Vec3,
+    lod_reach: f32,
     mut visit: impl FnMut(&Mesh, Mat4, &Material, Option<&Arc<[Mat4]>>),
 ) {
     for (_, (transform, motion, mesh, material)) in world
@@ -803,7 +804,10 @@ fn visit_drawn(
         )>()
         .iter()
     {
-        let matrix = shown(transform, motion, alpha).matrix();
+        let shown_transform = shown(transform, motion, alpha);
+        let matrix = shown_transform.matrix();
+        // LOD distances are in the model's space, so a model drawn twice as large switches twice as far.
+        let reach = (shown_transform.scale.max_element() * lod_reach).max(f32::EPSILON);
         let parts = model.parts();
         let rig = model.data().and_then(|data| data.rig.as_ref());
         let posed = rig
@@ -816,7 +820,7 @@ fn visit_drawn(
             });
         for part in parts {
             let center = matrix * part.transform * part.mesh.data().bounds_center.extend(1.0);
-            let mesh = part.mesh_at(center.truncate().distance(eye));
+            let mesh = part.mesh_at(center.truncate().distance(eye) / reach);
             let palette = posed
                 .as_ref()
                 .zip(part.skin)
@@ -887,6 +891,7 @@ pub(crate) fn extract_frame(
         world,
         alpha,
         eye.translation,
+        quality.lod_reach,
         |mesh, transform, material, palette| {
             // Only a masked caster needs its textures, so the others share batches across materials.
             let caster = match material.alpha_mode {
@@ -978,6 +983,7 @@ pub(crate) fn add_capture(frame: &mut Frame, world: &World, alpha: f32) {
         world,
         alpha,
         center,
+        1.0,
         |mesh, transform, material, palette| {
             // Blending needs sorting the capture does not do, and glass seen in a reflection is faint anyway.
             if material.alpha_mode == AlphaMode::Blend {
@@ -1178,6 +1184,47 @@ mod tests {
             extract_frame(&world, 100, 100, 1.0, &Quality::default()).sun,
             Sun::default()
         );
+    }
+
+    #[test]
+    fn models_switch_to_simpler_meshes_sooner_on_lower_tiers_and_later_when_scaled_up() {
+        use crate::model::{Lod, ModelData, ModelPart};
+        let (detailed, simple) = (Mesh::cube(1.0), Mesh::cube(0.9));
+        let model = Model::from_data(ModelData {
+            parts: vec![ModelPart {
+                mesh: detailed.clone(),
+                material: Material::default(),
+                transform: Mat4::IDENTITY,
+                node: None,
+                skin: None,
+                lods: vec![Lod {
+                    distance: 10.0,
+                    mesh: simple.clone(),
+                }],
+            }],
+            rig: None,
+        });
+        let drawn = |eye: Vec3, scale: f32, lod_reach: f32| {
+            let mut world = world_with_camera_at(eye);
+            world.spawn((
+                Transform {
+                    scale: Vec3::splat(scale),
+                    ..Transform::default()
+                },
+                model.clone(),
+            ));
+            let quality = Quality {
+                lod_reach,
+                ..Quality::default()
+            };
+            extract_frame(&world, 100, 100, 1.0, &quality).batches[0]
+                .mesh
+                .key()
+        };
+        assert_eq!(drawn(Vec3::Z * 5.0, 1.0, 1.0), detailed.key());
+        assert_eq!(drawn(Vec3::Z * 5.0, 1.0, 0.33), simple.key());
+        assert_eq!(drawn(Vec3::Z * 15.0, 1.0, 1.0), simple.key());
+        assert_eq!(drawn(Vec3::Z * 15.0, 2.0, 1.0), detailed.key());
     }
 
     #[test]

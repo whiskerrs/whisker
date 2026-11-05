@@ -254,6 +254,7 @@ pub fn cook_model(model: &Model, max_texture: u32) -> Result<Vec<u8>, String> {
     let mut data = model.data().ok_or("the model is not loaded")?.clone();
     let mut shrunk = HashMap::new();
     for part in &mut data.parts {
+        part.lods = lods(part);
         let material = &mut part.material;
         for texture in [
             &mut material.base_color_texture,
@@ -289,11 +290,34 @@ fn shrink(texture: &Texture, max_side: u32) -> Texture {
 }
 
 // A simpler mesh takes over at these multiples of a part's radius, when it covers little of the screen.
-const LOD_STEPS: [(f32, f32); 2] = [(10.0, 0.4), (30.0, 0.15)];
+const LOD_STEPS: [(f32, f32); 3] = [(10.0, 0.4), (30.0, 0.15), (60.0, 0.05)];
+// How far a simplified surface may move, as a fraction of its size, per radius of distance it is seen
+// from, so that every step looks as close to the original on screen.
+const LOD_ERROR_PER_RADIUS: f32 = 0.005;
 const FAR_RATIO: f32 = 0.1;
+const FAR_ERROR: f32 = 0.05;
 const SMALLEST_SIMPLIFIED_INDICES: usize = 300;
 
-fn simplify(mesh: &Mesh, ratio: f32) -> Option<Mesh> {
+/// Simpler meshes for `part`, at distances measured in the space that holds its model.
+fn lods(part: &ModelPart) -> Vec<Lod> {
+    let radius = part.mesh.data().bounds_radius;
+    let scale = part
+        .transform
+        .to_scale_rotation_translation()
+        .0
+        .max_element();
+    LOD_STEPS
+        .iter()
+        .filter_map(|&(step, ratio)| {
+            Some(Lod {
+                distance: radius * scale * step,
+                mesh: simplify(&part.mesh, ratio, step * LOD_ERROR_PER_RADIUS)?,
+            })
+        })
+        .collect()
+}
+
+fn simplify(mesh: &Mesh, ratio: f32, error: f32) -> Option<Mesh> {
     let data = mesh.data();
     if data.indices.len() < SMALLEST_SIMPLIFIED_INDICES || data.skin.is_some() {
         return None;
@@ -305,15 +329,22 @@ fn simplify(mesh: &Mesh, ratio: f32) -> Option<Mesh> {
     )
     .ok()?;
     let target = ((data.indices.len() as f32 * ratio) as usize / 3 * 3).max(3);
-    let kept = meshopt::simplify(
+    let mut kept = meshopt::simplify(
         &data.indices,
         &adapter,
         target,
-        // Moving the surface by up to 5% of its size is invisible at the distances that use this.
-        0.05,
+        error,
         meshopt::SimplifyOptions::None,
         None,
     );
+    // Foliage is many separate cards, whose borders edge collapses cannot cross, so it is merged by
+    // position instead.
+    if kept.len() > target * 2 {
+        let merged = meshopt::simplify_sloppy(&data.indices, &adapter, target, error, None);
+        if !merged.is_empty() && merged.len() < kept.len() {
+            kept = merged;
+        }
+    }
     if kept.is_empty() || kept.len() >= data.indices.len() {
         return None;
     }
@@ -361,7 +392,7 @@ fn far_stand_in(parts: &[ModelPart]) -> Option<ModelPart> {
     }
     let merged = Mesh::new(vertices, indices);
     Some(ModelPart {
-        mesh: simplify(&merged, FAR_RATIO).unwrap_or(merged),
+        mesh: simplify(&merged, FAR_RATIO, FAR_ERROR).unwrap_or(merged),
         material: Material {
             roughness: 0.8,
             ..Material::default()
@@ -409,21 +440,7 @@ pub fn cook_world(
                 (center.z / cell_size).floor() as i32,
             );
             let mut part = part.clone();
-            let radius = part.mesh.data().bounds_radius;
-            let scale = part
-                .transform
-                .to_scale_rotation_translation()
-                .0
-                .max_element();
-            part.lods = LOD_STEPS
-                .iter()
-                .filter_map(|&(step, ratio)| {
-                    Some(Lod {
-                        distance: radius * scale * step,
-                        mesh: simplify(&part.mesh, ratio)?,
-                    })
-                })
-                .collect();
+            part.lods = lods(&part);
             cells.entry((cell.x, cell.y)).or_default().push(part);
         }
     }
@@ -740,6 +757,39 @@ mod tests {
     }
 
     #[test]
+    fn a_cooked_model_carries_simpler_meshes_even_for_separate_cards() {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        for card in 0..400u32 {
+            let at = Vec3::new((card % 20) as f32, (card / 20) as f32, 0.0) * 0.5;
+            let first = vertices.len() as u32;
+            for corner in [Vec3::ZERO, Vec3::X, Vec3::X + Vec3::Y, Vec3::Y] {
+                vertices.push(Vertex {
+                    position: (at + corner * 0.4).to_array(),
+                    normal: [0.0, 0.0, 1.0],
+                    color: [1.0; 3],
+                    uv: [corner.x, corner.y],
+                });
+            }
+            indices.extend([0, 1, 2, 0, 2, 3].map(|i| first + i));
+        }
+        let cards = model(Mesh::new(vertices, indices), Mat4::IDENTITY);
+        let cooked = Model::from_pack(&cook_model(&cards, 64).expect("cooks")).expect("valid");
+        let part = &cooked.parts()[0];
+        let (full, farthest) = (
+            part.mesh.data().indices.len(),
+            part.lods
+                .last()
+                .expect("has simpler meshes")
+                .mesh
+                .data()
+                .indices
+                .len(),
+        );
+        assert!(farthest < full / 4, "{farthest} of {full}");
+    }
+
+    #[test]
     fn a_world_splits_into_cells_with_simpler_meshes_and_stand_ins() {
         let far_cube = Mat4::from_translation(Vec3::new(300.0, 0.0, 50.0));
         let world = Model::new([
@@ -758,7 +808,7 @@ mod tests {
             .unwrap();
         let model = Model::from_pack(bytes).expect("valid");
         let part = &model.parts()[0];
-        assert_eq!(part.lods.len(), 2);
+        assert_eq!(part.lods.len(), LOD_STEPS.len());
         let (full, simple) = (
             part.mesh.data().indices.len(),
             part.lods[1].mesh.data().indices.len(),
