@@ -368,8 +368,7 @@ because a Whisker app wants tap sounds as much as a game wants cues. Kiba re-exp
 listener from the camera. On the Web each primitive is one Web Audio node; native Hosts get a Rust mixer
 on `kira` in that module's later phases.
 
-**Order of work**, so the slime port has its sound and music before the site switches to it, one
-`whisker-mixer` commit per gap:
+**Order of work**, so the slime port has its sound and music before the site switches to it:
 
 1. Buses, compressor, reverb, and pitch, so the 24 recorded cues sound as in the original.
 2. `Tone` and `Noise`, for the 11 synthesized cues.
@@ -773,7 +772,8 @@ feature builds only after it has run. The port has four layers:
     magic circle, slash and wind arcs, drops, mist, glints, leaves, rock shards, the water sword and its
     trail, and the water figure.
 - **The HUD** is rebuilt in Whisker from slime's page, about 1,800 lines, fed by the game's HUD JSON. Its
-  sound cues play through `Sound` at the original's volumes.
+  sound plays through `whisker-mixer` as the original's graph did: its 24 recorded cues with their pitch
+  variation and reverb sends, its 11 synthesized cues, its wind, and its generated music.
 - **Lighting** takes the original's 15:30 sun, its stylized sky, and a lower exposure.
 
 Building it changed the engine in nine commits, each for a gap another game would hit:
@@ -788,8 +788,6 @@ Building it changed the engine in nine commits, each for a gap another game woul
 
 **Not matched,** for lack of an engine feature:
 
-- Audio has no playback rate, effects bus, master gain, or synthesis. The original's pitch variation and
-  reverb are gone, and its 11 synthesized cues, its wind, and its music are silent. D13 plans the fix.
 - Effects draw one entity each, with no instancing, and pass per-vertex data only through color and uv.
 - Post effects are Whisker overlays: the hurt edge and the ultimate's tint are gradients, without
   desaturation.
