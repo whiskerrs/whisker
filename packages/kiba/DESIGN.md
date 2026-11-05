@@ -259,7 +259,7 @@ load.
 | Animation | Own (skinning, blending, IK later) | P2 |
 | Physics / collision | Integrate Rapier as first candidate | P3 |
 | Particles / VFX | Own: CPU-simulated additive sprites in one instanced draw | P4 |
-| Audio | Own `Sound` over Web Audio for short effects with a 3D listener; music and background audio stay with `whisker-audio` | P3 |
+| Audio | Own mixer over Web Audio for effects, ambience, and music, with synthesized voices and a 3D listener (D13); app and background audio stay with `whisker-audio` | P3, P8 |
 | UI / text | Whisker | Done |
 | Scripting | Rust only | Out of scope |
 | AI / navigation | External crate for navmesh | P5 or later |
@@ -325,6 +325,69 @@ claim that Kiba is general-purpose.
   - **M3:** traffic, crowds, touch and gamepad controls, and the world reveal.
 - **Not ported:** content the original does not have either, namely roaming monsters and online PvP.
   Generation that spends credits (Meshy, ElevenLabs) is not run again.
+
+### D13. Game audio, music included, runs through one Kiba mixer, and games compose with its voices
+
+D10 left music to `whisker-audio`. The slime port shows why that cannot hold. The original's music is
+not a file: it is composed while the game runs, from four chords, a pad, a bass, and random plucks
+**[verified]**. `whisker-audio` plays one file through the platform's media player, so it cannot play
+that music at all. Even file music played that way bypasses the graph, so the music volume, the
+compressor, and the reverb cannot reach it. Games therefore play music through Kiba. `whisker-audio`
+stays the choice for app audio and playback that continues in the background.
+
+**Kiba provides instruments and a clock. The game composes.** Cue recipes, ambience, chord tables, and
+random note choices are game code. Kiba has no sequencer, LFO, or cue table, because each game wants a
+different one and each is a few lines over the primitives below. The original's whole graph maps onto
+these primitives **[verified]**:
+
+- **Buses.** Master → compressor → output, and named buses under master, each with a volume. A reverb
+  is a send bus, `Reverb { seconds }`, whose impulse response is generated decaying noise, so no file
+  ships. Muting is a bus volume, so it also silences looping and scheduled voices.
+- **Voices.** `Playback` gains `pitch` (playback rate), `bus`, `send: Option<(Bus, f32)>`, and `at`, a
+  start time on the audio clock. The game supplies random pitch variation itself. `play_with` returns
+  a `Voice` with `stop` and `set_volume(target, ramp_seconds)`. A game wobbles an ambience loop from
+  `on_update` through that handle, with no LFO in Kiba.
+- **Synthesis.** `Tone { wave, hz, to_hz, envelope, filter, bus, send, at }`, whose frequency glides
+  exponentially, and `Noise { filter, envelope, bus, send, at }`, from a shared noise buffer with a
+  random start. A filter is a biquad type, Q, and a frequency that may glide. The envelope is attack,
+  hold, and release, not attack and length: a music pad rises for 1.4 s, holds for a bar, and fades for
+  1.5 s past it, which two numbers cannot express.
+- **Clock.** `audio::now()` in seconds, plus `at`. One cue is several voices at offsets from now. Music
+  schedules each bar ahead of the clock.
+
+Two behaviours the Web forces are decided here:
+
+- **Autoplay.** Browsers start audio only during a gesture, and Kiba already resumes it on the first
+  pointer or key. Until then the clock stands still, so a bar scheduled earlier would land in the past
+  and be silent. `audio::is_running()` tells the game when to start composing.
+- **Hidden pages.** Frames stop while the page is hidden, so composition stops. Kiba suspends audio on
+  `visibilitychange` and resumes it on return, which pauses the game's sound as most games do.
+
+The API carries no `web_sys` types. On the Web each primitive is one Web Audio node, so the backend
+stays thin. Native Hosts stay silent, as they are today; whether they get the platform's audio graph or
+a mixer in Rust is an open question.
+
+**Order of work**, so the slime port has its sound and music before the site switches to it, one engine
+commit per gap:
+
+1. Buses, compressor, reverb, and pitch, so the 24 recorded cues sound as in the original.
+2. `Tone` and `Noise`, for the 11 synthesized cues.
+3. `Voice`, for the wind.
+4. The clock and `is_running`, for the music.
+
+The slime-specific tables, each cue's gain, pitch variation, and reverb send, and the recipes all stay
+in the game's `hud/sound.rs`.
+
+**Verification.** Native tests cover parameter checks and the game's bar scheduler with a seeded random
+source. Whether sound is heard is checked in a browser by reading an `AnalyserNode` on master after each
+cue and after the first bar. Host conformance does not cover audio.
+
+Left out, with reasons:
+
+- **Streamed file music.** A three-minute track decoded whole is about 60 MB, and nothing needs it yet.
+  It comes with the first game whose music is a recording.
+- **Sequencer and LFO.** They are composition, which belongs to games.
+- **3D position on buses.** Position stays per voice; music and ambience are heard from everywhere.
 
 ## Target API
 
@@ -725,7 +788,7 @@ Building it changed the engine in nine commits, each for a gap another game woul
 **Not matched,** for lack of an engine feature:
 
 - Audio has no playback rate, effects bus, master gain, or synthesis. The original's pitch variation and
-  reverb are gone, and its 11 synthesized cues, its wind, and its music are silent.
+  reverb are gone, and its 11 synthesized cues, its wind, and its music are silent. D13 plans the fix.
 - Effects draw one entity each, with no instancing, and pass per-vertex data only through color and uv.
 - Post effects are Whisker overlays: the hurt edge and the ultimate's tint are gradients, without
   desaturation.
@@ -801,6 +864,9 @@ Each result can change the decisions above.
    patch; keeping the world across a patch is not attempted.
 
 ## Open questions
+
+- **Native audio.** Native Hosts are silent. Whether they map D13's primitives onto each platform's
+  audio graph or mix in Rust is undecided, and waits until a native Host runs a `Game`.
 
 - **The reference device.** Not chosen; it is the project owner's call. Android 12 or later with an
   Adreno 6xx-class or Mali-G6x-class GPU is the working target, and the Mac stand-in in the phase rules
