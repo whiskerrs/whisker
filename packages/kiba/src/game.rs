@@ -576,6 +576,7 @@ impl<C: 'static> RunningGame for Registered<C> {
         let alpha = setup.advance(delta_seconds, commands);
 
         let updated = Instant::now();
+        setup.governor.resize(width, height);
         setup.governor.update(real_delta);
         let quality = setup.governor.quality(width, height);
         let mut frame = extract_frame(&setup.world, width, height, alpha, &quality);

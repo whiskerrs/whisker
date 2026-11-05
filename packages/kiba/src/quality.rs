@@ -37,6 +37,13 @@ impl Tier {
         }
     }
 
+    fn higher(self) -> Self {
+        match self {
+            Self::T0 => Self::T1,
+            Self::T1 | Self::T2 => Self::T2,
+        }
+    }
+
     fn lower(self) -> Option<Self> {
         match self {
             Self::T2 => Some(Self::T1),
@@ -81,12 +88,23 @@ const WINDOW_SECONDS: f32 = 1.0;
 // The tab was hidden or a load hitched, which says nothing about how fast the GPU is.
 const LONGEST_COUNTED_FRAME_SECONDS: f32 = 0.25;
 const SCALE_STEP: f32 = 0.1;
+// A frame this far past the budget waited for another refresh.
 const OVER_BUDGET: f32 = 1.1;
-// A display's refresh caps how fast frames arrive, so meeting the budget is the only sign of room.
-const WITHIN_BUDGET: f32 = 1.05;
+// Under vsync a late frame takes a whole extra refresh, so a few of them already show as stutter
+// that a median would hide.
+const MOST_LATE_SHARE: f32 = 0.1;
+// A display's refresh caps how fast frames arrive, so frames meeting the budget is the only sign of
+// room, and one late frame a window is a load hitch rather than a lack of it.
+const MOST_LATE_FRAMES_WHEN_CALM: usize = 1;
 // Giving up resolution is quick and taking it back is slow, so the image does not pulse.
 const WINDOWS_BEFORE_RAISING: u32 = 3;
 const MOST_WINDOWS_BEFORE_RAISING: u32 = 64;
+// A raise that fails within this many windows was too much, even if its first window passed.
+const WINDOWS_TO_TRUST_A_RAISE: u32 = 5;
+// A burst of heavy action costs resolution for a moment, but only sustained load costs a tier.
+const WINDOWS_BEFORE_LOWERING_TIER: u32 = 3;
+// The output must shrink this much below where a tier was lost before that tier is tried again.
+const OUTPUT_SHRINK_TO_RETRY: f32 = 0.75;
 
 /// Chooses a tier and an internal resolution from how long frames really take.
 ///
@@ -102,7 +120,11 @@ pub(crate) struct Governor {
     frame_ms: Vec<f32>,
     calm_windows: u32,
     windows_before_raising: u32,
-    just_raised: bool,
+    windows_since_raise: Option<u32>,
+    strained_windows: u32,
+    output_pixels: f32,
+    // The output size at each tier given up, the latest last.
+    tiers_lost_at: Vec<f32>,
 }
 
 impl Default for Governor {
@@ -115,7 +137,10 @@ impl Default for Governor {
             frame_ms: Vec::new(),
             calm_windows: 0,
             windows_before_raising: WINDOWS_BEFORE_RAISING,
-            just_raised: false,
+            windows_since_raise: None,
+            strained_windows: 0,
+            output_pixels: 0.0,
+            tiers_lost_at: Vec::new(),
         }
     }
 }
@@ -125,6 +150,22 @@ impl Governor {
         self.tier = tier;
         self.locked = true;
         self.steps_down = 0;
+        self.tiers_lost_at.clear();
+    }
+
+    /// Takes back each tier lost at an output much larger than `width` by `height`.
+    pub(crate) fn resize(&mut self, width: u32, height: u32) {
+        self.output_pixels = width as f32 * height as f32;
+        while self
+            .tiers_lost_at
+            .last()
+            .is_some_and(|&lost_at| self.output_pixels < lost_at * OUTPUT_SHRINK_TO_RETRY)
+        {
+            self.tiers_lost_at.pop();
+            self.tier = self.tier.higher();
+            self.steps_down = 0;
+            self.strained_windows = 0;
+        }
     }
 
     pub(crate) fn tier(&self) -> Tier {
@@ -140,31 +181,45 @@ impl Governor {
         if self.elapsed < WINDOW_SECONDS {
             return;
         }
-        // The median ignores the odd hitch from a load, which says nothing about steady cost.
-        self.frame_ms.sort_by(f32::total_cmp);
-        let median_ms = self.frame_ms[self.frame_ms.len() / 2];
+        let target = self.tier.target_ms();
+        let late = self
+            .frame_ms
+            .iter()
+            .filter(|&&ms| ms > target * OVER_BUDGET)
+            .count();
+        let late_share = late as f32 / self.frame_ms.len() as f32;
         self.elapsed = 0.0;
         self.frame_ms.clear();
-        let target = self.tier.target_ms();
-        let just_raised = std::mem::take(&mut self.just_raised);
-        if median_ms > target * OVER_BUDGET {
+        let since_raise = self.windows_since_raise.take().map(|windows| windows + 1);
+        if late_share > MOST_LATE_SHARE {
             self.calm_windows = 0;
-            if just_raised {
+            if since_raise.is_some() {
                 self.windows_before_raising =
                     (self.windows_before_raising * 2).min(MOST_WINDOWS_BEFORE_RAISING);
             }
             if self.steps_down < self.tier.most_steps_down() {
                 self.steps_down += 1;
+                self.strained_windows = 0;
             } else if let Some(lower) = self.tier.lower().filter(|_| !self.locked) {
-                self.tier = lower;
-                self.steps_down = 0;
+                self.strained_windows += 1;
+                if self.strained_windows >= WINDOWS_BEFORE_LOWERING_TIER {
+                    self.tiers_lost_at.push(self.output_pixels);
+                    self.tier = lower;
+                    self.steps_down = 0;
+                    self.strained_windows = 0;
+                }
             }
-        } else if median_ms <= target * WITHIN_BUDGET {
+            return;
+        }
+        self.strained_windows = 0;
+        self.windows_since_raise =
+            since_raise.filter(|&windows| windows < WINDOWS_TO_TRUST_A_RAISE);
+        if late <= MOST_LATE_FRAMES_WHEN_CALM {
             self.calm_windows += 1;
             if self.calm_windows >= self.windows_before_raising && self.steps_down > 0 {
                 self.calm_windows = 0;
                 self.steps_down -= 1;
-                self.just_raised = true;
+                self.windows_since_raise = Some(0);
             }
         } else {
             self.calm_windows = 0;
@@ -211,6 +266,16 @@ mod tests {
         }
     }
 
+    // Feeds whole windows, so a window never mixes two loads.
+    fn windows(governor: &mut Governor, frame_ms: f32, count: usize) {
+        for _ in 0..count {
+            governor.update(frame_ms / 1000.0);
+            while governor.elapsed > 0.0 {
+                governor.update(frame_ms / 1000.0);
+            }
+        }
+    }
+
     #[test]
     fn a_fast_device_keeps_the_top_tier_at_full_resolution() {
         let mut governor = Governor::default();
@@ -245,15 +310,15 @@ mod tests {
     #[test]
     fn resolution_returns_slowly_once_there_is_room() {
         let mut governor = Governor::default();
-        run(&mut governor, 28.0, 2.5);
+        windows(&mut governor, 28.0, 2);
         let lowered = governor.scale();
-        run(&mut governor, 16.7, 1.5);
+        windows(&mut governor, 16.7, 2);
         assert_eq!(
             governor.scale(),
             lowered,
             "a display's refresh is room enough, but only slowly"
         );
-        run(&mut governor, 16.7, 3.0);
+        windows(&mut governor, 16.7, 1);
         assert!(governor.scale() > lowered);
     }
 
@@ -269,16 +334,71 @@ mod tests {
     }
 
     #[test]
+    fn resolution_returns_through_a_hitch_in_each_window() {
+        let mut governor = Governor::default();
+        windows(&mut governor, 28.0, 2);
+        let lowered = governor.scale();
+        for _ in 0..4 {
+            governor.update(0.2);
+            windows(&mut governor, 16.7, 1);
+        }
+        assert!(governor.scale() > lowered);
+    }
+
+    #[test]
     fn a_raise_that_fails_waits_longer_before_the_next() {
         let mut governor = Governor::default();
-        run(&mut governor, 20.0, 1.1);
+        windows(&mut governor, 20.0, 1);
         assert_eq!(governor.scale(), 0.9);
-        run(&mut governor, 16.7, 3.1);
+        windows(&mut governor, 16.7, 3);
         assert_eq!(governor.scale(), 1.0);
-        run(&mut governor, 20.0, 1.1);
+        windows(&mut governor, 20.0, 1);
         assert_eq!(governor.scale(), 0.9);
-        run(&mut governor, 16.7, 4.1);
+        windows(&mut governor, 16.7, 5);
         assert_eq!(governor.scale(), 0.9, "the second try waits six windows");
+    }
+
+    #[test]
+    fn a_fifth_of_frames_missing_the_refresh_gives_up_resolution() {
+        let mut governor = Governor::default();
+        for _ in 0..12 {
+            run(&mut governor, 16.7, 0.067);
+            governor.update(0.0333);
+        }
+        assert!(governor.scale() < 1.0);
+    }
+
+    #[test]
+    fn a_raise_that_fails_a_few_windows_later_still_waits_longer() {
+        let mut governor = Governor::default();
+        windows(&mut governor, 20.0, 1);
+        windows(&mut governor, 16.7, 3);
+        assert_eq!(governor.scale(), 1.0);
+        windows(&mut governor, 16.7, 2);
+        windows(&mut governor, 20.0, 1);
+        assert_eq!(governor.scale(), 0.9);
+        windows(&mut governor, 16.7, 5);
+        assert_eq!(governor.scale(), 0.9, "the second try waits six windows");
+    }
+
+    #[test]
+    fn a_short_spike_at_the_lowest_resolution_keeps_the_tier() {
+        let mut governor = Governor::default();
+        windows(&mut governor, 33.3, 3);
+        assert_eq!(governor.scale(), 0.7);
+        windows(&mut governor, 33.3, 2);
+        windows(&mut governor, 16.7, 1);
+        assert_eq!(governor.tier(), Tier::T2);
+    }
+
+    #[test]
+    fn a_tier_lost_to_a_larger_output_returns_when_it_shrinks() {
+        let mut governor = Governor::default();
+        governor.resize(3456, 2234);
+        run(&mut governor, 33.3, 10.0);
+        assert!(governor.tier() < Tier::T2);
+        governor.resize(1728, 1117);
+        assert_eq!(governor.tier(), Tier::T2);
     }
 
     #[test]

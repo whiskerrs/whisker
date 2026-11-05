@@ -136,12 +136,14 @@ All tiers use the same assets. T0's image is tuned as the product baseline, not 
 
 The tier is chosen while the game runs, not by a benchmark at startup, because a benchmark draws a scene
 other than the game's and a phone that heats up slows minutes later. A game starts at T2. Whenever a
-one-second window averages more than 110% of the tier's frame time, internal resolution drops by a tenth,
-and at the tier's lowest scale the tier drops. Windows are judged by their median frame, so a load's hitch
-does not count. A display's refresh caps how fast frames arrive, so meeting the budget for three windows
-is enough to try a tenth more resolution, and each try that fails doubles the wait for the next. A tier
-never climbs back, so the image does not pulse. Frames over 250 ms, from a hidden tab or a
-load, do not count. `GameSetup::set_tier` fixes the tier for a settings menu, and resolution still
+one-second window has more than a tenth of its frames over 110% of the tier's frame time, internal
+resolution drops by a tenth. Under vsync a late frame costs a whole extra refresh, so a median would hide
+up to half the frames stuttering. At the tier's lowest scale the tier drops only after three such windows
+in a row, so a burst of action does not cost features. A display's refresh caps how fast frames arrive,
+so three windows with at most one late frame are enough to try a tenth more resolution, and a try that
+fails within five windows doubles the wait for the next. A tier climbs back only when the output shrinks
+below three quarters of the size at which it was lost, as when leaving full screen, so the image does
+not pulse. Frames over 250 ms, from a hidden tab or a load, do not count. `GameSetup::set_tier` fixes the tier for a settings menu, and resolution still
 adapts. The scene renders at the scaled size, and post-processing upscales it with bilinear filtering
 and a light sharpen.
 
@@ -569,8 +571,9 @@ of main-thread work, so lowering resolution could not restore 30 fps; the govern
 cannot tell CPU from GPU cost. The example shows the campfire, bloom, and AO with no console errors.
 
 A first Web run found that on a 60 Hz display frames never arrive faster than 16.7 ms, so resolution lost
-to a load hitch never came back. The governor now judges each second by its median frame and probes upward
-whenever the budget is met.
+to a load hitch never came back. The governor now probes upward whenever the budget is met. It first
+judged each second by its median frame, until a Retina full screen showed a median of 16.7 ms over a
+second at 53 fps, and a tier lost there stayed lost after leaving full screen; it now counts late frames.
 
 **Automatic tier selection works on the stand-in.** Which tier a real mid-range phone settles on is
 deferred to the project owner with spike 1.
