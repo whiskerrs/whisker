@@ -122,6 +122,7 @@ macro_rules! define_style_properties {
                     self,
                     Self::Cursor
                         | Self::PointerEvents
+                        | Self::Visibility
                         | Self::FontFamily
                         | Self::FontSize
                         | Self::FontWeight
@@ -588,6 +589,7 @@ mod tests {
                 StyleProperty::LineHeight,
                 StyleProperty::PointerEvents,
                 StyleProperty::TextAlign,
+                StyleProperty::Visibility,
                 StyleProperty::FontFeatureSettings,
                 StyleProperty::FontOpticalSizing,
                 StyleProperty::FontVariationSettings,
