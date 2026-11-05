@@ -22,16 +22,39 @@ async fn create_renderer(canvas: web_sys::HtmlCanvasElement) -> Result<Renderer,
     Renderer::new(&instance, surface).await
 }
 
-fn resize_to_display(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32, f32) {
-    let scale = web_sys::window()
+// Past 1080p the browser's upscale is far cheaper than drawing every device pixel, which took a Retina
+// full screen from 60 to under 50 fps at the lowest tier.
+const MOST_CANVAS_PIXELS: f64 = 1920.0 * 1080.0;
+
+/// Canvas pixels per CSS pixel: the device's ratio, lowered until the canvas fits the pixel budget.
+fn canvas_scale(css_width: f64, css_height: f64, device_pixel_ratio: f64) -> f64 {
+    let pixels = css_width * css_height * device_pixel_ratio * device_pixel_ratio;
+    if pixels <= MOST_CANVAS_PIXELS {
+        device_pixel_ratio
+    } else {
+        device_pixel_ratio * (MOST_CANVAS_PIXELS / pixels).sqrt()
+    }
+}
+
+fn resize_to_display(
+    canvas: &web_sys::HtmlCanvasElement,
+    scale_cell: &Cell<f32>,
+) -> (u32, u32, f32) {
+    let (css_width, css_height) = (
+        f64::from(canvas.client_width()),
+        f64::from(canvas.client_height()),
+    );
+    let device_pixel_ratio = web_sys::window()
         .expect("kiba requires a window")
         .device_pixel_ratio();
-    let width = (f64::from(canvas.client_width()) * scale) as u32;
-    let height = (f64::from(canvas.client_height()) * scale) as u32;
+    let scale = canvas_scale(css_width, css_height, device_pixel_ratio);
+    let width = (css_width * scale) as u32;
+    let height = (css_height * scale) as u32;
     if (canvas.width(), canvas.height()) != (width, height) {
         canvas.set_width(width);
         canvas.set_height(height);
     }
+    scale_cell.set(scale as f32);
     (width, height, scale as f32)
 }
 
@@ -87,6 +110,7 @@ fn is_text_entry(event: &web_sys::Event) -> bool {
 fn listen_for_input(
     canvas: &web_sys::HtmlCanvasElement,
     current_game: &Rc<Cell<Option<i64>>>,
+    scale: &Rc<Cell<f32>>,
 ) -> Vec<Listener> {
     let window = web_sys::window().expect("kiba requires a window");
     let send = {
@@ -98,10 +122,9 @@ fn listen_for_input(
         }
     };
     let position = {
-        let window = window.clone();
+        let scale = scale.clone();
         move |event: &web_sys::PointerEvent| {
-            let scale = window.device_pixel_ratio() as f32;
-            Vec2::new(event.offset_x() as f32, event.offset_y() as f32) * scale
+            Vec2::new(event.offset_x() as f32, event.offset_y() as f32) * scale.get()
         }
     };
     let canvas_target: web_sys::EventTarget = canvas.clone().into();
@@ -175,7 +198,7 @@ fn listen_for_input(
     let move_position = position.clone();
     let move_buttons = sync_buttons.clone();
     let move_locked = locked.clone();
-    let move_window = window.clone();
+    let move_scale = scale.clone();
     let unlock_send = send.clone();
     let down_send = send.clone();
     let down_position = position.clone();
@@ -216,10 +239,10 @@ fn listen_for_input(
             let event: web_sys::PointerEvent = event.unchecked_into();
             let id = event.pointer_id();
             move_send(if move_locked() {
-                let scale = move_window.device_pixel_ratio() as f32;
                 InputEvent::PointerMotion {
                     id,
-                    delta: Vec2::new(event.movement_x() as f32, event.movement_y() as f32) * scale,
+                    delta: Vec2::new(event.movement_x() as f32, event.movement_y() as f32)
+                        * move_scale.get(),
                 }
             } else {
                 InputEvent::PointerMove {
@@ -260,6 +283,8 @@ struct ViewportWebView {
     canvas: web_sys::HtmlCanvasElement,
     // Cleared on unmount or game change, so a renderer still being created is not attached.
     current_game: Rc<Cell<Option<i64>>>,
+    // Canvas pixels per CSS pixel, which input shares with drawing.
+    scale: Rc<Cell<f32>>,
     _listeners: Vec<Listener>,
 }
 
@@ -273,10 +298,13 @@ impl ViewportWebView {
         };
         let canvas = self.canvas.clone();
         let current_game = self.current_game.clone();
+        let scale = self.scale.clone();
         spawn_local(async move {
             match create_renderer(canvas.clone()).await {
                 Ok(renderer) if current_game.get() == Some(game) => {
-                    kiba::attach_renderer(game, renderer, move || resize_to_display(&canvas));
+                    kiba::attach_renderer(game, renderer, move || {
+                        resize_to_display(&canvas, &scale)
+                    });
                 }
                 Ok(_) => {}
                 Err(error) => web_sys::console::error_1(&format!("kiba: {error}").into()),
@@ -311,10 +339,12 @@ impl WhiskerModule for ViewportModule {
                     // Without this the browser claims touch drags for scrolling and cancels them.
                     canvas.style().set_property("touch-action", "none")?;
                     let current_game = Rc::new(Cell::new(None));
-                    let listeners = listen_for_input(&canvas, &current_game);
+                    let scale = Rc::new(Cell::new(1.0));
+                    let listeners = listen_for_input(&canvas, &current_game, &scale);
                     Ok::<_, wasm_bindgen::JsValue>(ViewportWebView {
                         canvas,
                         current_game,
+                        scale,
                         _listeners: listeners,
                     })
                 },
