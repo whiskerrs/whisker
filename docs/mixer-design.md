@@ -1,6 +1,6 @@
 # whisker-mixer design
 
-Status: **planned**
+Status: **W1 implemented** (Web); native platforms are silent
 
 ## Decision
 
@@ -77,10 +77,12 @@ music.set_volume(0.0, 0.05);
   fades past it needs all three.
 - `now()` is the audio clock in seconds. `at` schedules against it, and a bar of
   music is scheduled ahead of it.
-- `state()` returns `ReadSignal<MixerState>`: `Locked` until the browser allows
-  sound, `Running`, `Suspended` while the app is in the background, or
-  `Unavailable`. The clock stands still unless the state is `Running`, so apps
-  start composing on `Running`.
+- `state()` returns `MixerState`: `Locked` until the browser allows sound,
+  `Running`, `Suspended` while the app is in the background, or `Unavailable`.
+  The clock stands still unless the state is `Running`, so apps start composing
+  on `Running`, and voices played before then all sound at once when it starts.
+  It is polled rather than a signal, so the crate does not depend on `whisker`
+  and games read it from their frame loop.
 - `set_listener(position, forward, up)` and `Playback::position` place voices in
   3D, as `[f32; 3]` so the crate does not depend on a math library.
 

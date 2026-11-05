@@ -3077,6 +3077,7 @@ dependencies = [
  "whisker",
  "whisker-asset",
  "whisker-cng",
+ "whisker-mixer",
  "whisker-svg",
 ]
 
@@ -7640,6 +7641,16 @@ dependencies = [
  "serde_json",
  "syn 2.0.119",
  "whisker-macro-syntax",
+]
+
+[[package]]
+name = "whisker-mixer"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
