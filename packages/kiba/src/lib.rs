@@ -19,7 +19,7 @@
 //! | A file | `(Transform::default(), Model::load(asset!("crate.glb")))` |
 //! | Sky light blocked and bounced by still models | `(ProbeVolume::load(asset!("scene.kiba")),)`, cooked with `kiba-cook` |
 //! | A large world, loaded around the camera | `(WorldStream::load(asset!("world/index.kiba"), StreamSettings::default()),)`, cooked with `kiba-cook` |
-//! | Sound | `Sound::load(asset!("step.ogg"))`, held by a callback, then `.play()` |
+//! | Sound | `Sound::load(asset!("step.ogg"))`, held by a callback, then `.play()`; buses, reverb, synthesis, and music in [`audio`] |
 //! | Physics, with the `physics` feature | `(Physics::default(),)` once, then `(Transform::default(), RigidBody::new(BodyKind::Dynamic), Collider::Ball(0.5))` |
 //! | A file's animation | Add `Animator::new("walk")` next to its `Model` |
 //!
@@ -145,7 +145,6 @@
 //! ```
 
 mod animation;
-mod audio;
 mod controller;
 #[cfg(feature = "cook")]
 pub mod cook;
@@ -174,9 +173,6 @@ mod android;
 mod ios;
 
 pub use animation::{Animator, Pose};
-#[doc(hidden)]
-pub use audio::resume_audio;
-pub use audio::{Playback, Sound};
 pub use controller::{FlyCamera, OrbitCamera};
 pub use game::{
     Camera, Context, DepthOfField, FrameStats, Game, GameSetup, Interpolated, Sun, Time, Transform,
@@ -208,6 +204,9 @@ pub use stream::{StreamSettings, WorldStream};
 pub use texture::Texture;
 #[doc(hidden)]
 pub use wgpu;
+/// Sound from `whisker-mixer`, whose listener Kiba keeps at the camera.
+pub use whisker_mixer as audio;
+pub use whisker_mixer::{Playback, Sound};
 
 /// Commonly used items.
 pub mod prelude {

@@ -3056,6 +3056,7 @@ dependencies = [
  "web-time",
  "wgpu",
  "whisker",
+ "whisker-mixer",
 ]
 
 [[package]]
@@ -3077,7 +3078,6 @@ dependencies = [
  "whisker",
  "whisker-asset",
  "whisker-cng",
- "whisker-mixer",
  "whisker-svg",
 ]
 

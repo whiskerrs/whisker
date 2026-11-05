@@ -33,7 +33,6 @@ whisker-cng = { path = "../../../crates/whisker-cng", version = "0.15.0", defaul
 whisker = { workspace = true }
 whisker-asset = { path = "../../whisker-asset" }
 kiba = { path = "..", features = ["gltf"] }
-whisker-mixer = { path = "../../whisker-mixer" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 web-time = "1"

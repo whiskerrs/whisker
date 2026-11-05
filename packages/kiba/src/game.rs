@@ -10,7 +10,6 @@ use web_time::Instant;
 use whisker::runtime::{RuntimeDispatcher, runtime_dispatcher};
 
 use crate::animation::{Animator, Pose, run_animators};
-use crate::audio::{resume_audio, set_listener};
 use crate::controller::run_controllers;
 use crate::input::{InputEvent, Key};
 use crate::lights::{LightUniform, MAX_LIGHTS, PointLight, SpotLight};
@@ -390,12 +389,6 @@ impl<C> GameSetup<C> {
     }
 
     fn apply_input(&mut self, event: InputEvent) {
-        if matches!(
-            event,
-            InputEvent::PointerDown { .. } | InputEvent::KeyDown(_)
-        ) {
-            resume_audio();
-        }
         self.frame_input.apply(event);
         self.fixed_input.apply(event);
     }
@@ -478,10 +471,10 @@ impl<C> GameSetup<C> {
             .into_iter()
             .next()
         {
-            set_listener(
-                eye.translation,
-                eye.rotation * Vec3::NEG_Z,
-                eye.rotation * Vec3::Y,
+            whisker_mixer::set_listener(
+                eye.translation.to_array(),
+                (eye.rotation * Vec3::NEG_Z).to_array(),
+                (eye.rotation * Vec3::Y).to_array(),
             );
         }
         run_controllers(&mut self.world, &frame_time, &self.frame_input);

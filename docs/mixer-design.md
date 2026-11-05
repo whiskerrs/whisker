@@ -1,6 +1,6 @@
 # whisker-mixer design
 
-Status: **W1 implemented** (Web); native platforms are silent
+Status: **W1 and W2 implemented** (Web, and Kiba on top); native platforms are silent
 
 ## Decision
 
