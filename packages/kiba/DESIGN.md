@@ -757,19 +757,18 @@ where it lifts, switching back on a key, and the sound toggle's round trip.
     takes the `Game` after both exist.
   - Actions are digital. The stick's tilt and the camera drag go through signals the game reads
     untracked, and the game resets the drag it took.
-  - Whisker has no pointer capture for an app: a finger's later events go to whatever lies under it.
-    Every finger is followed at the HUD's root by its id, and a button only claims a finger as it
-    lands.
   - Whisker's `pointer_events: None` removes a whole subtree from hit testing, unlike CSS, so the
     HUD's root switches between `Auto` and `None` with the mode rather than enabling the buttons.
-  - Whisker's Web host writes `visibility: visible` on every node, so a hidden parent does not hide
-    its children; the crosshair hid that way and showed in melee forms until it used `display`.
   - A mouse press is a `pointerdown`, which has no `on_` handler, so only `on_click` notices the
     mouse coming back.
   - Kiba asked for a pointer lock on every finger; it asks only for a mouse now.
-- Unverified: a real phone. Whisker's Web host sets no `touch-action` on its nodes, so a browser
-  may claim a drag that starts on the HUD and cancel it. Safe-area insets and the fullscreen button
-  are left out. A button's pressed look comes back through the game one frame late.
+- Fixed in Whisker after this check: `visibility` now inherits, so a hidden parent hides its
+  children, and the Web surface root sets `touch-action: none`, so the browser does not claim a
+  drag outside a scroll view. A finger was already captured by the node it landed on, so each
+  button holds and releases its own key.
+- Unverified: a real phone, including whether the browser still cancels any HUD drag. Safe-area
+  insets and the fullscreen button are left out. A button's pressed look comes back through the
+  game one frame late.
 
 ## Spikes to run first
 
