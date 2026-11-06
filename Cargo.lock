@@ -3071,13 +3071,9 @@ dependencies = [
 name = "kiba-example"
 version = "0.1.0"
 dependencies = [
- "js-sys",
  "kiba",
  "serde",
  "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
  "web-time",
  "whisker",
  "whisker-asset",

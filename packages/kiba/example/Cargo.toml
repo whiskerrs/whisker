@@ -23,10 +23,6 @@ stress = []
 soak = []
 # Replaces the scene with the Meshy-built world in showcase/.
 showcase = []
-# Replaces the scene with the water slime of the slime game, drawn with material shaders.
-slime = []
-# Replaces the scene with the whole slime game, from assets converted by slime/cook.sh.
-slime-game = []
 
 [dependencies]
 whisker-cng = { path = "../../../crates/whisker-cng", version = "0.15.0", default-features = false }
@@ -37,9 +33,3 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 web-time = "1"
 whisker-svg = { workspace = true }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys = "0.3"
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Document", "Element", "OrientationLockType", "Screen", "ScreenOrientation", "Window"] }
