@@ -209,13 +209,13 @@ fn place_vertex(input: VertexInput, instance: InstanceInput, skin: mat4x4<f32>) 
     let moved = vertex(Geometry(input.position, input.normal, input.uv, input.color));
     let transform = entity * skin;
     let basis = mat3x3<f32>(transform[0].xyz, transform[1].xyz, transform[2].xyz);
-    let squared_scale = vec3<f32>(dot(basis[0], basis[0]), dot(basis[1], basis[1]), dot(basis[2], basis[2]));
     var output: VertexOutput;
     let world_position = transform * vec4<f32>(moved.position, 1.0);
     output.position = frame.view_projection * world_position;
     output.world_position = world_position.xyz;
-    // Equals the inverse transpose for a matrix without shear, which every Transform is, and WGSL has no inverse.
-    output.normal = basis * (moved.normal / squared_scale);
+    // The cofactor matrix is the inverse transpose times the determinant, without the division by squared scales that Pixel 10's GPU miscomputes.
+    let cofactor = mat3x3<f32>(cross(basis[1], basis[2]), cross(basis[2], basis[0]), cross(basis[0], basis[1]));
+    output.normal = cofactor * moved.normal * sign(dot(basis[0], cofactor[0]));
     output.base_color = moved.color * instance.base_color;
     output.metallic = instance.metallic;
     output.roughness = instance.roughness;
