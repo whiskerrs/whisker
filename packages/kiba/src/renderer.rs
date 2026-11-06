@@ -1347,10 +1347,41 @@ impl SceneRenderer {
             .iter()
             .chain(faces)
             .map(|batch| (batch, false));
-        for (batch, shadow) in drawn.chain(casters.map(|batch| (batch, true))) {
-            let Some(shader) = &batch.material.shader else {
-                continue;
-            };
+        let named =
+            drawn
+                .chain(casters.map(|batch| (batch, true)))
+                .filter_map(|(batch, shadow)| {
+                    let shader = batch.material.shader.as_ref()?;
+                    Some((shader, PipelineKey::of_batch(batch), shadow))
+                });
+        self.compile_shaders(device, named);
+        for (_, check) in self.shader_modules.values_mut() {
+            check.poll();
+        }
+        for (_, check) in self.shader_pipelines.values_mut() {
+            check.poll();
+        }
+    }
+
+    /// Starts compiling the pipelines `materials` will draw with, posed or not, and their shadows'.
+    pub(crate) fn precompile(&mut self, device: &wgpu::Device, materials: &[(Material, bool)]) {
+        let named = materials.iter().flat_map(|(material, posed)| {
+            let key = PipelineKey::of(material, *posed);
+            let casts = material.casts_shadow && material.alpha_mode != AlphaMode::Blend;
+            let shader = material.shader.as_ref();
+            [(shader, key, false), (shader.filter(|_| casts), key, true)]
+                .into_iter()
+                .filter_map(|(shader, key, shadow)| Some((shader?, key, shadow)))
+        });
+        self.compile_shaders(device, named);
+    }
+
+    fn compile_shaders<'a>(
+        &mut self,
+        device: &wgpu::Device,
+        named: impl Iterator<Item = (&'a Shader, PipelineKey, bool)>,
+    ) {
+        for (shader, key, shadow) in named {
             let (module, _) = self.shader_modules.entry(shader.key()).or_insert_with(|| {
                 Check::of(device, || {
                     device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1359,18 +1390,11 @@ impl SceneRenderer {
                     })
                 })
             });
-            let key = PipelineKey::of_batch(batch);
             if let Entry::Vacant(slot) = self.shader_pipelines.entry((key, shadow)) {
                 slot.insert(Check::of(device, || {
                     mesh_pipeline(device, &self.mesh_layout, module, key, shadow)
                 }));
             }
-        }
-        for (_, check) in self.shader_modules.values_mut() {
-            check.poll();
-        }
-        for (_, check) in self.shader_pipelines.values_mut() {
-            check.poll();
         }
     }
 
@@ -2050,6 +2074,10 @@ impl Renderer {
 
     pub(crate) fn needs_capture(&self, id: &crate::reflection::ReflectionId) -> bool {
         self.scene.needs_capture(id)
+    }
+
+    pub(crate) fn precompile(&mut self, materials: &[(Material, bool)]) {
+        self.scene.precompile(&self.device, materials);
     }
 
     /// Bytes of meshes and textures held on the GPU.
@@ -3589,6 +3617,29 @@ mod tests {
         assert!(front[1] > 150 && front[0] == 0, "{front:?}");
         let back = center(nearer * Mat4::from_rotation_y(std::f32::consts::PI));
         assert!(back[0] > 150 && back[1] == 0, "{back:?}");
+    }
+
+    #[test]
+    fn precompiling_builds_a_material_and_its_shadow_before_it_is_drawn() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let mut renderer = SceneRenderer::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);
+        let source = "fn surface(surface: Surface, pixel: Pixel) -> Surface { return surface; }";
+        let opaque = shaded(source, MATTE);
+        let glass = Material {
+            alpha_mode: AlphaMode::Blend,
+            ..opaque.clone()
+        };
+        renderer.precompile(&device, &[(opaque.clone(), true), (glass.clone(), false)]);
+        let built = |material: &Material, posed, shadow| {
+            renderer
+                .shader_pipelines
+                .contains_key(&(PipelineKey::of(material, posed), shadow))
+        };
+        assert!(built(&opaque, true, false) && built(&opaque, true, true));
+        assert!(!built(&opaque, false, false));
+        assert!(built(&glass, false, false) && !built(&glass, false, true));
     }
 
     #[test]

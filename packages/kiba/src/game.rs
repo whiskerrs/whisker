@@ -302,6 +302,7 @@ pub struct GameSetup<C> {
     stats: FrameStats,
     governor: Governor,
     pointer_lock: bool,
+    precompile: Vec<(Material, bool)>,
 }
 
 impl<C> GameSetup<C> {
@@ -322,6 +323,7 @@ impl<C> GameSetup<C> {
             stats: FrameStats::default(),
             governor: Governor::default(),
             pointer_lock: false,
+            precompile: Vec::new(),
         }
     }
 
@@ -332,6 +334,12 @@ impl<C> GameSetup<C> {
     /// [`Input::pointer_locked`](crate::Input::pointer_locked) turns true.
     pub fn lock_pointer(&mut self) {
         self.pointer_lock = true;
+    }
+
+    /// Compiles `material`'s shader before the first frame, on a posed model's skin or not, so that its
+    /// first appearance later does not stall, as compiling can for a few hundred milliseconds on phones.
+    pub fn precompile(&mut self, material: &Material, posed: bool) {
+        self.precompile.push((material.clone(), posed));
     }
 
     /// Keeps the game at one [`Tier`] from the start, for a known device. [`Context::set_tier`] does the
@@ -583,6 +591,11 @@ impl<C: 'static> RunningGame for Registered<C> {
             add_capture(&mut frame, &setup.world, alpha);
         }
         let extracted = Instant::now();
+        if !setup.precompile.is_empty() {
+            target
+                .renderer
+                .precompile(&std::mem::take(&mut setup.precompile));
+        }
         target.renderer.render(width, height, &frame);
         let rendered = Instant::now();
         let drawn = || {
