@@ -20,7 +20,7 @@ whisker-credentials = { workspace = true }
 whisker-config = { workspace = true }
 # Both stores' JWTs are built by hand: p256 signs Apple's ES256, ring
 # (already in the tree as ureq's TLS backend) signs Google's RS256.
-p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+p256 = { version = "0.14", features = ["ecdsa", "pem"] }
 ring = "0.17"
 ureq = { version = "2", features = ["json"] }
 base64 = { workspace = true }
@@ -30,5 +30,4 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 plist = "1"
 
 [dev-dependencies]
-rand = "0.8"
 tempfile = "3"
