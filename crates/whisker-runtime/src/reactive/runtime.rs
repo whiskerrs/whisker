@@ -185,6 +185,10 @@ pub struct Scope {
     /// parent's flag at `Owner::new` time. Used by `StackLayout`
     /// to freeze back-stack entries that are mounted-but-off-screen.
     pub paused: bool,
+    /// Set by [`super::error::set_error_boundary`]: panics under this
+    /// scope are delivered here instead of unwinding further.
+    pub(crate) error_boundary: Option<super::error::BoundaryHandler>,
+    pub(crate) hot_patch_reset: Option<Rc<dyn Fn()>>,
 }
 
 impl Scope {
@@ -200,6 +204,8 @@ impl Scope {
             mount_fn: None,
             elements: Vec::new(),
             paused: false,
+            error_boundary: None,
+            hot_patch_reset: None,
         }
     }
 }
@@ -273,6 +279,8 @@ pub struct ReactiveRuntime {
     /// Drained by [`super::flush_mounts`] once a component's view has
     /// been appended to its parent.
     pub pending_mounts: Vec<Box<dyn FnOnce()>>,
+    /// Caught panics waiting for delivery to their boundary.
+    pub(crate) failures: Vec<super::error::Failure>,
 }
 
 impl ReactiveRuntime {
@@ -295,6 +303,7 @@ impl ReactiveRuntime {
             mount_sites: HashMap::new(),
             fn_ptr_mounts: HashMap::new(),
             mount_id_counter: 0,
+            failures: Vec::new(),
         }
     }
 

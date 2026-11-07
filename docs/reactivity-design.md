@@ -386,6 +386,13 @@ ForEach {
   apart by occurrence. Only rows whose position changed are moved. This is
   the closest thing to "vDOM diff" in the model, but it's scoped to one
   list and keyed — efficient.
+- **`ErrorBoundary`** owns its children through an owner marked with
+  `set_error_boundary`. The runtime catches a panic where it calls user
+  code (component bodies, effects, computeds, `Scoped` callbacks such as
+  event handlers / `on_mount` / tasks, and cleanups), queues it for the
+  nearest marked ancestor, and delivers it at the next flush; the
+  boundary then disposes the children and mounts `fallback(error,
+  reset)`. With no boundary above, the panic is re-raised unchanged.
 
 Custom control flow follows the same recipe (phantom + effect); the
 `#[component]` form in `control_flow.rs` is the reference.

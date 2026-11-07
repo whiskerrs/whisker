@@ -317,7 +317,7 @@ where
         rt.component_owners.entry(fn_ptr).or_default().push(owner);
     });
     // See `mount_component` for why the body runs untracked.
-    let body_root = untrack(|| owner.with(|| (*body_for_first)()));
+    let body_root = mount_body(owner, || (*body_for_first)());
 
     // `parent` / `anchor` stay `None` until the next
     // `view::append_child` attaches `body_root` and calls back through
@@ -349,6 +349,15 @@ where
     PENDING_MOUNTS.with_borrow_mut(|pending| pending.push((mount_id, body_root)));
 
     body_root
+}
+
+/// Runs a component body in `owner`; a panic routed to a boundary leaves
+/// an empty placeholder so the parent's render continues.
+fn mount_body(owner: Owner, body: impl FnOnce() -> Element) -> Element {
+    super::error::catch(Some(owner), super::error::ErrorPhase::Render, || {
+        untrack(|| owner.with(body))
+    })
+    .unwrap_or_else(|| owner.with(crate::view::create_phantom_element))
 }
 
 /// Re-mount every remountable site whose `fn_ptr` is in the given
@@ -579,7 +588,7 @@ fn remount_sites(ids: Vec<MountId>) -> RemountStats {
         // `untrack` so the body's signal reads register against its own
         // nested `effect`/`computed`s, not against whatever scheduler
         // context was active when the tick called into us.
-        let new_body_root = untrack(|| new_owner.with(|| (*info.body)()));
+        let new_body_root = mount_body(new_owner, || (*info.body)());
 
         if let Some(list) = by_parent.get_mut(&info.parent)
             && let Some(entry) = list

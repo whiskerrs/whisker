@@ -1060,3 +1060,264 @@ fn view_scroll_view_tags_supported() {
         );
     });
 }
+
+// ----- ErrorBoundary ---------------------------------------------------------
+
+fn visible_texts(root: Element, log: &Rc<RefCell<Vec<Op>>>) -> Vec<String> {
+    fn walk(at: Element, log: &[Op], out: &mut Vec<String>) {
+        for op in log {
+            if let Op::SetAttr { id, key, value } = op
+                && *id == at.id()
+                && key == "text"
+            {
+                out.push(value.clone());
+            }
+        }
+        for child in whisker::runtime::view::children_of(at) {
+            walk(child, log, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &log.borrow(), &mut out);
+    out
+}
+
+fn error_fallback(error: ErrorInfo, _reset: Reset) -> Element {
+    render! { Text(value: format!("caught: {}", error.message)) }
+}
+
+#[component]
+fn panicking_body() -> Element {
+    panic!("body failed");
+}
+
+#[component]
+fn fails_when(fail: ReadSignal<bool>) -> Element {
+    effect(move || assert!(!fail.get(), "effect failed"));
+    render! { Text(value: "child") }
+}
+
+#[component]
+fn mount_panics() -> Element {
+    on_mount(|| panic!("mount failed"));
+    render! { View {} }
+}
+
+thread_local! {
+    static CLEANUP_RAN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[component]
+fn cleanup_panics() -> Element {
+    on_cleanup(|| CLEANUP_RAN.set(true));
+    on_cleanup(|| panic!("cleanup failed"));
+    render! { View {} }
+}
+
+#[test]
+fn error_boundary_replaces_children_when_an_effect_panics() {
+    with_recorder_and_owner(|log| {
+        let (fail, set_fail) = signal(false).split();
+        let h = render! {
+            View {
+                Text(value: "sibling")
+                ErrorBoundary(fallback: error_fallback) {
+                    FailsWhen(fail: fail)
+                }
+            }
+        };
+        assert_eq!(visible_texts(h, &log), vec!["sibling", "child"]);
+
+        set_fail.set(true);
+        flush();
+
+        assert_eq!(
+            visible_texts(h, &log),
+            vec!["sibling", "caught: effect failed"]
+        );
+    });
+}
+
+#[test]
+fn error_boundary_catches_a_component_body_panic() {
+    with_recorder_and_owner(|log| {
+        let h = render! {
+            View {
+                ErrorBoundary(fallback: error_fallback) {
+                    PanickingBody()
+                }
+            }
+        };
+        flush();
+        assert_eq!(visible_texts(h, &log), vec!["caught: body failed"]);
+    });
+}
+
+#[test]
+fn error_boundary_catches_an_on_mount_panic() {
+    with_recorder_and_owner(|log| {
+        let h = render! {
+            View {
+                ErrorBoundary(fallback: error_fallback) {
+                    MountPanics()
+                }
+            }
+        };
+        flush_mounts_and_deliver();
+        assert_eq!(visible_texts(h, &log), vec!["caught: mount failed"]);
+    });
+}
+
+fn flush_mounts_and_deliver() {
+    whisker::flush_mounts();
+    flush();
+}
+
+#[test]
+fn error_boundary_reset_mounts_children_again() {
+    with_recorder_and_owner(|log| {
+        let (fail, set_fail) = signal(true).split();
+        let reset_slot: Rc<RefCell<Option<Reset>>> = Rc::new(RefCell::new(None));
+        let slot = reset_slot.clone();
+        let h = render! {
+            View {
+                ErrorBoundary(fallback: move |error: ErrorInfo, reset: Reset| {
+                    *slot.borrow_mut() = Some(reset);
+                    error_fallback(error, reset)
+                }) {
+                    FailsWhen(fail: fail)
+                }
+            }
+        };
+        flush();
+        assert_eq!(visible_texts(h, &log), vec!["caught: effect failed"]);
+
+        set_fail.set(false);
+        reset_slot.borrow().unwrap().reset();
+        flush();
+
+        assert_eq!(visible_texts(h, &log), vec!["child"]);
+    });
+}
+
+#[test]
+fn error_boundary_fallback_panic_goes_to_the_outer_boundary() {
+    with_recorder_and_owner(|log| {
+        let h = render! {
+            View {
+                ErrorBoundary(fallback: error_fallback) {
+                    ErrorBoundary(fallback: |_error: ErrorInfo, _reset: Reset| -> Element {
+                        panic!("fallback failed")
+                    }) {
+                        PanickingBody()
+                    }
+                }
+            }
+        };
+        flush();
+        assert_eq!(visible_texts(h, &log), vec!["caught: fallback failed"]);
+    });
+}
+
+#[test]
+fn error_boundary_isolates_one_list_row() {
+    with_recorder_and_owner(|log| {
+        let h = render! {
+            View {
+                ForEach(
+                    each: || vec![1_u32, 2, 3],
+                    key: |x: &u32| *x,
+                    children: |x: ReadSignal<u32>| render! {
+                        ErrorBoundary(fallback: error_fallback) {
+                            Text(value: {
+                                let x = x.get_untracked();
+                                assert!(x != 2, "row failed");
+                                x.to_string()
+                            })
+                        }
+                    },
+                )
+            }
+        };
+        flush();
+        assert_eq!(visible_texts(h, &log), vec!["1", "caught: row failed", "3"]);
+    });
+}
+
+#[test]
+fn error_boundary_routes_a_cleanup_panic_and_runs_the_other_cleanups() {
+    with_recorder_and_owner(|log| {
+        let (show, set_show) = signal(true).split();
+        CLEANUP_RAN.set(false);
+        let h = render! {
+            View {
+                ErrorBoundary(fallback: error_fallback) {
+                    Show(when: move || show.get()) {
+                        CleanupPanics()
+                    }
+                }
+            }
+        };
+        set_show.set(false);
+        flush();
+
+        assert!(CLEANUP_RAN.get());
+        assert_eq!(visible_texts(h, &log), vec!["caught: cleanup failed"]);
+    });
+}
+
+#[test]
+fn panic_without_a_boundary_still_unwinds() {
+    let result = std::panic::catch_unwind(|| {
+        with_recorder_and_owner(|_log| {
+            let _h = render! {
+                View {
+                    PanickingBody()
+                }
+            };
+        })
+    });
+    assert!(result.is_err());
+}
+
+#[test]
+fn error_boundary_retries_its_children_after_a_hot_patch() {
+    with_recorder_and_owner(|log| {
+        let (fail, set_fail) = signal(true).split();
+        let h = render! {
+            View {
+                ErrorBoundary(fallback: error_fallback) {
+                    FailsWhen(fail: fail)
+                }
+            }
+        };
+        flush();
+        assert_eq!(visible_texts(h, &log), vec!["caught: effect failed"]);
+
+        set_fail.set(false);
+        whisker::runtime::reactive::error::reset_for_hot_patch();
+        flush();
+
+        assert_eq!(visible_texts(h, &log), vec!["child"]);
+    });
+}
+
+#[test]
+fn error_boundary_removes_children_attached_before_an_inline_panic() {
+    with_recorder_and_owner(|log| {
+        let h = render! {
+            View {
+                ErrorBoundary(fallback: error_fallback) {
+                    Text(value: "attached")
+                    Text(value: {
+                        panic!("inline failed");
+                        #[allow(unreachable_code)]
+                        ""
+                    })
+                }
+            }
+        };
+        flush();
+        assert_eq!(visible_texts(h, &log), vec!["caught: inline failed"]);
+    });
+}

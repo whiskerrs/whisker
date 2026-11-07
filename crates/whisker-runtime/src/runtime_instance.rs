@@ -967,6 +967,7 @@ impl RuntimeInstance {
         self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
                 surface.begin_mutation_batch();
+                reactive::error::reset_for_hot_patch();
                 let stats = remount();
                 reactive::flush();
                 reactive::flush_mounts();

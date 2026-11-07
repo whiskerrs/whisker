@@ -13,6 +13,7 @@
 //! of effect runs, not three. Solid / Leptos call this "microtask
 //! batching".
 
+use super::error::ErrorPhase;
 use super::runtime::{NodeData, NodeId};
 use super::with_runtime;
 
@@ -50,8 +51,9 @@ pub(crate) fn schedule(node: NodeId) {
     }
 }
 
-/// True if there is undrained reactive work (scheduled effects/computeds
-/// or pending on_mount callbacks) that a frame would make progress on.
+/// True if there is undrained reactive work (scheduled effects/computeds,
+/// pending on_mount callbacks or undelivered panics) that a frame would
+/// make progress on.
 /// The driver's `tick()` reports busy from this, so the host keeps its
 /// render loop running until the queue genuinely drains — a
 /// level-triggered check, since work can be scheduled during the final
@@ -61,8 +63,9 @@ pub(crate) fn schedule(node: NodeId) {
 /// to stay frozen) nor outstanding async tasks (those resume from the
 /// main-loop drive, not vsync).
 pub fn has_pending_work() -> bool {
-    with_runtime(|rt| !rt.pending.is_empty() || !rt.pending_mounts.is_empty())
-        || crate::anim_hook::is_animating()
+    with_runtime(|rt| {
+        !rt.pending.is_empty() || !rt.pending_mounts.is_empty() || !rt.failures.is_empty()
+    }) || crate::anim_hook::is_animating()
 }
 
 /// Drain the pending queue, re-running effects and computeds in the order
@@ -104,6 +107,9 @@ pub fn flush() {
     // land in a fresh one and can't perturb the current wave's order.
     let mut iterations = 0;
     loop {
+        // Delivered before the emptiness check so a boundary's own re-run
+        // lands in this flush instead of waiting for a wake.
+        super::error::deliver();
         let batch: Vec<NodeId> = with_runtime(|rt| std::mem::take(&mut rt.pending));
         if batch.is_empty() {
             break;
@@ -149,9 +155,9 @@ fn run_node_if_alive(node: NodeId) {
         }
         // Signal nodes have no compute, so the paused-owner gate below
         // only concerns Effect / Computed.
-        let compute = match &n.data {
-            NodeData::Effect { compute } => compute.clone(),
-            NodeData::Computed { compute, .. } => compute.clone(),
+        let (compute, phase) = match &n.data {
+            NodeData::Effect { compute } => (compute.clone(), ErrorPhase::Effect),
+            NodeData::Computed { compute, .. } => (compute.clone(), ErrorPhase::Computed),
             NodeData::Signal { .. } => return None,
         };
         let paused = rt.owners.get(owner).map(|o| o.paused).unwrap_or(false);
@@ -180,10 +186,10 @@ fn run_node_if_alive(node: NodeId) {
             .unwrap_or_default();
         rt.current_tracker = Some(node);
         rt.owner_stack.push(owner);
-        Some((compute, arc_sources))
+        Some((compute, phase, owner, arc_sources))
     });
 
-    let Some((compute, arc_sources)) = prep else {
+    let Some((compute, phase, owner, arc_sources)) = prep else {
         return;
     };
 
@@ -211,8 +217,8 @@ fn run_node_if_alive(node: NodeId) {
 
     // The runtime is unborrowed here, so the compute body is free to
     // enter `with_runtime`.
-    {
+    super::error::catch(Some(owner), phase, || {
         let mut borrow = compute.borrow_mut();
         (*borrow)();
-    }
+    });
 }

@@ -165,8 +165,17 @@ pub use whisker_runtime::reactive::{flush_mounts, mount_component, unmount_compo
 // extension code (custom control-flow, custom routers, advanced
 // tests) reaches into this module to create and dispose reactive
 // scopes manually.
+pub use whisker_runtime::reactive::ErrorInfo;
 pub use whisker_runtime::reactive::Owner;
 pub use whisker_runtime::reactive::owner;
+/// Panic routing, for crash reporters.
+pub mod error {
+    pub use whisker_runtime::reactive::error::{
+        ErrorInfo, ErrorLocation, ErrorPhase, panic_will_be_caught,
+    };
+    #[doc(hidden)]
+    pub use whisker_runtime::reactive::error::{catch, reset_on_hot_patch, set_error_boundary};
+}
 pub use whisker_runtime::tasks::{run_blocking, spawn_local};
 pub use whisker_runtime::{RuntimeDispatcher, runtime_dispatcher};
 // Frame-driving internal used by the host tick loop, not app code.
@@ -189,7 +198,9 @@ pub use whisker_runtime::{
     standard_element_registrations, text_element_binding, view_element_binding,
 };
 
-pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
+pub use control_flow::{
+    ErrorBoundary, ErrorBoundaryProps, ErrorFallback, ForEach, ForEachProps, Reset, Show, ShowProps,
+};
 pub use whisker_runtime::view::{Children, ChildrenBuilder, TextChildren};
 pub use whisker_runtime::view::{
     EachFn, Fallback, ItemFn, KeyFn, ListHandle, ListHandleError, ListRef, ListScrollTarget,
@@ -453,6 +464,7 @@ pub mod prelude {
         ListSnapshot, RefError, ScrollAlignment, ScrollAxis, ScrollBehavior, ScrollViewHandle,
         TextHandle,
     };
+    pub use crate::{ErrorBoundary, ErrorBoundaryProps, ErrorFallback, ErrorInfo, Reset};
     pub use crate::{ForEach, ForEachProps, Show, ShowProps};
     pub use crate::{component, compose, main, render};
     // The `css!` macro coexists with the `crate::css` module

@@ -33,6 +33,7 @@ pub mod component;
 pub mod computed;
 pub mod context;
 pub mod effect;
+pub mod error;
 pub mod owner;
 pub mod prop;
 pub mod resource;
@@ -60,6 +61,7 @@ pub use component::{
 pub use computed::computed;
 pub use context::{provide_context, use_context, with_context};
 pub use effect::effect;
+pub use error::{ErrorInfo, ErrorLocation, ErrorPhase, panic_will_be_caught};
 pub use owner::on_cleanup;
 pub use prop::Signal;
 pub use resource::{Resource, ResourceState, resource, resource_sync};

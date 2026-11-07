@@ -114,6 +114,7 @@ impl Crashlytics {
     /// location, and backtrace, instead of an anonymous abort. Idempotent. The report is
     /// written synchronously through the SDK's crash handler, which then ends the process;
     /// a panic raised while a native call is already in progress may only produce the abort.
+    /// A panic an `ErrorBoundary` catches is reported as a non-fatal error instead.
     pub fn record_panics(&self) {
         static INSTALL: Once = Once::new();
         INSTALL.call_once(|| {
@@ -261,7 +262,12 @@ fn record_panic(info: &std::panic::PanicHookInfo<'_>) {
         reason: format!("{message}{location}"),
         frames: backtrace::capture(),
     };
-    let _ = std::panic::catch_unwind(|| module().invoke("recordPanic", vec![report.encode()]));
+    let method = if whisker::error::panic_will_be_caught(info.payload()) {
+        "recordError"
+    } else {
+        "recordPanic"
+    };
+    let _ = std::panic::catch_unwind(|| module().invoke(method, vec![report.encode()]));
     IN_PANIC_HOOK.with(|flag| flag.set(false));
 }
 
