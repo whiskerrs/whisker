@@ -231,12 +231,12 @@ fn check_rust() -> Vec<Check> {
         Ok(s) => {
             let line = s.lines().next().unwrap_or("").trim().to_string();
             if let Some(v) = parse_rustc_version(&line) {
-                if v >= (1, 85) {
+                if v >= (1, 88) {
                     out.push(Check::ok("rustc", line));
                 } else {
                     out.push(Check::err(
                         "rustc",
-                        format!("{line} — Whisker requires 1.85+"),
+                        format!("{line} — Whisker requires 1.88+"),
                     ));
                 }
             } else {
