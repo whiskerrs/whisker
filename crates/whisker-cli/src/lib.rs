@@ -87,7 +87,7 @@ enum Command {
     /// Scaffold a new Whisker module crate — Cargo.toml (with the
     /// `[package.metadata.whisker.module.platforms]` support map), Package.swift,
     /// build.gradle.kts, and skeleton Rust / Swift / Kotlin sources.
-    /// See `docs/module-author-guide.md`.
+    /// See `docs/module-api-design.md`.
     NewModule(new_module::NewModuleArgs),
     /// Scaffold a new Whisker app — single-crate workspace with
     /// `Cargo.toml`, a `#[whisker::main]` `src/lib.rs`, the
