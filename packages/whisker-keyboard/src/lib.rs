@@ -35,9 +35,9 @@
 //! #[component]
 //! fn form() -> Element {
 //!     let kb = keyboard_height();
-//!     let pad = move || format!("padding-bottom: {}px;", kb.get());
+//!     let pad = computed(move || Css::new().padding_bottom(px(kb.get() as f32)));
 //!     render! {
-//!         ScrollView(style: pad()) { /* fields … */ }
+//!         ScrollView(style: pad) { /* fields … */ }
 //!     }
 //! }
 //! ```

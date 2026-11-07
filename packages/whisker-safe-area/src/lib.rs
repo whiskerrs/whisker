@@ -16,16 +16,16 @@
 //! #[component]
 //! fn screen() -> Element {
 //!     let insets = safe_area_insets();
-//!     let outer_style = move || {
+//!     let outer_style = computed(move || {
 //!         let i = insets.get();
-//!         format!(
-//!             "padding-top: {}px; padding-bottom: {}px; \
-//!              padding-left: {}px; padding-right: {}px;",
-//!             i.top, i.bottom, i.leading, i.trailing,
-//!         )
-//!     };
+//!         Css::new()
+//!             .padding_top(px(i.top as f32))
+//!             .padding_bottom(px(i.bottom as f32))
+//!             .padding_left(px(i.leading as f32))
+//!             .padding_right(px(i.trailing as f32))
+//!     });
 //!     render! {
-//!         View(style: outer_style()) {
+//!         View(style: outer_style) {
 //!             // ...
 //!         }
 //!     }
