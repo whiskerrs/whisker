@@ -211,3 +211,30 @@ fn declared_text_style_and_measurement_reach_the_module_handlers() {
         .unwrap();
     assert_eq!(*font_size.lock().unwrap(), Some(18.0));
 }
+
+#[test]
+fn declared_gpu_content_is_exposed_to_the_paint_path() {
+    let registration = ElementRegistration {
+        element_type: ElementTypeId::new(22).unwrap(),
+        name: "whisker.test/Gpu".into(),
+        child_policy: ChildPolicy::None,
+        measurement: ElementMeasurement::None,
+        text_style: false,
+        properties: Vec::new(),
+        events: Vec::new(),
+        commands: Vec::new(),
+    };
+    let definition = DesktopViewDefinition::new("whisker.test/Gpu", |_| ()).gpu(|_, _| {});
+    let registry = DesktopElementRegistry::bind(
+        std::slice::from_ref(&registration),
+        &[definition.into_desktop_factory()],
+    )
+    .unwrap();
+    let content = registry
+        .create(registration.element_type, DesktopEventEmitter::default())
+        .unwrap();
+
+    let element = content.rasterizer().expect("GPU content paints");
+    assert!(element.has_gpu_content());
+    assert!(!element.has_raster_content());
+}

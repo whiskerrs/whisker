@@ -1,0 +1,13 @@
+[package]
+name = "kiba-desktop"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Desktop Host implementation for Kiba."
+publish = false
+
+[dependencies]
+kiba = { path = ".." }
+whisker-desktop = { path = "../../../platforms/desktop", version = "0.15.0" }

@@ -20,6 +20,10 @@ members = [
     "crates/whisker-macro-syntax",
     "crates/whisker-fmt",
     "crates/whisker-host-conformance",
+    "packages/kiba",
+    "packages/kiba/web",
+    "packages/kiba/desktop",
+    "packages/kiba/example",
     "packages/whisker-asset",
     "packages/whisker-firebase",
     "packages/whisker-firebase/core",
@@ -86,6 +90,7 @@ members = [
     "packages/whisker-audio",
     "packages/whisker-audio/web",
     "packages/whisker-audio/example",
+    "packages/whisker-mixer",
     "packages/whisker-webview",
     "packages/whisker-webview/example",
 ]

@@ -701,6 +701,7 @@ pub(crate) fn resolve_paint_style(
     environment: StyleEnvironment,
 ) -> Result<ComputedPaintStyle, StyleResolutionError> {
     let mut paint = ComputedPaintStyle::initial(inherited.color());
+    paint.visibility = inherited.visibility();
     for declaration in specified.resolved() {
         let property = declaration.property();
         let value = declaration.value();
@@ -1017,12 +1018,6 @@ pub(crate) fn resolve_paint_style(
                     return Err(invalid(property));
                 }
                 paint.opacity = StyleNumber::new(value.clamp(0.0, 1.0));
-            }
-            StyleProperty::Visibility => {
-                let StyleValue::Visibility(value) = value else {
-                    return Err(invalid(property));
-                };
-                paint.visibility = *value;
             }
             StyleProperty::OverflowX => {
                 let StyleValue::Overflow(value) = value else {

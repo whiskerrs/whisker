@@ -184,6 +184,9 @@ mod geometry;
 mod paragraph;
 mod shaders;
 
+/// Encodes linear output as sRGB bytes, which the CSS compositor samples as-is.
+const GPU_CONTENT_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
+
 use geometry::*;
 pub(crate) use geometry::{GpuRenderer, background_gradient_draw, background_resource_draw};
 #[cfg(all(test, feature = "host-conformance"))]
@@ -395,7 +398,7 @@ struct BoxGpuPipeline {
 struct GpuImageResource {
     linear_bind_group: wgpu::BindGroup,
     nearest_bind_group: wgpu::BindGroup,
-    _texture: wgpu::Texture,
+    texture: wgpu::Texture,
     intrinsic_size: [f32; 2],
 }
 
@@ -630,6 +633,22 @@ impl BoxGpuPipeline {
                 depth_or_array_layers: 1,
             },
         );
+        Self::bind_image(
+            device,
+            layout,
+            label,
+            texture,
+            [raster.width as f32, raster.height as f32],
+        )
+    }
+
+    fn bind_image(
+        device: &Device,
+        layout: &wgpu::BindGroupLayout,
+        label: &str,
+        texture: wgpu::Texture,
+        intrinsic_size: [f32; 2],
+    ) -> GpuImageResource {
         let view = texture.create_view(&TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("whisker Desktop background image sampler"),
@@ -682,9 +701,33 @@ impl BoxGpuPipeline {
         GpuImageResource {
             linear_bind_group,
             nearest_bind_group,
-            _texture: texture,
-            intrinsic_size: [raster.width as f32, raster.height as f32],
+            texture,
+            intrinsic_size,
         }
+    }
+
+    fn create_render_target(&self, device: &Device, width: u32, height: u32) -> GpuImageResource {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("whisker Desktop GPU content"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[GPU_CONTENT_FORMAT],
+        });
+        Self::bind_image(
+            device,
+            &self.image_layout,
+            "whisker Desktop GPU content",
+            texture,
+            [width as f32, height as f32],
+        )
     }
 
     fn upload_image(

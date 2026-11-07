@@ -336,6 +336,7 @@ pub(crate) struct GpuRenderer {
     pub(super) text_renderers: HashMap<NodeId, TextRenderer>,
     pub(super) image_resources: HashMap<ResourceId, GpuImageResource>,
     pub(super) native_rasters: HashMap<NodeId, NativeRasterCache>,
+    pub(crate) has_gpu_content: bool,
 }
 
 #[cfg(test)]

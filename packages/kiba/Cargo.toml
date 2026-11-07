@@ -1,0 +1,72 @@
+[package]
+name = "kiba"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+description = "3D game engine for Whisker."
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { manifest = "Package.swift" }
+web = { manifest = "web/Cargo.toml" }
+desktop = { manifest = "desktop/Cargo.toml" }
+
+[[bin]]
+name = "kiba-cook"
+path = "src/bin/kiba-cook.rs"
+required-features = ["cook"]
+
+[features]
+# Loads glTF at run time, for development until cooked assets exist.
+gltf = ["dep:gltf", "dep:image"]
+# The ahead-of-time tools, which run on a development machine.
+cook = ["gltf", "dep:meshopt"]
+# Simulates rigid bodies with Rapier, which adds about 220 KB gzipped to wasm.
+physics = ["dep:rapier3d"]
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+whisker-mixer = { path = "../whisker-mixer", version = "0.1.0" }
+glam = { version = "0.30", features = ["bytemuck"] }
+gltf = { version = "1.4", default-features = false, features = ["utils", "names", "KHR_materials_emissive_strength"], optional = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
+hecs = "0.10"
+meshopt = { version = "0.4", optional = true }
+rapier3d = { version = "0.22", default-features = false, features = ["dim3", "f32"], optional = true }
+rustc-hash = "2"
+web-time = "1"
+whisker = { path = "../../crates/whisker", version = "0.15.0" }
+
+[dev-dependencies]
+pollster = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "25.0.2", default-features = false, features = ["webgpu", "wgsl"] }
+web-sys = { version = "0.3", features = [
+    "Response",
+    "Window",
+    "console",
+] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+wgpu = { version = "25.0.2", default-features = false, features = ["metal", "wgsl"] }
+pollster = "0.4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+wgpu = { version = "25.0.2", default-features = false, features = ["vulkan", "gles", "wgsl"] }
+pollster = "0.4"
+raw-window-handle = "0.6"
+
+[target.'cfg(not(any(target_arch = "wasm32", target_vendor = "apple", target_os = "android")))'.dependencies]
+wgpu = { version = "25.0.2", default-features = false, features = ["wgsl"] }
