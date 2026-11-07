@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn bearer_token_is_a_verifiable_es256_jws() {
-        let signing_key = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let signing_key = p256::ecdsa::SigningKey::from_slice(&[7; 32]).unwrap();
         let pem = signing_key
             .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
             .unwrap();
