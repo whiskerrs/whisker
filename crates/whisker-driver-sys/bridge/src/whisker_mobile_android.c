@@ -20,6 +20,15 @@ static jmethodID g_present_frame, g_current_revision, g_measure_batch;
 static jmethodID g_resource_command, g_invoke_module, g_observe_module;
 static jclass g_measure_response_class;
 static jfieldID g_measure_response_longs, g_measure_response_ints, g_measure_response_floats, g_measure_response_paragraphs, g_measure_response_layouts;
+typedef struct { jclass cls; jmethodID init; } ValueCtor;
+static jclass g_string_class, g_string_array_class, g_float_array_class, g_byte_array_class;
+static jclass g_boolean_class, g_long_class, g_double_class, g_list_class, g_map_class, g_collection_class, g_map_entry_class;
+static jclass g_array_list_class, g_linked_hash_map_class, g_value_class, g_value_kt_class;
+static jobject g_utf8, g_value_null;
+static jmethodID g_string_init, g_string_get_bytes, g_boolean_value, g_long_value, g_double_value, g_list_size, g_list_get;
+static jmethodID g_map_entry_set, g_collection_to_array, g_map_entry_key, g_map_entry_value;
+static jmethodID g_array_list_init, g_array_list_add, g_linked_hash_map_init, g_linked_hash_map_put, g_value_to_java, g_value_err_message;
+static ValueCtor g_value_bool, g_value_int, g_value_float, g_value_str, g_value_err, g_value_bytes, g_value_array, g_value_map;
 static WhiskerValueRaw object_to_raw(JNIEnv* env, jobject value);
 static void release_paragraph(WhiskerValueRaw* value);
 static void release_prepared_layout(void* value);
@@ -57,30 +66,13 @@ static jobject local_view(JNIEnv* env, WhiskerAndroidView* view) {
     return view != NULL && view->surface != NULL ? (*env)->NewLocalRef(env, view->surface) : NULL;
 }
 
-static jobject utf8_charset(JNIEnv* env) {
-    jclass charsets_class = (*env)->FindClass(env, "java/nio/charset/StandardCharsets");
-    if (charsets_class == NULL) return NULL;
-    jfieldID utf8_field = (*env)->GetStaticFieldID(
-        env, charsets_class, "UTF_8", "Ljava/nio/charset/Charset;");
-    jobject utf8 = utf8_field == NULL ? NULL : (*env)->GetStaticObjectField(env, charsets_class, utf8_field);
-    (*env)->DeleteLocalRef(env, charsets_class);
-    return utf8;
-}
-
 static jstring new_string(JNIEnv* env, const char* bytes, size_t length) {
     if (length == 0) return (*env)->NewString(env, NULL, 0);
     if (bytes == NULL || length > INT32_MAX) return NULL;
     jbyteArray encoded = (*env)->NewByteArray(env, (jsize)length);
     if (encoded == NULL) return NULL;
     (*env)->SetByteArrayRegion(env, encoded, 0, (jsize)length, (const jbyte*)bytes);
-    jclass string_class = (*env)->FindClass(env, "java/lang/String");
-    jobject utf8 = utf8_charset(env);
-    jmethodID init = string_class == NULL ? NULL : (*env)->GetMethodID(
-        env, string_class, "<init>", "([BLjava/nio/charset/Charset;)V");
-    jstring result = init == NULL || utf8 == NULL ? NULL
-        : (*env)->NewObject(env, string_class, init, encoded, utf8);
-    if (utf8) (*env)->DeleteLocalRef(env, utf8);
-    if (string_class) (*env)->DeleteLocalRef(env, string_class);
+    jstring result = (*env)->NewObject(env, g_string_class, g_string_init, encoded, g_utf8);
     (*env)->DeleteLocalRef(env, encoded);
     return result;
 }
@@ -91,8 +83,7 @@ static bool valid_nonempty_string_ref(WhiskerStringRef value) {
 
 static jobjectArray string_refs(JNIEnv* env, const WhiskerStringRef* values, size_t count) {
     if (count > 4096 || (values == NULL) != (count == 0)) return NULL;
-    jclass cls = (*env)->FindClass(env, "java/lang/String");
-    jobjectArray result = cls == NULL ? NULL : (*env)->NewObjectArray(env, (jsize)count, cls, NULL);
+    jobjectArray result = (*env)->NewObjectArray(env, (jsize)count, g_string_class, NULL);
     for (size_t i = 0; result != NULL && i < count; ++i) {
         if (!valid_nonempty_string_ref(values[i])) {
             (*env)->DeleteLocalRef(env, result);
@@ -108,7 +99,6 @@ static jobjectArray string_refs(JNIEnv* env, const WhiskerStringRef* values, siz
         (*env)->SetObjectArrayElement(env, result, (jsize)i, value);
         (*env)->DeleteLocalRef(env, value);
     }
-    if (cls) (*env)->DeleteLocalRef(env, cls);
     return result;
 }
 
@@ -129,14 +119,12 @@ static jintArray member_ints(JNIEnv* env, const WhiskerMobileMemberRegistration*
 
 static jobjectArray member_names(JNIEnv* env, const WhiskerMobileMemberRegistration* values,
                                  size_t count) {
-    jclass string_class = (*env)->FindClass(env, "java/lang/String");
-    jobjectArray result = (*env)->NewObjectArray(env, (jsize)count, string_class, NULL);
+    jobjectArray result = (*env)->NewObjectArray(env, (jsize)count, g_string_class, NULL);
     for (size_t i = 0; i < count; ++i) {
         jstring value = new_string(env, values[i].name.ptr, values[i].name.len);
         (*env)->SetObjectArrayElement(env, result, (jsize)i, value);
         (*env)->DeleteLocalRef(env, value);
     }
-    (*env)->DeleteLocalRef(env, string_class);
     return result;
 }
 
@@ -180,53 +168,38 @@ static bool bootstrap_host(void* data, const WhiskerMobileBootstrap* bootstrap) 
 
 static jobject raw_to_value(JNIEnv* env, const WhiskerValueRaw* raw);
 
-static jobject new_value(JNIEnv* env, const char* nested, const char* signature, jvalue* args) {
-    char name[128]; snprintf(name, sizeof(name), "rs/whisker/runtime/WhiskerValue$%s", nested);
-    jclass cls = (*env)->FindClass(env, name);
-    jmethodID init = cls != NULL ? (*env)->GetMethodID(env, cls, "<init>", signature) : NULL;
-    jobject value = init != NULL ? (*env)->NewObjectA(env, cls, init, args) : NULL;
-    if (cls) (*env)->DeleteLocalRef(env, cls);
-    return value;
+static jobject new_value(JNIEnv* env, ValueCtor ctor, jvalue* args) {
+    return (*env)->NewObjectA(env, ctor.cls, ctor.init, args);
 }
 
 static jobject raw_to_value(JNIEnv* env, const WhiskerValueRaw* raw) {
-    if (raw == NULL || raw->type == WHISKER_VALUE_NULL) {
-        jclass cls = (*env)->FindClass(env, "rs/whisker/runtime/WhiskerValue$Null");
-        jfieldID field = (*env)->GetStaticFieldID(env, cls, "INSTANCE", "Lrs/whisker/runtime/WhiskerValue$Null;");
-        jobject value = (*env)->GetStaticObjectField(env, cls, field); (*env)->DeleteLocalRef(env, cls); return value;
-    }
+    if (raw == NULL || raw->type == WHISKER_VALUE_NULL) return (*env)->NewLocalRef(env, g_value_null);
     jvalue arg = {0};
     switch (raw->type) {
-        case WHISKER_VALUE_BOOL: arg.z = raw->v.b; return new_value(env, "Bool", "(Z)V", &arg);
-        case WHISKER_VALUE_INT: arg.j = raw->v.i; return new_value(env, "Int", "(J)V", &arg);
-        case WHISKER_VALUE_FLOAT: arg.d = raw->v.f; return new_value(env, "Float", "(D)V", &arg);
+        case WHISKER_VALUE_BOOL: arg.z = raw->v.b; return new_value(env, g_value_bool, &arg);
+        case WHISKER_VALUE_INT: arg.j = raw->v.i; return new_value(env, g_value_int, &arg);
+        case WHISKER_VALUE_FLOAT: arg.d = raw->v.f; return new_value(env, g_value_float, &arg);
         case WHISKER_VALUE_STRING: case WHISKER_VALUE_ERROR: {
             arg.l = new_string(env, raw->v.s.ptr, raw->v.s.len);
-            jobject value = new_value(env, raw->type == WHISKER_VALUE_ERROR ? "Err" : "Str", "(Ljava/lang/String;)V", &arg);
+            jobject value = new_value(env, raw->type == WHISKER_VALUE_ERROR ? g_value_err : g_value_str, &arg);
             (*env)->DeleteLocalRef(env, arg.l); return value;
         }
         case WHISKER_VALUE_BYTES: {
             jbyteArray bytes = (*env)->NewByteArray(env, (jsize)raw->v.bytes.len);
             if (raw->v.bytes.len) (*env)->SetByteArrayRegion(env, bytes, 0, (jsize)raw->v.bytes.len, (const jbyte*)raw->v.bytes.ptr);
-            arg.l = bytes; jobject value = new_value(env, "Bytes", "([B)V", &arg); (*env)->DeleteLocalRef(env, bytes); return value;
+            arg.l = bytes; jobject value = new_value(env, g_value_bytes, &arg); (*env)->DeleteLocalRef(env, bytes); return value;
         }
         case WHISKER_VALUE_ARRAY: {
-            jclass list_cls = (*env)->FindClass(env, "java/util/ArrayList");
-            jmethodID init = (*env)->GetMethodID(env, list_cls, "<init>", "(I)V");
-            jmethodID add = (*env)->GetMethodID(env, list_cls, "add", "(Ljava/lang/Object;)Z");
-            jobject list = (*env)->NewObject(env, list_cls, init, (jint)raw->v.array.count);
-            for (size_t i = 0; i < raw->v.array.count; ++i) { jobject item = raw_to_value(env, &raw->v.array.items[i]); (*env)->CallBooleanMethod(env, list, add, item); (*env)->DeleteLocalRef(env, item); }
-            arg.l = list; jobject value = new_value(env, "Array", "(Ljava/util/List;)V", &arg);
-            (*env)->DeleteLocalRef(env, list); (*env)->DeleteLocalRef(env, list_cls); return value;
+            jobject list = (*env)->NewObject(env, g_array_list_class, g_array_list_init, (jint)raw->v.array.count);
+            for (size_t i = 0; i < raw->v.array.count; ++i) { jobject item = raw_to_value(env, &raw->v.array.items[i]); (*env)->CallBooleanMethod(env, list, g_array_list_add, item); (*env)->DeleteLocalRef(env, item); }
+            arg.l = list; jobject value = new_value(env, g_value_array, &arg);
+            (*env)->DeleteLocalRef(env, list); return value;
         }
         case WHISKER_VALUE_MAP: {
-            jclass map_cls = (*env)->FindClass(env, "java/util/LinkedHashMap");
-            jmethodID init = (*env)->GetMethodID(env, map_cls, "<init>", "()V");
-            jmethodID put = (*env)->GetMethodID(env, map_cls, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
-            jobject map = (*env)->NewObject(env, map_cls, init);
-            for (size_t i = 0; i < raw->v.map.count; ++i) { const WhiskerKeyValueRaw* entry = &raw->v.map.entries[i]; jstring key = new_string(env, entry->key.ptr, entry->key.len); jobject item = raw_to_value(env, &entry->value); (*env)->CallObjectMethod(env, map, put, key, item); (*env)->DeleteLocalRef(env, key); (*env)->DeleteLocalRef(env, item); }
-            arg.l = map; jobject value = new_value(env, "Map", "(Ljava/util/Map;)V", &arg);
-            (*env)->DeleteLocalRef(env, map); (*env)->DeleteLocalRef(env, map_cls); return value;
+            jobject map = (*env)->NewObject(env, g_linked_hash_map_class, g_linked_hash_map_init);
+            for (size_t i = 0; i < raw->v.map.count; ++i) { const WhiskerKeyValueRaw* entry = &raw->v.map.entries[i]; jstring key = new_string(env, entry->key.ptr, entry->key.len); jobject item = raw_to_value(env, &entry->value); (*env)->CallObjectMethod(env, map, g_linked_hash_map_put, key, item); (*env)->DeleteLocalRef(env, key); (*env)->DeleteLocalRef(env, item); }
+            arg.l = map; jobject value = new_value(env, g_value_map, &arg);
+            (*env)->DeleteLocalRef(env, map); return value;
         }
         default: return raw_to_value(env, NULL);
     }
@@ -247,11 +220,10 @@ static void append_color(float* out, size_t* cursor, const WhiskerMobileColor* c
 }
 
 static jobjectArray color_names(JNIEnv* env, const WhiskerMobileBoxPaint* paint) {
-    jclass cls = (*env)->FindClass(env, "java/lang/String");
-    jobjectArray result = (*env)->NewObjectArray(env, 5, cls, NULL);
+    jobjectArray result = (*env)->NewObjectArray(env, 5, g_string_class, NULL);
     const WhiskerMobileColor* colors[] = {&paint->background, &paint->colors[0], &paint->colors[1], &paint->colors[2], &paint->colors[3]};
     for (int i = 0; i < 5; ++i) { jstring name = new_string(env, colors[i]->name.ptr, colors[i]->name.len); (*env)->SetObjectArrayElement(env, result, i, name); if (name) (*env)->DeleteLocalRef(env, name); }
-    (*env)->DeleteLocalRef(env, cls); return result;
+    return result;
 }
 
 static jstring font_setting(JNIEnv* env, const uint8_t tag[4], double value, bool integer) {
@@ -288,9 +260,8 @@ static jobjectArray font_settings(JNIEnv* env,
                                   const WhiskerMobileFontFeature* features, size_t feature_count,
                                   const WhiskerMobileFontVariation* variations, size_t variation_count) {
     if (!valid_font_settings(features, feature_count, variations, variation_count)) return NULL;
-    jclass cls = (*env)->FindClass(env, "java/lang/String");
-    jobjectArray result = cls == NULL ? NULL : (*env)->NewObjectArray(
-        env, (jsize)(feature_count + variation_count), cls, NULL);
+    jobjectArray result = (*env)->NewObjectArray(
+        env, (jsize)(feature_count + variation_count), g_string_class, NULL);
     for (size_t i = 0; result != NULL && i < feature_count; ++i) {
         jstring value = font_setting(env, features[i].tag, features[i].value, true);
         (*env)->SetObjectArrayElement(env, result, (jsize)i, value);
@@ -301,7 +272,6 @@ static jobjectArray font_settings(JNIEnv* env,
         (*env)->SetObjectArrayElement(env, result, (jsize)(feature_count + i), value);
         if (value) (*env)->DeleteLocalRef(env, value);
     }
-    if (cls) (*env)->DeleteLocalRef(env, cls);
     return result;
 }
 
@@ -315,18 +285,10 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
     const jsize operation_count = (jsize)frame->operation_count;
     const jsize metadata_count = operation_count * WHISKER_ANDROID_OPERATION_STRIDE;
     jlongArray metadata = (*env)->NewLongArray(env, metadata_count);
-    jclass float_array_class = (*env)->FindClass(env, "[F");
-    jclass string_class = (*env)->FindClass(env, "java/lang/String");
-    jclass string_array_class = (*env)->FindClass(env, "[Ljava/lang/String;");
-    jclass value_class = (*env)->FindClass(env, "rs/whisker/runtime/WhiskerValue");
-    jobjectArray number_batches = float_array_class == NULL ? NULL
-        : (*env)->NewObjectArray(env, operation_count, float_array_class, NULL);
-    jobjectArray texts = string_class == NULL ? NULL
-        : (*env)->NewObjectArray(env, operation_count, string_class, NULL);
-    jobjectArray name_batches = string_array_class == NULL ? NULL
-        : (*env)->NewObjectArray(env, operation_count, string_array_class, NULL);
-    jobjectArray values = value_class == NULL ? NULL
-        : (*env)->NewObjectArray(env, operation_count, value_class, NULL);
+    jobjectArray number_batches = (*env)->NewObjectArray(env, operation_count, g_float_array_class, NULL);
+    jobjectArray texts = (*env)->NewObjectArray(env, operation_count, g_string_class, NULL);
+    jobjectArray name_batches = (*env)->NewObjectArray(env, operation_count, g_string_array_class, NULL);
+    jobjectArray values = (*env)->NewObjectArray(env, operation_count, g_value_class, NULL);
     jlongArray result = (*env)->NewLongArray(env, 2);
     jlong* metadata_values = malloc(
         (metadata_count > 0 ? (size_t)metadata_count : 1) * sizeof(jlong));
@@ -362,10 +324,7 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 const WhiskerMobileBoxShadow* shadows = op->payload;
                 const size_t value_count = op->payload_count * 10;
                 float* values = malloc((value_count > 0 ? value_count : 1) * sizeof(float));
-                jclass cls = (*env)->FindClass(env, "java/lang/String");
-                names = cls == NULL ? NULL
-                    : (*env)->NewObjectArray(env, (jsize)op->payload_count, cls, NULL);
-                if (cls) (*env)->DeleteLocalRef(env, cls);
+                names = (*env)->NewObjectArray(env, (jsize)op->payload_count, g_string_class, NULL);
                 if (values == NULL || names == NULL) { free(values); ok = false; break; }
                 size_t cursor = 0;
                 for (size_t shadow_index = 0; shadow_index < op->payload_count; ++shadow_index) {
@@ -500,10 +459,7 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 if (!ok) break;
                 float* values = malloc(total_values * sizeof(float));
                 if (values == NULL) { ok = false; break; }
-                jclass string_class = (*env)->FindClass(env, "java/lang/String");
-                names = string_class == NULL ? NULL
-                    : (*env)->NewObjectArray(env, (jsize)total_stops, string_class, NULL);
-                if (string_class) (*env)->DeleteLocalRef(env, string_class);
+                names = (*env)->NewObjectArray(env, (jsize)total_stops, g_string_class, NULL);
                 if (names == NULL) { free(values); ok = false; break; }
                 size_t cursor = 0;
                 size_t name_cursor = 0;
@@ -630,7 +586,7 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 storage[34]=p->line_height; storage[35]=p->letter_spacing;
                 storage[36]=(float)p->direction;
                 numbers = floats(env, storage, 37);
-                jclass cls = (*env)->FindClass(env, "java/lang/String"); names = (*env)->NewObjectArray(env, (jsize)(3 + p->font_family_count + p->font_feature_count + p->font_variation_count), cls, NULL);
+                names = (*env)->NewObjectArray(env, (jsize)(3 + p->font_family_count + p->font_feature_count + p->font_variation_count), g_string_class, NULL);
                 jstring color_name = new_string(env, p->color.name.ptr, p->color.name.len); (*env)->SetObjectArrayElement(env, names, 0, color_name);
                 jstring shadow_name = new_string(env, p->shadow_color.name.ptr, p->shadow_color.name.len); (*env)->SetObjectArrayElement(env, names, 1, shadow_name);
                 jstring decoration_name = new_string(env, p->decoration_color.name.ptr, p->decoration_color.name.len); (*env)->SetObjectArrayElement(env, names, 2, decoration_name);
@@ -640,7 +596,7 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 if (color_name) (*env)->DeleteLocalRef(env, color_name);
                 if (shadow_name) (*env)->DeleteLocalRef(env, shadow_name);
                 if (decoration_name) (*env)->DeleteLocalRef(env, decoration_name);
-                (*env)->DeleteLocalRef(env, cls); break;
+                break;
             }
             case WHISKER_OP_PROPERTY: case WHISKER_OP_COMMAND:
             case WHISKER_OP_ACCESSIBILITY:
@@ -703,10 +659,6 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
     if (name_batches) (*env)->DeleteLocalRef(env, name_batches);
     if (texts) (*env)->DeleteLocalRef(env, texts);
     if (number_batches) (*env)->DeleteLocalRef(env, number_batches);
-    if (value_class) (*env)->DeleteLocalRef(env, value_class);
-    if (string_array_class) (*env)->DeleteLocalRef(env, string_array_class);
-    if (string_class) (*env)->DeleteLocalRef(env, string_class);
-    if (float_array_class) (*env)->DeleteLocalRef(env, float_array_class);
     if (metadata) (*env)->DeleteLocalRef(env, metadata);
     (*env)->DeleteLocalRef(env, view); if (attached) (*g_vm)->DetachCurrentThread(g_vm); return ok;
 }
@@ -743,18 +695,12 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
     jlongArray request_longs = (*env)->NewLongArray(env, (jsize)(count * MEASURE_REQUEST_LONG_STRIDE));
     jintArray request_ints = (*env)->NewIntArray(env, (jsize)(count * MEASURE_REQUEST_INT_STRIDE));
     jfloatArray request_floats = (*env)->NewFloatArray(env, (jsize)(count * MEASURE_REQUEST_FLOAT_STRIDE));
-    jclass string_class = (*env)->FindClass(env, "java/lang/String");
-    jclass string_array_class = (*env)->FindClass(env, "[Ljava/lang/String;");
-    jclass value_class = (*env)->FindClass(env, "rs/whisker/runtime/WhiskerValue");
-    jobjectArray paragraphs = value_class == NULL ? NULL : (*env)->NewObjectArray(env, (jsize)count, value_class, NULL);
-    jobjectArray request_strings = string_class == NULL ? NULL : (*env)->NewObjectArray(
-        env, (jsize)(count * MEASURE_REQUEST_STRING_STRIDE), string_class, NULL);
-    jobjectArray family_batches = string_array_class == NULL ? NULL : (*env)->NewObjectArray(
-        env, (jsize)count, string_array_class, NULL);
-    jobjectArray setting_batches = string_array_class == NULL ? NULL : (*env)->NewObjectArray(
-        env, (jsize)count, string_array_class, NULL);
-    jobjectArray payload_batches = value_class == NULL ? NULL : (*env)->NewObjectArray(
-        env, (jsize)count, value_class, NULL);
+    jobjectArray paragraphs = (*env)->NewObjectArray(env, (jsize)count, g_value_class, NULL);
+    jobjectArray request_strings = (*env)->NewObjectArray(
+        env, (jsize)(count * MEASURE_REQUEST_STRING_STRIDE), g_string_class, NULL);
+    jobjectArray family_batches = (*env)->NewObjectArray(env, (jsize)count, g_string_array_class, NULL);
+    jobjectArray setting_batches = (*env)->NewObjectArray(env, (jsize)count, g_string_array_class, NULL);
+    jobjectArray payload_batches = (*env)->NewObjectArray(env, (jsize)count, g_value_class, NULL);
     jlong* longs = calloc(count * MEASURE_REQUEST_LONG_STRIDE + 1, sizeof(jlong));
     jint* ints = calloc(count * MEASURE_REQUEST_INT_STRIDE + 1, sizeof(jint));
     jfloat* values = calloc(count * MEASURE_REQUEST_FLOAT_STRIDE + 1, sizeof(jfloat));
@@ -926,12 +872,9 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
     if (result) (*env)->DeleteLocalRef(env, result);
     if (payload_batches) (*env)->DeleteLocalRef(env, payload_batches);
     if (paragraphs) (*env)->DeleteLocalRef(env, paragraphs);
-    if (value_class) (*env)->DeleteLocalRef(env, value_class);
     if (setting_batches) (*env)->DeleteLocalRef(env, setting_batches);
     if (family_batches) (*env)->DeleteLocalRef(env, family_batches);
     if (request_strings) (*env)->DeleteLocalRef(env, request_strings);
-    if (string_array_class) (*env)->DeleteLocalRef(env, string_array_class);
-    if (string_class) (*env)->DeleteLocalRef(env, string_class);
     if (request_floats) (*env)->DeleteLocalRef(env, request_floats);
     if (request_ints) (*env)->DeleteLocalRef(env, request_ints);
     if (request_longs) (*env)->DeleteLocalRef(env, request_longs);
@@ -943,12 +886,7 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
 static char* copy_utf8(JNIEnv* env, jstring string, size_t* length) {
     *length = 0;
     if (string == NULL) return NULL;
-    jclass string_class = (*env)->FindClass(env, "java/lang/String");
-    jmethodID get_bytes = string_class == NULL ? NULL : (*env)->GetMethodID(
-        env, string_class, "getBytes", "(Ljava/nio/charset/Charset;)[B");
-    jobject utf8 = utf8_charset(env);
-    jbyteArray encoded = get_bytes == NULL || utf8 == NULL ? NULL
-        : (*env)->CallObjectMethod(env, string, get_bytes, utf8);
+    jbyteArray encoded = (*env)->CallObjectMethod(env, string, g_string_get_bytes, g_utf8);
     jsize count = encoded == NULL ? 0 : (*env)->GetArrayLength(env, encoded);
     char* result = malloc((size_t)count + 1);
     if (result != NULL) {
@@ -957,8 +895,6 @@ static char* copy_utf8(JNIEnv* env, jstring string, size_t* length) {
         *length = (size_t)count;
     }
     if (encoded) (*env)->DeleteLocalRef(env, encoded);
-    if (utf8) (*env)->DeleteLocalRef(env, utf8);
-    if (string_class) (*env)->DeleteLocalRef(env, string_class);
     return result;
 }
 
@@ -990,58 +926,39 @@ static void release_paragraph(WhiskerValueRaw* value) {
 static WhiskerValueRaw object_to_raw(JNIEnv* env, jobject value) {
     WhiskerValueRaw out; memset(&out, 0, sizeof(out));
     if (value == NULL) return out;
-    jclass value_cls = (*env)->FindClass(env, "rs/whisker/runtime/WhiskerValue");
-    if ((*env)->IsInstanceOf(env, value, value_cls)) {
-        jclass error_cls = (*env)->FindClass(env, "rs/whisker/runtime/WhiskerValue$Err");
-        if ((*env)->IsInstanceOf(env, value, error_cls)) {
-            jmethodID message = (*env)->GetMethodID(env, error_cls, "getMessage", "()Ljava/lang/String;");
-            jstring string = (*env)->CallObjectMethod(env, value, message);
+    if ((*env)->IsInstanceOf(env, value, g_value_class)) {
+        if ((*env)->IsInstanceOf(env, value, g_value_err.cls)) {
+            jstring string = (*env)->CallObjectMethod(env, value, g_value_err_message);
             out.type = WHISKER_VALUE_ERROR;
             out.v.s.ptr = copy_utf8(env, string, &out.v.s.len);
-            (*env)->DeleteLocalRef(env, string); (*env)->DeleteLocalRef(env, error_cls);
-            (*env)->DeleteLocalRef(env, value_cls); return out;
+            (*env)->DeleteLocalRef(env, string); return out;
         }
-        (*env)->DeleteLocalRef(env, error_cls);
-        jclass helper = (*env)->FindClass(env, "rs/whisker/runtime/WhiskerValueKt");
-        jmethodID convert = (*env)->GetStaticMethodID(env, helper, "toJavaObject", "(Lrs/whisker/runtime/WhiskerValue;)Ljava/lang/Object;");
-        jobject converted = (*env)->CallStaticObjectMethod(env, helper, convert, value);
-        (*env)->DeleteLocalRef(env, helper); (*env)->DeleteLocalRef(env, value_cls);
+        jobject converted = (*env)->CallStaticObjectMethod(env, g_value_kt_class, g_value_to_java, value);
         out = object_to_raw(env, converted); if (converted) (*env)->DeleteLocalRef(env, converted); return out;
     }
-    (*env)->DeleteLocalRef(env, value_cls);
-    jclass string_cls=(*env)->FindClass(env,"java/lang/String");
-    jclass bool_cls=(*env)->FindClass(env,"java/lang/Boolean");
-    jclass long_cls=(*env)->FindClass(env,"java/lang/Long");
-    jclass double_cls=(*env)->FindClass(env,"java/lang/Double");
-    jclass bytes_cls=(*env)->FindClass(env,"[B");
-    jclass list_cls=(*env)->FindClass(env,"java/util/List");
-    jclass map_cls=(*env)->FindClass(env,"java/util/Map");
-    if ((*env)->IsInstanceOf(env,value,string_cls)) {
+    if ((*env)->IsInstanceOf(env,value,g_string_class)) {
         out.type=WHISKER_VALUE_STRING; out.v.s.ptr=copy_utf8(env,(jstring)value,&out.v.s.len);
-    } else if ((*env)->IsInstanceOf(env,value,bool_cls)) {
-        jmethodID method=(*env)->GetMethodID(env,bool_cls,"booleanValue","()Z"); out.type=WHISKER_VALUE_BOOL; out.v.b=(*env)->CallBooleanMethod(env,value,method);
-    } else if ((*env)->IsInstanceOf(env,value,long_cls)) {
-        jmethodID method=(*env)->GetMethodID(env,long_cls,"longValue","()J"); out.type=WHISKER_VALUE_INT; out.v.i=(*env)->CallLongMethod(env,value,method);
-    } else if ((*env)->IsInstanceOf(env,value,double_cls)) {
-        jmethodID method=(*env)->GetMethodID(env,double_cls,"doubleValue","()D"); out.type=WHISKER_VALUE_FLOAT; out.v.f=(*env)->CallDoubleMethod(env,value,method);
-    } else if ((*env)->IsInstanceOf(env,value,bytes_cls)) {
+    } else if ((*env)->IsInstanceOf(env,value,g_boolean_class)) {
+        out.type=WHISKER_VALUE_BOOL; out.v.b=(*env)->CallBooleanMethod(env,value,g_boolean_value);
+    } else if ((*env)->IsInstanceOf(env,value,g_long_class)) {
+        out.type=WHISKER_VALUE_INT; out.v.i=(*env)->CallLongMethod(env,value,g_long_value);
+    } else if ((*env)->IsInstanceOf(env,value,g_double_class)) {
+        out.type=WHISKER_VALUE_FLOAT; out.v.f=(*env)->CallDoubleMethod(env,value,g_double_value);
+    } else if ((*env)->IsInstanceOf(env,value,g_byte_array_class)) {
         jsize count=(*env)->GetArrayLength(env,(jarray)value); uint8_t* bytes=malloc(count > 0 ? (size_t)count : 1);
         if(count) (*env)->GetByteArrayRegion(env,(jbyteArray)value,0,count,(jbyte*)bytes); out.type=WHISKER_VALUE_BYTES; out.v.bytes.ptr=bytes; out.v.bytes.len=(size_t)count;
-    } else if ((*env)->IsInstanceOf(env,value,list_cls)) {
-        jmethodID size=(*env)->GetMethodID(env,list_cls,"size","()I"), get=(*env)->GetMethodID(env,list_cls,"get","(I)Ljava/lang/Object;");
-        jint count=(*env)->CallIntMethod(env,value,size); WhiskerValueRaw* items=calloc(count > 0 ? (size_t)count : 1,sizeof(*items));
-        for(jint i=0;i<count;++i){ jobject item=(*env)->CallObjectMethod(env,value,get,i); items[i]=object_to_raw(env,item); if(item)(*env)->DeleteLocalRef(env,item); }
+    } else if ((*env)->IsInstanceOf(env,value,g_list_class)) {
+        jint count=(*env)->CallIntMethod(env,value,g_list_size); WhiskerValueRaw* items=calloc(count > 0 ? (size_t)count : 1,sizeof(*items));
+        for(jint i=0;i<count;++i){ jobject item=(*env)->CallObjectMethod(env,value,g_list_get,i); items[i]=object_to_raw(env,item); if(item)(*env)->DeleteLocalRef(env,item); }
         out.type=WHISKER_VALUE_ARRAY; out.v.array.items=items; out.v.array.count=(size_t)count;
-    } else if ((*env)->IsInstanceOf(env,value,map_cls)) {
-        jmethodID entry_set=(*env)->GetMethodID(env,map_cls,"entrySet","()Ljava/util/Set;"); jobject set=(*env)->CallObjectMethod(env,value,entry_set);
-        jclass collection_cls=(*env)->FindClass(env,"java/util/Collection"); jmethodID to_array=(*env)->GetMethodID(env,collection_cls,"toArray","()[Ljava/lang/Object;");
-        jobjectArray array=(*env)->CallObjectMethod(env,set,to_array); jsize count=(*env)->GetArrayLength(env,array); WhiskerKeyValueRaw* entries=calloc(count > 0 ? (size_t)count : 1,sizeof(*entries));
-        jclass entry_cls=(*env)->FindClass(env,"java/util/Map$Entry"); jmethodID get_key=(*env)->GetMethodID(env,entry_cls,"getKey","()Ljava/lang/Object;"),get_value=(*env)->GetMethodID(env,entry_cls,"getValue","()Ljava/lang/Object;");
-        for(jsize i=0;i<count;++i){ jobject entry=(*env)->GetObjectArrayElement(env,array,i),key=(*env)->CallObjectMethod(env,entry,get_key),item=(*env)->CallObjectMethod(env,entry,get_value); entries[i].key.ptr=copy_utf8(env,(jstring)key,&entries[i].key.len); entries[i].value=object_to_raw(env,item); (*env)->DeleteLocalRef(env,item);(*env)->DeleteLocalRef(env,key);(*env)->DeleteLocalRef(env,entry); }
+    } else if ((*env)->IsInstanceOf(env,value,g_map_class)) {
+        jobject set=(*env)->CallObjectMethod(env,value,g_map_entry_set);
+        jobjectArray array=(*env)->CallObjectMethod(env,set,g_collection_to_array); jsize count=(*env)->GetArrayLength(env,array); WhiskerKeyValueRaw* entries=calloc(count > 0 ? (size_t)count : 1,sizeof(*entries));
+        for(jsize i=0;i<count;++i){ jobject entry=(*env)->GetObjectArrayElement(env,array,i),key=(*env)->CallObjectMethod(env,entry,g_map_entry_key),item=(*env)->CallObjectMethod(env,entry,g_map_entry_value); entries[i].key.ptr=copy_utf8(env,(jstring)key,&entries[i].key.len); entries[i].value=object_to_raw(env,item); (*env)->DeleteLocalRef(env,item);(*env)->DeleteLocalRef(env,key);(*env)->DeleteLocalRef(env,entry); }
         out.type=WHISKER_VALUE_MAP; out.v.map.entries=entries; out.v.map.count=(size_t)count;
-        (*env)->DeleteLocalRef(env,entry_cls);(*env)->DeleteLocalRef(env,array);(*env)->DeleteLocalRef(env,collection_cls);(*env)->DeleteLocalRef(env,set);
+        (*env)->DeleteLocalRef(env,array);(*env)->DeleteLocalRef(env,set);
     }
-    jobject refs[]={string_cls,bool_cls,long_cls,double_cls,bytes_cls,list_cls,map_cls}; for(size_t i=0;i<7;++i)(*env)->DeleteLocalRef(env,refs[i]); return out;
+    return out;
 }
 
 static void request_frame(void* data) {
@@ -1072,14 +989,72 @@ static bool invoke_module(void* data,const uint8_t* module,size_t module_len,con
                           WhiskerMobileModuleResultCallback result,void* result_data) {
     bool attached; JNIEnv* env=whisker_env(&attached); jobject view=env?local_view(env,data):NULL; if(!view)return false;
     jstring m=new_string(env,(const char*)module,module_len),f=new_string(env,(const char*)method,method_len);
-    jclass value_cls=(*env)->FindClass(env,"rs/whisker/runtime/WhiskerValue"); jobjectArray array=(*env)->NewObjectArray(env,(jsize)arg_count,value_cls,NULL);
+    jobjectArray array=(*env)->NewObjectArray(env,(jsize)arg_count,g_value_class,NULL);
     for(size_t i=0;i<arg_count;++i){jobject item=raw_to_value(env,&args[i]);(*env)->SetObjectArrayElement(env,array,(jsize)i,item);(*env)->DeleteLocalRef(env,item);}
     bool accepted=(*env)->CallBooleanMethod(env,view,g_invoke_module,m,f,array,async?JNI_TRUE:JNI_FALSE,(jlong)(uintptr_t)result,(jlong)(uintptr_t)result_data)==JNI_TRUE&&!clear_exception(env);
-    (*env)->DeleteLocalRef(env,array);(*env)->DeleteLocalRef(env,value_cls);(*env)->DeleteLocalRef(env,f);(*env)->DeleteLocalRef(env,m);(*env)->DeleteLocalRef(env,view);if(attached)(*g_vm)->DetachCurrentThread(g_vm);return accepted;
+    (*env)->DeleteLocalRef(env,array);(*env)->DeleteLocalRef(env,f);(*env)->DeleteLocalRef(env,m);(*env)->DeleteLocalRef(env,view);if(attached)(*g_vm)->DetachCurrentThread(g_vm);return accepted;
 }
 
 static void observe_module(void* data,const uint8_t* module,size_t module_len,const uint8_t* event,size_t event_len,bool observing){
     bool attached;JNIEnv* env=whisker_env(&attached);jobject view=env?local_view(env,data):NULL;if(!view)return;jstring m=new_string(env,(const char*)module,module_len),e=new_string(env,(const char*)event,event_len);(*env)->CallVoidMethod(env,view,g_observe_module,m,e,observing?JNI_TRUE:JNI_FALSE);clear_exception(env);(*env)->DeleteLocalRef(env,e);(*env)->DeleteLocalRef(env,m);(*env)->DeleteLocalRef(env,view);if(attached)(*g_vm)->DetachCurrentThread(g_vm);
+}
+
+static jclass global_class(JNIEnv* env, const char* name) {
+    jclass local = (*env)->FindClass(env, name);
+    if (local == NULL) return NULL;
+    jclass global = (*env)->NewGlobalRef(env, local);
+    (*env)->DeleteLocalRef(env, local);
+    return global;
+}
+
+static jobject global_static_object(JNIEnv* env, const char* class_name, const char* field, const char* signature) {
+    jclass cls = (*env)->FindClass(env, class_name);
+    if (cls == NULL) return NULL;
+    jfieldID id = (*env)->GetStaticFieldID(env, cls, field, signature);
+    jobject local = id == NULL ? NULL : (*env)->GetStaticObjectField(env, cls, id);
+    jobject global = local == NULL ? NULL : (*env)->NewGlobalRef(env, local);
+    if (local) (*env)->DeleteLocalRef(env, local);
+    (*env)->DeleteLocalRef(env, cls);
+    return global;
+}
+
+static bool cache_value_refs(JNIEnv* env) {
+#define CLASS(slot, name) if ((slot = global_class(env, name)) == NULL) return false;
+#define MID(slot, cls, name, sig) if ((slot = (*env)->GetMethodID(env, cls, name, sig)) == NULL) return false;
+#define CTOR(slot, nested, sig) CLASS(slot.cls, "rs/whisker/runtime/WhiskerValue$" nested) MID(slot.init, slot.cls, "<init>", sig)
+    CLASS(g_string_class, "java/lang/String") CLASS(g_string_array_class, "[Ljava/lang/String;")
+    CLASS(g_float_array_class, "[F") CLASS(g_byte_array_class, "[B")
+    CLASS(g_boolean_class, "java/lang/Boolean") CLASS(g_long_class, "java/lang/Long") CLASS(g_double_class, "java/lang/Double")
+    CLASS(g_list_class, "java/util/List") CLASS(g_map_class, "java/util/Map") CLASS(g_collection_class, "java/util/Collection")
+    CLASS(g_map_entry_class, "java/util/Map$Entry") CLASS(g_array_list_class, "java/util/ArrayList")
+    CLASS(g_linked_hash_map_class, "java/util/LinkedHashMap")
+    CLASS(g_value_class, "rs/whisker/runtime/WhiskerValue") CLASS(g_value_kt_class, "rs/whisker/runtime/WhiskerValueKt")
+    MID(g_string_init, g_string_class, "<init>", "([BLjava/nio/charset/Charset;)V")
+    MID(g_string_get_bytes, g_string_class, "getBytes", "(Ljava/nio/charset/Charset;)[B")
+    MID(g_boolean_value, g_boolean_class, "booleanValue", "()Z")
+    MID(g_long_value, g_long_class, "longValue", "()J")
+    MID(g_double_value, g_double_class, "doubleValue", "()D")
+    MID(g_list_size, g_list_class, "size", "()I")
+    MID(g_list_get, g_list_class, "get", "(I)Ljava/lang/Object;")
+    MID(g_map_entry_set, g_map_class, "entrySet", "()Ljava/util/Set;")
+    MID(g_collection_to_array, g_collection_class, "toArray", "()[Ljava/lang/Object;")
+    MID(g_map_entry_key, g_map_entry_class, "getKey", "()Ljava/lang/Object;")
+    MID(g_map_entry_value, g_map_entry_class, "getValue", "()Ljava/lang/Object;")
+    MID(g_array_list_init, g_array_list_class, "<init>", "(I)V")
+    MID(g_array_list_add, g_array_list_class, "add", "(Ljava/lang/Object;)Z")
+    MID(g_linked_hash_map_init, g_linked_hash_map_class, "<init>", "()V")
+    MID(g_linked_hash_map_put, g_linked_hash_map_class, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;")
+    CTOR(g_value_bool, "Bool", "(Z)V") CTOR(g_value_int, "Int", "(J)V") CTOR(g_value_float, "Float", "(D)V")
+    CTOR(g_value_str, "Str", "(Ljava/lang/String;)V") CTOR(g_value_err, "Err", "(Ljava/lang/String;)V")
+    CTOR(g_value_bytes, "Bytes", "([B)V") CTOR(g_value_array, "Array", "(Ljava/util/List;)V") CTOR(g_value_map, "Map", "(Ljava/util/Map;)V")
+    MID(g_value_err_message, g_value_err.cls, "getMessage", "()Ljava/lang/String;")
+#undef CTOR
+#undef MID
+#undef CLASS
+    g_value_to_java = (*env)->GetStaticMethodID(env, g_value_kt_class, "toJavaObject", "(Lrs/whisker/runtime/WhiskerValue;)Ljava/lang/Object;");
+    g_utf8 = global_static_object(env, "java/nio/charset/StandardCharsets", "UTF_8", "Ljava/nio/charset/Charset;");
+    g_value_null = global_static_object(env, "rs/whisker/runtime/WhiskerValue$Null", "INSTANCE", "Lrs/whisker/runtime/WhiskerValue$Null;");
+    return g_value_to_java != NULL && g_utf8 != NULL && g_value_null != NULL;
 }
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
@@ -1112,6 +1087,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_measure_response_layouts = (*env)->GetFieldID(env, g_measure_response_class, "layouts", "[Landroid/text/StaticLayout;");
     if (g_measure_response_layouts == NULL || g_measure_response_paragraphs == NULL || g_measure_response_longs == NULL || g_measure_response_ints == NULL ||
         g_measure_response_floats == NULL) return JNI_ERR;
+    if (!cache_value_refs(env)) { clear_exception(env); return JNI_ERR; }
     return JNI_VERSION_1_6;
 }
 
