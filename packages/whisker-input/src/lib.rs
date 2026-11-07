@@ -93,9 +93,9 @@
 //! | `on_submit`        | `Fn(String)`                          | —             | Return / done key pressed. |
 //! | `placeholder`      | `Signal<String>`                      | `""`          | Placeholder text shown when empty. |
 //! | `multiline`        | `bool`                                | `false`       | Single-line field vs multiline area. |
-//! | `auto_size`        | `bool`                                | `false`       | Measure content at its layout width; respects min/max size and overrides `lines`. |
+//! | `auto_size`        | `bool`                                | `false`       | Measure content at its layout width; respects min/max size and overrides `lines`. Otherwise the intrinsic height is one line, or `lines` when multiline. |
 //! | `on_size_change`   | `Fn(InputSize)`                        | —             | Final size after padding, borders, and style constraints. |
-//! | `lines`            | `u32`                                 | unset (`0`)   | Fixed visible line count (multiline only). |
+//! | `lines`            | `u32`                                 | unset (`0`)   | Visible line count for the intrinsic height (multiline only). |
 //! | `secure`           | `bool`                                | `false`       | Mask Input (password entry). |
 //! | `editable`         | `bool`                                | `true`        | Allow editing. |
 //! | `auto_focus`       | `bool`                                | `false`       | Focus + raise keyboard on mount. |
