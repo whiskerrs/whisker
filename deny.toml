@@ -60,6 +60,9 @@ ignore = [
     "RUSTSEC-2026-0370",
     "RUSTSEC-2026-0371",
     "RUSTSEC-2026-0372",
+    # Unmaintained `basic-toml` only parses age's bundled i18n.toml inside its
+    # proc-macro; the latest age and i18n-config still require it.
+    "RUSTSEC-2026-0374",
 ]
 
 [bans]
