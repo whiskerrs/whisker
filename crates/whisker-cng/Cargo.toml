@@ -23,6 +23,7 @@ description = "Whisker Continuous Native Generation — declarative platform pro
 include = [
     "src/**",
     "tests/**",
+    "!tests/project_composition.rs",
     "Cargo.toml",
     "CHANGELOG.md",
 ]
