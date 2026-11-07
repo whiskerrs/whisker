@@ -130,9 +130,12 @@ fn feed() -> Element {
                 }
                 ScrollView(axis: ScrollAxis::Horizontal, style: Css::new().height(px(48)).flex_shrink(0.0)) {
                     View(style: row().width(px(456)).gap(px(8)).padding_left(px(22)).padding_right(px(22))) {
-                        ForEach(each: || (0..CATEGORIES.len()).collect::<Vec<_>>(), key: |i: &usize| *i, children: move |i: usize| render! {
-                            View(on_tap: move |_| state.category.set(i), style: computed(move || row().width(px(76)).flex_shrink(0.0).justify_content(JustifyContent::Center).height(px(32)).border_radius(px(18)).background_color(Color::hex(if state.category.get() == i { INK } else { 0xe8e8df })))) {
-                                Text(value: CATEGORIES[i], max_lines: 1u32, style: computed(move || text(12.0).font_weight(FontWeight::Bold).color(Color::hex(if state.category.get() == i { PAPER } else { INK }))))
+                        ForEach(each: || (0..CATEGORIES.len()).collect::<Vec<_>>(), key: |i: &usize| *i, children: move |i: ReadSignal<usize>| {
+                            let i = i.get_untracked();
+                            render! {
+                                View(on_tap: move |_| state.category.set(i), style: computed(move || row().width(px(76)).flex_shrink(0.0).justify_content(JustifyContent::Center).height(px(32)).border_radius(px(18)).background_color(Color::hex(if state.category.get() == i { INK } else { 0xe8e8df })))) {
+                                    Text(value: CATEGORIES[i], max_lines: 1u32, style: computed(move || text(12.0).font_weight(FontWeight::Bold).color(Color::hex(if state.category.get() == i { PAPER } else { INK }))))
+                                }
                             }
                         })
                     }

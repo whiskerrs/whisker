@@ -14,7 +14,7 @@ pub fn markdown(text: Signal<String>) -> Element {
             ForEach(
                 each: move || blocks(&text.get()),
                 key: |block: &Block| block.clone(),
-                children: paragraph,
+                children: |block: ReadSignal<Block>| paragraph(block.get_untracked()),
             )
         }
     }

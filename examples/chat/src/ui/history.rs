@@ -162,9 +162,9 @@ pub fn history_panel(
             ForEach(
                 each: move || editing.get().into_iter().collect::<Vec<_>>(),
                 key: |session: &Session| session.id,
-                children: move |session: Session| render! {
+                children: move |session: ReadSignal<Session>| render! {
                     HistoryDialog(
-                        session: session,
+                        session: session.get_untracked(),
                         closed: move |()| editing.set(None),
                         trashed: trash,
                     )

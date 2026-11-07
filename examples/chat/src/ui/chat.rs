@@ -24,8 +24,8 @@ pub fn chat_screen() -> Element {
             ForEach(
                 each: move || selected.active().into_iter().collect::<Vec<_>>(),
                 key: |session: &Session| session.id,
-                children: move |session: Session| render! {
-                    ConversationView(session: session, sidebar: sidebar)
+                children: move |session: ReadSignal<Session>| render! {
+                    ConversationView(session: session.get_untracked(), sidebar: sidebar)
                 },
             )
         }

@@ -832,7 +832,7 @@ fn for_renders_initial_items() {
                 ForEach(
                     each: move || items.get(),
                     key: |i: &Item| i.id,
-                    children: move |i: Item| render! { Text(value: i.name) },
+                    children: move |i: ReadSignal<Item>| render! { Text(value: i.get_untracked().name) },
                 )
             }
         };
@@ -861,7 +861,7 @@ fn for_adds_new_items_on_update() {
                 ForEach(
                     each: move || items.get(),
                     key: |x: &u32| *x,
-                    children: move |x: u32| render! { Text(value: x.to_string()) },
+                    children: move |x: ReadSignal<u32>| render! { Text(value: x.get_untracked().to_string()) },
                 )
             }
         };
@@ -893,33 +893,116 @@ fn for_adds_new_items_on_update() {
     });
 }
 
+fn for_rows(root: Element) -> Vec<Element> {
+    let frag = whisker::runtime::view::children_of(root)[0];
+    whisker::runtime::view::children_of(frag)
+}
+
 #[test]
 fn for_reorders_existing_items_visually() {
-    with_recorder_and_owner(|log| {
+    with_recorder_and_owner(|_log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]).split();
-        let _h = render! {
+        let h = render! {
             View {
                 ForEach(
                     each: move || items.get(),
                     key: |x: &u32| *x,
-                    children: move |x: u32| render! { Text(value: x.to_string()) },
+                    children: move |x: ReadSignal<u32>| render! { Text(value: x.get_untracked().to_string()) },
+                )
+            }
+        };
+        let before = for_rows(h);
+
+        set_items.set(vec![3, 2, 1]);
+        flush();
+
+        assert_eq!(for_rows(h), vec![before[2], before[1], before[0]]);
+    });
+}
+
+#[test]
+fn for_append_leaves_existing_rows_attached() {
+    with_recorder_and_owner(|log| {
+        let (items, set_items) = signal(vec![1_u32, 2]).split();
+        let h = render! {
+            View {
+                ForEach(
+                    each: move || items.get(),
+                    key: |x: &u32| *x,
+                    children: move |x: ReadSignal<u32>| render! { Text(value: x.get_untracked().to_string()) },
                 )
             }
         };
         log.borrow_mut().clear();
 
-        set_items.set(vec![3, 2, 1]);
+        set_items.set(vec![1, 2, 3]);
         flush();
 
-        let appends_to_wrapper = log
+        let appends: Vec<u32> = log
             .borrow()
             .iter()
-            .filter(|op| matches!(op, Op::Append { parent: 0, .. }))
-            .count();
-        assert!(
-            appends_to_wrapper >= 3,
-            "expected re-attach for reordered items; got {appends_to_wrapper}"
-        );
+            .filter_map(|op| match op {
+                Op::Append { parent, child } if *parent == h.id() => Some(*child),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(appends, vec![for_rows(h)[2].id()]);
+    });
+}
+
+#[test]
+fn for_duplicate_keys_mount_and_dispose_every_row() {
+    with_recorder_and_owner(|_log| {
+        let (items, set_items) = signal(vec![1_u32, 1, 2]).split();
+        let h = render! {
+            View {
+                ForEach(
+                    each: move || items.get(),
+                    key: |x: &u32| *x,
+                    children: move |x: ReadSignal<u32>| render! { Text(value: x.get_untracked().to_string()) },
+                )
+            }
+        };
+        assert_eq!(for_rows(h).len(), 3);
+
+        set_items.set(vec![2]);
+        flush();
+
+        assert_eq!(for_rows(h).len(), 1);
+    });
+}
+
+#[test]
+fn for_updates_kept_row_when_item_changes() {
+    with_recorder_and_owner(|log| {
+        let (items, set_items) = signal(vec![(1_u32, "old")]).split();
+        let h = render! {
+            View {
+                ForEach(
+                    each: move || items.get(),
+                    key: |(id, _): &(u32, &'static str)| *id,
+                    children: move |item: ReadSignal<(u32, &'static str)>| render! {
+                        Text(value: computed(move || item.get().1.to_string()))
+                    },
+                )
+            }
+        };
+        let row = for_rows(h)[0];
+        log.borrow_mut().clear();
+
+        set_items.set(vec![(1, "new")]);
+        flush();
+
+        let texts: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["new".to_string()]);
+        assert_eq!(for_rows(h), vec![row]);
     });
 }
 
@@ -932,7 +1015,7 @@ fn for_removes_items_on_update() {
                 ForEach(
                     each: move || items.get(),
                     key: |x: &u32| *x,
-                    children: move |x: u32| render! { Text(value: x.to_string()) },
+                    children: move |x: ReadSignal<u32>| render! { Text(value: x.get_untracked().to_string()) },
                 )
             }
         };

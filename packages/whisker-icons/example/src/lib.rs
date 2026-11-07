@@ -90,9 +90,12 @@ fn icon_row(icons: ReadSignal<Vec<(&'static str, &'static str)>>) -> Element {
             ForEach(
                 each: move || icons.get(),
                 key: |(name, _): &(&'static str, &'static str)| *name,
-                children: |(name, svg): (&'static str, &'static str)| render! {
-                    View(style: css!(width: percent(33.333), flex_shrink: 0.0)) {
-                        Tile(label: name, svg: svg)
+                children: |icon: ReadSignal<(&'static str, &'static str)>| {
+                    let (name, svg) = icon.get_untracked();
+                    render! {
+                        View(style: css!(width: percent(33.333), flex_shrink: 0.0)) {
+                            Tile(label: name, svg: svg)
+                        }
                     }
                 },
             )
