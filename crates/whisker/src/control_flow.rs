@@ -43,10 +43,10 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use whisker_runtime::reactive::{Owner, effect};
+use whisker_runtime::reactive::{Owner, ReadSignal, RwSignal, effect};
 use whisker_runtime::view::{
     Children, EachFn, Element, Fallback, ItemFn, KeyFn, WhenFn, append_child,
-    create_phantom_element, remove_child,
+    create_phantom_element, insert_child_at, remove_child,
 };
 
 use crate::component;
@@ -65,26 +65,30 @@ use crate::component;
 /// recomputes it, derives new keys via `key`, and diffs against the
 /// previous frame:
 ///
-///   - kept (same key) → owner + element preserved
-///   - new key → fresh owner, `children(item)` runs
+///   - kept (same key) → owner + element preserved, item signal set
+///     to the new value
+///   - new key → fresh owner, `children(item)` runs with a signal of
+///     the item
 ///   - missing key → owner disposed, element detached
 ///
-/// Reordering: detach every surviving handle, then re-attach in the
-/// new order. The fragment's phantom-hoisting routes each operation
-/// to the nearest non-phantom Host ancestor.
+/// Repeated keys are told apart by occurrence, so each duplicate gets
+/// its own row. Only rows whose position changed are moved, which keeps
+/// a focused native input in an untouched row focused.
 #[component]
-pub fn for_each<T, K>(each: EachFn<T>, key: KeyFn<T, K>, children: ItemFn<T>) -> Element
+pub fn for_each<T, K>(each: EachFn<T>, key: KeyFn<T, K>, children: ItemFn<ReadSignal<T>>) -> Element
 where
     T: 'static,
     K: Eq + Hash + Clone + 'static,
 {
     let frag = create_phantom_element();
 
-    struct Entry {
+    struct Entry<T: 'static> {
         owner: Owner,
         handle: Element,
+        item: RwSignal<T>,
     }
-    let entries: Rc<RefCell<HashMap<K, Entry>>> = Rc::new(RefCell::new(HashMap::new()));
+    type Entries<K, T> = HashMap<(K, usize), Entry<T>>;
+    let entries: Rc<RefCell<Entries<K, T>>> = Rc::new(RefCell::new(HashMap::new()));
 
     // The outer body is a `FnMut` (per `#[component]`'s hot-reload
     // wrapper), so the closure props must be cloned in rather than
@@ -94,32 +98,23 @@ where
     let children = children.clone();
 
     effect(move || {
-        let items = each.call();
-        let mut new_entries: HashMap<K, Entry> = HashMap::new();
-        let mut new_keys_in_order: Vec<K> = Vec::with_capacity(items.len());
-
         let mut old = std::mem::take(&mut *entries.borrow_mut());
+        let mut new_entries: Entries<K, T> = HashMap::new();
+        let mut occurrences: HashMap<K, usize> = HashMap::new();
+        let mut ordered: Vec<((K, usize), Option<T>)> = Vec::new();
 
-        for item in items {
+        for item in each.call() {
             let k = key.call(&item);
-            if let Some(existing) = old.remove(&k) {
-                new_entries.insert(k.clone(), existing);
+            let n = occurrences.entry(k.clone()).or_insert(0);
+            let slot = (k, *n);
+            *n += 1;
+            if let Some(existing) = old.remove(&slot) {
+                existing.item.set(item);
+                new_entries.insert(slot.clone(), existing);
+                ordered.push((slot, None));
             } else {
-                let item_owner = Owner::new(None);
-                let handle = item_owner.with(|| {
-                    let h = children.call(item);
-                    append_child(frag, h);
-                    h
-                });
-                new_entries.insert(
-                    k.clone(),
-                    Entry {
-                        owner: item_owner,
-                        handle,
-                    },
-                );
+                ordered.push((slot, Some(item)));
             }
-            new_keys_in_order.push(k);
         }
 
         for (_, entry) in old.drain() {
@@ -127,17 +122,26 @@ where
             entry.owner.dispose();
         }
 
-        // Reorder by detaching every surviving handle and re-attaching
-        // in the new order; phantom-hoisting routes each pair to the
-        // real Host ancestor one element at a time.
-        for k in &new_keys_in_order {
-            if let Some(entry) = new_entries.get(k) {
-                remove_child(frag, entry.handle);
-            }
-        }
-        for k in &new_keys_in_order {
-            if let Some(entry) = new_entries.get(k) {
-                append_child(frag, entry.handle);
+        for (index, (slot, item)) in ordered.into_iter().enumerate() {
+            match item {
+                Some(item) => {
+                    let owner = Owner::new(None);
+                    let (handle, item) = owner.with(|| {
+                        let item = RwSignal::new(item);
+                        let h = children.call(item.read_only());
+                        insert_child_at(frag, h, index);
+                        (h, item)
+                    });
+                    new_entries.insert(
+                        slot,
+                        Entry {
+                            owner,
+                            handle,
+                            item,
+                        },
+                    );
+                }
+                None => insert_child_at(frag, new_entries[&slot].handle, index),
             }
         }
 
