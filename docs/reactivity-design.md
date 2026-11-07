@@ -372,7 +372,7 @@ Show {
 ForEach {
     each: move || items.get(),
     key:  |item| item.id,
-    children: move |item| render! { /* per item */ },
+    children: move |item: ReadSignal<Item>| render! { /* per item */ },
 }
 ```
 
@@ -380,11 +380,12 @@ ForEach {
   previously-mounted branch's owner (cascading cleanup) before mounting
   the other branch, so reactive state can't leak between branches.
 - **`ForEach`** re-keys against the previous frame: survivors (same key)
-  keep their per-item owner and any reactive state inside; new keys get a
-  fresh owner + `children(item)` run; missing keys are disposed.
-  Reordering detaches every surviving handle and re-attaches in the new
-  order. This is the closest thing to "vDOM diff" in the model, but it's
-  scoped to one list and keyed — efficient.
+  keep their per-item owner and any reactive state inside, and their item
+  signal is set to the new value; new keys get a fresh owner +
+  `children(item)` run; missing keys are disposed. Repeated keys are told
+  apart by occurrence. Only rows whose position changed are moved. This is
+  the closest thing to "vDOM diff" in the model, but it's scoped to one
+  list and keyed — efficient.
 
 Custom control flow follows the same recipe (phantom + effect); the
 `#[component]` form in `control_flow.rs` is the reference.
