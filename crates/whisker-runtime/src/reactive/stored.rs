@@ -68,13 +68,10 @@ impl<T: 'static> StoredValue<T> {
     }
 
     /// Borrowed read. Does NOT register a dependency.
+    #[track_caller]
     pub fn with<R>(self, f: impl FnOnce(&T) -> R) -> R {
-        let value = with_runtime(|rt| {
-            rt.nodes
-                .get(self.id)
-                .and_then(|n| n.data.value().cloned())
-                .expect("StoredValue: disposed")
-        });
+        let value = with_runtime(|rt| rt.nodes.get(self.id).and_then(|n| n.data.value().cloned()))
+            .expect("StoredValue: disposed");
         let borrow = value.borrow();
         let typed = borrow
             .downcast_ref::<T>()
@@ -84,13 +81,10 @@ impl<T: 'static> StoredValue<T> {
 
     /// Borrowed mutation. Does NOT notify subscribers (this primitive
     /// has none by construction).
+    #[track_caller]
     pub fn update<R>(self, f: impl FnOnce(&mut T) -> R) -> R {
-        let value = with_runtime(|rt| {
-            rt.nodes
-                .get(self.id)
-                .and_then(|n| n.data.value().cloned())
-                .expect("StoredValue: disposed")
-        });
+        let value = with_runtime(|rt| rt.nodes.get(self.id).and_then(|n| n.data.value().cloned()))
+            .expect("StoredValue: disposed");
         let mut borrow = value.borrow_mut();
         let typed = borrow
             .downcast_mut::<T>()
@@ -99,6 +93,7 @@ impl<T: 'static> StoredValue<T> {
     }
 
     /// Replace the value.
+    #[track_caller]
     pub fn set(self, value: T) {
         self.update(move |slot| *slot = value);
     }
@@ -113,6 +108,7 @@ impl<T: 'static + Clone> StoredValue<T> {
         .try_get_untracked()
     }
 
+    #[track_caller]
     pub fn get(self) -> T {
         self.with(|v| v.clone())
     }

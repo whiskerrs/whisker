@@ -107,12 +107,14 @@ impl<T: 'static + Clone> ReadSignal<T> {
 
     /// Read the current value, registering this signal as a dependency
     /// of the currently-running effect / computed (if any).
+    #[track_caller]
     pub fn get(self) -> T {
         self.with(|v| v.clone())
     }
 
     /// Read without registering a dependency — useful inside effects
     /// where you want to read a value but not subscribe to it.
+    #[track_caller]
     pub fn get_untracked(self) -> T {
         self.with_untracked(|v| v.clone())
     }
@@ -121,11 +123,13 @@ impl<T: 'static + Clone> ReadSignal<T> {
 impl<T: 'static> ReadSignal<T> {
     /// Borrowed read with dependency tracking. Useful when `T` is
     /// expensive to clone or doesn't implement `Clone`.
+    #[track_caller]
     pub fn with<R>(self, f: impl FnOnce(&T) -> R) -> R {
         read_value(self.id, true, f)
             .expect("ReadSignal: signal disposed or not a value-bearing node")
     }
 
+    #[track_caller]
     pub fn with_untracked<R>(self, f: impl FnOnce(&T) -> R) -> R {
         read_value(self.id, false, f)
             .expect("ReadSignal: signal disposed or not a value-bearing node")
@@ -242,6 +246,7 @@ impl<T: 'static> RwSignal<T> {
         )
     }
 
+    #[track_caller]
     pub fn with<R>(self, f: impl FnOnce(&T) -> R) -> R {
         ReadSignal::<T> {
             id: self.id,
@@ -250,6 +255,7 @@ impl<T: 'static> RwSignal<T> {
         .with(f)
     }
 
+    #[track_caller]
     pub fn with_untracked<R>(self, f: impl FnOnce(&T) -> R) -> R {
         ReadSignal::<T> {
             id: self.id,
@@ -322,6 +328,7 @@ impl<T: 'static + Clone> RwSignal<T> {
         self.split().0.try_get_untracked()
     }
 
+    #[track_caller]
     pub fn get(self) -> T {
         ReadSignal::<T> {
             id: self.id,
@@ -330,6 +337,7 @@ impl<T: 'static + Clone> RwSignal<T> {
         .get()
     }
 
+    #[track_caller]
     pub fn get_untracked(self) -> T {
         ReadSignal::<T> {
             id: self.id,
