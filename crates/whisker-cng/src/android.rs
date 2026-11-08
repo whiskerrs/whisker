@@ -687,7 +687,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 38,
+        template_version: 39,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -732,7 +732,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 38,
+            template_version: 39,
             cargo_selection: crate::CargoSelection::default(),
         }
     }
@@ -1045,6 +1045,18 @@ mod tests {
         let app_gradle = std::fs::read_to_string(out.join("app/build.gradle.kts")).unwrap();
         assert!(app_gradle.contains("compileSdk = 36"));
         assert!(app_gradle.contains("targetSdk = 36"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn app_packages_only_the_built_abi() {
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/android");
+        sync(&out, &sample_inputs()).unwrap();
+        let app_gradle = std::fs::read_to_string(out.join("app/build.gradle.kts")).unwrap();
+        let default_config = &app_gradle[app_gradle.find("defaultConfig {").unwrap()..];
+        assert!(default_config.contains("abiFilters += listOf(\"arm64-v8a\")"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
