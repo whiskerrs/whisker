@@ -135,7 +135,7 @@ private func measureText(
                 if let pointer { Unmanaged<PreparedParagraph>.fromOpaque(pointer).release() }
             }
             let geometry = UnsafeMutablePointer<WhiskerValueRaw>.allocate(capacity: 1)
-            geometry.initialize(to: measured.geometry.toRaw())
+            geometry.initialize(to: measured.geometry.copy())
             response.paragraph = geometry
             response.release_paragraph = { pointer in
                 guard let pointer else { return }

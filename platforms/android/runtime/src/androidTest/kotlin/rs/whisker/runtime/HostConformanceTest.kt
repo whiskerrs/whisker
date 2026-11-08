@@ -34,6 +34,7 @@ import rs.whisker.runtime.input.normalizePointerInput
 import rs.whisker.runtime.bridge.MobileAbi
 import rs.whisker.runtime.measure.HostMeasureBatchAbi
 import rs.whisker.runtime.measure.resolveTextLayoutSemantics
+import rs.whisker.runtime.measure.textIndentPixels
 import rs.whisker.runtime.paint.HostBoxShadow
 import rs.whisker.runtime.paint.ResolvedBoxGeometry
 import rs.whisker.runtime.paint.drawOuterBoxShadows
@@ -1404,10 +1405,12 @@ private class Driver(
                 alignment = alignment,
                 localeRtl = context.resources.configuration.layoutDirection ==
                     View.LAYOUT_DIRECTION_RTL,
-                widthBasis = command.getDouble("available_width").toFloat(),
-                density = density,
-                indentLogicalPixels = indentLogicalPixels,
-                indentPercentage = indentPercentage,
+                indentPixels = textIndentPixels(
+                    widthBasis = command.getDouble("available_width").toFloat(),
+                    density = density,
+                    indentLogicalPixels = indentLogicalPixels,
+                    indentPercentage = indentPercentage,
+                ),
             )
             check(abs(semantics.indentPixels / density - (indentLogicalPixels +
                 command.getDouble("available_width").toFloat() * indentPercentage / 100f)) < 0.01f)
