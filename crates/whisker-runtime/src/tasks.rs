@@ -206,7 +206,7 @@ pub(crate) fn spawn_cancelable<F>(future: F) -> crate::lifetime::Cancellation
 where
     F: Future<Output = ()> + 'static,
 {
-    assert!(
+    crate::reactive::error::invariant!(
         crate::runtime_dispatcher().is_some(),
         "spawn_local requires an entered Runtime"
     );

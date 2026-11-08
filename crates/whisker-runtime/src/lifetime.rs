@@ -1,3 +1,4 @@
+use crate::reactive::error::{ErrorPhase, invariant};
 use crate::reactive::{Owner, try_with_runtime, with_runtime};
 use slotmap::DefaultKey;
 use std::cell::{Cell, RefCell};
@@ -97,15 +98,14 @@ impl<T: 'static> Scoped<T> {
         });
         let weak = Rc::downgrade(&inner);
         let key = with_runtime(|rt| {
-            assert!(
+            invariant!(
                 !rt.shutting_down,
                 "cannot register work during runtime shutdown"
             );
-            let scope = rt
-                .owners
-                .get_mut(owner)
-                .expect("cannot register work in a disposed owner");
-            assert!(!scope.closing, "cannot register work in a closing owner");
+            let scope = rt.owners.get_mut(owner);
+            invariant!(scope.is_some(), "cannot register work in a disposed owner");
+            let scope = scope.unwrap();
+            invariant!(!scope.closing, "cannot register work in a closing owner");
             scope.registrations.insert(Box::new(move || {
                 if let Some(value) = weak.upgrade() {
                     value.cancel();
@@ -131,9 +131,14 @@ impl<T: 'static> Scoped<T> {
         }
         let _execution = Execution::enter();
         let _release = ReleaseCancelled(&self.inner);
-        self.inner
-            .owner
-            .with(|| self.inner.value.borrow().as_ref().map(f))
+        let owner = self.inner.owner;
+        crate::reactive::error::catch(Some(owner), ErrorPhase::Callback, || {
+            owner.with(|| self.inner.value.borrow().as_ref().map(f))
+        })
+        .unwrap_or_else(|| {
+            self.inner.cancel();
+            None
+        })
     }
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
         if !self.is_active() {
@@ -141,9 +146,14 @@ impl<T: 'static> Scoped<T> {
         }
         let _execution = Execution::enter();
         let _release = ReleaseCancelled(&self.inner);
-        self.inner
-            .owner
-            .with(|| self.inner.value.borrow_mut().as_mut().map(f))
+        let owner = self.inner.owner;
+        crate::reactive::error::catch(Some(owner), ErrorPhase::Callback, || {
+            owner.with(|| self.inner.value.borrow_mut().as_mut().map(f))
+        })
+        .unwrap_or_else(|| {
+            self.inner.cancel();
+            None
+        })
     }
 }
 struct ReleaseCancelled<'a, T>(&'a Registered<T>);

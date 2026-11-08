@@ -1,7 +1,7 @@
-//! Built-in control-flow components — `for_each` (keyed list) and
-//! `show` (conditional).
+//! Built-in control-flow components — `for_each` (keyed list),
+//! `show` (conditional) and `error_boundary` (panic isolation).
 //!
-//! Both are written exactly as a user-defined control flow would be:
+//! All are written exactly as a user-defined control flow would be:
 //! regular `#[component]` functions that allocate a *fragment*
 //! ([`create_phantom_element`](whisker_runtime::view::create_phantom_element)),
 //! install a reactive [`effect`](whisker_runtime::reactive::effect) to
@@ -43,6 +43,9 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
+use whisker_runtime::reactive::error::{
+    ErrorInfo, ErrorPhase, catch, reset_on_hot_patch, set_error_boundary,
+};
 use whisker_runtime::reactive::{Owner, ReadSignal, RwSignal, effect};
 use whisker_runtime::view::{
     Children, EachFn, Element, Fallback, ItemFn, KeyFn, WhenFn, append_child,
@@ -224,6 +227,90 @@ pub fn show(
             });
             *mounted.borrow_mut() = Some((owner, vec![handle]));
         }
+    });
+
+    frag
+}
+
+// ---------------------------------------------------------------------------
+// `error_boundary` → `ErrorBoundary`
+// ---------------------------------------------------------------------------
+
+/// Builds an [`ErrorBoundary`]'s fallback from the caught error and a
+/// [`Reset`] that mounts the children again.
+#[derive(Clone)]
+pub struct ErrorFallback(pub Rc<dyn Fn(ErrorInfo, Reset) -> Element + 'static>);
+
+impl<F: Fn(ErrorInfo, Reset) -> Element + 'static> From<F> for ErrorFallback {
+    fn from(f: F) -> Self {
+        ErrorFallback(Rc::new(f))
+    }
+}
+
+/// Handle an [`ErrorBoundary`] passes to its fallback.
+#[derive(Clone, Copy)]
+pub struct Reset(RwSignal<Option<ErrorInfo>>);
+
+impl Reset {
+    /// Disposes the fallback and mounts the children again.
+    pub fn reset(&self) {
+        self.0.set(None);
+    }
+}
+
+/// Shows `children` until code under them panics — a component body, an
+/// effect, an event handler, `on_mount`, a task or a cleanup — then
+/// disposes them and shows `fallback` with the error. A panic inside the
+/// fallback goes to the boundary above.
+///
+/// A hot patch resets a boundary showing its fallback. A panic under no
+/// boundary still ends the process.
+#[component]
+pub fn error_boundary(children: Children, fallback: ErrorFallback) -> Element {
+    let frag = create_phantom_element();
+    let failed: RwSignal<Option<ErrorInfo>> = RwSignal::new(None);
+
+    type Mounted = Rc<RefCell<Option<(Owner, Vec<Element>)>>>;
+    let mounted: Mounted = Rc::new(RefCell::new(None));
+    // `set` notifies even for an equal value, so a `reset` while the
+    // children are showing must not rebuild them.
+    let last_failed: Rc<Cell<Option<bool>>> = Rc::new(Cell::new(None));
+
+    let children = children.clone();
+    let fallback = fallback.clone();
+
+    effect(move || {
+        let error = failed.get();
+        if last_failed.get() == Some(error.is_some()) {
+            return;
+        }
+        last_failed.set(Some(error.is_some()));
+
+        if let Some((owner, handles)) = mounted.borrow_mut().take() {
+            for h in handles {
+                remove_child(frag, h);
+            }
+            owner.dispose();
+        }
+
+        let owner = Owner::new(None);
+        let handles = match error {
+            None => owner
+                .with(|| {
+                    set_error_boundary(move |info| failed.set(Some(info)));
+                    catch(Some(owner), ErrorPhase::Render, || {
+                        children().attach_to(frag)
+                    })
+                })
+                .unwrap_or_default(),
+            Some(error) => owner.with(|| {
+                reset_on_hot_patch(move || failed.set(None));
+                let h = (fallback.0)(error, Reset(failed));
+                append_child(frag, h);
+                vec![h]
+            }),
+        };
+        *mounted.borrow_mut() = Some((owner, handles));
     });
 
     frag

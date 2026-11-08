@@ -2466,3 +2466,50 @@ mod longpress {
         assert!(reader.holds.borrow().is_empty());
     }
 }
+
+thread_local! {
+    static FALLBACK_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+#[component]
+fn mount_panics() -> Element {
+    on_mount(|| panic!("mount failed"));
+    render! { View {} }
+}
+
+#[test]
+fn on_mount_panic_reaches_its_boundary_on_the_next_frame() {
+    let surface = surface(41);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(|| {
+            render! {
+                View {
+                    ErrorBoundary(fallback: |error: ErrorInfo, _reset: Reset| {
+                        FALLBACK_ERROR.set(Some(error.message.clone()));
+                        render! { View {} }
+                    }) {
+                        MountPanics()
+                    }
+                }
+            }
+        })
+        .unwrap();
+    assert_eq!(FALLBACK_ERROR.take(), None);
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(FALLBACK_ERROR.take().as_deref(), Some("mount failed"));
+}

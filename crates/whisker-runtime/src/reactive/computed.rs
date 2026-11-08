@@ -59,12 +59,18 @@ pub fn computed<T: 'static + Clone + PartialEq>(
     let compute_cell: ComputeCell = Rc::new(RefCell::new(None));
     let compute_cell_clone = compute_cell.clone();
     let trampoline: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new(move || {
-        // Take/run/put-back so the cell's borrow never spans user code.
-        let mut taken = compute_cell_clone.borrow_mut().take();
-        if let Some(ref mut inner) = taken {
+        // Take/run/put-back so the cell's borrow never spans user code; the
+        // put-back is a guard so a panicking run leaves the computed alive.
+        struct PutBack<'a>(&'a ComputeCell, Option<Box<dyn FnMut()>>);
+        impl Drop for PutBack<'_> {
+            fn drop(&mut self) {
+                *self.0.borrow_mut() = self.1.take();
+            }
+        }
+        let mut taken = PutBack(&compute_cell_clone, compute_cell_clone.borrow_mut().take());
+        if let Some(inner) = taken.1.as_mut() {
             inner();
         }
-        *compute_cell_clone.borrow_mut() = taken;
     }));
 
     let needs_warning = with_runtime(|rt| rt.current_owner().is_none());

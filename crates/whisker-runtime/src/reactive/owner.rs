@@ -28,6 +28,7 @@
 
 use std::rc::Rc;
 
+use super::error::invariant;
 use super::runtime::{NodeId, Owner, Scope};
 use super::with_runtime;
 
@@ -42,12 +43,12 @@ impl Owner {
     /// the route resumes.
     pub fn new(parent: Option<Owner>) -> Owner {
         with_runtime(|rt| {
-            assert!(
+            invariant!(
                 !rt.shutting_down,
                 "cannot create an owner during runtime shutdown"
             );
             let parent = parent.or_else(|| rt.current_owner());
-            assert!(
+            invariant!(
                 parent
                     .is_none_or(|parent| rt.owners.get(parent).is_some_and(|owner| !owner.closing)),
                 "cannot create a child of a disposed owner"
@@ -72,7 +73,7 @@ impl Owner {
     /// Call `dispose` explicitly; use [`crate::runtime_local!`] for Runtime-owned caches.
     pub fn detached_root() -> Owner {
         with_runtime(|rt| {
-            assert!(
+            invariant!(
                 !rt.shutting_down,
                 "cannot create an owner during runtime shutdown"
             );
@@ -146,12 +147,15 @@ impl Owner {
                 break;
             }
             for owner in owners {
-                owner.dispose_now();
+                let report_to = with_runtime(|rt| rt.owners.get(owner).and_then(|o| o.parent));
+                owner.dispose_now(report_to);
             }
         }
     }
 
-    fn dispose_now(self) {
+    /// `report_to` is the live owner above the disposed subtree; the
+    /// subtree's own scopes are removed before their cleanups run.
+    fn dispose_now(self, report_to: Option<Owner>) {
         // Everything is pulled out under a short borrow rather than
         // held across the recursion — deeper levels re-enter the
         // runtime.
@@ -230,7 +234,7 @@ impl Owner {
         }
 
         for child in children {
-            child.dispose_now();
+            child.dispose_now(report_to);
         }
 
         // Cleanups run before this owner's nodes are freed, so an
@@ -243,8 +247,10 @@ impl Owner {
             cancel();
         }
 
+        // Caught one by one so a failing cleanup neither skips the rest
+        // nor, during an unwind's `drain_disposals`, double-panics.
         for cleanup in cleanups.into_iter().rev() {
-            cleanup();
+            super::error::catch(report_to, super::error::ErrorPhase::Cleanup, cleanup);
         }
 
         // Freeing a node also detaches it from every subscriber list
