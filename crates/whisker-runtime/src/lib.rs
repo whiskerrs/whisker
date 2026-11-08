@@ -20,6 +20,7 @@ mod dispatch;
 pub mod element;
 mod element_registry;
 pub mod event;
+mod frame_timing;
 #[doc(hidden)]
 pub mod lifetime;
 pub mod module;
@@ -57,6 +58,7 @@ pub use element_registry::{
     ElementAuthoringBinding, ElementModuleDefinition, ElementProviderMetadata, ElementRegistry,
     ElementRegistryBuilder, ElementRegistryError,
 };
+pub use frame_timing::FrameTiming;
 pub use runtime_context::RuntimeContext;
 pub use runtime_instance::{
     RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeInstance, RuntimeLifecycle,

@@ -1009,6 +1009,28 @@ impl SurfaceRuntime {
         sink: &mut Sink,
         options: LayoutOptions,
     ) -> Result<RuntimeFrame, RuntimeFrameError<Provider::Error, Sink::Error>> {
+        self.render_frame_timed(
+            viewport,
+            environment_epoch,
+            viewport_epoch,
+            provider,
+            sink,
+            options,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn render_frame_timed<Provider: MeasurementProvider, Sink: FrameSink>(
+        &self,
+        viewport: LayoutSize,
+        environment_epoch: u64,
+        viewport_epoch: u32,
+        provider: &mut Provider,
+        sink: &mut Sink,
+        options: LayoutOptions,
+        present_time: Option<&mut std::time::Duration>,
+    ) -> Result<RuntimeFrame, RuntimeFrameError<Provider::Error, Sink::Error>> {
         self.state.borrow_mut().list_layout_requested = false;
         let mut layout = self
             .drive_layout(viewport, environment_epoch, provider, options)
@@ -1026,8 +1048,14 @@ impl SurfaceRuntime {
                 .map_err(RuntimeFrameError::Layout)?;
         }
         let presentation = if layout.has_layout() {
-            self.present(viewport_epoch, sink)
-                .map_err(RuntimeFrameError::Present)?
+            let start = crate::frame_timing::now_if(present_time.is_some());
+            let presentation = self
+                .present(viewport_epoch, sink)
+                .map_err(RuntimeFrameError::Present)?;
+            if let (Some(present_time), Some(start)) = (present_time, start) {
+                *present_time = start.elapsed();
+            }
+            presentation
         } else {
             None
         };
