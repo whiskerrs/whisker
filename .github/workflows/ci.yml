@@ -59,8 +59,12 @@ jobs:
       - uses: actions/checkout@v4
       # Keep lint results reproducible and aligned with the supported compiler. Tracking
       # `stable` here makes newly-added Clippy lints fail unrelated pull requests.
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Read the MSRV from Cargo.toml
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.msrv.outputs.version }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Install Linux text dependencies
@@ -68,7 +72,7 @@ jobs:
       # These two style-only lints create repository-wide churn when Clippy changes its
       # preferred spelling. Correctness and all other warnings remain denied.
       - run: >-
-          cargo +1.88.0 clippy --workspace --all-targets --
+          cargo +${{ steps.msrv.outputs.version }} clippy --workspace --all-targets --
           -D warnings
           -A clippy::collapsible-if
           -A clippy::uninlined-format-args
@@ -153,18 +157,21 @@ jobs:
         run: cargo test -p whisker-build --lib macos
 
   msrv:
-    name: MSRV (rust 1.88)
+    name: MSRV
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # The version here must match `rust-version` in the root
-      # Cargo.toml's `[workspace.package]`. If you bump one, bump both.
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Read the MSRV from Cargo.toml
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@v2
       - name: Install Linux text dependencies
         run: bash .github/scripts/install-ubuntu-packages.sh libfontconfig1-dev
       # `+version` takes precedence over the repository's stable toolchain file.
-      - run: cargo +1.88.0 check --workspace --all-targets
+      - run: cargo +${{ steps.msrv.outputs.version }} check --workspace --all-targets
 
   deny:
     name: cargo deny (advisories / bans / sources)
