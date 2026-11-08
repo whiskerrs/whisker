@@ -279,6 +279,11 @@ fn take_info(payload: &(dyn Any + Send), phase: ErrorPhase) -> ErrorInfo {
 }
 
 fn install_hook() {
+    // `set_hook` panics on an unwinding thread, which a cleanup run by a
+    // destructor mid-unwind turns into an abort.
+    if std::thread::panicking() {
+        return;
+    }
     static INSTALL: Once = Once::new();
     INSTALL.call_once(|| {
         let previous = std::panic::take_hook();
