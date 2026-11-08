@@ -15,6 +15,7 @@
 
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
@@ -30,7 +31,8 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    println!("{BOLD}whisker doctor{RESET}\n");
+    let &Style { bold, reset, .. } = style();
+    println!("{bold}whisker doctor{reset}\n");
 
     let mut report = Report::default();
 
@@ -56,12 +58,40 @@ pub fn run(args: Args) -> Result<()> {
 
 // ----- Style tokens ---------------------------------------------------------
 
-const C_OK: &str = "\x1b[32m";
-const C_WARN: &str = "\x1b[33m";
-const C_ERR: &str = "\x1b[31m";
-const DIM: &str = "\x1b[2m";
-const BOLD: &str = "\x1b[1m";
-const RESET: &str = "\x1b[0m";
+struct Style {
+    c_ok: &'static str,
+    c_warn: &'static str,
+    c_err: &'static str,
+    dim: &'static str,
+    bold: &'static str,
+    reset: &'static str,
+}
+
+const COLOR: Style = Style {
+    c_ok: "\x1b[32m",
+    c_warn: "\x1b[33m",
+    c_err: "\x1b[31m",
+    dim: "\x1b[2m",
+    bold: "\x1b[1m",
+    reset: "\x1b[0m",
+};
+
+const PLAIN: Style = Style {
+    c_ok: "",
+    c_warn: "",
+    c_err: "",
+    dim: "",
+    bold: "",
+    reset: "",
+};
+
+fn style() -> &'static Style {
+    if whisker_build::ui::color_enabled(std::io::stdout().is_terminal()) {
+        &COLOR
+    } else {
+        &PLAIN
+    }
+}
 
 #[derive(Clone, Copy)]
 enum Status {
@@ -120,8 +150,16 @@ impl Report {
         );
         pb.finish_and_clear();
 
+        let &Style {
+            c_ok,
+            c_warn,
+            c_err,
+            dim,
+            bold,
+            reset,
+        } = style();
         // Section header (bold)
-        println!("{BOLD}{name}{RESET}  {DIM}{summary}{RESET}");
+        println!("{bold}{name}{reset}  {dim}{summary}{reset}");
 
         // Compute aligned width of names (clamped so very long entries
         // don't push detail off-screen).
@@ -134,18 +172,18 @@ impl Report {
 
         for c in &checks {
             let (glyph, col) = match c.status {
-                Status::Ok => ("✓", C_OK),
-                Status::Warn => ("⚠", C_WARN),
-                Status::Err => ("✗", C_ERR),
+                Status::Ok => ("✓", c_ok),
+                Status::Warn => ("⚠", c_warn),
+                Status::Err => ("✗", c_err),
             };
             let pad = name_w.saturating_sub(visible_width(&c.name));
             let detail = if c.detail.is_empty() {
                 String::new()
             } else {
-                format!("  {DIM}{}{RESET}", c.detail)
+                format!("  {dim}{}{reset}", c.detail)
             };
             println!(
-                "  {col}{glyph}{RESET}  {name}{pad}{detail}",
+                "  {col}{glyph}{reset}  {name}{pad}{detail}",
                 name = c.name,
                 pad = " ".repeat(pad),
             );
@@ -163,14 +201,22 @@ impl Report {
 
     fn print_summary(&self) {
         let total = self.ok + self.warn + self.err;
+        let &Style {
+            c_ok,
+            c_warn,
+            c_err,
+            bold,
+            reset,
+            ..
+        } = style();
         match (self.err, self.warn) {
-            (0, 0) => println!("{C_OK}{BOLD}all {total} checks passed{RESET}"),
+            (0, 0) => println!("{c_ok}{bold}all {total} checks passed{reset}"),
             (0, w) => println!(
-                "{total} checks: {C_OK}{}✓{RESET}  {C_WARN}{w}⚠{RESET}",
+                "{total} checks: {c_ok}{}✓{reset}  {c_warn}{w}⚠{reset}",
                 self.ok
             ),
             (e, w) => println!(
-                "{total} checks: {C_OK}{}✓{RESET}  {C_WARN}{w}⚠{RESET}  {C_ERR}{e}✗{RESET}",
+                "{total} checks: {c_ok}{}✓{reset}  {c_warn}{w}⚠{reset}  {c_err}{e}✗{reset}",
                 self.ok
             ),
         }

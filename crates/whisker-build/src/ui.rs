@@ -255,6 +255,28 @@ fn is_tty() -> bool {
     *TTY.get_or_init(|| std::io::stderr().is_terminal())
 }
 
+/// Whether output to a stream may carry ANSI color: only a terminal, and
+/// never when a non-empty `NO_COLOR` is set (<https://no-color.org>).
+pub fn color_enabled(is_terminal: bool) -> bool {
+    color_allowed(is_terminal, std::env::var_os("NO_COLOR").as_deref())
+}
+
+fn color_allowed(is_terminal: bool, no_color: Option<&std::ffi::OsStr>) -> bool {
+    is_terminal && no_color.is_none_or(|value| value.is_empty())
+}
+
+fn color() -> bool {
+    color_enabled(is_tty())
+}
+
+fn paint(code: &str, text: &str) -> String {
+    if color() {
+        format!("{code}{text}\x1b[0m")
+    } else {
+        text.to_owned()
+    }
+}
+
 // ---- Dev-server status (printed-line model) -------------------------
 //
 // Deliberately no persistent bottom-anchored bar: printing above one
@@ -327,7 +349,7 @@ pub fn section(name: &str) {
         }
         Mode::Curated => {
             let bar_chars = "─".repeat(40usize.saturating_sub(name.len()));
-            let line = if is_tty() {
+            let line = if color() {
                 format!("\n\x1b[1;36m──── {name} {bar_chars}\x1b[0m")
             } else {
                 format!("\n──── {name} {bar_chars}")
@@ -763,7 +785,7 @@ fn render_step_line(
     summary: &str,
     kind: StepKind,
 ) -> String {
-    if is_tty() {
+    if color() {
         let color = match kind {
             StepKind::Done => "\x1b[32m",
             StepKind::Fail => "\x1b[31m",
@@ -803,7 +825,7 @@ pub fn info(msg: impl AsRef<str>) {
         Mode::Verbose => eprintln!("[whisker] {m}"),
         Mode::Curated => {
             if is_tty() {
-                emit_above_bars(&format!("  \x1b[90m·\x1b[0m {m}"));
+                emit_above_bars(&format!("  {} {m}", paint("\x1b[90m", "·")));
             } else {
                 eprintln!("  · {m}");
             }
@@ -827,7 +849,7 @@ pub fn warn(msg: impl AsRef<str>) {
         Mode::Verbose => eprintln!("[whisker] warn: {m}"),
         Mode::Curated => {
             if is_tty() {
-                emit_above_bars(&format!("  \x1b[33m⚠\x1b[0m {m}"));
+                emit_above_bars(&format!("  {} {m}", paint("\x1b[33m", "⚠")));
             } else {
                 eprintln!("  ! {m}");
             }
@@ -875,7 +897,7 @@ pub fn error(msg: impl AsRef<str>) {
         Mode::Verbose => eprintln!("[whisker] error: {m}"),
         Mode::Curated => {
             if is_tty() {
-                emit_above_bars(&format!("  \x1b[31m✗\x1b[0m {m}"));
+                emit_above_bars(&format!("  {} {m}", paint("\x1b[31m", "✗")));
             } else {
                 eprintln!("  X {m}");
             }
@@ -940,11 +962,20 @@ mod tests {
     }
 
     #[test]
+    fn color_needs_a_terminal_and_no_non_empty_no_color() {
+        use std::ffi::OsStr;
+        assert!(color_allowed(true, None));
+        assert!(color_allowed(true, Some(OsStr::new(""))));
+        assert!(!color_allowed(true, Some(OsStr::new("1"))));
+        assert!(!color_allowed(false, None));
+    }
+
+    #[test]
     fn render_step_line_aligns_name_column_at_12_chars() {
         // FIXME: Audit that the environment access only happens in single-threaded code.
         unsafe { std::env::set_var("WHISKER_VERBOSE", "") };
-        let line = if is_tty() {
-            // `is_tty()` can't be mocked without another abstraction,
+        let line = if color() {
+            // `color()` can't be mocked without another abstraction,
             // so an interactive run skips instead of asserting on the
             // colored branch.
             return;
