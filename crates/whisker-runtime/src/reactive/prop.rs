@@ -162,6 +162,7 @@ impl<T: 'static + Clone> Signal<T> {
     ///     render! { View(style: style) { /* children */ } }
     /// }
     /// ```
+    #[track_caller]
     pub fn get(&self) -> T {
         match self {
             Signal::Stored(v) => v.get(),
