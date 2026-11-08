@@ -2,8 +2,8 @@
 //!
 //! A panic in user code is caught where the runtime calls that code
 //! ([`catch`]), routed to the nearest owner with an error boundary, and
-//! delivered at the next safe point ([`deliver`]) rather than during the
-//! unwind. A panic with no boundary above it is re-raised unchanged.
+//! delivered at the next flush rather than during the unwind. A panic
+//! with no boundary above it is re-raised unchanged.
 
 use std::any::Any;
 use std::cell::RefCell;
