@@ -106,6 +106,8 @@ pub struct Config {
     /// Android system property). `None` runs unauthenticated (the prior
     /// behaviour). `whisker run` generates a random one per session.
     pub dev_token: Option<String>,
+    /// Asks every connected app to stream [`Event::DeviceTrace`] frame timings.
+    pub trace: bool,
     /// Strategy for reflecting code edits onto the running app.
     pub hot_patch_mode: HotPatchMode,
     /// Android install / launch params. Required iff
@@ -133,6 +135,7 @@ impl Config {
             watch_paths: Vec::new(),
             bind_addr: "127.0.0.1:9876".parse().expect("valid default addr"),
             dev_token: None,
+            trace: false,
             hot_patch_mode: HotPatchMode::FullReloadOnly,
             android: None,
             ios: None,
@@ -298,6 +301,24 @@ pub enum Event {
         /// device's clock was unavailable when the line was captured.
         ts_micros: u128,
     },
+    /// Frame timings the app recorded over roughly the last second; sent only
+    /// while [`Config::trace`] is on and frames were produced.
+    DeviceTrace {
+        frames: Vec<FrameSample>,
+    },
+}
+
+/// One `drive_frame` call on the device, in microseconds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FrameSample {
+    pub total_us: u64,
+    pub reactive_us: u64,
+    /// Includes `measure_us`.
+    pub layout_us: u64,
+    pub measure_us: u64,
+    pub present_us: u64,
+    pub measure_batches: u64,
+    pub measure_requests: u64,
 }
 
 // ----- Server ---------------------------------------------------------------
@@ -467,6 +488,7 @@ impl DevServer {
             self.config.bind_addr,
             self.on_event.clone(),
             self.config.dev_token.clone(),
+            self.config.trace,
             self.config.web.as_ref().map(|web| server::StaticFiles {
                 root: web.dist_dir.clone(),
                 base_path: web.base_path.clone(),

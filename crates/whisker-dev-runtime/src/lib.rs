@@ -11,6 +11,9 @@ pub mod hot_reload;
 pub mod log_capture;
 
 #[cfg(feature = "hot-reload")]
+mod trace;
+
+#[cfg(feature = "hot-reload")]
 pub use hot_reload::{
     NativeCodeUpdate, NativeHotReload, NativeHotReloadRegistration, register_native_runtime,
     start_receiver,
