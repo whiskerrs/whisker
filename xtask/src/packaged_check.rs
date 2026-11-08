@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 
 const ANDROID_ABI: &str = "arm64-v8a";
 
@@ -54,7 +54,35 @@ pub fn run(root: &Path, host: &str) -> Result<()> {
             .env(format!("AR_{triple}"), &toolchain.ar)
             .env("ANDROID_NDK_HOME", &toolchain.ndk);
     }
-    super::run(&mut check).with_context(|| format!("check the packaged crates for {target}"))
+    super::run(&mut check).with_context(|| format!("check the packaged crates for {target}"))?;
+    let lock = fs::read_to_string(consumer.join("Cargo.lock"))?;
+    let registry = from_registry(&lock, &packages)?;
+    ensure!(
+        registry.is_empty(),
+        "resolved from crates.io instead of the tarballs (a patch went unused): {}",
+        registry.join(", ")
+    );
+    Ok(())
+}
+
+/// Published workspace crates the lockfile took from a registry, which
+/// happens when a tarball's version doesn't satisfy a dependent's requirement.
+fn from_registry(lock: &str, packages: &[Package]) -> Result<Vec<String>> {
+    let lock: toml_edit::DocumentMut = lock.parse().context("parse consumer Cargo.lock")?;
+    let mut found = Vec::new();
+    for entry in lock["package"]
+        .as_array_of_tables()
+        .context("Cargo.lock packages")?
+    {
+        let name = entry["name"].as_str().context("locked package name")?;
+        if entry.contains_key("source") && packages.iter().any(|each| each.name == name) {
+            found.push(format!(
+                "{name} {}",
+                entry["version"].as_str().unwrap_or("?")
+            ));
+        }
+    }
+    Ok(found)
 }
 
 fn published_packages(root: &Path) -> Result<Vec<Package>> {
@@ -147,6 +175,31 @@ mod tests {
         assert!(!is_mobile("whisker-image-desktop", true));
         assert!(!is_mobile("whisker-cli", false));
         assert!(!is_mobile("whisker-web", false));
+    }
+
+    #[test]
+    fn registry_copies_of_workspace_crates_are_reported() {
+        let packages = [Package {
+            name: "whisker".into(),
+            version: "1.2.3".into(),
+            mobile: true,
+        }];
+        let lock = r#"
+            [[package]]
+            name = "whisker"
+            version = "1.2.3"
+
+            [[package]]
+            name = "whisker"
+            version = "1.2.0"
+            source = "registry+https://github.com/rust-lang/crates.io-index"
+
+            [[package]]
+            name = "serde"
+            version = "1.0.0"
+            source = "registry+https://github.com/rust-lang/crates.io-index"
+        "#;
+        assert_eq!(from_registry(lock, &packages).unwrap(), ["whisker 1.2.0"]);
     }
 
     #[test]
