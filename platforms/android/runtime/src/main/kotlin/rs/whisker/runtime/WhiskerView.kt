@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -89,6 +90,7 @@ class WhiskerView(context: Context) :
     private val modules = HostModuleDispatcher(::nativeResolveModule)
     private var backdropCaptureTarget: HostNode? = null
     private var backdropCaptureReached = false
+    private val backdropCaptureAncestors = ArrayList<View>()
     private val pendingContinuousEvents = PendingContinuousEvents()
     private var continuousEventFlushPending = false
     private val pendingModuleEvents = PendingModuleEvents()
@@ -127,9 +129,21 @@ class WhiskerView(context: Context) :
     internal val isRecordingBackdrop: Boolean
         get() = backdropCaptureTarget != null
 
+    /** False when an ancestor of [target] is a View whose child drawing capture cannot intercept. */
+    internal fun canRecordBackdrop(target: HostNode): Boolean {
+        var current = target.parent
+        while (current is HostNode) current = current.parent
+        return current === this
+    }
+
     /** Records only content painted before [target] in Host draw order. */
     internal fun recordBackdrop(canvas: Canvas, target: HostNode) {
         check(backdropCaptureTarget == null)
+        var current = target.parent
+        while (current is HostNode) {
+            backdropCaptureAncestors.add(current)
+            current = current.parent
+        }
         backdropCaptureTarget = target
         backdropCaptureReached = false
         try {
@@ -137,15 +151,37 @@ class WhiskerView(context: Context) :
         } finally {
             backdropCaptureTarget = null
             backdropCaptureReached = false
+            backdropCaptureAncestors.clear()
         }
     }
 
-    /** Returns true once capture reaches the target, excluding it and later siblings. */
-    internal fun shouldSkipBackdropCapture(node: HostNode): Boolean {
-        val target = backdropCaptureTarget ?: return false
-        if (node === target) backdropCaptureReached = true
-        return backdropCaptureReached
+    /** Replays target ancestors directly because their RenderNodes are mid-recording; null keeps the normal path. */
+    internal fun drawBackdropCaptureChild(canvas: Canvas, child: View): Boolean? {
+        val target = backdropCaptureTarget ?: return null
+        if (child === target) backdropCaptureReached = true
+        if (backdropCaptureReached) return false
+        if (!canvas.isHardwareAccelerated || child !in backdropCaptureAncestors) return null
+        val save = canvas.save()
+        canvas.translate(child.left.toFloat(), child.top.toFloat())
+        if (Build.VERSION.SDK_INT >= 29) child.animationMatrix?.let(canvas::concat)
+        if (!child.matrix.isIdentity) canvas.concat(child.matrix)
+        if (child.alpha < 1f) {
+            canvas.saveLayerAlpha(
+                0f,
+                0f,
+                child.width.toFloat(),
+                child.height.toFloat(),
+                (child.alpha * 255).toInt(),
+            )
+        }
+        canvas.translate(-child.scrollX.toFloat(), -child.scrollY.toFloat())
+        child.draw(canvas)
+        canvas.restoreToCount(save)
+        return false
     }
+
+    override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean =
+        drawBackdropCaptureChild(canvas, child) ?: super.drawChild(canvas, child, drawingTime)
 
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas)
