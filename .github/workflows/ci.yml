@@ -134,6 +134,10 @@ jobs:
         # warnings. The regular clippy job remains the source warning gate.
         env:
           RUSTFLAGS: ""
+      - name: Check the packaged crates for Android
+        run: cargo xtask packaged-check android
+        env:
+          RUSTFLAGS: ""
 
   mobile-link-test-ios:
     name: Mobile consumer link (iOS)
@@ -148,6 +152,10 @@ jobs:
         run: cargo xtask mobile-link-test ios
         # Cross-target feature flags can emit rustc's own compatibility
         # warnings. The regular clippy job remains the source warning gate.
+        env:
+          RUSTFLAGS: ""
+      - name: Check the packaged crates for iOS
+        run: cargo xtask packaged-check ios
         env:
           RUSTFLAGS: ""
 

@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 
 mod mobile_abi;
 mod mobile_link_test;
+mod packaged_check;
 mod release;
 mod rust_host_link_test;
 
@@ -33,11 +34,14 @@ fn main() -> Result<()> {
         (Some("mobile-link-test"), Some(host)) if arguments.next().is_none() => {
             mobile_link_test::run(&workspace_root()?, host)
         }
+        (Some("packaged-check"), Some(host)) if arguments.next().is_none() => {
+            packaged_check::run(&workspace_root()?, host)
+        }
         (Some("rust-host-link-test"), Some(host)) if arguments.next().is_none() => {
             rust_host_link_test::run(&workspace_root()?, host)
         }
         _ => bail!(
-            "usage: cargo xtask host-conformance <desktop|web|android|ios>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
+            "usage: cargo xtask host-conformance <desktop|web|android|ios>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
         ),
     }
 }
