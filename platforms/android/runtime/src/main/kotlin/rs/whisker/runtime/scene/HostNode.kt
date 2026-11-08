@@ -337,8 +337,10 @@ internal class HostNode(
         }
     }
 
+    override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean =
+        root?.drawBackdropCaptureChild(canvas, child) ?: super.drawChild(canvas, child, drawingTime)
+
     override fun draw(canvas: Canvas) {
-        if (root?.shouldSkipBackdropCapture(this) == true) return
         if (
             !needsCanvasTransformFallback &&
             (!needsSoftwareCanvasTransform || canvas.isHardwareAccelerated)
@@ -370,7 +372,10 @@ internal class HostNode(
 
     private fun drawBackdropBlur(canvas: Canvas) {
         val captureRoot = root ?: return
-        if (backdropBlur <= 0f || captureRoot.isRecordingBackdrop || Build.VERSION.SDK_INT < 31) {
+        if (
+            backdropBlur <= 0f || captureRoot.isRecordingBackdrop || Build.VERSION.SDK_INT < 31 ||
+            !captureRoot.canRecordBackdrop(this)
+        ) {
             return
         }
         val geometry = resolvedBoxGeometry ?: return
