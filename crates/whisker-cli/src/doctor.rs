@@ -231,12 +231,12 @@ fn check_rust() -> Vec<Check> {
         Ok(s) => {
             let line = s.lines().next().unwrap_or("").trim().to_string();
             if let Some(v) = parse_rustc_version(&line) {
-                if v >= (1, 88) {
+                if v >= msrv() {
                     out.push(Check::ok("rustc", line));
                 } else {
                     out.push(Check::err(
                         "rustc",
-                        format!("{line} — Whisker requires 1.88+"),
+                        format!("{line} — Whisker requires {MSRV}+"),
                     ));
                 }
             } else {
@@ -280,9 +280,18 @@ fn check_rust() -> Vec<Check> {
     out
 }
 
+const MSRV: &str = env!("CARGO_PKG_RUST_VERSION");
+
+fn msrv() -> (u32, u32) {
+    parse_major_minor(MSRV).expect("rust-version is MAJOR.MINOR[.PATCH]")
+}
+
 fn parse_rustc_version(s: &str) -> Option<(u32, u32)> {
     let rest = s.strip_prefix("rustc ")?;
-    let v = rest.split_whitespace().next()?;
+    parse_major_minor(rest.split_whitespace().next()?)
+}
+
+fn parse_major_minor(v: &str) -> Option<(u32, u32)> {
     let mut it = v.split('.');
     let major: u32 = it.next()?.parse().ok()?;
     let minor: u32 = it.next()?.parse().ok()?;
@@ -517,6 +526,11 @@ mod tests {
             parse_rustc_version("rustc 1.93.0-nightly (abcdef 2026-01-01)"),
             Some((1, 93)),
         );
+    }
+
+    #[test]
+    fn manifest_rust_version_parses() {
+        msrv();
     }
 
     #[test]
