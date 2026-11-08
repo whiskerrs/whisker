@@ -13,6 +13,8 @@ mod release;
 mod rust_host_link_test;
 
 #[cfg(test)]
+mod doc_links;
+#[cfg(test)]
 mod host_sdk_surface;
 #[cfg(test)]
 mod module_contract;

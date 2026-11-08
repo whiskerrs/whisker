@@ -33,7 +33,7 @@
 //! ```
 //!
 //! The fragment's phantom-hoisting machinery (see
-//! [`docs/wrapper-less-control-flow-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/wrapper-less-control-flow-design.md))
+//! [`docs/reactivity-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/reactivity-design.md#control-flow-show-and-foreach))
 //! routes the mounted children to the nearest non-phantom ancestor
 //! in the Host tree, so the on-screen DOM is wrapper-less while
 //! the user code keeps its hierarchical mental model.

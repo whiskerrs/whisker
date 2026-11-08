@@ -53,7 +53,7 @@ publishing {
                 licenses {
                     license {
                         name.set("MIT")
-                        url.set("https://github.com/whiskerrs/whisker/blob/main/LICENSE")
+                        url.set("https://github.com/whiskerrs/whisker/blob/main/LICENSE-MIT")
                     }
                 }
             }
