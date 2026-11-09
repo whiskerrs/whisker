@@ -103,11 +103,17 @@ pub(super) fn declarations(inputs: &AndroidInputs) -> Result<AndroidProjectIr> {
             target: Some(AndroidApiLevel::Release(inputs.target_sdk)),
         },
         default_config: Default::default(),
-        default_config_statements: vec![format!(
-            "versionCode = {}\nversionName = {}",
-            inputs.build_number,
-            super::project_render::quote(&inputs.version)
-        )],
+        default_config_statements: vec![
+            format!(
+                "versionCode = {}\nversionName = {}",
+                inputs.build_number,
+                super::project_render::quote(&inputs.version)
+            ),
+            // Whisker builds only arm64-v8a. Without the filter, a dependency's
+            // other ABIs (x86, x86_64, armeabi-v7a) are packaged too, and the
+            // app cannot start on those devices anyway.
+            "ndk {\n    abiFilters += listOf(\"arm64-v8a\")\n}".into(),
+        ],
         variants: Default::default(),
         source_sets: Default::default(),
         statements: vec![render(

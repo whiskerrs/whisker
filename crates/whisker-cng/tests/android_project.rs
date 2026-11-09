@@ -36,7 +36,7 @@ fn base() -> AndroidProjectInputs {
         },
         app_crate_dir: None,
         cargo_selection: Default::default(),
-        template_version: 38,
+        template_version: 39,
     }
 }
 fn text(files: &std::collections::BTreeMap<ProjectPath, FileEntry>, path: &str) -> String {
@@ -315,6 +315,10 @@ impl ProjectPlugin for EditApplication {
         };
         app.application_id = Some("test.changed.id".into());
         app.android.sdk.min = Some(AndroidApiLevel::Release(28));
+        // The ABI filter is a plain statement, so a project can drop it.
+        app.android
+            .default_config_statements
+            .retain(|statement| !statement.contains("abiFilters"));
         project
             .files
             .remove(&ProjectPath::new("app/src/main/res/values/colors.xml")?);
@@ -353,12 +357,14 @@ fn application_declarations_can_be_edited_and_final_validation_requires_a_main_p
                 project: *project,
                 app_crate_dir: None,
                 cargo_selection: Default::default(),
-                template_version: 38,
+                template_version: 39,
             })
             .unwrap();
             let script = text(&files, "app/build.gradle.kts");
             assert!(script.contains("applicationId = \"test.changed.id\""));
             assert!(script.contains("minSdk = 28"));
+            assert!(script.contains("versionCode = "));
+            assert!(!script.contains("abiFilters"));
             assert!(
                 !files
                     .contains_key(&ProjectPath::new("app/src/main/res/values/colors.xml").unwrap())
