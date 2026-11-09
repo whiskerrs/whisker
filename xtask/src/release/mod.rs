@@ -25,6 +25,8 @@ const PLAN_PATH: &str = ".github/release.json";
 const CNG_PATH: &str = "crates/whisker-cng/src/generator.rs";
 const IOS_PATH: &str = "crates/whisker-cng/src/ios_modules.rs";
 const REPOSITORY: &str = "whiskerrs/whisker";
+/// Published crates deliberately removed from the workspace; they stay on crates.io at their last version.
+const RETIRED_CRATES: &[&str] = &["whisker-macos"];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

@@ -228,8 +228,9 @@ pub(super) fn prepare_selection(
         previous
             .packages
             .keys()
-            .all(|name| current.packages.contains_key(name)),
-        "removing published crates requires an explicit release migration"
+            .all(|name| current.packages.contains_key(name)
+                || RETIRED_CRATES.contains(&name.as_str())),
+        "removing published crates requires listing them in RETIRED_CRATES"
     );
     for (name, package) in &current.packages {
         if let Some(old) = previous.packages.get(name) {
