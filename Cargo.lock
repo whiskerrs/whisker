@@ -7265,13 +7265,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "whisker-macos"
-version = "0.16.0"
-dependencies = [
- "whisker-desktop",
-]
-
-[[package]]
 name = "whisker-macro-syntax"
 version = "0.16.0"
 dependencies = [

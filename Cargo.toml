@@ -39,7 +39,6 @@ members = [
     "crates/whisker-value",
     "platforms/desktop",
     "crates/whisker-subsecond",
-    "platforms/macos",
     "platforms/windows",
     "platforms/linux",
     "platforms/web",
@@ -143,7 +142,6 @@ whisker-runtime = { path = "crates/whisker-runtime", version = "=0.16.0" }
 whisker-style = { path = "crates/whisker-style", version = "=0.16.0" }
 whisker-value = { path = "crates/whisker-value", version = "=0.16.0" }
 whisker-desktop = { path = "platforms/desktop", version = "=0.16.0" }
-whisker-macos = { path = "platforms/macos", version = "=0.16.0" }
 whisker-windows = { path = "platforms/windows", version = "=0.16.0" }
 whisker-linux = { path = "platforms/linux", version = "=0.16.0" }
 whisker-web = { path = "platforms/web", version = "=0.16.0" }
