@@ -127,7 +127,8 @@ public final class WhiskerImageView: WhiskerUI<WhiskerImageContentView> {
         guard let value = currentSrc else { return }
 
         let imageView: WhiskerImageContentView = self.view()
-        guard let url = URL(string: value) else {
+        // macOS bundles resolve `whisker-asset` paths to absolute file paths rather than URLs.
+        guard let url = value.hasPrefix("/") ? URL(fileURLWithPath: value) : URL(string: value) else {
             // Clear the previous image so a bad URL doesn't leave a stale
             // shot on screen.
             imageView.kf.cancelDownloadTask()

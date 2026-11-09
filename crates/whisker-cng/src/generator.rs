@@ -439,54 +439,16 @@ fn sync_macos(
     selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/macos");
-    // Inside the Whisker monorepo, point at the in-tree Host so examples
-    // exercise the current checkout. Installed projects use the published
-    // crate at the generator's matching version.
-    let in_tree_host = workspace_root.join("platforms/macos");
-    let dependency = if in_tree_host.join("Cargo.toml").is_file() {
-        format!("{{ path = {:?} }}", in_tree_host.display().to_string())
-    } else {
-        format!("{:?}", env!("CARGO_PKG_VERSION"))
-    };
     let mut inputs = crate::macos::inputs_from(
         app_config,
         package.to_string(),
         crate_dir.to_path_buf(),
-        dependency,
+        workspace_root.to_path_buf(),
     )?;
-    let in_tree_desktop = workspace_root.join("platforms/desktop");
-    if in_tree_desktop.join("Cargo.toml").is_file() {
-        inputs.whisker_desktop_dependency =
-            format!("{{ path = {:?} }}", in_tree_desktop.display().to_string());
-    }
     inputs.cargo_selection = selection.clone();
-    inputs.element_modules = graph
-        .modules
-        .iter()
-        .cloned()
-        .filter_map(|module| {
-            let contribution = module
-                .rust_host(crate::modules::ModulePlatform::Macos)?
-                .clone();
-            let host_dependency = match contribution.source {
-                crate::modules::ResolvedRustHostSource::Path(path) => {
-                    crate::RustHostDependency::Path(path)
-                }
-                crate::modules::ResolvedRustHostSource::Registry { version } => {
-                    crate::RustHostDependency::Registry { version }
-                }
-            };
-            Some(crate::RustElementModuleInput {
-                package: module.package,
-                crate_path: module.manifest_dir,
-                host_package: contribution.package,
-                host_dependency,
-            })
-        })
-        .collect();
+    inputs.modules = graph.modules.clone();
     let template_version = inputs.template_version;
-    let app_name = inputs.app_name.clone();
-    let generated_package = inputs.generated_package.clone();
+    let project_name = inputs.app_name.clone();
     let discovered: Vec<_> = graph
         .cng_plugins
         .iter()
@@ -524,24 +486,26 @@ fn sync_macos(
     let whisker_plugin::project::ProjectIr::Macos(project) = result.project else {
         unreachable!()
     };
-    let target = &project.apple.targets[&project.apple.application];
     anyhow::ensure!(
-        target.product_name == app_name
-            && target
-                .rust
-                .as_ref()
-                .is_some_and(|r| r.package == generated_package && r.target == generated_package),
-        "macOS build/run driver requires the configured app and generated binary names"
+        project
+            .apple
+            .schemes
+            .get(&project_name)
+            .is_some_and(|s| s.run_target.as_ref() == Some(&project.apple.application))
+            && project.apple.targets[&project.apple.application].product_name == project_name,
+        "Whisker macOS build driver requires the configured main scheme and application product name"
     );
     let regenerated = crate::macos::sync_project(
         &gen_dir,
         &crate::macos::MacosProjectInputs {
             project,
+            project_name,
             app_crate_dir: Some(crate_dir.to_path_buf()),
             cargo_selection: selection.clone(),
             template_version,
         },
-    )?;
+    )
+    .context("render gen/macos")?;
     Ok(PlatformSync {
         gen_dir,
         regenerated,
@@ -878,10 +842,14 @@ mod tests {
             "cng-module-fixture",
         )
         .unwrap();
-        let macos_source = std::fs::read_to_string(macos.gen_dir.join("src/main.rs")).unwrap();
-        assert!(macos_source.contains("cng_test_widget::__whisker_element_module_definition()"));
-        assert!(macos_source.contains("cng_test_widget_desktop::__whisker_module_definition()"));
-        assert!(!macos_source.contains("cng_test_service"));
+        let macos_registrar = std::fs::read_to_string(
+            macos
+                .gen_dir
+                .join("whisker_modules/Sources/WhiskerModules/RegisterAll.swift"),
+        )
+        .unwrap();
+        assert!(macos_registrar.contains("_whiskerRegisterModules_CngTestWidget()"));
+        assert!(!macos_registrar.contains("CngTestService"));
 
         let web = sync_for_target(
             Target::Web,

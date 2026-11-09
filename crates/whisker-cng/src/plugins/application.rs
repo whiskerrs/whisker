@@ -187,7 +187,7 @@ pub(crate) fn macos(config: &Config) -> Result<MacosApplication> {
             .ok_or_else(|| anyhow!("whisker.rs: app.bundle_id(\"…\") is required for macOS"))?,
         version: version(config.version.as_deref()),
         build_number: config.build_number.unwrap_or(1),
-        minimum_system_version: "12.0".into(),
+        minimum_system_version: "14.0".into(),
     })
 }
 

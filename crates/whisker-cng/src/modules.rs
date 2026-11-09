@@ -99,6 +99,7 @@ impl ResolvedModule {
         let implementation = match platform {
             ModulePlatform::Android => self.platforms.android.as_ref(),
             ModulePlatform::Ios => self.platforms.ios.as_ref(),
+            ModulePlatform::Macos => self.platforms.macos.as_ref(),
             _ => None,
         }?;
         match implementation {

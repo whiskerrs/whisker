@@ -68,7 +68,7 @@ pub fn stage_module_swift_sources(
     std::fs::create_dir_all(&sources_root)
         .with_context(|| format!("mkdir -p {}", sources_root.display()))?;
 
-    let files = module_files(modules, workspace_root);
+    let files = module_files(modules, workspace_root, ModulePlatform::Ios);
     for (path, entry) in files {
         let path = gen_ios.join(path.as_str());
         if let Some(parent) = path.parent() {
@@ -83,13 +83,14 @@ pub fn stage_module_swift_sources(
 pub(crate) fn module_files(
     modules: &[ResolvedModule],
     workspace_root: &Path,
+    platform: ModulePlatform,
 ) -> std::collections::BTreeMap<whisker_plugin::project::ProjectPath, whisker_plugin::FileEntry> {
-    // The module manifest is authoritative; unsupported and common-only iOS
+    // The module manifest is authoritative; unsupported and common-only
     // implementations do not enter SwiftPM's graph.
     let ios_modules: Vec<&ResolvedModule> = modules
         .iter()
         .filter(|m| {
-            m.native_manifest(ModulePlatform::Ios)
+            m.native_manifest(platform)
                 .is_some_and(|manifest| manifest.kind == NativeManifestKind::SwiftPm)
         })
         .collect();
@@ -108,9 +109,10 @@ pub(crate) fn module_files(
     [
         (
             ProjectPath::new("whisker_modules/Package.swift").unwrap(),
-            FileEntry::text(render_modules_package_swift(
+            FileEntry::text(render_platform_modules_package_swift(
                 local_whisker_package,
                 &ios_modules,
+                platform,
             )),
         ),
         (
@@ -190,6 +192,17 @@ pub fn render_modules_package_swift(
     local_whisker_package: Option<&Path>,
     modules: &[&ResolvedModule],
 ) -> String {
+    render_platform_modules_package_swift(local_whisker_package, modules, ModulePlatform::Ios)
+}
+
+/// macOS floor shared by the Host SDK and every generated aggregator.
+pub const MACOS_PLATFORM_MAJOR: u32 = 14;
+
+fn render_platform_modules_package_swift(
+    local_whisker_package: Option<&Path>,
+    modules: &[&ResolvedModule],
+    platform: ModulePlatform,
+) -> String {
     let mut out = String::new();
     out.push_str(
         "// swift-tools-version:5.9\n\
@@ -211,10 +224,16 @@ pub fn render_modules_package_swift(
     out.push_str("import PackageDescription\n\n");
     out.push_str("let package = Package(\n");
     out.push_str("    name: \"WhiskerModules\",\n");
-    out.push_str(&format!(
-        "    platforms: [.iOS(.v{})],\n",
-        ios_platform_major(modules)
-    ));
+    if platform == ModulePlatform::Macos {
+        out.push_str(&format!(
+            "    platforms: [.macOS(.v{MACOS_PLATFORM_MAJOR})],\n"
+        ));
+    } else {
+        out.push_str(&format!(
+            "    platforms: [.iOS(.v{})],\n",
+            ios_platform_major(modules)
+        ));
+    }
     out.push_str("    products: [\n");
     out.push_str("        .library(name: \"WhiskerModules\", targets: [\"WhiskerModules\"]),\n");
     out.push_str("    ],\n");
@@ -235,9 +254,9 @@ pub fn render_modules_package_swift(
         // crate's dir name — unique). Its target sources live under
         // the package's `ios/` subdir (Expo-style layout).
         let path = m
-            .native_manifest(ModulePlatform::Ios)
+            .native_manifest(platform)
             .and_then(|manifest| manifest.path.parent())
-            .expect("iOS modules were filtered to SwiftPM manifests")
+            .expect("modules were filtered to SwiftPM manifests")
             .display()
             .to_string();
         out.push_str(&format!(

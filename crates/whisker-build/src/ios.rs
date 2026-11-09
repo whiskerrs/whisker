@@ -110,10 +110,15 @@ fn cargo_build_ios_dylib(
             .env("CARGO_PROFILE_RELEASE_STRIP", "symbols")
             .env("CARGO_PROFILE_RELEASE_PANIC", "abort");
     }
+    let generation_target = if triple.ends_with("-apple-darwin") {
+        whisker_cng::GenerationTarget::Macos
+    } else {
+        whisker_cng::GenerationTarget::Ios
+    };
     let selection = whisker_cng::ProjectDependencyGraph::native_build_selection(
         workspace_root,
         package,
-        whisker_cng::GenerationTarget::Ios,
+        generation_target,
         triple,
         features,
     )?;
@@ -318,6 +323,9 @@ pub fn build_framework_for_xcode_run_script(
         fat
     };
 
+    if inputs.platform == "macosx" {
+        return publish_macos_library(&combined_dylib, built_products_dir);
+    }
     let staged_fw = build_framework_dir(&out_dir, &combined_dylib)?;
 
     // Xcode's embed-frameworks phase scans `Frameworks/` at link time.
@@ -336,6 +344,29 @@ pub fn build_framework_for_xcode_run_script(
         published_fw.display(),
     ));
     Ok(published_fw)
+}
+
+/// Places the app library where the macOS target links and embeds it.
+fn publish_macos_library(dylib: &Path, built_products_dir: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(built_products_dir)
+        .with_context(|| format!("mkdir -p {}", built_products_dir.display()))?;
+    let published = built_products_dir.join(whisker_cng::macos::DRIVER_LIBRARY);
+    std::fs::copy(dylib, &published)
+        .with_context(|| format!("copy {} → {}", dylib.display(), published.display()))?;
+    let install_name = format!("@rpath/{}", whisker_cng::macos::DRIVER_LIBRARY);
+    let status = Command::new("install_name_tool")
+        .args(["-id", &install_name])
+        .arg(&published)
+        .status()
+        .context("spawn install_name_tool")?;
+    if !status.success() {
+        return Err(anyhow!(
+            "install_name_tool failed on {} ({status})",
+            published.display()
+        ));
+    }
+    crate::ui::info(format!("publish {}", published.display()));
+    Ok(published)
 }
 
 /// Xcode `ARCHS` value for the Simulator slice this host runs natively.
@@ -357,6 +388,8 @@ fn map_arch_to_triple(platform: &str, arch: &str) -> Result<&'static str> {
         ("iphoneos", "arm64") => Ok("aarch64-apple-ios"),
         ("iphonesimulator", "arm64") => Ok("aarch64-apple-ios-sim"),
         ("iphonesimulator", "x86_64") => Ok("x86_64-apple-ios"),
+        ("macosx", "arm64") => Ok("aarch64-apple-darwin"),
+        ("macosx", "x86_64") => Ok("x86_64-apple-darwin"),
         (p, a) => Err(anyhow!(
             "unsupported (PLATFORM_NAME, ARCH) pair: ({p}, {a})"
         )),

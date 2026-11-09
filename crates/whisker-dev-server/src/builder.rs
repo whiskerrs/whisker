@@ -213,9 +213,8 @@ impl Builder {
         tokio::task::spawn_blocking(move || {
             whisker_build::macos::build_app(&whisker_build::macos::MacosBuild {
                 project_dir: &params.project_dir,
-                target_dir: &params.target_dir,
-                app_name: &params.app_name,
-                binary_name: &params.binary_name,
+                project_name: &params.project_name,
+                derived_data: &params.derived_data,
                 profile: whisker_build::Profile::Debug,
                 features: &features,
                 capture: capture.as_ref(),
@@ -223,7 +222,7 @@ impl Builder {
             .map(|_| ())
         })
         .await
-        .context("spawn_blocking macOS Host build")?
+        .context("spawn_blocking macOS app build")?
     }
 }
 

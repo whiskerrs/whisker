@@ -284,14 +284,7 @@ pub(super) fn init_patcher_for(config: &Config, prep: &HotReloadPrep) -> Result<
         .map(RuntimePatcher::Web);
     }
     let original_binary = original_binary_path(config)?;
-    // Native macOS builds do not pass `--target`; the capture envelope still
-    // names the host triple to select Apple linker flags, but filtering rustc
-    // records by an explicit target would discard the user crate invocation.
-    let captured_target = if config.target == Target::Macos {
-        None
-    } else {
-        prep.capture.target_triple.as_deref()
-    };
+    let captured_target = prep.capture.target_triple.as_deref();
     hotpatch::Patcher::initialize(
         &config.workspace_root,
         config.package.clone(),
@@ -408,23 +401,14 @@ pub(super) fn original_binary_path(config: &Config) -> Result<PathBuf> {
             Ok(dylib)
         }
         Target::Macos => {
-            let macos = config
-                .macos
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("target=Macos but Config.macos is None"))?;
-            let executable = whisker_build::macos::host_executable(
-                &macos.project_dir,
-                &macos.target_dir,
-                whisker_build::Profile::Debug,
-                &macos.binary_name,
-            )?;
-            if !executable.is_file() {
+            let dylib = whisker_build::macos::driver_dylib(&config.workspace_root, &config.package);
+            if !dylib.is_file() {
                 anyhow::bail!(
-                    "no macOS Host executable at {} — the initial Cargo build did not produce it",
-                    executable.display(),
+                    "no macOS dylib at {} — the initial xcodebuild did not produce it",
+                    dylib.display(),
                 );
             }
-            Ok(executable)
+            Ok(dylib)
         }
         Target::Web => anyhow::bail!(
             "Web hot patches use the generated post-bindgen WASM module, not a native executable"
