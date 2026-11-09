@@ -58,6 +58,10 @@ impl<Provider: MeasurementProvider> MeasurementProvider for TimedProvider<'_, Pr
         result
     }
 
+    fn measures_synchronously(&self) -> bool {
+        self.inner.measures_synchronously()
+    }
+
     fn retain_prepared_content(
         &mut self,
         surface: SurfaceId,

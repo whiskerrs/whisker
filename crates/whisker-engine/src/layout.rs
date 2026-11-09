@@ -30,6 +30,11 @@ pub trait MeasurementProvider {
         requests: &[MeasurementRequest],
         responses: &mut Vec<MeasurementResponse>,
     ) -> Result<(), Self::Error>;
+    /// Whether layout should ask for each uncached measurement while Taffy waits
+    /// instead of batching; a Host with a fixed per-batch cost, such as a DOM reflow, keeps `false`.
+    fn measures_synchronously(&self) -> bool {
+        false
+    }
     /// Retains measurement-cache objects independently of the currently displayed frame.
     fn retain_prepared_content(
         &mut self,
@@ -111,9 +116,35 @@ impl SurfaceEngine {
         options: LayoutOptions,
     ) -> Result<LayoutProgress, LayoutError<Provider::Error>> {
         let mut batches = 0;
+        let surface = self.surface();
+        let synchronous = provider.measures_synchronously();
         loop {
-            let progress =
-                self.compute_layout_with_measurements(root, viewport, environment_epoch)?;
+            let mut failure = None;
+            let progress = if !synchronous {
+                self.compute_layout_with_measurements(root, viewport, environment_epoch)
+            } else {
+                let mut host = |request: &MeasurementRequest| {
+                    if failure.is_some() {
+                        return None;
+                    }
+                    let requests = std::slice::from_ref(request);
+                    let mut responses = Vec::with_capacity(1);
+                    if let Err(error) = provider.measure_batch(surface, requests, &mut responses) {
+                        failure = Some(LayoutError::Measurement(error));
+                        return None;
+                    }
+                    if let Err(error) = validate_measurement_batch(requests, &responses) {
+                        failure = Some(LayoutError::InvalidBatch(error));
+                        return None;
+                    }
+                    responses.pop()
+                };
+                self.compute_layout_using(root, viewport, environment_epoch, Some(&mut host))
+            };
+            if let Some(failure) = failure {
+                return Err(failure);
+            }
+            let progress = progress?;
             if progress.requests().is_empty() {
                 self.synchronize_prepared_content(provider);
                 return Ok(progress);
@@ -175,6 +206,7 @@ mod tests {
 
     struct TestHost {
         reply: Reply,
+        synchronous: bool,
         calls: Vec<(SurfaceId, Vec<MeasurementRequest>)>,
     }
 
@@ -182,13 +214,25 @@ mod tests {
         fn new(reply: Reply) -> Self {
             Self {
                 reply,
+                synchronous: false,
                 calls: Vec::new(),
+            }
+        }
+
+        fn synchronous(reply: Reply) -> Self {
+            Self {
+                synchronous: true,
+                ..Self::new(reply)
             }
         }
     }
 
     impl MeasurementProvider for TestHost {
         type Error = TestHostError;
+
+        fn measures_synchronously(&self) -> bool {
+            self.synchronous
+        }
 
         fn measure_batch(
             &mut self,
@@ -248,6 +292,22 @@ mod tests {
                 Reply::Fail => return Err(TestHostError::Failed),
             }
             Ok(())
+        }
+    }
+
+    /// Keeps the default `measures_synchronously`.
+    struct BatchedHost(TestHost);
+
+    impl MeasurementProvider for BatchedHost {
+        type Error = TestHostError;
+
+        fn measure_batch(
+            &mut self,
+            surface: SurfaceId,
+            requests: &[MeasurementRequest],
+            responses: &mut Vec<MeasurementResponse>,
+        ) -> Result<(), Self::Error> {
+            self.0.measure_batch(surface, requests, responses)
         }
     }
 
@@ -325,6 +385,84 @@ mod tests {
         assert_eq!(
             surface.last_measurement(root).map(|metrics| metrics.size),
             Some(MeasuredSize::new(48.0, 20.0))
+        );
+    }
+
+    #[test]
+    fn synchronous_host_answers_each_request_inside_one_layout_pass() {
+        let (mut surface, root) = surface_with_text();
+        let mut host = TestHost::synchronous(Reply::Ready(MeasuredSize::new(48.0, 20.0)));
+        let progress = surface
+            .drive_layout(
+                root,
+                LayoutSize::new(100.0, 100.0),
+                7,
+                &mut host,
+                LayoutOptions {
+                    max_immediate_batches: 0,
+                },
+            )
+            .expect("synchronous layout needs no batch round");
+
+        assert!(progress.has_layout());
+        assert!(progress.requests().is_empty());
+        assert!(!host.calls.is_empty());
+        assert!(host.calls.iter().all(|(_, requests)| requests.len() == 1));
+        assert_eq!(
+            surface.last_measurement(root).map(|metrics| metrics.size),
+            Some(MeasuredSize::new(48.0, 20.0))
+        );
+    }
+
+    #[test]
+    fn synchronous_host_pending_and_failure_match_batched_outcomes() {
+        let (mut surface, root) = surface_with_text();
+        let mut pending = TestHost::synchronous(Reply::Pending);
+        let progress = surface
+            .drive_layout(
+                root,
+                LayoutSize::new(100.0, 100.0),
+                1,
+                &mut pending,
+                LayoutOptions::default(),
+            )
+            .expect("pending layout is valid");
+        assert!(matches!(
+            progress,
+            LayoutProgress::Blocked { requests, pending: count }
+                if requests.is_empty() && count == pending.calls.len()
+        ));
+
+        let (mut surface, root) = surface_with_text();
+        let mut failed = TestHost::synchronous(Reply::Fail);
+        let error = surface
+            .drive_layout(
+                root,
+                LayoutSize::new(100.0, 100.0),
+                1,
+                &mut failed,
+                LayoutOptions::default(),
+            )
+            .expect_err("Host failure");
+        assert_eq!(error, LayoutError::Measurement(TestHostError::Failed));
+        assert_eq!(failed.calls.len(), 1);
+
+        let (mut surface, root) = surface_with_text();
+        let mut missing = TestHost::synchronous(Reply::Missing);
+        let error = surface
+            .drive_layout(
+                root,
+                LayoutSize::new(100.0, 100.0),
+                1,
+                &mut missing,
+                LayoutOptions::default(),
+            )
+            .expect_err("missing response");
+        assert_eq!(
+            error,
+            LayoutError::InvalidBatch(MeasurementBatchError::MissingResponseKey {
+                key: missing.calls[0].1[0].key,
+            })
         );
     }
 
@@ -521,7 +659,7 @@ mod tests {
     #[test]
     fn pending_host_returns_control_to_the_event_boundary() {
         let (mut surface, root) = surface_with_text();
-        let mut host = TestHost::new(Reply::Pending);
+        let mut host = BatchedHost(TestHost::new(Reply::Pending));
         let progress = surface
             .drive_layout(
                 root,
@@ -531,11 +669,11 @@ mod tests {
                 LayoutOptions::default(),
             )
             .expect("pending layout is valid");
-        assert_eq!(host.calls.len(), 1);
+        assert_eq!(host.0.calls.len(), 1);
         assert!(matches!(
             progress,
             LayoutProgress::Blocked { requests, pending }
-                if requests.is_empty() && pending == host.calls[0].1.len()
+                if requests.is_empty() && pending == host.0.calls[0].1.len()
         ));
     }
 
