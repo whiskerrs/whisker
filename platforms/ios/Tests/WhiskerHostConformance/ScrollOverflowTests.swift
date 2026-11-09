@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import UIKit
 import XCTest
 @testable import WhiskerModule
@@ -107,3 +108,4 @@ extension HostConformanceTests {
         }
     }
 }
+#endif

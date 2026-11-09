@@ -8,7 +8,7 @@ import CompilerPluginSupport
 
 let package = Package(
     name: "Whisker",
-    platforms: [.iOS(.v13), .macOS(.v13)],
+    platforms: [.iOS(.v13), .macOS(.v14)],
     products: [
         .library(name: "WhiskerModule", targets: ["WhiskerModule"]),
         .library(name: "WhiskerRuntime", targets: ["WhiskerRuntime"]),

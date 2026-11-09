@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import UIKit
 
 /// UIKit projection of Whisker's single `backdrop-filter: blur()` primitive.
@@ -48,3 +49,4 @@ final class HostBackdropBlurView: UIVisualEffectView {
         layer.mask = shapeMask
     }
 }
+#endif

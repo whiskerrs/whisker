@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import UIKit
 @testable import WhiskerModule
 @testable import WhiskerRuntime
@@ -164,3 +165,4 @@ extension ParagraphTests {
         XCTAssertNil(retained)
     }
 }
+#endif

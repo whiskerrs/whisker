@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import UIKit
 @testable import WhiskerModule
 @testable import WhiskerRuntime
@@ -296,3 +297,4 @@ private final class Measurement {
         raw.release_prepared_layout?(raw.prepared_layout)
     }
 }
+#endif

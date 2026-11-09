@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import UIKit
 import WhiskerModule
 
@@ -423,3 +424,4 @@ public final class WhiskerView: UIView {
         }
     }
 }
+#endif

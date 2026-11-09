@@ -1,4 +1,8 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 /**
  Process-wide safe-area source shared by `WhiskerView` and native modules.
@@ -11,16 +15,16 @@ import UIKit
 public enum WhiskerInsetsDispatcher {
     public final class Registration {
         fileprivate let id = UUID()
-        fileprivate let callback: (UIEdgeInsets) -> Void
+        fileprivate let callback: (WhiskerPlatformEdgeInsets) -> Void
 
-        fileprivate init(_ callback: @escaping (UIEdgeInsets) -> Void) {
+        fileprivate init(_ callback: @escaping (WhiskerPlatformEdgeInsets) -> Void) {
             self.callback = callback
         }
     }
 
     private final class WeakView {
-        weak var value: UIView?
-        init(_ value: UIView) { self.value = value }
+        weak var value: WhiskerPlatformView?
+        init(_ value: WhiskerPlatformView) { self.value = value }
     }
 
     private static let lock = NSLock()
@@ -28,7 +32,7 @@ public enum WhiskerInsetsDispatcher {
     private static var listeners: [UUID: Registration] = [:]
 
     /** Register a view as the current inset source. Called by `WhiskerView`. */
-    public static func attach(_ view: UIView) {
+    public static func attach(_ view: WhiskerPlatformView) {
         let callbacks: [Registration]
         lock.lock()
         views.removeAll { $0.value == nil || $0.value === view }
@@ -39,8 +43,8 @@ public enum WhiskerInsetsDispatcher {
     }
 
     /** Remove a view from the source stack. Called when `WhiskerView` detaches. */
-    public static func detach(_ view: UIView) {
-        let current: UIView?
+    public static func detach(_ view: WhiskerPlatformView) {
+        let current: WhiskerPlatformView?
         let callbacks: [Registration]
         lock.lock()
         views.removeAll { $0.value == nil || $0.value === view }
@@ -51,7 +55,7 @@ public enum WhiskerInsetsDispatcher {
     }
 
     /** Publish a changed inset value from an attached view. */
-    public static func update(_ view: UIView) {
+    public static func update(_ view: WhiskerPlatformView) {
         let callbacks: [Registration]
         lock.lock()
         views.removeAll { $0.value == nil }
@@ -67,10 +71,10 @@ public enum WhiskerInsetsDispatcher {
     /** Subscribe and immediately receive the current value when available. */
     @discardableResult
     public static func addListener(
-        _ callback: @escaping (UIEdgeInsets) -> Void
+        _ callback: @escaping (WhiskerPlatformEdgeInsets) -> Void
     ) -> Registration {
         let registration = Registration(callback)
-        let current: UIView?
+        let current: WhiskerPlatformView?
         lock.lock()
         views.removeAll { $0.value == nil }
         listeners[registration.id] = registration
@@ -86,7 +90,7 @@ public enum WhiskerInsetsDispatcher {
         lock.unlock()
     }
 
-    private static func notify(_ registrations: [Registration], insets: UIEdgeInsets) {
+    private static func notify(_ registrations: [Registration], insets: WhiskerPlatformEdgeInsets) {
         for registration in registrations { registration.callback(insets) }
     }
 }

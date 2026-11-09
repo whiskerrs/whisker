@@ -1,4 +1,8 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 extension NSAttributedString.Key {
     static let whiskerInlineBackground = Self("rs.whisker.inline.background")
@@ -6,16 +10,16 @@ extension NSAttributedString.Key {
 }
 
 final class WhiskerInlineBackground: NSObject {
-    let color: UIColor
+    let color: WhiskerPlatformColor
     let radii: [[CGFloat]]
-    init(color: UIColor, radii: [[CGFloat]]) { self.color = color; self.radii = radii }
+    init(color: WhiskerPlatformColor, radii: [[CGFloat]]) { self.color = color; self.radii = radii }
 }
 
 final class WhiskerInlineWave: NSObject {
-    let color: UIColor
+    let color: WhiskerPlatformColor
     let underline: Bool
     let strike: Bool
-    init(color: UIColor, underline: Bool, strike: Bool) {
+    init(color: WhiskerPlatformColor, underline: Bool, strike: Bool) {
         self.color = color; self.underline = underline; self.strike = strike
     }
 }
@@ -24,19 +28,21 @@ extension WhiskerParagraphLayout {
     func drawInlineBackgrounds(at origin: CGPoint) {
         fragments(attribute: .whiskerInlineBackground) { value, rect, _, _ in
             guard let background = value as? WhiskerInlineBackground else { return }
-            background.color.setFill()
+            guard let context = whiskerCurrentGraphicsContext() else { return }
             let rect = rect.offsetBy(dx: origin.x, dy: origin.y)
-            inlineRoundedPath(rect, radii: background.radii).fill()
+            context.setFillColor(background.color.cgColor)
+            context.addPath(inlineRoundedPath(rect, radii: background.radii))
+            context.fillPath()
         }
     }
 
     func drawInlineWaves(at origin: CGPoint) {
         fragments(attribute: .whiskerInlineWave) { value, rect, glyph, character in
             guard let wave = value as? WhiskerInlineWave,
-                  let font = self.storage.attribute(.font, at: character, effectiveRange: nil) as? UIFont else { return }
+                  let font = self.storage.attribute(.font, at: character, effectiveRange: nil) as? WhiskerPlatformFont else { return }
             let baseline = self.baseline(at: glyph) + origin.y
             let stroke = max(1, font.pointSize / 16)
-            wave.color.setStroke()
+            whiskerCurrentGraphicsContext()?.setStrokeColor(wave.color.cgColor)
             if wave.underline { inlineWave(from: rect.minX + origin.x, to: rect.maxX + origin.x, y: baseline + stroke * 1.5, stroke: stroke) }
             if wave.strike { inlineWave(from: rect.minX + origin.x, to: rect.maxX + origin.x, y: baseline - font.ascender * 0.35, stroke: stroke) }
         }
@@ -62,7 +68,7 @@ extension WhiskerParagraphLayout {
     }
 }
 
-private func inlineRoundedPath(_ rect: CGRect, radii: [[CGFloat]]) -> UIBezierPath {
+private func inlineRoundedPath(_ rect: CGRect, radii: [[CGFloat]]) -> CGPath {
     var corners = radii.map { CGSize(width: $0[0] + $0[1] * rect.width, height: $0[2] + $0[3] * rect.height) }
     let scale = min(1,
         radiusScale(rect.width, corners[0].width + corners[1].width),
@@ -70,27 +76,27 @@ private func inlineRoundedPath(_ rect: CGRect, radii: [[CGFloat]]) -> UIBezierPa
         radiusScale(rect.height, corners[0].height + corners[3].height),
         radiusScale(rect.height, corners[1].height + corners[2].height))
     corners = corners.map { CGSize(width: $0.width * scale, height: $0.height * scale) }
-    let path = UIBezierPath()
+    let path = CGMutablePath()
     let k: CGFloat = 0.5522847498307936
     let (tl, tr, br, bl) = (corners[0], corners[1], corners[2], corners[3])
     path.move(to: CGPoint(x: rect.minX + tl.width, y: rect.minY))
     path.addLine(to: CGPoint(x: rect.maxX - tr.width, y: rect.minY))
-    path.addCurve(to: CGPoint(x: rect.maxX, y: rect.minY + tr.height), controlPoint1: CGPoint(x: rect.maxX - tr.width * (1 - k), y: rect.minY), controlPoint2: CGPoint(x: rect.maxX, y: rect.minY + tr.height * (1 - k)))
+    path.addCurve(to: CGPoint(x: rect.maxX, y: rect.minY + tr.height), control1: CGPoint(x: rect.maxX - tr.width * (1 - k), y: rect.minY), control2: CGPoint(x: rect.maxX, y: rect.minY + tr.height * (1 - k)))
     path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - br.height))
-    path.addCurve(to: CGPoint(x: rect.maxX - br.width, y: rect.maxY), controlPoint1: CGPoint(x: rect.maxX, y: rect.maxY - br.height * (1 - k)), controlPoint2: CGPoint(x: rect.maxX - br.width * (1 - k), y: rect.maxY))
+    path.addCurve(to: CGPoint(x: rect.maxX - br.width, y: rect.maxY), control1: CGPoint(x: rect.maxX, y: rect.maxY - br.height * (1 - k)), control2: CGPoint(x: rect.maxX - br.width * (1 - k), y: rect.maxY))
     path.addLine(to: CGPoint(x: rect.minX + bl.width, y: rect.maxY))
-    path.addCurve(to: CGPoint(x: rect.minX, y: rect.maxY - bl.height), controlPoint1: CGPoint(x: rect.minX + bl.width * (1 - k), y: rect.maxY), controlPoint2: CGPoint(x: rect.minX, y: rect.maxY - bl.height * (1 - k)))
+    path.addCurve(to: CGPoint(x: rect.minX, y: rect.maxY - bl.height), control1: CGPoint(x: rect.minX + bl.width * (1 - k), y: rect.maxY), control2: CGPoint(x: rect.minX, y: rect.maxY - bl.height * (1 - k)))
     path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + tl.height))
-    path.addCurve(to: CGPoint(x: rect.minX + tl.width, y: rect.minY), controlPoint1: CGPoint(x: rect.minX, y: rect.minY + tl.height * (1 - k)), controlPoint2: CGPoint(x: rect.minX + tl.width * (1 - k), y: rect.minY))
-    path.close()
+    path.addCurve(to: CGPoint(x: rect.minX + tl.width, y: rect.minY), control1: CGPoint(x: rect.minX, y: rect.minY + tl.height * (1 - k)), control2: CGPoint(x: rect.minX + tl.width * (1 - k), y: rect.minY))
+    path.closeSubpath()
     return path
 }
 
 private func radiusScale(_ extent: CGFloat, _ sum: CGFloat) -> CGFloat { sum > 0 ? extent / sum : 1 }
 
 private func inlineWave(from left: CGFloat, to right: CGFloat, y: CGFloat, stroke: CGFloat) {
-    let path = UIBezierPath()
-    path.lineWidth = stroke
+    guard let context = whiskerCurrentGraphicsContext() else { return }
+    let path = CGMutablePath()
     path.move(to: CGPoint(x: left, y: y))
     var x = left
     var up = true
@@ -99,7 +105,9 @@ private func inlineWave(from left: CGFloat, to right: CGFloat, y: CGFloat, strok
         path.addLine(to: CGPoint(x: x, y: y + (up ? -stroke : stroke)))
         up.toggle()
     }
-    path.stroke()
+    context.setLineWidth(stroke)
+    context.addPath(path)
+    context.strokePath()
 }
 
 

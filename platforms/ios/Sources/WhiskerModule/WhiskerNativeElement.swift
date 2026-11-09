@@ -1,4 +1,8 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 /** Event source shared by class-backed module Views and built-in controls. */
 public protocol WhiskerEventSource: AnyObject {
@@ -7,11 +11,11 @@ public protocol WhiskerEventSource: AnyObject {
 
 /** Runtime-facing contract implemented by module-owned native Views. */
 public protocol WhiskerNativeElement: WhiskerEventSource {
-    static func makeWhiskerView() -> UIView
+    static func makeWhiskerView() -> WhiskerPlatformView
 }
 
 /** Lightweight native-element base class with no renderer SDK dependency. */
-open class WhiskerUI<V: UIView>: UIView, WhiskerNativeElement {
+open class WhiskerUI<V: WhiskerPlatformView>: WhiskerPlatformView, WhiskerNativeElement {
     private var nativeView: V!
     private var eventSink: ((String, WhiskerValue) -> Void)?
 
@@ -32,7 +36,7 @@ open class WhiskerUI<V: UIView>: UIView, WhiskerNativeElement {
 
     public func view() -> V { nativeView }
 
-    public class func makeWhiskerView() -> UIView {
+    public class func makeWhiskerView() -> WhiskerPlatformView {
         self.init(frame: .zero)
     }
 

@@ -1,9 +1,13 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import WhiskerModule
 
 /// Owns the transactional UIKit projection of one Whisker surface.
 final class HostScene {
-    private unowned let root: UIView
+    private unowned let root: WhiskerPlatformView
     private let preparedParagraphs: PreparedParagraphs
     private let resources: HostResourceStore
     private let logicalBounds: () -> CGRect
@@ -22,7 +26,7 @@ final class HostScene {
     }
 
     init(
-        root: UIView,
+        root: WhiskerPlatformView,
         resources: HostResourceStore,
         preparedParagraphs: PreparedParagraphs = PreparedParagraphs(),
         logicalBounds: @escaping () -> CGRect,
@@ -668,7 +672,7 @@ final class HostScene {
         siblings: [UInt64],
         idsByView: [ObjectIdentifier: UInt64]
     ) {
-        let host: UIView?
+        let host: WhiskerPlatformView?
         if let parentID, let parent = nodes[parentID] {
             host = parent.sceneChildrenHost()
         } else {
@@ -693,8 +697,8 @@ final class HostScene {
             // `CALayer.render(in:)`, used by deterministic Host capture as
             // well as some UIKit snapshot paths, preserves sublayer order but
             // does not reliably sort extreme signed zPosition values. Project
-            // protocol z-order into stable UIView sibling order instead.
-            node.layer.zPosition = 0
+            // protocol z-order into stable WhiskerPlatformView sibling order instead.
+            node.backingLayer.zPosition = 0
             if node.superview === host { host?.bringSubviewToFront(node) }
         }
     }

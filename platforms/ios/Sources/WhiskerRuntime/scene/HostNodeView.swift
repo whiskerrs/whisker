@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import UIKit
 import WhiskerModule
 
@@ -12,6 +13,7 @@ private final class OverflowMaskLayer: CAShapeLayer {
 /// the mounted content view placed inside this wrapper.
 final class WhiskerNodeView: UIView {
     let element: String
+    var backingLayer: CALayer { layer }
     var contentFrame = CGRect.zero
     var paint: HostBoxPaint?
     let boxPainter = HostBoxPainter()
@@ -702,3 +704,4 @@ private final class HostNodePaintView: UIView {
         painter.draw(in: bounds, contentBox: contentBox)
     }
 }
+#endif

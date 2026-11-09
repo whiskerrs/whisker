@@ -1,4 +1,8 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 extension WhiskerParagraphLayout {
     public func measurementGeometry(_ paragraph: WhiskerParagraph) -> WhiskerValue {

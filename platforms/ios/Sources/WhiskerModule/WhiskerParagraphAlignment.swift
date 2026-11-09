@@ -1,4 +1,8 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 extension NSAttributedString.Key {
     static let whiskerVerticalAlignment = NSAttributedString.Key("WhiskerVerticalAlignment")
@@ -9,7 +13,7 @@ extension NSAttributedString.Key {
 
 private struct AlignmentItem {
     let range: NSRange
-    let font: UIFont
+    let font: WhiskerPlatformFont
     let attachment: WhiskerInlineAttachment?
     let alignment: Int
     let shift: CGFloat
@@ -27,12 +31,12 @@ extension WhiskerParagraphLayout {
         }
         var updates = [(NSRange, CGFloat, WhiskerInlineAttachment?)]()
         for line in lines {
-            let rootFont = storage.attribute(.whiskerParagraphFont, at: line.location, effectiveRange: nil) as? UIFont
-                ?? storage.attribute(.font, at: line.location, effectiveRange: nil) as? UIFont
-                ?? UIFont.systemFont(ofSize: 14)
+            let rootFont = storage.attribute(.whiskerParagraphFont, at: line.location, effectiveRange: nil) as? WhiskerPlatformFont
+                ?? storage.attribute(.font, at: line.location, effectiveRange: nil) as? WhiskerPlatformFont
+                ?? WhiskerPlatformFont.systemFont(ofSize: 14)
             var items = [AlignmentItem]()
             storage.enumerateAttributes(in: line) { attributes, range, _ in
-                let font = attributes[.font] as? UIFont ?? rootFont
+                let font = attributes[.font] as? WhiskerPlatformFont ?? rootFont
                 let attachment = attributes[.whiskerInlineAttachment] as? WhiskerInlineAttachment
                 items.append(AlignmentItem(range: range, font: font, attachment: attachment,
                     alignment: attachment?.alignment ?? attributes[.whiskerVerticalAlignment] as? Int ?? 0,

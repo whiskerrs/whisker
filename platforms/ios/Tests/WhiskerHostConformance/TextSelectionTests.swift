@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import UIKit
 import WhiskerModule
 import XCTest
@@ -44,3 +45,4 @@ final class TextSelectionTests: XCTestCase {
         XCTAssertEqual(changed["text"]?.asString, "")
     }
 }
+#endif

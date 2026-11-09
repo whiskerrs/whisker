@@ -1,4 +1,8 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import WhiskerModule
 
 enum HostClipReferenceBox {
@@ -114,7 +118,7 @@ struct HostCircleClipPath {
         )
         let diagonal = hypot(reference.width, reference.height) / sqrt(2)
         let radius = max(0, resolve(radius, axis: diagonal))
-        return UIBezierPath(arcCenter: center, radius: radius, startAngle: 0, endAngle: .pi * 2, clockwise: true).cgPath
+        return WhiskerBezierPath(arcCenter: center, radius: radius, startAngle: 0, endAngle: .pi * 2, clockwise: true).cgPath
     }
 }
 
@@ -131,7 +135,7 @@ struct HostEllipseClipPath {
         let centerY = reference.minY + resolve(centerY, axis: reference.height)
         let radiusX = max(0, resolve(radiusX, axis: reference.width))
         let radiusY = max(0, resolve(radiusY, axis: reference.height))
-        return UIBezierPath(ovalIn: CGRect(
+        return WhiskerBezierPath(ovalIn: CGRect(
             x: centerX - radiusX, y: centerY - radiusY,
             width: radiusX * 2, height: radiusY * 2
         )).cgPath
