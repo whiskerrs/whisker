@@ -97,6 +97,20 @@ nothing else to run. Add plugins with `cargo add` and configure them there.
 Everything — installation, core concepts, guides, and the full API
 reference — lives at **[whisker.rs/docs](https://whisker.rs/docs)**.
 
+## Skills for AI coding agents
+
+Install the Whisker skill for your coding agent (Claude Code, Codex, Cursor,
+Gemini CLI and others), so it follows Whisker's model instead of guessing
+from other frameworks:
+
+```sh
+npx skills add whiskerrs/whisker
+```
+
+| Skill | What it gives the agent |
+|---|---|
+| [`whisker`](skills/whisker/SKILL.md) | Building, running and verifying Whisker apps: the reactivity rules, the dev loop, and where to read for each task |
+
 ## Status
 
 Pre-alpha. The retained Rust runtime, typed styling, Host renderers, modules,
