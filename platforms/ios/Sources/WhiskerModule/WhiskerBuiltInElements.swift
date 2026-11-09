@@ -276,7 +276,11 @@ public final class WhiskerTextLabel: UILabel, WhiskerEventSource {
     public func installWhiskerEventSink(_ sink: ((String, WhiskerValue) -> Void)?) { textEventSink = sink }
     private var whiskerIndent = WhiskerTextIndent()
     private var richLayout: WhiskerParagraphLayout?
+    private var plainLayout: WhiskerParagraphLayout?
     var richParagraph: WhiskerParagraph?
+    public override var attributedText: NSAttributedString? {
+        didSet { plainLayout = nil }
+    }
     public var richContent: NSAttributedString? {
         didSet { richLayout = nil; setNeedsDisplay() }
     }
@@ -331,9 +335,15 @@ public final class WhiskerTextLabel: UILabel, WhiskerEventSource {
 
     public func installPreparedParagraph(_ layout: WhiskerParagraphLayout) {
         applyWhiskerIndent()
-        guard let richContent, richContent.string == layout.storage.string else { return }
-        layout.applyPaint(richContent)
-        richLayout = layout
+        if let richContent {
+            guard richContent.string == layout.storage.string else { return }
+            layout.applyPaint(richContent)
+            richLayout = layout
+        } else {
+            guard let attributedText, attributedText.string == layout.storage.string else { return }
+            layout.applyPaint(attributedText)
+            plainLayout = layout
+        }
         selectionController?.synchronize()
         setNeedsDisplay()
     }
@@ -352,24 +362,61 @@ public final class WhiskerTextLabel: UILabel, WhiskerEventSource {
             layout.draw(at: rect.origin)
             return
         }
+        if let plainLayout, drawPlain(plainLayout, in: rect) { return }
         super.drawText(in: rect)
         guard let decoration = whiskerDecoration, decoration.style == .wavy else { return }
         let textRect = self.textRect(forBounds: rect, limitedToNumberOfLines: numberOfLines)
         let width = min(textRect.width, sizeThatFits(textRect.size).width)
-        guard width > 0, let context = UIGraphicsGetCurrentContext() else { return }
+        guard width > 0 else { return }
+        drawWave(decoration, from: textRect.minX, to: textRect.minX + width, baseline: textRect.minY + font.ascender)
+    }
+
+    /// Draws the measured plain layout, or returns `false` when `rect` would break its lines elsewhere.
+    private func drawPlain(_ layout: WhiskerParagraphLayout, in rect: CGRect) -> Bool {
+        let manager = layout.manager
+        let glyphs = manager.glyphRange(for: layout.container)
+        var lines: [(glyphs: NSRange, used: CGRect)] = []
+        manager.enumerateLineFragments(forGlyphRange: glyphs) { _, used, _, range, _ in
+            lines.append((range, used))
+        }
+        let widest = lines.map(\.used.maxX).max() ?? 0
+        guard widest <= rect.width + 0.5 else { return false }
+        if rect.width > layout.container.size.width + 0.5 {
+            let shown = manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+            let truncated = glyphs.length > 0
+                && manager.truncatedGlyphRange(inLineFragmentForGlyphAt: NSMaxRange(glyphs) - 1).location != NSNotFound
+            guard lines.count <= 1, shown.length == layout.storage.length, !truncated else { return false }
+        }
+        let flush: CGFloat = switch textAlignment {
+        case .center: 0.5
+        case .right: 1
+        default: 0
+        }
+        let wave = whiskerDecoration.flatMap { $0.style == .wavy ? $0 : nil }
+        for line in lines {
+            let origin = CGPoint(x: rect.minX + flush * (rect.width - line.used.maxX), y: rect.minY)
+            manager.drawGlyphs(forGlyphRange: line.glyphs, at: origin)
+            guard let wave, line.used.width > 0 else { continue }
+            let baseline = origin.y + layout.baseline(at: line.glyphs.location)
+            drawWave(wave, from: origin.x + line.used.minX, to: origin.x + line.used.maxX, baseline: baseline)
+        }
+        return true
+    }
+
+    private func drawWave(_ decoration: WhiskerTextDecoration, from start: CGFloat, to end: CGFloat, baseline: CGFloat) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
         let stroke = max(1, font.pointSize / 16)
-        let baseline = textRect.minY + font.ascender
         let y = decoration.line == .underline
             ? baseline + stroke * 1.5
             : baseline - font.xHeight * 0.45
         context.saveGState()
         context.setStrokeColor(decoration.color.cgColor)
         context.setLineWidth(stroke)
-        context.move(to: CGPoint(x: textRect.minX, y: y))
-        var x = textRect.minX
+        context.move(to: CGPoint(x: start, y: y))
+        var x = start
         var up = true
-        while x < textRect.minX + width {
-            x = min(x + stroke * 2, textRect.minX + width)
+        while x < end {
+            x = min(x + stroke * 2, end)
             context.addLine(to: CGPoint(x: x, y: y + (up ? -stroke : stroke)))
             up.toggle()
         }

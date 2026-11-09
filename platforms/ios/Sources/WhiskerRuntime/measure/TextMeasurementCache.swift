@@ -57,9 +57,10 @@ final class TextMeasurementCache {
     }
 
     struct Plain {
+        let layout: WhiskerParagraphLayout?
         let size: CGSize
-        let ascender: Float
-        let descender: Float
+        let firstBaseline: CGFloat
+        let lastBaseline: CGFloat
     }
 
     struct Paragraph {
@@ -67,7 +68,7 @@ final class TextMeasurementCache {
         let size: CGSize
         let firstBaseline: CGFloat
         let lastBaseline: CGFloat
-        let geometry: WhiskerValue
+        let geometry: RawGeometry
 
         init(layout: WhiskerParagraphLayout, paragraph: WhiskerParagraph) {
             self.layout = layout
@@ -75,7 +76,7 @@ final class TextMeasurementCache {
             let baselines = layout.baselines
             firstBaseline = baselines.first
             lastBaseline = baselines.last
-            geometry = layout.measurementGeometry(paragraph)
+            geometry = RawGeometry(layout.measurementGeometry(paragraph))
         }
     }
 
@@ -123,4 +124,63 @@ final class TextMeasurementCache {
         if entries.count >= capacity { removeAll() }
         entries[key] = Entry(input: input, value: value)
     }
+}
+
+/// A geometry tree encoded once; each response receives a copy Rust may release.
+final class RawGeometry {
+    private var raw: WhiskerValueRaw
+
+    init(_ value: WhiskerValue) { raw = value.toRaw() }
+
+    deinit { WhiskerValue.releaseRaw(&raw) }
+
+    func copy() -> WhiskerValueRaw { copyRaw(raw) }
+}
+
+/// Deep-copies with the Swift allocator that `WhiskerValue.releaseRaw` frees.
+private func copyRaw(_ raw: WhiskerValueRaw) -> WhiskerValueRaw {
+    var out = raw
+    switch Int(raw.type) {
+    case Int(WHISKER_VALUE_STRING), Int(WHISKER_VALUE_ERROR):
+        out.v.s = copyString(raw.v.s)
+    case Int(WHISKER_VALUE_BYTES):
+        if let source = raw.v.bytes.ptr {
+            let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: raw.v.bytes.len)
+            buffer.update(from: source, count: raw.v.bytes.len)
+            out.v.bytes.ptr = UnsafePointer(buffer)
+        }
+    case Int(WHISKER_VALUE_ARRAY):
+        if let source = raw.v.array.items {
+            let buffer = UnsafeMutablePointer<WhiskerValueRaw>.allocate(capacity: max(raw.v.array.count, 1))
+            for index in 0..<raw.v.array.count {
+                buffer[index] = copyRaw(source[index])
+            }
+            out.v.array.items = buffer
+        }
+    case Int(WHISKER_VALUE_MAP):
+        if let source = raw.v.map.entries {
+            let buffer = UnsafeMutablePointer<WhiskerKeyValueRaw>.allocate(capacity: max(raw.v.map.count, 1))
+            for index in 0..<raw.v.map.count {
+                var entry = WhiskerKeyValueRaw()
+                entry.key = copyString(source[index].key)
+                entry.value = copyRaw(source[index].value)
+                buffer[index] = entry
+            }
+            out.v.map.entries = buffer
+        }
+    default:
+        break
+    }
+    return out
+}
+
+private func copyString(_ string: WhiskerStringRef) -> WhiskerStringRef {
+    guard let source = string.ptr else { return string }
+    let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: string.len + 1)
+    buffer.update(from: source, count: string.len)
+    buffer[string.len] = 0
+    var out = WhiskerStringRef()
+    out.ptr = UnsafePointer(buffer)
+    out.len = string.len
+    return out
 }

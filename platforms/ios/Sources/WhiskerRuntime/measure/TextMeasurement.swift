@@ -85,7 +85,7 @@ private func measureText(
     }
     let source = hostString(request.text)
     let payload = request.paragraph.map { WhiskerValue.from(raw: $0.pointee) }
-    func prepareAttributes() -> (UIFont, [NSAttributedString.Key: Any]) {
+    func prepareAttributes(alignment: NSTextAlignment? = nil) -> (UIFont, [NSAttributedString.Key: Any]) {
         let style: WhiskerTextFontStyle = switch request.font_style {
         case 0: .normal
         case 1: .italic
@@ -99,6 +99,7 @@ private func measureText(
         ).font
         baseFont = configuredMeasureFont(baseFont, request)
         let paragraph = whiskerTextParagraphStyle(request, widthBasis: widthBasis)
+        if let alignment { paragraph.alignment = alignment }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: baseFont,
             .kern: CGFloat(request.letter_spacing),
@@ -110,7 +111,7 @@ private func measureText(
         source: source, payload: payload,
         style: TextMeasurementCache.Style(request, families: fontFamilies, widthBasis: widthBasis),
         width: payload != nil && request.known_mask & 1 != 0 ? CGFloat(request.known_width) : width,
-        maxLines: payload != nil && request.wrap == 0 ? 1 : Int(request.max_lines),
+        maxLines: request.wrap == 0 ? 1 : Int(request.max_lines),
         overflow: request.overflow, wordBreak: request.word_break, environmentEpoch: request.environment_epoch
     )
     if let payload {
@@ -135,7 +136,7 @@ private func measureText(
                 if let pointer { Unmanaged<PreparedParagraph>.fromOpaque(pointer).release() }
             }
             let geometry = UnsafeMutablePointer<WhiskerValueRaw>.allocate(capacity: 1)
-            geometry.initialize(to: measured.geometry.toRaw())
+            geometry.initialize(to: measured.geometry.copy())
             response.paragraph = geometry
             response.release_paragraph = { pointer in
                 guard let pointer else { return }
@@ -150,34 +151,42 @@ private func measureText(
         return
     }
     let measured = cache.plain(node: request.node, input: input) {
-        let (baseFont, attributes) = prepareAttributes()
         let measuredText = request.word_break == 2 ? protectCJKBreaks(source) : source
-        var measured = (measuredText as NSString).boundingRect(
-            with: CGSize(width: input.width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: attributes,
-            context: nil
-        ).size
-        if request.max_lines > 0 {
-            let lineHeight = request.line_height > 0
-                ? CGFloat(request.line_height) : baseFont.lineHeight
-            measured.height = min(measured.height, lineHeight * CGFloat(request.max_lines))
+        if measuredText.isEmpty {
+            let (baseFont, attributes) = prepareAttributes()
+            let size = ("" as NSString).boundingRect(
+                with: CGSize(width: input.width, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attributes, context: nil
+            ).size
+            return TextMeasurementCache.Plain(layout: nil, size: size,
+                firstBaseline: baseFont.ascender, lastBaseline: max(baseFont.ascender, ceil(size.height) + baseFont.descender))
         }
-        return TextMeasurementCache.Plain(size: measured,
-            ascender: Float(baseFont.ascender), descender: Float(abs(baseFont.descender)))
+        // WhiskerTextLabel aligns each line itself, so the layout holds at any width it fits.
+        let (_, attributes) = prepareAttributes(alignment: .left)
+        let layout = WhiskerParagraphLayout(
+            text: NSAttributedString(string: measuredText, attributes: attributes),
+            width: input.width, maxLines: input.maxLines, overflow: request.overflow == 1 ? .ellipsis : .clip
+        )
+        let baselines = layout.baselines
+        return TextMeasurementCache.Plain(layout: layout, size: layout.size,
+            firstBaseline: baselines.first, lastBaseline: baselines.last)
     }
     response.status = UInt32(WHISKER_MEASURE_READY)
     response.width = request.known_mask & 1 != 0
         ? request.known_width : Float(ceil(measured.size.width))
     response.height = request.known_mask & 2 != 0
         ? request.known_height : Float(ceil(measured.size.height))
-    response.first_baseline = measured.ascender
-    response.last_baseline = max(
-        response.first_baseline,
-        response.height - measured.descender
-    )
+    response.first_baseline = Float(measured.firstBaseline)
+    response.last_baseline = Float(measured.lastBaseline)
     response.metrics_mask = 7
     response.prepared_content = request.key
+    if let layout = measured.layout {
+        let prepared = preparedParagraphs.insert(layout, id: request.key)
+        response.prepared_layout = Unmanaged.passRetained(prepared).toOpaque()
+        response.release_prepared_layout = { pointer in
+            if let pointer { Unmanaged<PreparedParagraph>.fromOpaque(pointer).release() }
+        }
+    }
 }
 
 func whiskerTextParagraphStyle(

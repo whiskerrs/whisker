@@ -125,6 +125,10 @@ impl MeasurementProvider for MobileMeasurementHost {
         Ok(())
     }
 
+    fn measures_synchronously(&self) -> bool {
+        true
+    }
+
     fn retain_prepared_content(
         &mut self,
         _: SurfaceId,

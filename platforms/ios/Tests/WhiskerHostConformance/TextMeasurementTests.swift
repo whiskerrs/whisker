@@ -108,6 +108,42 @@ final class TextMeasurementTests: XCTestCase {
         }
     }
 
+    func testPlainTextLeasesTheLayoutItWasMeasuredWith() throws {
+        let view = WhiskerView(frame: .zero)
+        let result = try measure(view, fixture: ("日本語の長い文章と English text wrapping across several lines.", nil))
+        let layout = try XCTUnwrap(view.preparedParagraphs.layout(result.raw.key))
+        XCTAssertEqual(result.raw.width, Float(ceil(layout.size.width)))
+        XCTAssertEqual(result.raw.height, Float(ceil(layout.size.height)))
+        XCTAssertEqual(result.raw.first_baseline, Float(layout.baselines.first))
+        XCTAssertGreaterThan(result.raw.last_baseline, result.raw.first_baseline)
+    }
+
+    func testLabelAlignsInstalledPlainLayoutInsideWiderBounds() throws {
+        let text = NSAttributedString(string: "Hi", attributes: [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: UIColor.black])
+        // A larger measured font tells the installed layout's glyphs apart from UILabel's own.
+        let measured = NSAttributedString(string: "Hi", attributes: [.font: UIFont.systemFont(ofSize: 32)])
+        let layout = WhiskerParagraphLayout(text: measured, width: .greatestFiniteMagnitude, maxLines: 0, overflow: .clip)
+        func ink(_ alignment: NSTextAlignment) -> (center: CGFloat, width: CGFloat) {
+            let label = WhiskerTextLabel(frame: CGRect(x: 0, y: 0, width: 200, height: ceil(layout.size.height)))
+            label.textAlignment = alignment
+            label.attributedText = text
+            label.installPreparedParagraph(layout)
+            let image = UIGraphicsImageRenderer(bounds: label.bounds).image { label.layer.render(in: $0.cgContext) }
+            let pixels = try! XCTUnwrap(image.cgImage?.dataProvider?.data as Data?)
+            let width = image.cgImage!.width, row = image.cgImage!.bytesPerRow
+            var inked: [Int] = []
+            for x in 0..<width where (0..<image.cgImage!.height).contains(where: { pixels[$0 * row + x * 4 + 3] > 0 }) {
+                inked.append(x)
+            }
+            let span = CGFloat((inked.last ?? 0) - (inked.first ?? 0)) / image.scale
+            return (CGFloat(inked.reduce(0, +)) / CGFloat(max(inked.count, 1)) / image.scale, span)
+        }
+        XCTAssertGreaterThan(ink(.left).width, layout.size.width * 0.8)
+        XCTAssertLessThan(ink(.left).center, layout.size.width)
+        XCTAssertEqual(ink(.center).center, 100, accuracy: 4)
+        XCTAssertGreaterThan(ink(.right).center, 200 - layout.size.width)
+    }
+
     func testPresentationReleasesUnleasedCachedLayouts() throws {
         let view = WhiskerView(frame: .zero)
         let fixture = try paragraph("styled")

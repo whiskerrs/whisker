@@ -50,6 +50,7 @@ pub mod run;
 pub mod rustc_shim;
 pub mod store;
 pub mod submit;
+mod trace;
 pub mod tui;
 
 #[derive(Parser, Debug)]

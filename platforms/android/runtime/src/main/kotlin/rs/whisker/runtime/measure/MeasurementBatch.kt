@@ -7,7 +7,7 @@ class HostMeasureBatchResponse(
     @JvmField val longs: LongArray,
     @JvmField val ints: IntArray,
     @JvmField val floats: FloatArray,
-    @JvmField val paragraphs: Array<WhiskerValue?>,
+    @JvmField val paragraphs: Array<ByteArray?>,
     @JvmField val layouts: Array<android.text.StaticLayout?> = arrayOfNulls(paragraphs.size),
 )
 
@@ -68,7 +68,7 @@ internal object HostMeasureBatchAbi {
         fontFamilies: Array<Array<String>>,
         fontSettings: Array<Array<String>>,
         payloads: Array<WhiskerValue?>,
-        paragraphs: Array<WhiskerValue?> = arrayOfNulls(payloads.size),
+        paragraphs: Array<ByteArray?> = arrayOfNulls(payloads.size),
     ): HostMeasureBatchResponse {
         require(requestLongs.size % REQUEST_LONG_STRIDE == 0)
         val count = requestLongs.size / REQUEST_LONG_STRIDE
@@ -83,16 +83,16 @@ internal object HostMeasureBatchAbi {
         val responseLongs = LongArray(count * RESPONSE_LONG_STRIDE)
         val responseInts = IntArray(count * RESPONSE_INT_STRIDE)
         val responseFloats = FloatArray(count * RESPONSE_FLOAT_STRIDE)
-        val responseParagraphs = arrayOfNulls<WhiskerValue>(count)
+        val responseParagraphs = arrayOfNulls<ByteArray>(count)
         val responseLayouts = arrayOfNulls<android.text.StaticLayout>(count)
         repeat(count) { index ->
             val longBase = index * REQUEST_LONG_STRIDE
             val intBase = index * REQUEST_INT_STRIDE
             val floatBase = index * REQUEST_FLOAT_STRIDE
             val stringBase = index * REQUEST_STRING_STRIDE
-            // Node remains in the batch contract for request identity even though
-            // the Android measurement provider does not currently consume it.
             val measured = provider.measure(
+                requestLongs[longBase + NODE],
+                requestLongs[longBase + ENVIRONMENT_EPOCH],
                 requestInts[intBase + ELEMENT_TYPE],
                 requestInts[intBase + KIND],
                 requestFloats[floatBase + KNOWN_WIDTH],
