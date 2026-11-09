@@ -53,7 +53,7 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
             .join("target/.whisker/macos-derived")
             .join(&manifest.package),
         profile: Profile::Release,
-        features: &[],
+        features: &args.cargo.features,
         capture: None,
     })?;
     build_ui.complete(&bundle);

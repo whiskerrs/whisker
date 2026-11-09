@@ -128,3 +128,18 @@ fn xcode_arch() -> &'static str {
         "arm64"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn driver_dylib_uses_the_host_triple_and_crate_name() {
+        assert_eq!(
+            driver_dylib(Path::new("/ws"), "whisker-news"),
+            Path::new("/ws/target")
+                .join(host_triple())
+                .join("release/libwhisker_news.dylib")
+        );
+    }
+}
