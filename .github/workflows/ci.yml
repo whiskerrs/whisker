@@ -224,7 +224,7 @@ jobs:
 
   rust-host-link-test-desktop:
     name: Rust Host module link (Desktop)
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
