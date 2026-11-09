@@ -25,7 +25,7 @@ import PackageDescription
 // so this module builds for an app created outside the whisker repo.
 let package = Package(
     name: "whisker-image",
-    platforms: [.iOS(.v13), .macOS(.v13)],
+    platforms: [.iOS(.v13), .macOS(.v14)],
     products: [
         .library(name: "WhiskerImage", targets: ["WhiskerImage"]),
     ],
