@@ -227,6 +227,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux text dependencies
+        run: bash .github/scripts/install-ubuntu-packages.sh libfontconfig1-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask rust-host-link-test desktop
