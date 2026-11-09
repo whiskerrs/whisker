@@ -50,22 +50,25 @@ entry point from scratch.
 
 ## Where to read for each task
 
+Every docs page is served as Markdown at its URL plus `.md`; https://whisker.rs/llms.txt
+lists all of them.
+
 | Task | Read |
 | --- | --- |
-| Components, props, children, `render!` syntax | https://whisker.rs/docs/components |
-| Styles and layout with `css!` | https://whisker.rs/docs/styling |
-| Signals, `computed`, effects | https://whisker.rs/docs/state-management, https://whisker.rs/docs/reactivity |
-| `Show`, `ForEach`, virtualized `List` | https://whisker.rs/docs/lists-and-conditionals |
-| Events and handlers | https://whisker.rs/docs/handling-events |
-| Context (`provide_context` / `use_context`) | https://whisker.rs/docs/context |
-| Async work and `resource` | https://whisker.rs/docs/async-and-data |
-| Navigation with `whisker-router` | https://whisker.rs/docs/routing |
-| Using platform modules (image, input, keyboard, ...) | https://whisker.rs/docs/using-modules |
-| App configuration in `whisker.rs` | https://whisker.rs/docs/app-configuration |
-| Hot reload behavior and its limits | https://whisker.rs/docs/hot-reload |
-| Logs, panics, environment problems | https://whisker.rs/docs/debugging |
-| Release builds and store submission | https://whisker.rs/docs/production-builds, https://whisker.rs/docs/store-submission |
-| Every CLI command and flag | https://whisker.rs/docs/cli-reference |
+| Components, props, children, `render!` syntax | https://whisker.rs/docs/components.md |
+| Styles and layout with `css!` | https://whisker.rs/docs/styling.md |
+| Signals, `computed`, effects | https://whisker.rs/docs/state-management.md, https://whisker.rs/docs/reactivity.md |
+| `Show`, `ForEach`, virtualized `List` | https://whisker.rs/docs/lists-and-conditionals.md |
+| Events and handlers | https://whisker.rs/docs/handling-events.md |
+| Context (`provide_context` / `use_context`) | https://whisker.rs/docs/context.md |
+| Async work and `resource` | https://whisker.rs/docs/async-and-data.md |
+| Navigation with `whisker-router` | https://whisker.rs/docs/routing.md |
+| Using platform modules (image, input, keyboard, ...) | https://whisker.rs/docs/using-modules.md |
+| App configuration in `whisker.rs` | https://whisker.rs/docs/app-configuration.md |
+| Hot reload behavior and its limits | https://whisker.rs/docs/hot-reload.md |
+| Logs, panics, environment problems | https://whisker.rs/docs/debugging.md |
+| Release builds and store submission | https://whisker.rs/docs/production-builds.md, https://whisker.rs/docs/store-submission.md |
+| Every CLI command and flag | https://whisker.rs/docs/cli-reference.md |
 
 ## Verify your work
 
