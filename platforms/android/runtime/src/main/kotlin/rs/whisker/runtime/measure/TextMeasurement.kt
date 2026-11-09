@@ -95,7 +95,7 @@ internal class HostMeasurementProvider(
                 lastBaseline = layout.lastBaseline,
                 mask = BASELINES,
                 paragraph = layout.geometry,
-                layout = layout.layout.takeIf { paragraph != null },
+                layout = layout.layout,
             )
         }
         if ((kind == MEASURE_REPLACED_CONTENT || kind == MEASURE_EMBEDDED_SURFACE) &&

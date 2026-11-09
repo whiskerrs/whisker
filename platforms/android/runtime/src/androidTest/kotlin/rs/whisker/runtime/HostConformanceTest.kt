@@ -187,6 +187,43 @@ class HostConformanceTest {
     }
 
     @Test
+    fun plainTextDrawsTheInstalledLayoutAlignedInsideWiderBounds() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                // A larger measured size tells the installed layout's glyphs apart from TextView's own.
+                val paint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 64f }
+                val measuredWidth = kotlin.math.ceil(android.text.Layout.getDesiredWidth("Hi", paint)).toInt()
+                fun ink(alignment: android.text.Layout.Alignment): Pair<Float, Int> {
+                    val layout = android.text.StaticLayout.Builder.obtain("Hi", 0, 2, android.text.TextPaint(paint), measuredWidth)
+                        .setAlignment(alignment).build()
+                    val view = WhiskerTextView(context).apply {
+                        textSize = 8f
+                        setTextColor(android.graphics.Color.BLACK)
+                        text = "Hi"
+                        setPadding(0, 0, 0, 0)
+                    }
+                    view.measure(
+                        View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(layout.height, View.MeasureSpec.EXACTLY),
+                    )
+                    view.layout(0, 0, 400, layout.height)
+                    view.installPreparedParagraph(layout)
+                    val bitmap = Bitmap.createBitmap(400, layout.height, Bitmap.Config.ARGB_8888)
+                    view.draw(Canvas(bitmap))
+                    val inked = (0 until 400).filter { x -> (0 until bitmap.height).any { y -> bitmap.getPixel(x, y) ushr 24 != 0 } }
+                    return inked.average().toFloat() to (inked.last() - inked.first())
+                }
+                val (left, span) = ink(android.text.Layout.Alignment.ALIGN_NORMAL)
+                assertTrue("installed layout drawn: $span", span > measuredWidth * 0.8)
+                assertTrue("left: $left", left < measuredWidth)
+                assertEquals(200f, ink(android.text.Layout.Alignment.ALIGN_CENTER).first, 6f)
+                assertTrue(ink(android.text.Layout.Alignment.ALIGN_OPPOSITE).first > 400 - measuredWidth)
+            }
+    }
+
+    @Test
     fun pooledBuiltInVisibilityIsResetBeforeReuse() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()

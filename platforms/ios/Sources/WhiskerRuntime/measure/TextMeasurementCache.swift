@@ -57,9 +57,10 @@ final class TextMeasurementCache {
     }
 
     struct Plain {
+        let layout: WhiskerParagraphLayout?
         let size: CGSize
-        let ascender: Float
-        let descender: Float
+        let firstBaseline: CGFloat
+        let lastBaseline: CGFloat
     }
 
     struct Paragraph {
