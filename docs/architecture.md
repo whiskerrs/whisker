@@ -84,7 +84,7 @@ cooperating parts of one application, not separate processes or dedicated
 threads. The Host owns the mounted Runtime's lifetime and initiates lifecycle
 transitions; the Runtime implements what those transitions do to UI state.
 
-Android and iOS carry these interactions through the mobile FFI Driver.
+Android, iOS, and macOS carry these interactions through the mobile FFI Driver.
 Web and Desktop use Rust calls directly. The Driver adapts the boundary; it
 does not take over layout, scheduling policy, or platform drawing.
 
@@ -215,15 +215,16 @@ They differ in how they connect to the operating system or browser.
 |---|---|---|
 | [Android](../platforms/android/runtime/) | Kotlin/JNI and the mobile FFI Driver | Android views, frame callbacks, text measurement, drawing, and native modules |
 | [iOS](../platforms/ios/) | Swift and the mobile FFI Driver | UIKit views, frame callbacks, text measurement, drawing, and native modules |
+| [macOS](../platforms/ios/) | Swift and the mobile FFI Driver | The iOS Host built against AppKit: AppKit views, frame callbacks, text measurement, drawing, and native modules |
 | [Web](../platforms/web/src/lib.rs) | Direct Rust calls from WebAssembly | DOM presentation, browser measurement and input, `requestAnimationFrame` scheduling |
 | [Desktop](../platforms/desktop/src/lib.rs) | Direct Rust calls | A shared `winit` window/event loop, `cosmic-text` measurement, and `wgpu` drawing |
 
-The macOS, Windows, and Linux target crates sit above the common Desktop Host.
+The Windows and Linux target crates sit above the common Desktop Host.
 They provide OS-named entry points and a place for platform-specific integration;
 the common renderer lives in `platforms/desktop`.
 
-Android and iOS need a foreign-function interface because their launch shells
-are written in Kotlin and Swift:
+Android, iOS, and macOS need a foreign-function interface because their launch
+shells are written in Kotlin and Swift:
 
 - [`whisker-driver-sys`](../crates/whisker-driver-sys/src/lib.rs) defines the raw
   mobile ABI: C-compatible values, callbacks, and entry points. Host declarations
