@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1" name="viewport">
+<meta content="/" name="whisker-base-path">
+<style>html, body, #whisker-root { width: 100%; height: 100%; margin: 0; background: #000000; }</style>
+<meta content="/v/d53d142a314e/" name="whisker-asset-base">
+<title>slime</title><link rel="icon" href="data:,">
+</head>
+<body>
+<div id="whisker-root"></div>
+<pre hidden id="whisker-dev-error"></pre>
+<script type="module">      import init, * as whisker from "/v/d53d142a314e/whisker_app.js";
+      const reportDevelopmentError = (error) => {
+        const output = document.getElementById("whisker-dev-error");
+        output.hidden = false;
+        output.textContent = `Whisker Web: ${error}`;
+      };
+      window.addEventListener("error", (event) => reportDevelopmentError(event.error));
+      window.addEventListener("unhandledrejection", (event) => reportDevelopmentError(event.reason));
+      try {
+        await init();
+      } catch (error) {
+        const root = document.getElementById("whisker-root");
+        root.textContent = `Whisker Web failed to start: ${error}`;
+        throw error;
+      }
+
+      
+</script>
+</body>
+</html>
