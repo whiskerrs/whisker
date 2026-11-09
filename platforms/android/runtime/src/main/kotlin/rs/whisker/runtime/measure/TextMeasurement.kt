@@ -34,6 +34,7 @@ internal class HostMeasurementProvider(
     internal val preparedParagraphs: PreparedParagraphs = PreparedParagraphs(),
 ) {
     private val layouts = HashMap<TextLayoutKey, TextLayout>()
+    private val paints = HashMap<TextPaintKey, TextPaint>()
 
     @Suppress("LongParameterList")
     fun measure(
@@ -126,35 +127,13 @@ internal class HostMeasurementProvider(
 
     private fun layoutText(key: TextLayoutKey): TextLayout = with(key) {
         val rich = paragraph?.let { WhiskerParagraph.decode(ValueBytes.decode(it.bytes), text) }
-        val paint = TextPaint().apply {
-            textSize = fontSize * density
-            if (locale.isNotEmpty()) textLocale = Locale.forLanguageTag(locale)
-            val italic = fontStyle != FONT_STYLE_NORMAL
-            val baseTypeface = resolveWhiskerTypeface(fontFamilies)
-            typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                Typeface.create(baseTypeface, fontWeight.coerceIn(1, 1000), italic)
-            } else {
-                val typefaceStyle = (if (fontWeight >= 600) Typeface.BOLD else 0) or
-                    (if (italic) Typeface.ITALIC else 0)
-                Typeface.create(baseTypeface, typefaceStyle)
-            }
-            this.letterSpacing = if (fontSize > 0f) letterSpacing / fontSize else 0f
-            fontFeatureSettings = fontSettings.take(fontFeatureCount).joinToString(", ") {
-                val (tag, value) = parseFontSetting(it)
-                "'$tag' ${value.toLong()}"
-            }.ifEmpty { null }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val variations = fontSettings.drop(fontFeatureCount)
-                    .map(::parseFontSetting)
-                    .toMutableList()
-                if (fontOpticalSizing == 0 && variations.none { it.first == "opsz" }) {
-                    variations += "opsz" to fontSize.toDouble()
-                }
-                fontVariationSettings = variations.joinToString(", ") {
-                    "'${it.first}' ${it.second}"
-                }.ifEmpty { null }
-            }
+        val paintKey = TextPaintKey(density, locale, fontFamilies, fontSize, fontWeight, fontStyle, letterSpacing, fontSettings, fontFeatureCount, fontOpticalSizing)
+        val prototype = paints[paintKey] ?: createPaint(paintKey).also {
+            if (paints.size >= PAINT_CACHE_CAPACITY) paints.clear()
+            paints[paintKey] = it
         }
+        // Views recolor the paint of the layout they draw, so each layout owns a copy.
+        val paint = TextPaint(prototype)
         val displayText = if (rich == null && wordBreak == WORD_BREAK_KEEP_ALL) protectCjkBreaks(text) else text
         val semantics = resolveTextLayoutSemantics(displayText, direction, alignment, localeRtl, indentPixels)
         fun styledText(value: String, paragraph: WhiskerParagraph?, width: Float = Float.POSITIVE_INFINITY): CharSequence {
@@ -204,6 +183,37 @@ internal class HostMeasurementProvider(
             lastBaseline = if (layout.lineCount > 0) layout.getLineBaseline(layout.lineCount - 1) / density else first,
             geometry = measuredParagraph?.measurementGeometry(layout, density)?.let(ValueBytes::encode),
         )
+    }
+
+    // TextPaint's own `density` and `letterSpacing` would shadow an implicit key receiver here.
+    private fun createPaint(key: TextPaintKey): TextPaint = TextPaint().apply {
+        textSize = key.fontSize * key.density
+        if (key.locale.isNotEmpty()) textLocale = Locale.forLanguageTag(key.locale)
+        val italic = key.fontStyle != FONT_STYLE_NORMAL
+        val baseTypeface = resolveWhiskerTypeface(key.fontFamilies)
+        typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Typeface.create(baseTypeface, key.fontWeight.coerceIn(1, 1000), italic)
+        } else {
+            val typefaceStyle = (if (key.fontWeight >= 600) Typeface.BOLD else 0) or
+                (if (italic) Typeface.ITALIC else 0)
+            Typeface.create(baseTypeface, typefaceStyle)
+        }
+        letterSpacing = if (key.fontSize > 0f) key.letterSpacing / key.fontSize else 0f
+        fontFeatureSettings = key.fontSettings.take(key.fontFeatureCount).joinToString(", ") {
+            val (tag, value) = parseFontSetting(it)
+            "'$tag' ${value.toLong()}"
+        }.ifEmpty { null }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val variations = key.fontSettings.drop(key.fontFeatureCount)
+                .map(::parseFontSetting)
+                .toMutableList()
+            if (key.fontOpticalSizing == 0 && variations.none { it.first == "opsz" }) {
+                variations += "opsz" to key.fontSize.toDouble()
+            }
+            fontVariationSettings = variations.joinToString(", ") {
+                "'${it.first}' ${it.second}"
+            }.ifEmpty { null }
+        }
     }
 
     private fun ready(width: Float, height: Float): HostMeasurementResult =
@@ -332,6 +342,7 @@ private fun Char.isCjk(): Boolean = code in 0x2E80..0x9FFF || code in 0xF900..0x
 
 private const val DESIRED_WIDTH = -1
 private const val LAYOUT_CACHE_CAPACITY = 256
+private const val PAINT_CACHE_CAPACITY = 64
 private const val DEFINITE = 0
 private const val MIN_CONTENT = 1
 private const val WIDTH = 1
@@ -385,6 +396,19 @@ private data class TextLayoutKey(
     val paragraph: EncodedParagraph?,
 )
 
+private data class TextPaintKey(
+    val density: Float,
+    val locale: String,
+    val fontFamilies: List<String>,
+    val fontSize: Float,
+    val fontWeight: Int,
+    val fontStyle: Int,
+    val letterSpacing: Float,
+    val fontSettings: List<String>,
+    val fontFeatureCount: Int,
+    val fontOpticalSizing: Int,
+)
+
 private class EncodedParagraph(val bytes: ByteArray) {
     private val hash = bytes.contentHashCode()
     override fun equals(other: Any?): Boolean = other is EncodedParagraph && hash == other.hash && bytes.contentEquals(other.bytes)
@@ -411,3 +435,4 @@ internal data class HostMeasurementResult(
     val paragraph: ByteArray? = null,
     val layout: StaticLayout? = null,
 )
+
