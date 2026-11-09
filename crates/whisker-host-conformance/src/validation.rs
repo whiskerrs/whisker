@@ -105,7 +105,10 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), FixtureError> {
         }
         let mut hosts = BTreeSet::new();
         for host in &case.required_hosts {
-            if !matches!(host.as_str(), "desktop" | "web" | "android" | "ios") {
+            if !matches!(
+                host.as_str(),
+                "desktop" | "web" | "android" | "ios" | "macos"
+            ) {
                 return Err(FixtureError(format!(
                     "case {} names unknown Host {host}",
                     case.id
