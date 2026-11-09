@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use subsecond::JumpTable;
 use whisker_runtime::view::Element;
-use whisker_runtime::{RuntimeInstance, RuntimeWakeHandle};
+use whisker_runtime::{FrameTiming, RuntimeInstance, RuntimeWakeHandle};
 
 const MAX_PATCH_HISTORY: usize = 64;
 
@@ -109,6 +109,7 @@ impl NativeHotReload {
 
     /// Applies and reflects any patch not yet observed by `runtime`.
     pub fn apply(&mut self, runtime: &mut RuntimeInstance) -> Result<bool, String> {
+        runtime.set_frame_timing(crate::trace::enabled());
         let Some(update) = self.registration.poll()? else {
             return Ok(false);
         };
@@ -127,6 +128,13 @@ impl NativeHotReload {
         }
         self.mounted_hash = current_hash;
         Ok(true)
+    }
+
+    /// Queues one frame's timing for `whisker run --trace`.
+    pub fn record_frame(&self, timing: Option<FrameTiming>) {
+        if let Some(timing) = timing {
+            crate::trace::record(timing);
+        }
     }
 }
 
@@ -398,8 +406,15 @@ where
     .to_string();
     ws.send(Message::Text(hello)).await?;
 
+    let mut trace_flush = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
+            _ = trace_flush.tick() => {
+                let frames = crate::trace::take();
+                if !frames.is_empty() {
+                    ws.send(Message::Text(crate::trace::encode(&frames))).await?;
+                }
+            }
             // device → host: forward captured stdout/stderr lines,
             // batched so a burst of `println!`s is one frame.
             lines = crate::log_capture::drain_pending_logs() => {
@@ -419,11 +434,24 @@ where
                 let Some(msg) = msg else { return Ok(()); };
                 match msg? {
                     Message::Binary(bytes) => handle_patch_frame(&bytes),
+                    Message::Text(text) => handle_control_frame(&text),
                     Message::Close(_) => return Ok(()),
                     _ => {}
                 }
             }
         }
+    }
+}
+
+fn handle_control_frame(text: &str) {
+    #[derive(serde::Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum Control {
+        Trace { enabled: bool },
+    }
+    if let Ok(Control::Trace { enabled }) = serde_json::from_str(text) {
+        crate::trace::set_enabled(enabled);
+        wake_registered_runtimes();
     }
 }
 

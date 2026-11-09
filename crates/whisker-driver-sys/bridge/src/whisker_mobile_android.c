@@ -32,6 +32,8 @@ static ValueCtor g_value_bool, g_value_int, g_value_float, g_value_str, g_value_
 static WhiskerValueRaw object_to_raw(JNIEnv* env, jobject value);
 static void release_paragraph(WhiskerValueRaw* value);
 static void release_prepared_layout(void* value);
+static jbyteArray raw_to_bytes(JNIEnv* env, const WhiskerValueRaw* raw);
+static bool bytes_to_raw(JNIEnv* env, jbyteArray array, WhiskerValueRaw* out);
 
 enum {
     MEASURE_REQUEST_LONG_STRIDE = 3,
@@ -695,7 +697,7 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
     jlongArray request_longs = (*env)->NewLongArray(env, (jsize)(count * MEASURE_REQUEST_LONG_STRIDE));
     jintArray request_ints = (*env)->NewIntArray(env, (jsize)(count * MEASURE_REQUEST_INT_STRIDE));
     jfloatArray request_floats = (*env)->NewFloatArray(env, (jsize)(count * MEASURE_REQUEST_FLOAT_STRIDE));
-    jobjectArray paragraphs = (*env)->NewObjectArray(env, (jsize)count, g_value_class, NULL);
+    jobjectArray paragraphs = (*env)->NewObjectArray(env, (jsize)count, g_byte_array_class, NULL);
     jobjectArray request_strings = (*env)->NewObjectArray(
         env, (jsize)(count * MEASURE_REQUEST_STRING_STRIDE), g_string_class, NULL);
     jobjectArray family_batches = (*env)->NewObjectArray(env, (jsize)count, g_string_array_class, NULL);
@@ -764,9 +766,12 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
             (*env)->SetObjectArrayElement(env, setting_batches, (jsize)i, settings);
             (*env)->SetObjectArrayElement(env, payload_batches, (jsize)i, payload);
             if (r->paragraph) {
-                jobject paragraph = raw_to_value(env, r->paragraph);
-                (*env)->SetObjectArrayElement(env, paragraphs, (jsize)i, paragraph);
-                if (paragraph) (*env)->DeleteLocalRef(env, paragraph);
+                jbyteArray paragraph = raw_to_bytes(env, r->paragraph);
+                if (paragraph == NULL) ok = false;
+                else {
+                    (*env)->SetObjectArrayElement(env, paragraphs, (jsize)i, paragraph);
+                    (*env)->DeleteLocalRef(env, paragraph);
+                }
             }
             if (clear_exception(env)) ok = false;
         }
@@ -847,12 +852,13 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
             else responses[i].release_prepared_layout = release_prepared_layout;
             (*env)->DeleteLocalRef(env, layout);
         }
-        jobject geometry = (*env)->GetObjectArrayElement(env, response_paragraphs, (jsize)i);
+        jbyteArray geometry = (*env)->GetObjectArrayElement(env, response_paragraphs, (jsize)i);
         if (geometry != NULL) {
             WhiskerValueRaw* owned = malloc(sizeof(WhiskerValueRaw));
-            if (owned == NULL) ok = false;
-            else {
-                *owned = object_to_raw(env, geometry);
+            if (owned == NULL || !bytes_to_raw(env, geometry, owned)) {
+                free(owned);
+                ok = false;
+            } else {
                 responses[i].paragraph = owned;
                 responses[i].release_paragraph = release_paragraph;
             }
@@ -920,6 +926,178 @@ static void release_paragraph(WhiskerValueRaw* value) {
     if (value == NULL) return;
     release_raw(value);
     free(value);
+}
+
+// Mirrors ValueBytes.kt: a tag byte, then little-endian u32 lengths and 8-byte scalars.
+enum { VALUE_BYTES_MAX_DEPTH = 256 };
+
+static size_t value_bytes_size(const WhiskerValueRaw* v) {
+    switch (v->type) {
+        case WHISKER_VALUE_BOOL: return 2;
+        case WHISKER_VALUE_INT: case WHISKER_VALUE_FLOAT: return 9;
+        case WHISKER_VALUE_STRING: case WHISKER_VALUE_ERROR: return 5 + v->v.s.len;
+        case WHISKER_VALUE_BYTES: return 5 + v->v.bytes.len;
+        case WHISKER_VALUE_ARRAY: {
+            size_t size = 5;
+            for (size_t i = 0; i < v->v.array.count; ++i) size += value_bytes_size(&v->v.array.items[i]);
+            return size;
+        }
+        case WHISKER_VALUE_MAP: {
+            size_t size = 5;
+            for (size_t i = 0; i < v->v.map.count; ++i)
+                size += 4 + v->v.map.entries[i].key.len + value_bytes_size(&v->v.map.entries[i].value);
+            return size;
+        }
+        default: return 1;
+    }
+}
+
+static uint8_t* put_u32(uint8_t* out, size_t value) {
+    for (int shift = 0; shift < 32; shift += 8) *out++ = (uint8_t)(value >> shift);
+    return out;
+}
+
+static uint8_t* put_u64(uint8_t* out, uint64_t value) {
+    for (int shift = 0; shift < 64; shift += 8) *out++ = (uint8_t)(value >> shift);
+    return out;
+}
+
+static uint8_t* put_slice(uint8_t* out, const void* ptr, size_t len) {
+    out = put_u32(out, len);
+    if (len) memcpy(out, ptr, len);
+    return out + len;
+}
+
+static uint8_t* put_value(uint8_t* out, const WhiskerValueRaw* v) {
+    switch (v->type) {
+        case WHISKER_VALUE_BOOL: *out++ = 1; *out++ = v->v.b ? 1 : 0; return out;
+        case WHISKER_VALUE_INT: *out++ = 2; return put_u64(out, (uint64_t)v->v.i);
+        case WHISKER_VALUE_FLOAT: { uint64_t bits; memcpy(&bits, &v->v.f, sizeof(bits)); *out++ = 3; return put_u64(out, bits); }
+        case WHISKER_VALUE_STRING: *out++ = 4; return put_slice(out, v->v.s.ptr, v->v.s.len);
+        case WHISKER_VALUE_BYTES: *out++ = 5; return put_slice(out, v->v.bytes.ptr, v->v.bytes.len);
+        case WHISKER_VALUE_ARRAY:
+            *out++ = 6; out = put_u32(out, v->v.array.count);
+            for (size_t i = 0; i < v->v.array.count; ++i) out = put_value(out, &v->v.array.items[i]);
+            return out;
+        case WHISKER_VALUE_MAP:
+            *out++ = 7; out = put_u32(out, v->v.map.count);
+            for (size_t i = 0; i < v->v.map.count; ++i) {
+                out = put_slice(out, v->v.map.entries[i].key.ptr, v->v.map.entries[i].key.len);
+                out = put_value(out, &v->v.map.entries[i].value);
+            }
+            return out;
+        case WHISKER_VALUE_ERROR: *out++ = 8; return put_slice(out, v->v.s.ptr, v->v.s.len);
+        default: *out++ = 0; return out;
+    }
+}
+
+static jbyteArray raw_to_bytes(JNIEnv* env, const WhiskerValueRaw* raw) {
+    size_t size = value_bytes_size(raw);
+    if (size > INT32_MAX) return NULL;
+    uint8_t* buffer = malloc(size);
+    if (buffer == NULL) return NULL;
+    put_value(buffer, raw);
+    jbyteArray array = (*env)->NewByteArray(env, (jsize)size);
+    if (array) (*env)->SetByteArrayRegion(env, array, 0, (jsize)size, (const jbyte*)buffer);
+    free(buffer);
+    return array;
+}
+
+typedef struct { const uint8_t* cursor; size_t left; } ValueReader;
+
+static bool take_u32(ValueReader* r, size_t* value) {
+    if (r->left < 4) return false;
+    uint32_t v = 0;
+    for (int i = 0; i < 4; ++i) v |= (uint32_t)r->cursor[i] << (8 * i);
+    r->cursor += 4; r->left -= 4;
+    *value = v;
+    return true;
+}
+
+static bool take_u64(ValueReader* r, uint64_t* value) {
+    if (r->left < 8) return false;
+    uint64_t v = 0;
+    for (int i = 0; i < 8; ++i) v |= (uint64_t)r->cursor[i] << (8 * i);
+    r->cursor += 8; r->left -= 8;
+    *value = v;
+    return true;
+}
+
+static uint8_t* take_slice(ValueReader* r, size_t* len) {
+    size_t length;
+    if (!take_u32(r, &length) || length > r->left) return NULL;
+    uint8_t* copy = malloc(length + 1);
+    if (copy == NULL) return NULL;
+    if (length) memcpy(copy, r->cursor, length);
+    copy[length] = 0;
+    r->cursor += length; r->left -= length;
+    *len = length;
+    return copy;
+}
+
+static bool take_value(ValueReader* r, WhiskerValueRaw* out, int depth) {
+    memset(out, 0, sizeof(*out));
+    if (r->left < 1 || depth > VALUE_BYTES_MAX_DEPTH) return false;
+    uint8_t tag = *r->cursor++; r->left--;
+    uint64_t bits;
+    size_t count;
+    switch (tag) {
+        case 0: return true;
+        case 1:
+            if (r->left < 1) return false;
+            out->type = WHISKER_VALUE_BOOL; out->v.b = *r->cursor++ != 0; r->left--;
+            return true;
+        case 2:
+            if (!take_u64(r, &bits)) return false;
+            out->type = WHISKER_VALUE_INT; out->v.i = (int64_t)bits;
+            return true;
+        case 3:
+            if (!take_u64(r, &bits)) return false;
+            out->type = WHISKER_VALUE_FLOAT; memcpy(&out->v.f, &bits, sizeof(bits));
+            return true;
+        case 4: case 8:
+            out->v.s.ptr = (const char*)take_slice(r, &out->v.s.len);
+            if (out->v.s.ptr == NULL) return false;
+            out->type = tag == 4 ? WHISKER_VALUE_STRING : WHISKER_VALUE_ERROR;
+            return true;
+        case 5:
+            out->v.bytes.ptr = take_slice(r, &out->v.bytes.len);
+            if (out->v.bytes.ptr == NULL) return false;
+            out->type = WHISKER_VALUE_BYTES;
+            return true;
+        case 6: {
+            if (!take_u32(r, &count) || count > r->left) return false;
+            WhiskerValueRaw* items = calloc(count ? count : 1, sizeof(*items));
+            if (items == NULL) return false;
+            out->type = WHISKER_VALUE_ARRAY; out->v.array.items = items; out->v.array.count = count;
+            for (size_t i = 0; i < count; ++i) if (!take_value(r, &items[i], depth + 1)) return false;
+            return true;
+        }
+        case 7: {
+            if (!take_u32(r, &count) || count > r->left / 5) return false;
+            WhiskerKeyValueRaw* entries = calloc(count ? count : 1, sizeof(*entries));
+            if (entries == NULL) return false;
+            out->type = WHISKER_VALUE_MAP; out->v.map.entries = entries; out->v.map.count = count;
+            for (size_t i = 0; i < count; ++i) {
+                entries[i].key.ptr = (const char*)take_slice(r, &entries[i].key.len);
+                if (entries[i].key.ptr == NULL || !take_value(r, &entries[i].value, depth + 1)) return false;
+            }
+            return true;
+        }
+        default: return false;
+    }
+}
+
+static bool bytes_to_raw(JNIEnv* env, jbyteArray array, WhiskerValueRaw* out) {
+    memset(out, 0, sizeof(*out));
+    jsize length = (*env)->GetArrayLength(env, array);
+    jbyte* bytes = (*env)->GetPrimitiveArrayCritical(env, array, NULL);
+    if (bytes == NULL) return false;
+    ValueReader reader = { (const uint8_t*)bytes, (size_t)length };
+    bool ok = take_value(&reader, out, 0) && reader.left == 0;
+    (*env)->ReleasePrimitiveArrayCritical(env, array, bytes, JNI_ABORT);
+    if (!ok) release_raw(out);
+    return ok;
 }
 
 
@@ -1069,7 +1247,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     METHOD(g_finish_bootstrap,"finishBootstrapFromNative","()Z")
     METHOD(g_present_frame,"presentFrameFromNative","(IIJJ[J[[F[Ljava/lang/String;[[Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;[J)Z")
     METHOD(g_current_revision,"currentRevisionFromNative","()J")
-    METHOD(g_measure_batch,"measureBatchFromNative","([J[I[F[Ljava/lang/String;[[Ljava/lang/String;[[Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;[Lrs/whisker/runtime/WhiskerValue;)Lrs/whisker/runtime/measure/HostMeasureBatchResponse;")
+    METHOD(g_measure_batch,"measureBatchFromNative","([J[I[F[Ljava/lang/String;[[Ljava/lang/String;[[Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;[[B)Lrs/whisker/runtime/measure/HostMeasureBatchResponse;")
     METHOD(g_resource_command,"resourceCommandFromNative","(IIIJJLjava/lang/String;[B)Z")
     METHOD(g_invoke_module,"invokeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;ZJJ)Z")
     METHOD(g_observe_module,"observeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;Z)V")
@@ -1083,7 +1261,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_measure_response_longs = (*env)->GetFieldID(env, g_measure_response_class, "longs", "[J");
     g_measure_response_ints = (*env)->GetFieldID(env, g_measure_response_class, "ints", "[I");
     g_measure_response_floats = (*env)->GetFieldID(env, g_measure_response_class, "floats", "[F");
-    g_measure_response_paragraphs = (*env)->GetFieldID(env, g_measure_response_class, "paragraphs", "[Lrs/whisker/runtime/WhiskerValue;");
+    g_measure_response_paragraphs = (*env)->GetFieldID(env, g_measure_response_class, "paragraphs", "[[B");
     g_measure_response_layouts = (*env)->GetFieldID(env, g_measure_response_class, "layouts", "[Landroid/text/StaticLayout;");
     if (g_measure_response_layouts == NULL || g_measure_response_paragraphs == NULL || g_measure_response_longs == NULL || g_measure_response_ints == NULL ||
         g_measure_response_floats == NULL) return JNI_ERR;

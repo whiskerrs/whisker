@@ -25,6 +25,7 @@ public class WhiskerTextView(context: Context) : TextView(context), WhiskerEvent
     private val accessibilityActions = mutableMapOf<Int, Long>()
     private var alignedWidth: Int? = null
     private var preparedLayout: Layout? = null
+    private var plainLayout: Layout? = null
     internal val paragraphLayout: Layout? get() = preparedLayout ?: layout
     override fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?) { textEventSink = sink }
     override fun onSelectionChanged(start: Int, end: Int) {
@@ -155,7 +156,13 @@ public class WhiskerTextView(context: Context) : TextView(context), WhiskerEvent
     }
 
     public fun installPreparedParagraph(prepared: Layout) {
-        val rich = paragraph ?: return
+        val rich = paragraph ?: run {
+            if (prepared.text.toString() == text.toString()) {
+                plainLayout = prepared
+                invalidate()
+            }
+            return
+        }
         if (prepared.text.toString() != rich.displayText()) return
         prepared.paint.color = currentTextColor
         val styled = prepared.text as? Spanned
@@ -189,6 +196,7 @@ public class WhiskerTextView(context: Context) : TextView(context), WhiskerEvent
     }
 
     private fun applyWhiskerText() {
+        plainLayout = null
         if (whiskerTextValue.isEmpty()) {
             text = whiskerTextValue
             return
@@ -232,6 +240,8 @@ public class WhiskerTextView(context: Context) : TextView(context), WhiskerEvent
     override fun onDraw(canvas: Canvas) {
         val rich = paragraph
         val textLayout = paragraphLayout
+        val plain = plainLayout?.takeIf { rich == null && !isTextSelectable }
+            ?.let { layout -> plainOffset(layout)?.let { layout to it } }
         if (rich != null && textLayout != null) {
             val save = canvas.save()
             canvas.translate(totalPaddingLeft.toFloat(), extendedPaddingTop.toFloat())
@@ -243,6 +253,8 @@ public class WhiskerTextView(context: Context) : TextView(context), WhiskerEvent
             canvas.translate(totalPaddingLeft.toFloat(), extendedPaddingTop.toFloat())
             preparedLayout?.draw(canvas)
             canvas.restoreToCount(save)
+        } else if (plain != null) {
+            drawPlain(canvas, plain.first, plain.second)
         } else super.onDraw(canvas)
         if (rich != null && textLayout != null) {
             val save = canvas.save()
@@ -252,7 +264,8 @@ public class WhiskerTextView(context: Context) : TextView(context), WhiskerEvent
             if (rich.runs.isNotEmpty()) return
         }
         val decoration = whiskerDecoration ?: return
-        if (textLayout == null) return
+        val decorated = plain?.first ?: textLayout ?: return
+        val offset = plain?.second ?: 0f
         val density = resources.displayMetrics.density
         val stroke = max(density, textSize / 16f)
         val decorationPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -260,11 +273,11 @@ public class WhiskerTextView(context: Context) : TextView(context), WhiskerEvent
             style = Paint.Style.STROKE
             strokeWidth = stroke
         }
-        for (line in 0 until textLayout.lineCount) {
-            val left = totalPaddingLeft + textLayout.getLineLeft(line)
-            val right = totalPaddingLeft + textLayout.getLineRight(line)
+        for (line in 0 until decorated.lineCount) {
+            val left = totalPaddingLeft + offset + decorated.getLineLeft(line)
+            val right = totalPaddingLeft + offset + decorated.getLineRight(line)
             if (right <= left) continue
-            val baseline = extendedPaddingTop + textLayout.getLineBaseline(line)
+            val baseline = extendedPaddingTop + decorated.getLineBaseline(line)
             val y = when (decoration.line) {
                 WhiskerTextDecorationLine.UNDERLINE -> baseline + stroke * 1.5f
                 WhiskerTextDecorationLine.LINE_THROUGH -> baseline + paint.fontMetrics.ascent * 0.35f
@@ -272,8 +285,38 @@ public class WhiskerTextView(context: Context) : TextView(context), WhiskerEvent
             drawWhiskerTextDecoration(canvas, decorationPaint, decoration.style, left, right, y, stroke)
         }
     }
+    /** Where the measured plain layout starts inside the content box, or `null` when this width would break its lines elsewhere. */
+    private fun plainOffset(layout: Layout): Float? {
+        val available = (width - totalPaddingLeft - totalPaddingRight).toFloat()
+        val last = layout.lineCount - 1
+        if (last < 0) return 0f
+        if ((0..last).any { layout.getLineWidth(it) > available + 0.5f }) return null
+        if (available > layout.width + 0.5f &&
+            (last > 0 || layout.getEllipsisCount(last) > 0 || layout.getLineEnd(last) < layout.text.length)
+        ) return null
+        val rtl = layout.getParagraphDirection(0) == Layout.DIR_RIGHT_TO_LEFT
+        val flush = when (val alignment = layout.getParagraphAlignment(0)) {
+            Layout.Alignment.ALIGN_CENTER -> 0.5f
+            Layout.Alignment.ALIGN_NORMAL -> if (rtl) 1f else 0f
+            Layout.Alignment.ALIGN_OPPOSITE -> if (rtl) 0f else 1f
+            else -> if (alignment.name == "ALIGN_RIGHT") 1f else 0f
+        }
+        return flush * (available - layout.width)
+    }
 
-
+    private fun drawPlain(canvas: Canvas, layout: Layout, offset: Float) {
+        // Plain layouts are shared by every view showing the same text, so the paint is only borrowed.
+        val paint = layout.paint
+        val color = paint.color
+        paint.color = currentTextColor
+        paint.setShadowLayer(shadowRadius, shadowDx, shadowDy, shadowColor)
+        val save = canvas.save()
+        canvas.translate(totalPaddingLeft + offset, extendedPaddingTop.toFloat())
+        layout.draw(canvas)
+        canvas.restoreToCount(save)
+        paint.color = color
+        paint.clearShadowLayer()
+    }
 }
 
 private fun protectCjkBreaks(value: String): String = buildString {

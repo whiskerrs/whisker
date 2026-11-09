@@ -2513,3 +2513,35 @@ fn on_mount_panic_reaches_its_boundary_on_the_next_frame() {
 
     assert_eq!(FALLBACK_ERROR.take().as_deref(), Some("mount failed"));
 }
+
+#[test]
+fn frame_timing_counts_host_measurement_only_while_enabled() {
+    let surface = surface(91);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime.mount(|| render! { Text(value: "timed") }).unwrap();
+    let mut measurements = ReadyTextMeasurement::default();
+    let mut sink = RecordingRenderer::new(surface.surface());
+    let mut drive = |runtime: &RuntimeInstance, timestamp| {
+        runtime
+            .drive_frame(
+                timestamp,
+                StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+                1,
+                1,
+                &mut measurements,
+                &mut sink,
+                LayoutOptions::default(),
+            )
+            .unwrap()
+    };
+
+    runtime.set_frame_timing(true);
+    let timing = drive(&runtime, 1.0).timing.expect("timing is enabled");
+    assert!(timing.measure_batches >= 1);
+    assert!(timing.measure_requests >= timing.measure_batches);
+    assert!(timing.measure <= timing.layout);
+    assert!(timing.reactive + timing.layout + timing.present <= timing.total);
+
+    runtime.set_frame_timing(false);
+    assert_eq!(drive(&runtime, 2.0).timing, None);
+}

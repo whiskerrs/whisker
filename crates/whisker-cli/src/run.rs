@@ -48,6 +48,11 @@ pub struct Args {
     #[arg(long)]
     pub no_hot_patch: bool,
 
+    /// Print frame timings from the running app once a second, plus every
+    /// frame slower than 16.7ms. Android and iOS only.
+    #[arg(long)]
+    pub trace: bool,
+
     /// Explicit workspace root; must match the application's Cargo workspace.
     #[arg(long)]
     pub workspace_root: Option<PathBuf>,
@@ -239,6 +244,7 @@ fn run_inner(
         // Web clients share this server's HTTP origin with the patch socket.
         // Native-code patch transport keeps its random per-session token.
         dev_token: (target != Target::Web).then(generate_dev_token),
+        trace: args.trace,
         hot_patch_mode: if args.no_hot_patch {
             HotPatchMode::FullReloadOnly
         } else {
@@ -337,6 +343,7 @@ fn run_macos(
         watch_paths: watch_roots,
         bind_addr,
         dev_token: Some(generate_dev_token()),
+        trace: false,
         hot_patch_mode: if no_hot_patch {
             HotPatchMode::FullReloadOnly
         } else {
@@ -450,6 +457,11 @@ fn target_label(target: Target) -> &'static str {
 ///
 fn forward_event_to_ui(event: whisker_dev_server::Event) {
     use whisker_dev_server::Event;
+    if let Event::DeviceTrace { frames } = &event {
+        for line in crate::trace::lines(frames) {
+            whisker_build::ui::info(line);
+        }
+    }
     if let Event::DeviceLog {
         stream,
         line,

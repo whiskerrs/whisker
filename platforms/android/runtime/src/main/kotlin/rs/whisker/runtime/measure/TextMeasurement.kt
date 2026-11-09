@@ -33,8 +33,12 @@ internal class HostMeasurementProvider(
     private val elements: WhiskerElementBindings,
     internal val preparedParagraphs: PreparedParagraphs = PreparedParagraphs(),
 ) {
+    private val layouts = HashMap<TextLayoutKey, TextLayout>()
+    private val paints = HashMap<TextPaintKey, TextPaint>()
+
     @Suppress("LongParameterList")
     fun measure(
+        node: Long, environmentEpoch: Long,
         elementType: Int, kind: Int,
         knownWidth: Float, knownHeight: Float, knownMask: Int,
         availableWidth: Float, availableHeight: Float,
@@ -46,16 +50,52 @@ internal class HostMeasurementProvider(
         fontOpticalSizing: Int, payloadVersion: Int, payload: WhiskerValue?,
         intrinsicWidth: Float, intrinsicHeight: Float, intrinsicMask: Int,
         direction: Int, alignment: Int,
-        paragraph: WhiskerValue? = null,
+        paragraph: ByteArray? = null,
     ): HostMeasurementResult {
         if (kind == MEASURE_TEXT) {
-            return measureText(
-                knownWidth, knownHeight, knownMask,
-                availableWidth, availableWidthKind,
-                text, locale, fontFamilies, fontSize, fontWeight, fontStyle, wrap, wordBreak, overflow,
-                letterSpacing, lineHeight, indentLogicalPixels, indentPercentage, maxLines,
-                fontSettings, fontFeatureCount, fontOpticalSizing, direction, alignment,
-                WhiskerParagraph.decode(paragraph, text),
+            val density = context.resources.displayMetrics.density
+            val localeRtl = context.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+            val widthBasis = when {
+                knownMask and WIDTH != 0 -> knownWidth
+                availableWidthKind == DEFINITE -> availableWidth
+                else -> 0f
+            }
+            val key = TextLayoutKey(
+                // Views restyle the layout they draw in place, so rich layouts stay per node.
+                if (paragraph != null) node else 0L,
+                environmentEpoch, density, localeRtl,
+                when {
+                    knownMask and WIDTH != 0 -> ceil(knownWidth * density).toInt().coerceAtLeast(1)
+                    availableWidthKind == DEFINITE && wrap != 0 -> ceil(availableWidth * density).toInt().coerceAtLeast(1)
+                    availableWidthKind == MIN_CONTENT && wrap != 0 -> 1
+                    else -> DESIRED_WIDTH
+                },
+                text, locale, fontFamilies.asList(), fontSize, fontWeight, fontStyle, wrap, wordBreak, overflow,
+                letterSpacing, lineHeight, textIndentPixels(widthBasis, density, indentLogicalPixels, indentPercentage),
+                maxLines, fontSettings.asList(), fontFeatureCount, fontOpticalSizing, direction, alignment,
+                paragraph?.let(::EncodedParagraph),
+            )
+            val layout = layouts[key] ?: layoutText(key).also {
+                if (layouts.size >= LAYOUT_CACHE_CAPACITY) layouts.clear()
+                layouts[key] = it
+            }
+            val width = measuredTextWidth(
+                knownWidth = knownWidth,
+                hasKnownWidth = knownMask and WIDTH != 0,
+                availableWidth = availableWidth,
+                hasDefiniteAvailableWidth = availableWidthKind == DEFINITE,
+                wraps = wrap != 0,
+                usedLineWidthPixels = layout.usedLineWidthPixels,
+                density = density,
+            )
+            return HostMeasurementResult(
+                width = width,
+                height = if (knownMask and HEIGHT != 0) knownHeight else layout.height,
+                firstBaseline = layout.firstBaseline,
+                lastBaseline = layout.lastBaseline,
+                mask = BASELINES,
+                paragraph = layout.geometry,
+                layout = layout.layout,
             )
         }
         if ((kind == MEASURE_REPLACED_CONTENT || kind == MEASURE_EMBEDDED_SURFACE) &&
@@ -85,64 +125,17 @@ internal class HostMeasurementProvider(
         )
     }
 
-    @Suppress("LongParameterList")
-    private fun measureText(
-        knownWidth: Float, knownHeight: Float, knownMask: Int,
-        availableWidth: Float, availableWidthKind: Int,
-        text: String, locale: String, fontFamilies: Array<String>, fontSize: Float, fontWeight: Int,
-        fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
-        lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float, maxLines: Int,
-        fontSettings: Array<String>, fontFeatureCount: Int, fontOpticalSizing: Int,
-        direction: Int, alignment: Int,
-        rich: WhiskerParagraph?,
-    ): HostMeasurementResult {
-        val density = context.resources.displayMetrics.density
-        val paint = TextPaint().apply {
-            textSize = fontSize * density
-            if (locale.isNotEmpty()) textLocale = Locale.forLanguageTag(locale)
-            val italic = fontStyle != FONT_STYLE_NORMAL
-            val baseTypeface = resolveWhiskerTypeface(fontFamilies.asList())
-            typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                Typeface.create(baseTypeface, fontWeight.coerceIn(1, 1000), italic)
-            } else {
-                val typefaceStyle = (if (fontWeight >= 600) Typeface.BOLD else 0) or
-                    (if (italic) Typeface.ITALIC else 0)
-                Typeface.create(baseTypeface, typefaceStyle)
-            }
-            this.letterSpacing = if (fontSize > 0f) letterSpacing / fontSize else 0f
-            fontFeatureSettings = fontSettings.take(fontFeatureCount).joinToString(", ") {
-                val (tag, value) = parseFontSetting(it)
-                "'$tag' ${value.toLong()}"
-            }.ifEmpty { null }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val variations = fontSettings.drop(fontFeatureCount)
-                    .map(::parseFontSetting)
-                    .toMutableList()
-                if (fontOpticalSizing == 0 && variations.none { it.first == "opsz" }) {
-                    variations += "opsz" to fontSize.toDouble()
-                }
-                fontVariationSettings = variations.joinToString(", ") {
-                    "'${it.first}' ${it.second}"
-                }.ifEmpty { null }
-            }
+    private fun layoutText(key: TextLayoutKey): TextLayout = with(key) {
+        val rich = paragraph?.let { WhiskerParagraph.decode(ValueBytes.decode(it.bytes), text) }
+        val paintKey = TextPaintKey(density, locale, fontFamilies, fontSize, fontWeight, fontStyle, letterSpacing, fontSettings, fontFeatureCount, fontOpticalSizing)
+        val prototype = paints[paintKey] ?: createPaint(paintKey).also {
+            if (paints.size >= PAINT_CACHE_CAPACITY) paints.clear()
+            paints[paintKey] = it
         }
-        val widthBasis = when {
-            knownMask and WIDTH != 0 -> knownWidth
-            availableWidthKind == DEFINITE -> availableWidth
-            else -> 0f
-        }
+        // Views recolor the paint of the layout they draw, so each layout owns a copy.
+        val paint = TextPaint(prototype)
         val displayText = if (rich == null && wordBreak == WORD_BREAK_KEEP_ALL) protectCjkBreaks(text) else text
-        val localeRtl = context.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-        val semantics = resolveTextLayoutSemantics(
-            displayText,
-            direction,
-            alignment,
-            localeRtl,
-            widthBasis,
-            density,
-            indentLogicalPixels,
-            indentPercentage,
-        )
+        val semantics = resolveTextLayoutSemantics(displayText, direction, alignment, localeRtl, indentPixels)
         fun styledText(value: String, paragraph: WhiskerParagraph?, width: Float = Float.POSITIVE_INFINITY): CharSequence {
             if (value.isEmpty() || (paragraph == null && semantics.indentPixels == 0f && lineHeight <= 0f)) return value
             return SpannableString(value).apply {
@@ -152,12 +145,8 @@ internal class HostMeasurementProvider(
             }
         }
         val layoutText = styledText(displayText, rich)
-        val maxWidthPx = when {
-            knownMask and WIDTH != 0 -> ceil(knownWidth * density).toInt().coerceAtLeast(1)
-            availableWidthKind == DEFINITE && wrap != 0 ->
-                ceil(availableWidth * density).toInt().coerceAtLeast(1)
-            availableWidthKind == MIN_CONTENT && wrap != 0 -> 1
-            else -> ceil(Layout.getDesiredWidth(layoutText, paint) + semantics.indentPixels).toInt().coerceAtLeast(1)
+        val maxWidthPx = if (widthPixels != DESIRED_WIDTH) widthPixels else {
+            ceil(Layout.getDesiredWidth(layoutText, paint) + semantics.indentPixels).toInt().coerceAtLeast(1)
         }
         val lineLimit = if (wrap == 0) 1 else if (maxLines == 0) Int.MAX_VALUE else maxLines
         fun buildLayout(value: CharSequence, limit: Int = lineLimit, ellipsis: Boolean = overflow == TEXT_OVERFLOW_ELLIPSIS): StaticLayout {
@@ -185,25 +174,46 @@ internal class HostMeasurementProvider(
                 truncated
             }
         } else buildLayout(layoutText)
-        val usedLineWidthPixels = (0 until layout.lineCount)
-            .maxOfOrNull(layout::getLineWidth) ?: 0f
-        val width = measuredTextWidth(
-            knownWidth = knownWidth,
-            hasKnownWidth = knownMask and WIDTH != 0,
-            availableWidth = availableWidth,
-            hasDefiniteAvailableWidth = availableWidthKind == DEFINITE,
-            wraps = wrap != 0,
-            usedLineWidthPixels = usedLineWidthPixels,
-            density = density,
-        )
-        val height = if (knownMask and HEIGHT != 0) knownHeight else layout.height / density
         val first = if (layout.lineCount > 0) layout.getLineBaseline(0) / density else 0f
-        val last = if (layout.lineCount > 0) {
-            layout.getLineBaseline(layout.lineCount - 1) / density
+        TextLayout(
+            layout = layout,
+            usedLineWidthPixels = (0 until layout.lineCount).maxOfOrNull(layout::getLineWidth) ?: 0f,
+            height = layout.height / density,
+            firstBaseline = first,
+            lastBaseline = if (layout.lineCount > 0) layout.getLineBaseline(layout.lineCount - 1) / density else first,
+            geometry = measuredParagraph?.measurementGeometry(layout, density)?.let(ValueBytes::encode),
+        )
+    }
+
+    // TextPaint's own `density` and `letterSpacing` would shadow an implicit key receiver here.
+    private fun createPaint(key: TextPaintKey): TextPaint = TextPaint().apply {
+        textSize = key.fontSize * key.density
+        if (key.locale.isNotEmpty()) textLocale = Locale.forLanguageTag(key.locale)
+        val italic = key.fontStyle != FONT_STYLE_NORMAL
+        val baseTypeface = resolveWhiskerTypeface(key.fontFamilies)
+        typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Typeface.create(baseTypeface, key.fontWeight.coerceIn(1, 1000), italic)
         } else {
-            first
+            val typefaceStyle = (if (key.fontWeight >= 600) Typeface.BOLD else 0) or
+                (if (italic) Typeface.ITALIC else 0)
+            Typeface.create(baseTypeface, typefaceStyle)
         }
-        return HostMeasurementResult(width = width, height = height, firstBaseline = first, lastBaseline = last, mask = BASELINES, paragraph = measuredParagraph?.measurementGeometry(layout, density), layout = layout.takeIf { rich != null })
+        letterSpacing = if (key.fontSize > 0f) key.letterSpacing / key.fontSize else 0f
+        fontFeatureSettings = key.fontSettings.take(key.fontFeatureCount).joinToString(", ") {
+            val (tag, value) = parseFontSetting(it)
+            "'$tag' ${value.toLong()}"
+        }.ifEmpty { null }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val variations = key.fontSettings.drop(key.fontFeatureCount)
+                .map(::parseFontSetting)
+                .toMutableList()
+            if (key.fontOpticalSizing == 0 && variations.none { it.first == "opsz" }) {
+                variations += "opsz" to key.fontSize.toDouble()
+            }
+            fontVariationSettings = variations.joinToString(", ") {
+                "'${it.first}' ${it.second}"
+            }.ifEmpty { null }
+        }
     }
 
     private fun ready(width: Float, height: Float): HostMeasurementResult =
@@ -240,23 +250,25 @@ internal data class TextLayoutSemantics(
     val indentPixels: Float,
 )
 
-@Suppress("LongParameterList")
+internal fun textIndentPixels(
+    widthBasis: Float,
+    density: Float,
+    indentLogicalPixels: Float,
+    indentPercentage: Float,
+): Float = indentLogicalPixels * density + widthBasis * density * indentPercentage / 100f
+
 internal fun resolveTextLayoutSemantics(
     text: String,
     direction: Int,
     alignment: Int,
     localeRtl: Boolean,
-    widthBasis: Float,
-    density: Float,
-    indentLogicalPixels: Float,
-    indentPercentage: Float,
+    indentPixels: Float,
 ): TextLayoutSemantics {
     val rightToLeft = resolvesRightToLeft(text, direction, localeRtl)
     return TextLayoutSemantics(
         alignment = resolveAlignment(alignment, rightToLeft),
         directionHeuristic = resolveDirectionHeuristic(direction, localeRtl),
-        indentPixels = indentLogicalPixels * density +
-            widthBasis * density * indentPercentage / 100f,
+        indentPixels = indentPixels,
     )
 }
 
@@ -328,6 +340,9 @@ private fun protectCjkBreaks(value: String): String = buildString {
 private fun Char.isCjk(): Boolean = code in 0x2E80..0x9FFF || code in 0xF900..0xFAFF ||
     code in 0xAC00..0xD7AF
 
+private const val DESIRED_WIDTH = -1
+private const val LAYOUT_CACHE_CAPACITY = 256
+private const val PAINT_CACHE_CAPACITY = 64
 private const val DEFINITE = 0
 private const val MIN_CONTENT = 1
 private const val WIDTH = 1
@@ -353,6 +368,62 @@ private const val UNSUPPORTED = 3
 private const val UNSUPPORTED_FEATURE = 1
 private const val BASELINES = 3
 
+/** Every input that shapes a text layout; equal keys produce interchangeable layouts. */
+private data class TextLayoutKey(
+    val node: Long,
+    val environmentEpoch: Long,
+    val density: Float,
+    val localeRtl: Boolean,
+    val widthPixels: Int,
+    val text: String,
+    val locale: String,
+    val fontFamilies: List<String>,
+    val fontSize: Float,
+    val fontWeight: Int,
+    val fontStyle: Int,
+    val wrap: Int,
+    val wordBreak: Int,
+    val overflow: Int,
+    val letterSpacing: Float,
+    val lineHeight: Float,
+    val indentPixels: Float,
+    val maxLines: Int,
+    val fontSettings: List<String>,
+    val fontFeatureCount: Int,
+    val fontOpticalSizing: Int,
+    val direction: Int,
+    val alignment: Int,
+    val paragraph: EncodedParagraph?,
+)
+
+private data class TextPaintKey(
+    val density: Float,
+    val locale: String,
+    val fontFamilies: List<String>,
+    val fontSize: Float,
+    val fontWeight: Int,
+    val fontStyle: Int,
+    val letterSpacing: Float,
+    val fontSettings: List<String>,
+    val fontFeatureCount: Int,
+    val fontOpticalSizing: Int,
+)
+
+private class EncodedParagraph(val bytes: ByteArray) {
+    private val hash = bytes.contentHashCode()
+    override fun equals(other: Any?): Boolean = other is EncodedParagraph && hash == other.hash && bytes.contentEquals(other.bytes)
+    override fun hashCode(): Int = hash
+}
+
+private class TextLayout(
+    val layout: StaticLayout,
+    val usedLineWidthPixels: Float,
+    val height: Float,
+    val firstBaseline: Float,
+    val lastBaseline: Float,
+    val geometry: ByteArray?,
+)
+
 internal data class HostMeasurementResult(
     val status: Int = READY,
     val reason: Int = 0,
@@ -361,6 +432,7 @@ internal data class HostMeasurementResult(
     val firstBaseline: Float = 0f,
     val lastBaseline: Float = 0f,
     val mask: Int = 0,
-    val paragraph: WhiskerValue? = null,
+    val paragraph: ByteArray? = null,
     val layout: StaticLayout? = null,
 )
+

@@ -846,6 +846,16 @@ impl SurfaceEngine {
         viewport: LayoutSize,
         environment_epoch: u64,
     ) -> Result<LayoutProgress, SurfaceError> {
+        self.compute_layout_using(root, viewport, environment_epoch, None)
+    }
+
+    pub(crate) fn compute_layout_using(
+        &mut self,
+        root: NodeId,
+        viewport: LayoutSize,
+        environment_epoch: u64,
+        immediate: Option<&mut crate::measurement::ImmediateHost<'_>>,
+    ) -> Result<LayoutProgress, SurfaceError> {
         self.ensure_mutable()?;
         if self.measurements.environment_epoch() != Some(environment_epoch) {
             for node in Rc::make_mut(&mut self.measurements).set_environment(environment_epoch) {
@@ -875,11 +885,16 @@ impl SurfaceEngine {
         }
 
         Rc::make_mut(&mut self.measurements).begin_pass();
-        let snapshot = Rc::make_mut(&mut self.layout).compute(
-            root,
-            viewport,
-            Rc::<MeasurementCoordinator>::make_mut(&mut self.measurements),
-        )?;
+        let layout = Rc::make_mut(&mut self.layout);
+        let coordinator = Rc::<MeasurementCoordinator>::make_mut(&mut self.measurements);
+        let snapshot = match immediate {
+            Some(host) => layout.compute(
+                root,
+                viewport,
+                &mut crate::measurement::ImmediateMeasurer { coordinator, host },
+            ),
+            None => layout.compute(root, viewport, coordinator),
+        }?;
         let pass = Rc::make_mut(&mut self.measurements).finish_pass()?;
         if pass.blocking {
             self.layout_dirty = true;

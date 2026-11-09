@@ -100,6 +100,8 @@ impl MobileHotReload {
     fn apply(&mut self, _runtime: &mut RuntimeInstance) -> Result<bool, String> {
         Ok(false)
     }
+
+    fn record_frame(&self, _timing: Option<whisker_runtime::FrameTiming>) {}
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -317,6 +319,7 @@ pub unsafe fn tick(
     mobile.drain_resource_commands();
     match frame_result {
         Ok(drive) => {
+            mobile.hot_reload.record_frame(drive.timing);
             mobile.retrying_failed_frame = false;
             !drive.needs_frame
         }

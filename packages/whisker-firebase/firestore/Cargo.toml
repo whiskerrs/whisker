@@ -1,6 +1,6 @@
 [package]
 name = "whisker-firebase-firestore"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -20,6 +20,6 @@ android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 
 [dependencies]
-whisker = { path = "../../../crates/whisker", version = "0.15.2" }
-whisker-firebase-core = { path = "../core", version = "0.1.0" }
+whisker = { path = "../../../crates/whisker", version = "0.16.0" }
+whisker-firebase-core = { path = "../core", version = "0.1.1" }
 serde = { workspace = true }

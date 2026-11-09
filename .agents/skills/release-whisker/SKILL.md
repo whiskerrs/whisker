@@ -1,6 +1,8 @@
 ---
 name: release-whisker
 description: Prepare or publish a Whisker release across Rust crates, Android SDK, Gradle plugin, and SwiftPM; recover a partial release or diagnose a missing SDK pin.
+metadata:
+  internal: true
 ---
 
 # Release Whisker

@@ -248,6 +248,7 @@ struct PassState {
     blocking: bool,
     provisional: bool,
     error: Option<MeasurementError>,
+    issued: Option<MeasurementKey>,
 }
 
 #[derive(Clone, Debug)]
@@ -885,7 +886,73 @@ impl MeasurementCoordinator {
         );
         self.remember_consumer(node, cache_key);
         self.pass.requests.insert(key, request);
+        self.pass.issued = Some(key);
         self.fallback_result(state.spec.pending_policy, state.last_ready.as_ref(), None)
+    }
+}
+
+/// Answers one Host request while Taffy waits, or `None` after recording why it could not.
+pub(crate) type ImmediateHost<'h> =
+    dyn FnMut(&MeasurementRequest) -> Option<MeasurementResponse> + 'h;
+
+/// Asks the Host for each uncached measurement as Taffy needs it, so one pass
+/// lays out with real sizes instead of blocking on a batch round trip.
+pub(crate) struct ImmediateMeasurer<'a, 'h> {
+    pub(crate) coordinator: &'a mut MeasurementCoordinator,
+    pub(crate) host: &'a mut ImmediateHost<'h>,
+}
+
+impl ImmediateMeasurer<'_, '_> {
+    fn resolve(
+        &mut self,
+        node: NodeId,
+        constraints: LayoutMeasureRequest,
+        children: &[MeasuredInlineChild],
+    ) -> IntrinsicResult {
+        let pass = &self.coordinator.pass;
+        let (blocking, provisional) = (pass.blocking, pass.provisional);
+        let result = self
+            .coordinator
+            .resolve_intrinsic(node, constraints, children);
+        let Some(key) = self.coordinator.pass.issued.take() else {
+            return result;
+        };
+        let request = self.coordinator.pass.requests[&key].clone();
+        let Some(response) = (self.host)(&request) else {
+            return result;
+        };
+        // The fallback above only stood in for this request, which now has an answer.
+        self.coordinator.pass.requests.remove(&key);
+        self.coordinator.pass.blocking = blocking;
+        self.coordinator.pass.provisional = provisional;
+        if let Err(error) = self
+            .coordinator
+            .apply_batch(std::slice::from_ref(&response))
+        {
+            self.coordinator.pass.error.get_or_insert(error);
+            return result;
+        }
+        self.coordinator
+            .resolve_intrinsic(node, constraints, children)
+    }
+}
+
+impl IntrinsicMeasurer for ImmediateMeasurer<'_, '_> {
+    fn measure(&mut self, node: NodeId, request: LayoutMeasureRequest) -> LayoutSize {
+        self.resolve(node, request, &[]).size
+    }
+
+    fn measure_detailed(&mut self, node: NodeId, request: LayoutMeasureRequest) -> IntrinsicResult {
+        self.resolve(node, request, &[])
+    }
+
+    fn measure_paragraph(
+        &mut self,
+        node: NodeId,
+        request: LayoutMeasureRequest,
+        children: &[MeasuredInlineChild],
+    ) -> IntrinsicResult {
+        self.resolve(node, request, children)
     }
 }
 
@@ -1066,6 +1133,58 @@ mod tests {
             }),
             prepared_content: PreparedContentId::new(3),
         }
+    }
+
+    #[test]
+    fn immediate_measurer_applies_answers_and_records_rejected_ones() {
+        let mut coordinator = MeasurementCoordinator::default();
+        coordinator.set_environment(1);
+        coordinator
+            .set_spec(
+                node(1),
+                element(),
+                Some(spec(MeasurementKind::Text, PendingMeasurePolicy::Block)),
+            )
+            .unwrap();
+        let mut width = 30.0;
+        let mut host = |request: &MeasurementRequest| {
+            Some(MeasurementResponse::Ready {
+                key: request.key,
+                environment_epoch: request.environment_epoch,
+                metrics: MeasurementMetrics::from_size(MeasuredSize::new(width, 10.0)),
+            })
+        };
+        coordinator.begin_pass();
+        let size = ImmediateMeasurer {
+            coordinator: &mut coordinator,
+            host: &mut host,
+        }
+        .measure(node(1), constraints(100.0));
+        assert_eq!(size, LayoutSize::new(30.0, 10.0));
+        assert!(coordinator.finish_pass().unwrap().requests.is_empty());
+
+        width = -1.0;
+        let mut rejected = None;
+        let mut host = |request: &MeasurementRequest| {
+            rejected = Some(request.key);
+            Some(MeasurementResponse::Ready {
+                key: request.key,
+                environment_epoch: request.environment_epoch,
+                metrics: MeasurementMetrics::from_size(MeasuredSize::new(width, 10.0)),
+            })
+        };
+        coordinator.begin_pass();
+        ImmediateMeasurer {
+            coordinator: &mut coordinator,
+            host: &mut host,
+        }
+        .measure(node(1), constraints(50.0));
+        assert_eq!(
+            coordinator.finish_pass().map(|_| ()),
+            Err(MeasurementError::InvalidMetrics {
+                key: rejected.expect("the Host saw the request"),
+            })
+        );
     }
 
     #[test]

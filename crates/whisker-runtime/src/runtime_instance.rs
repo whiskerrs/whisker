@@ -1,6 +1,6 @@
 //! Host-driven lifecycle and frame execution for one application surface.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fmt;
@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::RuntimeContext;
+use crate::frame_timing::{FrameTiming, TimedProvider, now_if};
 use crate::module::{ModuleHost, with_module_host};
 use crate::reactive::{self, Owner};
 use crate::runtime_wake::RuntimeWakeHandle;
@@ -498,6 +499,8 @@ pub struct RuntimeDrive {
     pub frame: RuntimeFrame,
     /// Whether the Host should schedule another VSync after this callback.
     pub needs_frame: bool,
+    /// Phase durations, present only while frame timing is on.
+    pub timing: Option<FrameTiming>,
 }
 
 /// Failure while validating lifecycle or producing a frame.
@@ -547,6 +550,7 @@ pub struct RuntimeInstance {
     pending_host_events: RefCell<VecDeque<PendingHostEvent>>,
     activations: RefCell<ActivationRecognizer>,
     wake_enabled: Arc<AtomicBool>,
+    frame_timing: Cell<bool>,
 }
 
 enum PendingHostEvent {
@@ -776,7 +780,16 @@ impl RuntimeInstance {
             pending_host_events: RefCell::new(VecDeque::new()),
             activations: RefCell::new(ActivationRecognizer::default()),
             wake_enabled,
+            frame_timing: Cell::new(false),
         }
+    }
+
+    /// Records a [`FrameTiming`] in every following [`RuntimeDrive`].
+    ///
+    /// Ignored on `wasm32`, where `std` has no clock.
+    pub fn set_frame_timing(&self, enabled: bool) {
+        self.frame_timing
+            .set(enabled && !cfg!(target_arch = "wasm32"));
     }
 
     /// Returns the current lifecycle state.
@@ -1187,6 +1200,7 @@ impl RuntimeInstance {
         self.require(RuntimeLifecycle::Running, "drive a frame")
             .map_err(RuntimeDriveError::Lifecycle)?;
         let surface = self.surface.clone();
+        let start = now_if(self.frame_timing.get());
         self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
                 surface
@@ -1215,31 +1229,50 @@ impl RuntimeInstance {
                 surface
                     .finish_mutation_batch()
                     .map_err(RuntimeDriveError::Binding)?;
+                let reactive_end = now_if(start.is_some());
                 surface
                     .step_motion(timestamp_ms)
                     .map_err(RuntimeDriveError::Motion)?;
 
                 let pending_text_queries = surface.step_text_queries(timestamp_ms);
+                let mut timing = FrameTiming::default();
+                let mut present = std::time::Duration::ZERO;
+                let render_start = now_if(start.is_some());
                 let frame = surface
-                    .render_frame(
+                    .render_frame_timed(
                         LayoutSize::new(
                             environment.viewport_width(),
                             environment.viewport_height(),
                         ),
                         environment_epoch,
                         viewport_epoch,
-                        measurement_provider,
+                        &mut TimedProvider {
+                            inner: measurement_provider,
+                            timing: start.is_some().then_some(&mut timing),
+                        },
                         frame_sink,
                         options,
+                        start.is_some().then_some(&mut present),
                     )
                     .map_err(RuntimeDriveError::Frame)?;
+                let render_time = render_start.map(|render_start| render_start.elapsed());
                 let recovery = matches!(frame.presentation, Some(ApplyResult::NeedSnapshot { .. }));
                 let pending_frame_application =
                     frame.layout.has_layout() && surface.has_pending_frame_application();
                 let drained_events = self
                     .drain_pending_host_events()
                     .map_err(RuntimeDriveError::HostEvent)?;
+                let timing = start.zip(reactive_end).zip(render_time).map(
+                    |((start, reactive_end), render_time)| FrameTiming {
+                        total: start.elapsed(),
+                        reactive: reactive_end - start,
+                        layout: render_time.saturating_sub(present),
+                        present,
+                        ..timing
+                    },
+                );
                 Ok(RuntimeDrive {
+                    timing,
                     frame,
                     needs_frame: recovery
                         || pending_frame_application

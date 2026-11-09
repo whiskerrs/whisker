@@ -385,6 +385,14 @@ pub fn apply_event(
                 line: line.clone(),
             });
         }
+        Event::DeviceTrace { frames } => {
+            for text in crate::trace::lines(frames) {
+                history.push(HistoryItem::Message {
+                    level: MessageLevel::Info,
+                    text,
+                });
+            }
+        }
     }
 }
 

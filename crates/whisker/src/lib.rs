@@ -189,7 +189,7 @@ pub mod attrs;
 pub use style::{Style, apply_style};
 pub use whisker_runtime::{
     ElementAuthoringBinding, ElementModuleDefinition, ElementProviderMetadata, ElementRegistry,
-    ElementRegistryBuilder, ElementRegistryError, InputDispatch, ResourceEventApply,
+    ElementRegistryBuilder, ElementRegistryError, FrameTiming, InputDispatch, ResourceEventApply,
     RuntimeBindingError, RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeFrame,
     RuntimeFrameError, RuntimeInputError, RuntimeInstance, RuntimeLayoutError, RuntimeLifecycle,
     RuntimeLifecycleError, RuntimePresentError, RuntimeResourceError, SCROLL_BY_COMMAND,

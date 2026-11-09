@@ -158,6 +158,7 @@ struct AppState {
     /// peer from pushing arbitrary native code. `None` = unauthenticated
     /// (token-less local setup / tests).
     expected_token: Option<Arc<str>>,
+    trace: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -183,6 +184,7 @@ pub async fn serve(
     addr: SocketAddr,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     expected_token: Option<String>,
+    trace: bool,
     static_files: Option<StaticFiles>,
 ) -> Result<(PatchSender, SocketAddr, tokio::task::JoinHandle<()>)> {
     let (tx, _rx) = broadcast::channel::<ServerUpdate>(16);
@@ -192,6 +194,7 @@ pub async fn serve(
         on_event,
         aslr_reference: Arc::clone(&aslr_reference),
         expected_token: expected_token.map(Arc::from),
+        trace,
     };
 
     let mut app = Router::new()
@@ -247,6 +250,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             cb(Event::ClientConnected);
         }
         announced = true;
+        if state.trace && tx_ws.send(Message::Text(TRACE_ON.into())).await.is_err() {
+            return;
+        }
     }
 
     loop {
@@ -320,6 +326,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                         cb(Event::ClientConnected);
                                     }
                                     announced = true;
+                                    if state.trace
+                                        && tx_ws.send(Message::Text(TRACE_ON.into())).await.is_err()
+                                    {
+                                        break;
+                                    }
                                 }
                             }
                             let aslr = hello.aslr_reference;
@@ -336,6 +347,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     line: log.line,
                                     ts_micros: log.ts_micros,
                                 });
+                            }
+                        } else if let Some(frames) = parse_client_trace(&t) {
+                            if let Some(cb) = &state.on_event {
+                                cb(Event::DeviceTrace { frames });
                             }
                         }
                     }
@@ -412,6 +427,45 @@ fn parse_client_hello(text: &str) -> Option<ClientHello> {
     }
 }
 
+const TRACE_ON: &str = r#"{"kind":"trace","enabled":true}"#;
+
+/// Decodes `whisker-dev-runtime`'s `trace::encode` tuples.
+fn parse_client_trace(text: &str) -> Option<Vec<crate::FrameSample>> {
+    #[derive(serde::Deserialize)]
+    struct Trace {
+        kind: String,
+        frames: Vec<[u64; 7]>,
+    }
+    let trace: Trace = serde_json::from_str(text).ok()?;
+    (trace.kind == "trace").then(|| {
+        trace
+            .frames
+            .into_iter()
+            .map(
+                |[
+                    total_us,
+                    reactive_us,
+                    layout_us,
+                    measure_us,
+                    present_us,
+                    measure_batches,
+                    measure_requests,
+                ]| {
+                    crate::FrameSample {
+                        total_us,
+                        reactive_us,
+                        layout_us,
+                        measure_us,
+                        present_us,
+                        measure_batches,
+                        measure_requests,
+                    }
+                },
+            )
+            .collect()
+    })
+}
+
 /// Decoded payload of a `{"kind":"log",…}` text frame emitted by the
 /// device-side `log_capture` module.
 struct ClientLog {
@@ -481,7 +535,9 @@ mod tests {
         on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     ) -> (PatchSender, SocketAddr) {
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (sender, addr, _handle) = serve(any, on_event, None, None).await.expect("serve");
+        let (sender, addr, _handle) = serve(any, on_event, None, false, None)
+            .await
+            .expect("serve");
         (sender, addr)
     }
 
@@ -589,6 +645,7 @@ mod tests {
             any,
             None,
             None,
+            false,
             Some(StaticFiles {
                 root: root.clone(),
                 base_path: "/".into(),
@@ -618,6 +675,7 @@ mod tests {
             any,
             None,
             None,
+            false,
             Some(StaticFiles {
                 root: root.clone(),
                 base_path: "/examples/chat/".into(),
@@ -720,7 +778,7 @@ mod tests {
 
     async fn spawn_test_server_with_token(token: Option<String>) -> (PatchSender, SocketAddr) {
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (sender, addr, _handle) = serve(any, None, token, None).await.expect("serve");
+        let (sender, addr, _handle) = serve(any, None, token, false, None).await.expect("serve");
         (sender, addr)
     }
 
@@ -928,6 +986,49 @@ mod tests {
     #[test]
     fn parse_client_log_rejects_other_kinds() {
         assert!(parse_client_log(r#"{"kind":"hello","aslr_reference":42}"#,).is_none());
+    }
+
+    #[test]
+    fn parse_client_trace_decodes_frame_tuples() {
+        let frames = parse_client_trace(r#"{"kind":"trace","frames":[[900,100,500,300,200,2,7]]}"#)
+            .expect("valid");
+        assert_eq!(
+            frames,
+            [crate::FrameSample {
+                total_us: 900,
+                reactive_us: 100,
+                layout_us: 500,
+                measure_us: 300,
+                present_us: 200,
+                measure_batches: 2,
+                measure_requests: 7,
+            }]
+        );
+        assert!(parse_client_trace(r#"{"kind":"log","frames":[]}"#).is_none());
+    }
+
+    #[tokio::test]
+    async fn trace_server_enables_tracing_on_the_authenticated_client() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+
+        let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let (_sender, addr, _handle) = serve(any, None, Some("s3kret".into()), true, None)
+            .await
+            .expect("serve");
+        let mut client = connect(addr).await;
+        client
+            .send(TMsg::Text(
+                r#"{"kind":"hello","aslr_reference":1,"token":"s3kret"}"#.into(),
+            ))
+            .await
+            .expect("send hello");
+        let reply = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+            .await
+            .expect("trace control frame")
+            .expect("open socket")
+            .expect("frame");
+        assert_eq!(reply, TMsg::Text(TRACE_ON.into()));
     }
 
     #[tokio::test]

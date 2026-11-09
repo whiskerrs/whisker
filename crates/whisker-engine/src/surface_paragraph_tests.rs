@@ -9,10 +9,14 @@ use whisker_style::{Axes, ComputedSizeValue, SpecifiedStyle, StyleEnvironment, r
 
 struct ParagraphHost {
     visible: bool,
+    synchronous: bool,
     calls: usize,
 }
 impl crate::MeasurementProvider for ParagraphHost {
     type Error = Infallible;
+    fn measures_synchronously(&self) -> bool {
+        self.synchronous
+    }
     fn retain_prepared_content(
         &mut self,
         _: SurfaceId,
@@ -130,6 +134,15 @@ fn drive(surface: &mut SurfaceEngine, root: NodeId, host: &mut ParagraphHost, ep
 
 #[test]
 fn rich_paragraphs_preserve_source_hit_testing_and_inline_visibility_across_updates() {
+    rich_paragraph_updates(false);
+}
+
+#[test]
+fn synchronous_hosts_shape_rich_paragraphs_with_their_inline_children() {
+    rich_paragraph_updates(true);
+}
+
+fn rich_paragraph_updates(synchronous: bool) {
     let mut surface = SurfaceEngine::new(SurfaceId::new(1).unwrap());
     let root = surface
         .create_node(ElementTypeId::new(1).unwrap(), fixed(100.0, None))
@@ -201,6 +214,7 @@ fn rich_paragraphs_preserve_source_hit_testing_and_inline_visibility_across_upda
     );
     let mut host = ParagraphHost {
         visible: true,
+        synchronous,
         calls: 0,
     };
     drive(&mut surface, root, &mut host, 1);
