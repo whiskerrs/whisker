@@ -271,8 +271,7 @@ jobs:
       # "Repository not found" (the symptom we hit before this line
       # was here).
       contents: read
-      # Required for the PR-comment step to post on pull requests
-      # opened from forks. Plain push events ignore this.
+      # Required for the PR-comment step; fork PRs get a read-only token regardless.
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
@@ -326,9 +325,10 @@ jobs:
         run: cat coverage.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post / update PR comment
-        # Only on pull_request events. The sticky comment is updated in
-        # place on subsequent pushes to the same PR.
-        if: github.event_name == 'pull_request'
+        # Fork PRs can't post with their read-only token; they rely on the Job Summary.
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: coverage

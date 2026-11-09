@@ -414,6 +414,7 @@ class WhiskerView(context: Context) :
             height / density,
             density,
         )
+        measurements.endFrame()
         if (!idle) requestFrameFromNative()
     }
 
