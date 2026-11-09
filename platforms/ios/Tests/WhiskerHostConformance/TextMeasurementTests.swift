@@ -209,6 +209,27 @@ final class TextMeasurementTests: XCTestCase {
         XCTAssertEqual(original.variations.first?.value, 400)
     }
 
+    func testOneFrameReusesEveryEntryItBuilt() {
+        var request = WhiskerMobileMeasureRequest()
+        request.font_size = 16
+        let input = TextMeasurementCache.Input(
+            source: "text", payload: nil,
+            style: TextMeasurementCache.Style(request, families: ["system"], widthBasis: 100),
+            width: 100, maxLines: 0, overflow: 0, wordBreak: 0, environmentEpoch: 0
+        )
+        let cache = TextMeasurementCache()
+        var builds = 0
+        for _ in 0..<2 {
+            for node in 0..<1_000 {
+                _ = cache.plain(node: UInt64(node), input: input) {
+                    builds += 1
+                    return TextMeasurementCache.Plain(layout: nil, size: .zero, firstBaseline: 0, lastBaseline: 0)
+                }
+            }
+        }
+        XCTAssertEqual(builds, 1_000)
+    }
+
     private var nextKey: UInt64 = 0
 
     private func measure(_ view: WhiskerView, fixture: (String, WhiskerValue?), change: (inout WhiskerMobileMeasureRequest) -> Void = { _ in }) throws -> Measurement {

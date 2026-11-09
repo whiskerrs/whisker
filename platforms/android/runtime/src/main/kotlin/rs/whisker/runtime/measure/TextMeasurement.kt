@@ -33,8 +33,10 @@ internal class HostMeasurementProvider(
     private val elements: WhiskerElementBindings,
     internal val preparedParagraphs: PreparedParagraphs = PreparedParagraphs(),
 ) {
-    private val layouts = HashMap<TextLayoutKey, TextLayout>()
+    private val layouts = FrameCache<TextLayoutKey, TextLayout>()
     private val paints = HashMap<TextPaintKey, TextPaint>()
+
+    fun endFrame() = layouts.endFrame()
 
     @Suppress("LongParameterList")
     fun measure(
@@ -75,10 +77,7 @@ internal class HostMeasurementProvider(
                 maxLines, fontSettings.asList(), fontFeatureCount, fontOpticalSizing, direction, alignment,
                 paragraph?.let(::EncodedParagraph),
             )
-            val layout = layouts[key] ?: layoutText(key).also {
-                if (layouts.size >= LAYOUT_CACHE_CAPACITY) layouts.clear()
-                layouts[key] = it
-            }
+            val layout = layouts.getOrPut(key) { layoutText(key) }
             val width = measuredTextWidth(
                 knownWidth = knownWidth,
                 hasKnownWidth = knownMask and WIDTH != 0,
@@ -220,6 +219,22 @@ internal class HostMeasurementProvider(
         HostMeasurementResult(width = width, height = height)
 }
 
+/** Keeps the layouts measured in the current or previous frame. */
+internal class FrameCache<K, V> {
+    private var current = HashMap<K, V>()
+    private var previous = HashMap<K, V>()
+
+    fun getOrPut(key: K, build: () -> V): V =
+        current[key] ?: (previous.remove(key) ?: build()).also { current[key] = it }
+
+    // A fixed cap would evict a large frame's own entries before its later constraint passes reuse them.
+    fun endFrame() {
+        if (current.isEmpty()) return
+        previous = current
+        current = HashMap()
+    }
+}
+
 internal fun configureFallbackLineSpacing(
     builder: StaticLayout.Builder,
 ): StaticLayout.Builder {
@@ -341,7 +356,6 @@ private fun Char.isCjk(): Boolean = code in 0x2E80..0x9FFF || code in 0xF900..0x
     code in 0xAC00..0xD7AF
 
 private const val DESIRED_WIDTH = -1
-private const val LAYOUT_CACHE_CAPACITY = 256
 private const val PAINT_CACHE_CAPACITY = 64
 private const val DEFINITE = 0
 private const val MIN_CONTENT = 1
