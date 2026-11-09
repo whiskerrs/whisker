@@ -95,8 +95,8 @@ final class TextMeasurementCache {
         let value: Value
     }
 
+    // WhiskerView empties this every frame, so a cap would only evict a large frame's own constraint passes.
     private var entries: [Key: Entry] = [:]
-    private let capacity = 256
 
     func removeAll() { entries.removeAll(keepingCapacity: true) }
 
@@ -121,7 +121,6 @@ final class TextMeasurementCache {
     }
 
     private func insert(_ value: Value, key: Key, input: Input) {
-        if entries.count >= capacity { removeAll() }
         entries[key] = Entry(input: input, value: value)
     }
 }
