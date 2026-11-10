@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Pinned `Whisker.WindowsHost` release; bumped with the `windows-host-v*` tag.
-const WHISKER_WINDOWS_HOST_VERSION: &str = "0.1.0";
+/// Pinned `Whisker.WindowsHost` release, bumped by the release plan's `windows` stream; `0.0.0` means none is published yet.
+const WHISKER_WINDOWS_HOST_VERSION: &str = "0.0.0";
 const WINDOWS_APP_SDK_VERSION: &str = "2.6.5";
 const NUGET_ORG: &str = "https://api.nuget.org/v3/index.json";
 

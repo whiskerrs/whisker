@@ -68,11 +68,7 @@ pub(super) fn run(root: &Path) -> Result<()> {
             &["merge-base", "--is-ancestor", &baseline, &plan.source],
         )?;
         plan.selective.as_mut().unwrap().baseline = baseline;
-        for (stream, selected) in [
-            ("sdk", &plan.sdk),
-            ("gradle", &plan.gradle),
-            ("ios", &plan.ios),
-        ] {
+        for (stream, selected) in plan.native_streams() {
             native::check_selection(root, stream, selected.as_deref())?;
         }
         ensure!(
@@ -176,6 +172,7 @@ fn request(root: &Path) -> Result<(ReleasePlan, Option<String>)> {
         sdk: optional("SDK_VERSION")?,
         gradle: optional("GRADLE_VERSION")?,
         ios: optional("IOS_VERSION")?,
+        windows: optional("WINDOWS_VERSION")?,
         subsecond: optional("SUBSECOND_VERSION")?,
         crates: BTreeMap::new(),
         selective: Some(selection::SelectivePlan {
@@ -214,11 +211,7 @@ pub(super) fn prepare_selection(
     let previous = selection::Inventory::read(baseline.path())?;
     let previous_contents = previous.contents(baseline.path())?;
     selection::detach_packages(root)?;
-    for (stream, next) in [
-        ("sdk", &plan.sdk),
-        ("gradle", &plan.gradle),
-        ("ios", &plan.ios),
-    ] {
+    for (stream, next) in plan.native_streams() {
         if let Some(next) = next {
             native::update_pin(root, stream, next)?;
         }
@@ -335,11 +328,7 @@ pub(super) fn stamp_versions(root: &Path, plan: &ReleasePlan) -> Result<()> {
         update_path_dependencies(doc.as_table_mut(), &versions);
         fs::write(path, doc.to_string())?;
     }
-    for (stream, selected) in [
-        ("sdk", &plan.sdk),
-        ("gradle", &plan.gradle),
-        ("ios", &plan.ios),
-    ] {
+    for (stream, selected) in plan.native_streams() {
         if let Some(selected) = selected {
             native::update_pin(root, stream, selected)?;
         }
@@ -396,11 +385,7 @@ fn release_notes(root: &Path, plan: &ReleasePlan, previous_tag: &str) -> Result<
         ));
     }
     notes.push_str("\nUnlisted Rust packages retain their published versions. Automatic patch bumps are proposals; review API compatibility before merging.\n\n| Native stream | Version | Publication |\n| --- | --- | --- |\n");
-    for (stream, next) in [
-        ("sdk", &plan.sdk),
-        ("gradle", &plan.gradle),
-        ("ios", &plan.ios),
-    ] {
+    for (stream, next) in plan.native_streams() {
         notes.push_str(&format!(
             "| {stream} | {} | {} |\n",
             native::pin(root, stream)?,

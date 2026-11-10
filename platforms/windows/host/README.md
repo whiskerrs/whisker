@@ -22,7 +22,8 @@ msbuild WhiskerHost.sln /p:Configuration=Release /p:Platform=x64
 ```
 
 `cargo xtask windows-host-pack <version>` packs `target\nuget\Whisker.WindowsHost.<version>.nupkg`.
-Point `WHISKER_WINDOWS_HOST_FEED` at that directory to build apps against an unpublished package.
+Point `WHISKER_WINDOWS_HOST_FEED` at that directory, packed at the version `whisker-windows` pins
+(`WHISKER_WINDOWS_HOST_VERSION`), to build apps against an unpublished package.
 
 The app needs the Windows App Runtime 2.6 installed (the MSIX files under
 `packages/Microsoft.WindowsAppSDK.Runtime.*/tools/MSIX`).

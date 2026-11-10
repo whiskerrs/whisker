@@ -93,6 +93,7 @@ fn plan(root: &Path) -> ReleasePlan {
         sdk: None,
         gradle: None,
         ios: None,
+        windows: None,
         subsecond: None,
         crates: BTreeMap::new(),
         selective: Some(selection::SelectivePlan {
