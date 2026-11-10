@@ -384,6 +384,83 @@ fn navigate_mounts_new_leaf_exactly_once() {
     });
 }
 
+/// `Stack { Switch(tabs) Route(modal) }` with mount-counting leaves; `layout`
+/// wraps the Switch in a layout Route, as `routes!` does for a tab bar.
+fn counting_stacked_tabs_handle(counts: Counts, layout: bool) -> RouterHandle {
+    let tabs = RouteTree::Switch(
+        SwitchDef::new("tabs", 0),
+        vec![
+            RouteTree::Stack(vec![
+                RouteTree::route("", "home"),
+                RouteTree::route("detail/:id", "detail"),
+            ]),
+            RouteTree::Stack(vec![
+                RouteTree::route("list", "list"),
+                RouteTree::route("detail/:id", "detail"),
+            ]),
+        ],
+    );
+    let tabs = if layout {
+        RouteTree::route_with(RouteDef::new("", "layout"), vec![tabs])
+    } else {
+        tabs
+    };
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
+        tabs,
+        RouteTree::route("modal", "modal"),
+    ]));
+    let mk = |id: &'static str, counts: Counts| {
+        move |_: &RouteInstance| {
+            *counts.borrow_mut().entry(id).or_insert(0) += 1;
+            whisker::runtime::view::create_phantom_element()
+        }
+    };
+    let registry = RouteRegistry::new()
+        .route("home", mk("home", counts.clone()))
+        .route("list", mk("list", counts.clone()))
+        .route_with(
+            "detail",
+            RouteTransition::none(),
+            mk("detail", counts.clone()),
+        )
+        .route_with(
+            "modal",
+            RouteTransition::none(),
+            mk("modal", counts.clone()),
+        );
+    RouterHandle::new((tree, registry))
+}
+
+/// A tab switch changes only the nested Switch, so the outer Stack must keep
+/// the tabs (and their layout) mounted instead of replacing its top entry.
+#[test]
+fn tab_switch_inside_stack_keeps_tabs_mounted() {
+    for layout in [false, true] {
+        with_runtime(|| {
+            let counts: Counts = Rc::new(RefCell::new(HashMap::new()));
+            let h = counting_stacked_tabs_handle(counts.clone(), layout);
+            let _slot = mount_node(&h, NodePath::root());
+            flush();
+
+            h.navigate("/list").unwrap();
+            flush();
+            h.navigate("/").unwrap();
+            flush();
+            h.navigate("/list").unwrap();
+            flush();
+            h.navigate("/modal").unwrap();
+            flush();
+            h.back().unwrap();
+            flush();
+
+            let c = counts.borrow();
+            assert_eq!(c.get("home").copied(), Some(1), "layout={layout}");
+            assert_eq!(c.get("list").copied(), Some(1), "layout={layout}");
+            assert_eq!(c.get("modal").copied(), Some(1), "layout={layout}");
+        });
+    }
+}
+
 /// A single root Stack with mount-counting leaves (`home` at `""`, `detail`
 /// at `detail/:id`).
 fn counting_simple_handle(counts: Counts) -> RouterHandle {
