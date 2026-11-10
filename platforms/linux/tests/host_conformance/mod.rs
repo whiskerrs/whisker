@@ -1,6 +1,6 @@
 use gtk::glib::translate::IntoGlib;
 use gtk::prelude::*;
-use gtk::{gdk, graphene, pango};
+use gtk::{gdk, graphene, gsk, pango};
 use gtk4 as gtk;
 use whisker::standard_element_registrations;
 use whisker_engine::{FrameSink, MeasurementProvider};
@@ -10,21 +10,20 @@ use whisker_host_conformance::{
     ClipReferenceBoxFixture, ClipShapeFixture, ColorFixture, Command, ConicGradientFixture,
     CursorFixture, FillRuleFixture, Host, ImageRenderingFixture, ImageRepeatFixture,
     LinearGradientFixture, LoadedCase, OverflowClipFixture, PathCommandFixture,
-    PixelRelationFixture, PixelRelationKind, PixelSampleFixture, PointerEventFixture,
-    PointerEventsFixture, PointerKindFixture, RadialGradientFixture, Scenario, ScenarioSide,
-    SceneNodeFixture, VisibilityFixture, load_required,
+    PixelRelationFixture, PixelRelationKind, PixelSampleFixture, PointerEventsFixture,
+    RadialGradientFixture, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
+    load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
     BorderLineStyle, BoxClip, BoxPaint, ClipShape, Cursor, CursorKeyword, ElementTypeId, FillRule,
     FrameHeader, FrameMode, FramePacket, GradientStop, HitTestBehavior, ImageRendering,
-    ImageRepeat, InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect,
-    MeasureConstraints, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-    MeasureTextAlignment, MeasureTextDirection, MeasureTextIndent, MeasureTextOverflow,
-    MeasureTextWordBreak, MeasureTextWrap, MeasurementKey, MeasurementPayload, MeasurementRequest,
-    MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
-    PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
-    PathCommand, PointerId, PointerInput, PointerKind, ProtocolVersion, RadialGradientExtent,
+    ImageRepeat, LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily,
+    MeasureFontStyle, MeasureLineHeight, MeasureTextAlignment, MeasureTextDirection,
+    MeasureTextIndent, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasurementKey,
+    MeasurementPayload, MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip,
+    PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
+    PaintLengthPercentage, PaintPosition, PathCommand, ProtocolVersion, RadialGradientExtent,
     RadialGradientShape, ResourceId, SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle,
     TextPaint, TextShadow, Transform, Visibility,
 };
@@ -32,24 +31,6 @@ use whisker_protocol::{
 use crate::node::{NodeWidget, PaintedText};
 use crate::scene::GtkFrameSink;
 use crate::text::PangoMeasurementProvider;
-
-const fn pointer_event_protocol(value: PointerEventFixture) -> InputEventKind {
-    match value {
-        PointerEventFixture::Down => InputEventKind::PointerDown,
-        PointerEventFixture::Move => InputEventKind::PointerMove,
-        PointerEventFixture::Up => InputEventKind::PointerUp,
-        PointerEventFixture::Cancel => InputEventKind::PointerCancel,
-    }
-}
-
-const fn pointer_kind_protocol(value: PointerKindFixture) -> PointerKind {
-    match value {
-        PointerKindFixture::Mouse => PointerKind::Mouse,
-        PointerKindFixture::Touch => PointerKind::Touch,
-        PointerKindFixture::Pen => PointerKind::Pen,
-        PointerKindFixture::Unknown => PointerKind::Unknown,
-    }
-}
 
 fn color_protocol(value: &ColorFixture) -> PaintColor {
     match value {
@@ -486,7 +467,6 @@ struct Driver {
     logical_size: [f32; 2],
     text: PangoMeasurementProvider,
     measurement_responses: Vec<MeasurementResponse>,
-    input: Vec<InputEvent>,
 }
 
 struct Checkpoint {
@@ -522,7 +502,6 @@ impl Driver {
             logical_size: [0.0; 2],
             text: PangoMeasurementProvider::new(crate::text::new_context()),
             measurement_responses: Vec::new(),
-            input: Vec::new(),
         }
     }
 
@@ -586,36 +565,14 @@ impl Driver {
                     [*min_height, *max_height],
                     *prepared_content,
                 ),
-                Command::EmitPointer {
-                    event,
-                    pointer_kind,
-                    pointer_id,
-                    timestamp_ms,
-                    x,
-                    y,
-                    buttons,
-                    changed_button,
-                } => self.emit_pointer(
-                    *event,
-                    *pointer_kind,
-                    *pointer_id,
-                    *timestamp_ms,
-                    [*x, *y],
-                    *buttons,
-                    *changed_button,
-                ),
-                Command::CheckpointInput {
-                    event,
-                    pointer_kind,
-                    pointer_id,
-                    x,
-                    y,
-                } => self.check_input(*event, *pointer_kind, *pointer_id, [*x, *y]),
                 Command::RegisterRasterResource { .. }
                 | Command::LoadRasterResource { .. }
                 | Command::ReleaseRasterResource { .. }
                 | Command::CheckpointResource { .. } => {
                     panic!("Linux Host does not implement raster resources")
+                }
+                Command::EmitPointer { .. } | Command::CheckpointInput { .. } => {
+                    panic!("Linux pointer translation needs a real GDK event")
                 }
             }
         }
@@ -686,6 +643,10 @@ impl Driver {
             .native()
             .and_then(|native| native.renderer())
             .expect("the presented window has a renderer");
+        assert!(
+            !renderer.is::<gsk::CairoRenderer>(),
+            "GTK fell back to the Cairo renderer; the fixtures expect GL (install Mesa drivers)"
+        );
         let texture = renderer.render_texture(
             &node,
             Some(&graphene::Rect::new(
@@ -1239,56 +1200,6 @@ impl Driver {
             assert_eq!(metrics.prepared_content.is_some(), expected);
         }
     }
-
-    #[allow(clippy::too_many_arguments)]
-    fn emit_pointer(
-        &mut self,
-        kind: PointerEventFixture,
-        pointer_kind: PointerKindFixture,
-        pointer_id: u64,
-        timestamp_ms: f64,
-        position: [f32; 2],
-        buttons: u32,
-        changed_button: i16,
-    ) {
-        let event = crate::app::pointer_event(
-            self.surface.expect("attach_surface precedes emit_pointer"),
-            pointer_event_protocol(kind),
-            PointerInput {
-                id: PointerId::new(pointer_id).expect("scenario pointer id is non-zero"),
-                kind: pointer_kind_protocol(pointer_kind),
-                position: InputPoint {
-                    x: position[0],
-                    y: position[1],
-                },
-                buttons,
-                changed_button,
-            },
-            timestamp_ms,
-        );
-        event
-            .validate()
-            .expect("Host scenario emits valid normalized input");
-        self.input.push(event);
-    }
-
-    fn check_input(
-        &self,
-        kind: PointerEventFixture,
-        pointer_kind: PointerKindFixture,
-        pointer_id: u64,
-        position: [f32; 2],
-    ) {
-        let event = self.input.last().expect("input checkpoint follows event");
-        assert_eq!(event.kind, pointer_event_protocol(kind));
-        assert_eq!(event.surface, self.surface.expect("attached surface"));
-        assert_eq!(event.target, None);
-        let pointer = event.pointer.expect("pointer checkpoint has pointer data");
-        assert_eq!(pointer.id.get(), pointer_id);
-        assert_eq!(pointer.kind, pointer_kind_protocol(pointer_kind));
-        assert_close(pointer.position.x, position[0], "pointer x");
-        assert_close(pointer.position.y, position[1], "pointer y");
-    }
 }
 
 fn layout_rect([x, y, width, height]: [f32; 4]) -> LayoutRect {
@@ -1498,13 +1409,6 @@ fn box_paint(background: &ColorFixture, border: Option<&BorderFixture>) -> BoxPa
             bottom_left: radii[3],
         },
     }
-}
-
-fn assert_close(left: f32, right: f32, context: &str) {
-    assert!(
-        (left - right).abs() <= 0.001,
-        "{context}: {left} != {right}"
-    );
 }
 
 fn run_reftest(scenario: &Scenario) {

@@ -699,14 +699,14 @@
       "id": "host.input.pointer.basic",
       "feature": "pointer-input",
       "fixture": "core/pointer-input-basic.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
       "checkpoints": ["input"]
     },
     {
       "id": "host.input.pointer.kinds",
       "feature": "pointer-input-kinds",
       "fixture": "core/pointer-input-kinds.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
       "checkpoints": ["input"]
     }
   ]

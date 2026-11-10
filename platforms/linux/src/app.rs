@@ -265,12 +265,15 @@ impl LinuxApplication {
         timestamp_ms: f64,
     ) -> Result<(), LinuxError> {
         let presentation = self.feedback.borrow_mut().take_presentation_updates();
-        let event = pointer_event(
-            self.runtime.surface().surface(),
-            kind,
-            pointer,
+        let event = InputEvent {
+            presentation_revision: None,
+            surface: self.runtime.surface().surface(),
             timestamp_ms,
-        );
+            kind,
+            pointer: Some(pointer),
+            target: None,
+            detail: WhiskerValue::Null,
+        };
         self.modules
             .with_host(|| {
                 self.runtime
@@ -420,24 +423,6 @@ fn translate_pointer(
         gdk::EventType::TouchEnd => Some((InputEventKind::PointerUp, touch(0))),
         gdk::EventType::TouchCancel => Some((InputEventKind::PointerCancel, touch(0))),
         _ => None,
-    }
-}
-
-/// Normalized runtime input for one translated GTK pointer event.
-pub(crate) fn pointer_event(
-    surface: SurfaceId,
-    kind: InputEventKind,
-    pointer: PointerInput,
-    timestamp_ms: f64,
-) -> InputEvent {
-    InputEvent {
-        presentation_revision: None,
-        surface,
-        timestamp_ms,
-        kind,
-        pointer: Some(pointer),
-        target: None,
-        detail: WhiskerValue::Null,
     }
 }
 
