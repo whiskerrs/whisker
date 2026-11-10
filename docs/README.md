@@ -29,6 +29,8 @@ Whisker itself**.
 - [`module-api-design.md`](module-api-design.md) — how to choose the
   user-facing surface shape for a new `whisker-*` module crate. Read
   before writing a new module.
+- [`image-cache.md`](image-cache.md) — managed image cache ownership, Host request
+  encoding, decoded-memory accounting and temporary-file lifecycle.
 - [`router-design.md`](router-design.md) — the router model: the static
   `RouteTree` (`routes!`) and the dynamic `NavState`, URL derivation,
   relative resolution, and the `navigate`/`back`/`replace`/`popTo`/`reset`

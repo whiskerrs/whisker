@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:usesCleartextTraffic="true">
+        <uses-library android:name="android.test.runner" android:required="true" />
+        <uses-library android:name="android.test.base" android:required="true" />
+    </application>
+</manifest>

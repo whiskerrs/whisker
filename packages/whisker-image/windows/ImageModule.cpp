@@ -81,8 +81,9 @@ std::vector<uint8_t> DecodeBase64(std::string_view text) {
   return out;
 }
 
-// Parses the flat `{"name": "value"}` object the Rust API serialises headers as.
-bool ParseHeaders(std::string_view json, std::vector<std::pair<std::string, std::string>>& out) {
+// Parses a flat JSON object into its string members; `scalars` skips number, bool and null members.
+bool ParseObject(std::string_view json, std::vector<std::pair<std::string, std::string>>& out,
+                 bool scalars) {
   size_t i = 0;
   auto skip = [&] {
     while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
@@ -138,8 +139,18 @@ bool ParseHeaders(std::string_view json, std::vector<std::pair<std::string, std:
     if (!string(name)) return false;
     skip();
     if (i >= json.size() || json[i++] != ':') return false;
-    if (!string(value)) return false;
-    out.emplace_back(std::move(name), std::move(value));
+    skip();
+    if (i < json.size() && json[i] == '"') {
+      if (!string(value)) return false;
+      out.emplace_back(std::move(name), std::move(value));
+    } else {
+      size_t start = i;
+      while (i < json.size() && json[i] != ',' && json[i] != '}' &&
+             !std::isspace(static_cast<unsigned char>(json[i]))) {
+        ++i;
+      }
+      if (!scalars || i == start) return false;
+    }
     skip();
     if (i < json.size() && json[i] == ',') {
       ++i;
@@ -148,6 +159,11 @@ bool ParseHeaders(std::string_view json, std::vector<std::pair<std::string, std:
     return i < json.size() && json[i] == '}';
   }
   return false;
+}
+
+// Parses the flat `{"name": "value"}` object the Rust API serialises headers as.
+bool ParseHeaders(std::string_view json, std::vector<std::pair<std::string, std::string>>& out) {
+  return ParseObject(json, out, false);
 }
 
 bool Download(const std::string& url, const std::string& headers, std::vector<uint8_t>& body,
@@ -402,6 +418,13 @@ class ImageView : public whisker::ModuleView {
     if (!src_.empty()) Reload();
   }
 
+  // Managed-cache requests load as ordinary images: this Host keeps no cache files or decode bounds.
+  void SetCache(std::string_view cache) {
+    if (cache == cache_) return;
+    cache_ = cache;
+    Reload();
+  }
+
   void SetMode(std::string_view mode) {
     if (mode == "aspectFill") mode_ = Mode::AspectFill;
     if (mode == "aspectFit") mode_ = Mode::AspectFit;
@@ -450,11 +473,24 @@ class ImageView : public whisker::ModuleView {
     if (pending_) pending_->view = nullptr;
     pending_.reset();
     Invalidate();
-    if (src_.empty()) return;
+    std::string src = src_, headers = headers_;
+    if (!cache_.empty()) {
+      std::vector<std::pair<std::string, std::string>> request;
+      if (!ParseObject(cache_, request, true)) {
+        Emit("error", Detail(0, 0, "invalid image cache options"));
+        return;
+      }
+      src.clear();
+      for (auto const& [name, value] : request) {
+        if (name == "_src") src = value;
+        if (name == "_headers") headers = value;
+      }
+    }
+    if (src.empty()) return;
     auto pending = std::make_shared<Pending>(Pending{this});
     pending_ = pending;
     auto& ui = UiThread::Current();
-    std::thread([pending, src = src_, headers = headers_, &ui] {
+    std::thread([pending, src = std::move(src), headers = std::move(headers), &ui] {
       auto load = LoadImage(src, headers);
       ui.Post([pending, load = std::move(load)]() mutable {
         if (pending->view) pending->view->Finish(std::move(load));
@@ -476,6 +512,7 @@ class ImageView : public whisker::ModuleView {
  private:
   std::string src_;
   std::string headers_;
+  std::string cache_;
   Mode mode_ = Mode::AspectFill;
   std::shared_ptr<const Decoded> image_;
   std::shared_ptr<Pending> pending_;
@@ -504,6 +541,14 @@ class ImageModule : public whisker::Module {
                            promise.Resolve();
                          }).detach();
                        })
+        .AsyncFunction("configureCache",
+                       [](const whisker::Arguments&, whisker::Promise promise) {
+                         promise.Reject("the Windows Host does not support the managed image cache");
+                       })
+        .AsyncFunction("removeCached",
+                       [](const whisker::Arguments&, whisker::Promise promise) {
+                         promise.Reject("the Windows Host does not support the managed image cache");
+                       })
         .View<ImageView>("whisker-image:Image", [](auto& view) {
           view.Prop("src", [](ImageView& image, const whisker::Value& value) {
             image.SetSrc(value.AsString().value_or(""));
@@ -513,6 +558,9 @@ class ImageModule : public whisker::Module {
           });
           view.Prop("headers", [](ImageView& image, const whisker::Value& value) {
             image.SetHeaders(value.AsString().value_or(""));
+          });
+          view.Prop("cache", [](ImageView& image, const whisker::Value& value) {
+            image.SetCache(value.AsString().value_or(""));
           });
           view.Events({"load", "error"});
         });

@@ -55,6 +55,11 @@
 //! - `on_load` / `on_error` — optional; the load finished, with the
 //!   decoded size, or failed, with the reason.
 //!
+//! ## Managed cache
+//!
+//! Set [`ImageCacheOptions`] to opt into URL-keyed temporary files and a
+//! byte-bounded decoded-image LRU. See [the cache guide](https://github.com/whiskerrs/whisker/blob/main/docs/image-cache.md).
+//!
 //! ## Native source
 //!
 //! Contributors: the matching platform module lives at
@@ -179,6 +184,7 @@ pub fn native_image(
     src: Signal<String>,
     mode: Signal<String>,
     headers: Signal<String>,
+    cache: Signal<String>,
     style: whisker::Style,
     on_load: ImageEvent,
     on_error: ImageEvent,
@@ -235,6 +241,13 @@ pub fn image(
     /// element (or via flex sizing) — the platform image loaders
     /// target-size the fetched bitmap against the rendered size.
     style: Option<whisker::Style>,
+    /// Opt-in URL-keyed temporary-file cache with bounded decoded-image memory.
+    ///
+    /// Decode dimensions are physical pixels and preserve the source aspect ratio.
+    /// Web uses the browser cache and Windows loads it as an ordinary image, so
+    /// neither enforces these limits.
+    #[prop(default = None.into())]
+    cache: Signal<Option<ImageCacheOptions>>,
     /// The bitmap arrived and is on screen; `detail` carries its size.
     on_load: Option<ImageCallback>,
     /// The load failed; `detail.error` says how. A reader that shows a
@@ -244,12 +257,39 @@ pub fn image(
 ) -> Element {
     let style_prop: whisker::Style = style.clone().unwrap_or_default();
     let mode_prop = computed(move || mode.get().as_str().to_owned());
+    let cache_prop = computed(move || {
+        cache
+            .get()
+            .map(|value| {
+                let mut options =
+                    serde_json::to_value(&value).expect("image cache options serialize");
+                options["_src"] = src.get().into();
+                options["_headers"] = headers.get().into();
+                options.to_string()
+            })
+            .unwrap_or_default()
+    });
+    let source_prop = computed(move || {
+        if cache.get().is_some() {
+            String::new()
+        } else {
+            src.get()
+        }
+    });
+    let headers_prop = computed(move || {
+        if cache.get().is_some() {
+            String::new()
+        } else {
+            headers.get()
+        }
+    });
     let load = on_load.clone();
     let error = on_error.clone();
     NativeImage::builder()
-        .src(src)
+        .src(source_prop)
         .mode(mode_prop)
-        .headers(headers)
+        .headers(headers_prop)
+        .cache(cache_prop)
         .style(style_prop)
         .on_load(move |event: ImageEvent| {
             if let Some(cb) = &load {
@@ -262,6 +302,51 @@ pub fn image(
             }
         })
         .build()
+}
+
+/// Decode bounds for the opt-in URL-keyed image cache
+///
+/// Each URL has one original temporary file and separate memory entries for each
+/// pair of decode bounds. Neither dimension enlarges the source. A zero bound
+/// reports a load error. Animated sources retain their first decoded frame.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct ImageCacheOptions {
+    /// Maximum decoded width in physical pixels; omitted means unconstrained.
+    pub decode_width: Option<u32>,
+    /// Maximum decoded height in physical pixels; omitted means unconstrained.
+    pub decode_height: Option<u32>,
+}
+
+/// Set the shared managed image cache budget in bytes
+///
+/// The default is 64 MiB. Lowering it immediately evicts least recently used
+/// decoded images. Zero disables retention. Visible images, temporary decode
+/// allocations and GPU resources are outside this budget. Ordinary `Image`s
+/// without cache options retain their existing loader policy.
+/// Web returns an error because its cache belongs to the browser, and Windows
+/// because its Host has no managed cache.
+pub async fn configure_image_cache(max_bytes: usize) -> Result<(), String> {
+    cache_operation("configureCache", max_bytes.to_string()).await
+}
+
+/// Remove an original file and every decoded size for an exact URL
+///
+/// Currently displayed images remain visible. Await completion before requesting
+/// the URL again. HTTP headers never participate in this cache's identity.
+/// Web and Windows return an error because they keep no managed cache.
+pub async fn remove_cached_image(url: &str) -> Result<(), String> {
+    cache_operation("removeCached", url.to_owned()).await
+}
+
+async fn cache_operation(method: &str, value: String) -> Result<(), String> {
+    use whisker::platform_module::WhiskerValue;
+    match whisker::module!("Image")
+        .invoke_async(method, vec![WhiskerValue::String(value)])
+        .await
+    {
+        WhiskerValue::Null => Ok(()),
+        other => Err(format!("image cache operation failed: {other:?}")),
+    }
 }
 
 /// Warm the cache for `urls` without showing them.

@@ -15,6 +15,10 @@ import rs.whisker.runtime.WhiskerUI
 open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(context) {
 
     private var currentSrc: String? = null
+    private var cacheOptions = ""
+    private var requestVersion = 0L
+    private var loadScheduled = false
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var currentHeaders: Map<String, String> = emptyMap()
     private var currentRequest: Disposable? = null
     override fun createView(context: Context): ImageView {
@@ -35,7 +39,7 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
         // on every benign re-render.
         if (currentSrc == value) return
         currentSrc = value
-        reload()
+        scheduleLoad()
     }
 
     /// Backing of the `headers` prop: a JSON object of request headers.
@@ -45,7 +49,7 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
         val parsed = parseHeaders(json)
         if (parsed == currentHeaders) return
         currentHeaders = parsed
-        reload()
+        scheduleLoad()
     }
 
     private fun parseHeaders(json: String): Map<String, String> {
@@ -72,8 +76,36 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
      * Issue (or re-issue) a Coil request for the current `src` with the
      * current request options.
      */
+    fun setCache(value: String) {
+        if (cacheOptions == value) return
+        cacheOptions = value
+        scheduleLoad()
+    }
+
+    private fun scheduleLoad() {
+        requestVersion++
+        if (loadScheduled) return
+        loadScheduled = true
+        handler.post {
+            loadScheduled = false
+            reload()
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        handler.post {
+            if (!isAttachedToWindow) {
+                requestVersion++
+                currentRequest?.dispose()
+                view().dispose()
+            }
+        }
+    }
+
     private fun reload() {
-        val src = currentSrc ?: return
+        val managed = if (cacheOptions.isNotEmpty()) runCatching { org.json.JSONObject(cacheOptions) }.getOrNull() else null
+        val src = (if (cacheOptions.isEmpty()) currentSrc else managed?.optString("_src")) ?: return
         val imageView = view()
 
         // `dispose()` is a no-op on an already-completed disposable.
@@ -86,6 +118,30 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
             return
         }
 
+        if (cacheOptions.isNotEmpty()) {
+            imageView.setImageDrawable(null)
+            val version = requestVersion
+            val options = cacheOptions
+            val headers = parseHeaders(managed?.optString("_headers").orEmpty())
+            val context = imageView.context.applicationContext
+            val weak = java.lang.ref.WeakReference(this)
+            val completionHandler = handler
+            ManagedImageCache.executor.execute {
+                val result = runCatching { ManagedImageCache.load(context, src, headers, options) }
+                completionHandler.post {
+                    val owner = weak.get()
+                    if (owner != null && owner.requestVersion == version) {
+                        result.fold(onSuccess = { bitmap ->
+                            owner.view().setImageBitmap(bitmap)
+                            WhiskerCustomEvent.dispatch(owner, "load", mapOf("width" to bitmap.width, "height" to bitmap.height))
+                        }, onFailure = { error ->
+                            WhiskerCustomEvent.dispatch(owner, "error", mapOf("error" to (error.message ?: "image load failed")))
+                        })
+                    }
+                }
+            }
+            return
+        }
         currentRequest = imageView.load(src) {
             crossfade(200)
             // Two requests that differ only by header are two different

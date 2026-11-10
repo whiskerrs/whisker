@@ -11,15 +11,15 @@ plugins {
 }
 
 android {
+    useLibrary("android.test.runner", false)
+    useLibrary("android.test.base", false)
     namespace = "rs.whisker.modules.image"
     compileSdk = 34
 
     defaultConfig {
-        // Coil 2.7 needs API 21+, which lines up with Whisker's
-        // baseline. We don't drop to anything lower — Coil 1.x is
-        // unmaintained and lacks the coroutine-native API the
-        // ImageView code below leans on.
-        minSdk = 21
+        // The Whisker module runtime requires API 24 or later.
+        minSdk = 24
+        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
     }
 
     compileOptions {
@@ -36,6 +36,10 @@ android {
     sourceSets {
         getByName("main") {
             kotlin.srcDirs("android/src/main/kotlin")
+        }
+        getByName("androidTest") {
+            kotlin.srcDirs("android/src/androidTest/kotlin")
+            manifest.srcFile("android/src/androidTest/AndroidManifest.xml")
         }
     }
 }

@@ -14,6 +14,7 @@ struct ImageWebView {
     emitter: whisker_web::WebEventEmitter,
     src: String,
     headers: String,
+    cache: String,
     load: Closure<dyn FnMut(web_sys::Event)>,
     error: Closure<dyn FnMut(web_sys::Event)>,
 }
@@ -44,6 +45,12 @@ impl WhiskerModule for ImageModule {
                     Ok(()) => promise.resolve(WhiskerValue::Null),
                     Err(error) => promise.reject(error),
                 }
+            })
+            .async_function("configureCache", |_, promise, _| {
+                promise.reject("Web image caching is managed by the browser");
+            })
+            .async_function("removeCached", |_, promise, _| {
+                promise.reject("Web image caching is managed by the browser");
             })
             .view(
                 WebViewDefinition::new(
@@ -92,6 +99,7 @@ impl WhiskerModule for ImageModule {
                             emitter,
                             src: String::new(),
                             headers: String::new(),
+                            cache: String::new(),
                             load,
                             error,
                         })
@@ -105,20 +113,12 @@ impl WhiskerModule for ImageModule {
                             return Err(js_error("Image src property must be a string"));
                         };
                         view.src.clone_from(src);
-                        if view.headers.trim().is_empty() {
-                            view.image.set_src(src);
-                        } else {
-                            view.image.set_src("");
-                            emit_error(
-                                &view.emitter,
-                                "Web Image does not yet support custom request headers",
-                            );
-                        }
+                        apply_source(view)?;
                         Ok(())
                     },
                     |view| {
                         view.src.clear();
-                        view.image.set_src("");
+                        apply_source(view)?;
                         Ok(())
                     },
                 )
@@ -139,27 +139,62 @@ impl WhiskerModule for ImageModule {
                             return Err(js_error("Image headers property must be a string"));
                         };
                         view.headers.clone_from(headers);
-                        if view.headers.trim().is_empty() {
-                            view.image.set_src(&view.src);
-                        } else {
-                            view.image.set_src("");
-                            emit_error(
-                                &view.emitter,
-                                "Web Image does not yet support custom request headers",
-                            );
-                        }
+                        apply_source(view)?;
                         Ok(())
                     },
                     |view| {
                         view.headers.clear();
-                        view.image.set_src(&view.src);
+                        apply_source(view)?;
                         Ok(())
+                    },
+                )
+                .prop(
+                    "cache",
+                    |view, value| {
+                        let WhiskerValue::String(value) = value else {
+                            return Err(js_error("Image cache property must be a string"));
+                        };
+                        view.cache.clone_from(value);
+                        apply_source(view)
+                    },
+                    |view| {
+                        view.cache.clear();
+                        apply_source(view)
                     },
                 )
                 .event("load")
                 .event("error"),
             )
     }
+}
+
+fn apply_source(view: &ImageWebView) -> Result<(), wasm_bindgen::JsValue> {
+    let managed = if view.cache.is_empty() {
+        None
+    } else {
+        Some(
+            serde_json::from_str::<serde_json::Value>(&view.cache)
+                .map_err(|_| js_error("invalid image cache options"))?,
+        )
+    };
+    let src = managed
+        .as_ref()
+        .and_then(|value| value["_src"].as_str())
+        .unwrap_or(&view.src);
+    let headers = managed
+        .as_ref()
+        .and_then(|value| value["_headers"].as_str())
+        .unwrap_or(&view.headers);
+    if headers.trim().is_empty() {
+        view.image.set_src(src);
+    } else {
+        view.image.set_src("");
+        emit_error(
+            &view.emitter,
+            "Web Image does not yet support custom request headers",
+        );
+    }
+    Ok(())
 }
 
 fn set_mode(image: &web_sys::HtmlImageElement, mode: &str) -> Result<(), wasm_bindgen::JsValue> {

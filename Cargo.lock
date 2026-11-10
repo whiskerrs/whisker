@@ -5315,6 +5315,7 @@ dependencies = [
  "lru 0.18.4",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "ureq",
  "whisker",
 ]
@@ -5341,6 +5342,7 @@ dependencies = [
 name = "whisker-image-web"
 version = "0.14.6"
 dependencies = [
+ "serde_json",
  "web-sys",
  "whisker-web",
 ]
