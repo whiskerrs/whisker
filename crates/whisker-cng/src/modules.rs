@@ -78,11 +78,7 @@ impl ResolvedModule {
                 .windows
                 .as_ref()
                 .or(self.platforms.desktop.as_ref()),
-            ModulePlatform::Linux => self
-                .platforms
-                .linux
-                .as_ref()
-                .or(self.platforms.desktop.as_ref()),
+            ModulePlatform::Linux => self.platforms.linux.as_ref(),
             ModulePlatform::Android => self.platforms.android.as_ref(),
             ModulePlatform::Ios => self.platforms.ios.as_ref(),
             ModulePlatform::Web => self.platforms.web.as_ref(),

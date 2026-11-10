@@ -9,10 +9,17 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Native Linux application shell for Whisker."
+description = "Native GTK4 Linux Host for Whisker."
 
 [features]
-hot-reload = ["whisker-desktop/hot-reload"]
+hot-reload = ["whisker/hot-reload"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
-whisker-desktop = { workspace = true }
+whisker = { workspace = true }
+whisker-engine = { workspace = true }
+whisker-protocol = { workspace = true }
+whisker-style = { workspace = true }
+whisker-value = { workspace = true }
+gtk4 = { version = "0.10", features = ["v4_14"] }
+pangocairo = "0.21"
+csscolorparser = "0.7.2"
