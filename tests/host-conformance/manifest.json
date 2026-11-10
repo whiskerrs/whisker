@@ -440,7 +440,7 @@
       "id": "wpt.css-backgrounds.box-shadow-001",
       "feature": "box-shadow-offset",
       "fixture": "wpt/css/css-backgrounds/box-shadow-001.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
@@ -454,77 +454,77 @@
       "id": "wpt.css-backgrounds.box-shadow-002",
       "feature": "box-shadow-spread",
       "fixture": "wpt/css/css-backgrounds/box-shadow-002.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.box-shadow-blur-definition-001",
       "feature": "box-shadow-blur",
       "fixture": "wpt/css/css-backgrounds/box-shadow-blur-definition-001.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
     },
     {
       "id": "wpt.css-backgrounds.box-shadow-inset-without-border-radius",
       "feature": "box-shadow-inset",
       "fixture": "wpt/css/css-backgrounds/box-shadow-inset-without-border-radius.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.box-shadow-inset-spread",
       "feature": "box-shadow-inset-spread",
       "fixture": "wpt/css/css-backgrounds/box-shadow-inset-spread.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.box-shadow-inset-blur-definition",
       "feature": "box-shadow-inset-blur",
       "fixture": "wpt/css/css-backgrounds/box-shadow-inset-blur-definition.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
     },
     {
       "id": "wpt.css-backgrounds.box-shadow-multiple-001",
       "feature": "multiple-box-shadows",
       "fixture": "wpt/css/css-backgrounds/box-shadow-multiple-001.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-masking.clip-path-inset-round-rendering",
       "feature": "clip-path-inset",
       "fixture": "wpt/css/css-masking/clip-path-inset-round-rendering.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-masking.clip-path-circle-002",
       "feature": "clip-path-circle",
       "fixture": "wpt/css/css-masking/clip-path-circle-002.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-masking.clip-path-ellipse-002",
       "feature": "clip-path-ellipse",
       "fixture": "wpt/css/css-masking/clip-path-ellipse-002.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-masking.clip-path-path-001",
       "feature": "clip-path-path-nonzero",
       "fixture": "wpt/css/css-masking/clip-path-path-001.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-masking.clip-path-path-002",
       "feature": "clip-path-path-evenodd",
       "fixture": "wpt/css/css-masking/clip-path-path-002.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {

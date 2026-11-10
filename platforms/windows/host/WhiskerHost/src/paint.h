@@ -23,6 +23,7 @@ struct RoundedRect {
   std::array<D2D1_SIZE_F, 4> radii{};
 
   static RoundedRect From(const WhiskerMobileBoxPaint* paint, float width, float height);
+  void FitRadii();
   bool IsRectilinear() const;
   RoundedRect Shrink(float top, float right, float bottom, float left) const;
   winrt::com_ptr<ID2D1PathGeometry> Geometry(ID2D1Factory* factory) const;
@@ -35,10 +36,11 @@ std::array<float, 4> BorderWidths(const WhiskerMobileBoxPaint& paint, float widt
 bool NeedsBoxSurface(const WhiskerMobileBoxPaint& paint, float width, float height);
 
 struct BackgroundLayer;
+struct BoxShadow;
 
 // `content` is the content box in border-box space.
 void PaintBox(ID2D1DeviceContext* context, const WhiskerMobileBoxPaint& paint,
-              const std::vector<BackgroundLayer>& layers, float width, float height,
-              D2D1_RECT_F content);
+              const std::vector<BackgroundLayer>& layers, const std::vector<BoxShadow>& shadows,
+              float width, float height, D2D1_RECT_F content);
 
 }  // namespace whisker

@@ -1,6 +1,7 @@
 #include "paint.h"
 
 #include "background.h"
+#include "shadow.h"
 
 #include <algorithm>
 #include <cctype>
@@ -302,8 +303,15 @@ RoundedRect RoundedRect::From(const WhiskerMobileBoxPaint* paint, float width, f
     float ry = std::max(0.0f, Resolve(paint->radii_vertical[corner], height));
     rounded.radii[corner] = rx == 0 || ry == 0 ? D2D1_SIZE_F{0, 0} : D2D1_SIZE_F{rx, ry};
   }
+  rounded.FitRadii();
+  return rounded;
+}
+
+void RoundedRect::FitRadii() {
+  float width = rect.right - rect.left;
+  float height = rect.bottom - rect.top;
   // CSS scales every radius by the same factor until no two adjacent corners overlap.
-  auto const& r = rounded.radii;
+  auto const& r = radii;
   float factor = 1;
   auto limit = [&factor](float side, float sum) {
     if (sum > side && sum > 0) factor = std::min(factor, side / sum);
@@ -312,11 +320,10 @@ RoundedRect RoundedRect::From(const WhiskerMobileBoxPaint* paint, float width, f
   limit(width, r[3].width + r[2].width);
   limit(height, r[0].height + r[3].height);
   limit(height, r[1].height + r[2].height);
-  for (auto& radius : rounded.radii) {
+  for (auto& radius : radii) {
     radius.width *= factor;
     radius.height *= factor;
   }
-  return rounded;
 }
 
 bool RoundedRect::IsRectilinear() const {
@@ -382,8 +389,8 @@ bool NeedsBoxSurface(const WhiskerMobileBoxPaint& paint, float width, float heig
 }
 
 void PaintBox(ID2D1DeviceContext* context, const WhiskerMobileBoxPaint& paint,
-              const std::vector<BackgroundLayer>& layers, float width, float height,
-              D2D1_RECT_F content) {
+              const std::vector<BackgroundLayer>& layers, const std::vector<BoxShadow>& shadows,
+              float width, float height, D2D1_RECT_F content) {
   winrt::com_ptr<ID2D1Factory> factory;
   context->GetFactory(factory.put());
   auto border = RoundedRect::From(&paint, width, height);
@@ -393,14 +400,15 @@ void PaintBox(ID2D1DeviceContext* context, const WhiskerMobileBoxPaint& paint,
     context->CreateSolidColorBrush(background, brush.put());
     context->FillGeometry(border.Geometry(factory.get()).get(), brush.get());
   }
+  auto widths = BorderWidths(paint, width);
+  auto padding = border.Shrink(widths[0], widths[1], widths[2], widths[3]);
   if (!layers.empty()) {
-    auto widths = BorderWidths(paint, width);
-    PaintBackgroundLayers(
-        context, layers,
-        {border, border.Shrink(widths[0], widths[1], widths[2], widths[3]),
-         border.Shrink(content.top, width - content.right, height - content.bottom,
-                       content.left)});
+    PaintBackgroundLayers(context, layers,
+                          {border, padding,
+                           border.Shrink(content.top, width - content.right,
+                                         height - content.bottom, content.left)});
   }
+  PaintInsetShadows(context, shadows, padding);
   PaintBorder(context, paint, width, height);
 }
 

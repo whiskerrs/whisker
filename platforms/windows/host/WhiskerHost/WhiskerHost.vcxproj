@@ -38,16 +38,20 @@
     <ClInclude Include="include\whisker\whisker_view.h" />
     <ClInclude Include="src\background.h" />
     <ClInclude Include="src\capabilities.h" />
+    <ClInclude Include="src\clip_path.h" />
     <ClInclude Include="src\graphics.h" />
     <ClInclude Include="src\host_scene.h" />
     <ClInclude Include="src\paint.h" />
+    <ClInclude Include="src\shadow.h" />
     <ClInclude Include="src\text.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\background.cpp" />
+    <ClCompile Include="src\clip_path.cpp" />
     <ClCompile Include="src\graphics.cpp" />
     <ClCompile Include="src\host_scene.cpp" />
     <ClCompile Include="src\paint.cpp" />
+    <ClCompile Include="src\shadow.cpp" />
     <ClCompile Include="src\text.cpp" />
     <ClCompile Include="src\whisker_view.cpp" />
   </ItemGroup>

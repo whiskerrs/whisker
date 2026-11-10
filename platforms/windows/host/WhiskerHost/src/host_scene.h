@@ -7,7 +7,9 @@
 #include <vector>
 
 #include "background.h"
+#include "clip_path.h"
 #include "graphics.h"
+#include "shadow.h"
 #include "text.h"
 #include "whisker_mobile.h"
 
@@ -28,6 +30,7 @@ class HostScene {
     winrt::Microsoft::UI::Composition::ContainerVisual group{nullptr};
     winrt::Microsoft::UI::Composition::CompositionVisualSurface group_surface{nullptr};
     winrt::Microsoft::UI::Composition::SpriteVisual group_sprite{nullptr};
+    winrt::Microsoft::UI::Composition::SpriteVisual shadow{nullptr};
     winrt::Microsoft::UI::Composition::SpriteVisual background{nullptr};
     winrt::Microsoft::UI::Composition::SpriteVisual text_sprite{nullptr};
     winrt::Microsoft::UI::Composition::ContainerVisual children_visual{nullptr};
@@ -37,6 +40,8 @@ class HostScene {
     WhiskerMobileLayoutGeometry geometry{};
     std::optional<WhiskerMobileBoxPaint> paint;
     std::vector<BackgroundLayer> layers;
+    std::vector<BoxShadow> shadows;
+    std::optional<ClipPath> clip_path;
     bool box_dirty = false;
     bool clip_horizontal = false;
     bool clip_vertical = false;
@@ -55,8 +60,10 @@ class HostScene {
   void Layout(Node& node, const WhiskerMobileLayoutGeometry& geometry);
   void Flatten(Node& node);
   void UpdateClip(Node& node);
+  void UpdateClipPath(Node& node);
   void SyncChildren(uint64_t parent);
   void DrawBox(Node& node);
+  void DrawShadow(Node& node);
   void DrawText(Node& node);
 
   winrt::Microsoft::UI::Composition::Compositor compositor_;

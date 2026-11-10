@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 #include <windows.graphics.interop.h>
 #include <winrt/Microsoft.Graphics.DirectX.h>
@@ -31,17 +32,18 @@ winrt::Windows::UI::Color ToColor(const WhiskerMobileColor& color) {
 struct GeometrySource
     : winrt::implements<GeometrySource, winrt::Windows::Graphics::IGeometrySource2D,
                         ABI::Windows::Graphics::IGeometrySource2DInterop> {
-  explicit GeometrySource(RoundedRect shape) : shape_(shape) {}
+  using Build = std::function<winrt::com_ptr<ID2D1Geometry>(ID2D1Factory*)>;
+  explicit GeometrySource(Build build) : build_(std::move(build)) {}
   HRESULT __stdcall GetGeometry(ID2D1Geometry** value) override;
   HRESULT __stdcall TryGetGeometryUsingFactory(ID2D1Factory* factory,
                                                ID2D1Geometry** value) override try {
-    shape_.Geometry(factory).as<ID2D1Geometry>().copy_to(value);
+    build_(factory).copy_to(value);
     return S_OK;
   } catch (...) {
     *value = nullptr;
     return winrt::to_hresult();
   }
-  RoundedRect shape_;
+  Build build_;
 };
 
 ID2D1Factory* SharedFactory() {
@@ -55,6 +57,21 @@ ID2D1Factory* SharedFactory() {
 
 HRESULT __stdcall GeometrySource::GetGeometry(ID2D1Geometry** value) {
   return TryGetGeometryUsingFactory(SharedFactory(), value);
+}
+
+BoxGeometry Boxes(const std::optional<WhiskerMobileBoxPaint>& paint,
+                  const WhiskerMobileLayoutGeometry& geometry) {
+  auto const& border = geometry.border;
+  auto const& content = geometry.content;
+  auto rounded = RoundedRect::From(paint ? &*paint : nullptr, border.width, border.height);
+  auto widths = paint ? BorderWidths(*paint, border.width) : std::array<float, 4>{};
+  return {rounded, rounded.Shrink(widths[0], widths[1], widths[2], widths[3]),
+          rounded.Shrink(content.y, border.width - content.x - content.width,
+                         border.height - content.y - content.height, content.x)};
+}
+
+bool HasInsetShadow(const std::vector<BoxShadow>& shadows) {
+  return std::any_of(shadows.begin(), shadows.end(), [](auto const& s) { return s.inset; });
 }
 
 }  // namespace
@@ -150,6 +167,7 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       node.paint = OwnedPaint(*static_cast<const WhiskerMobileBoxPaint*>(op.payload));
       node.box_dirty = true;
       UpdateClip(node);
+      UpdateClipPath(node);
       break;
     }
     case WHISKER_OP_BACKGROUND_LAYERS: {
@@ -162,6 +180,23 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       node.box_dirty = true;
       break;
     }
+    case WHISKER_OP_BOX_SHADOWS: {
+      if (op.payload_count && !op.payload) return false;
+      node.shadows.clear();
+      auto shadows = static_cast<const WhiskerMobileBoxShadow*>(op.payload);
+      for (size_t i = 0; i < op.payload_count; ++i) {
+        if (auto shadow = BoxShadow::From(shadows[i])) node.shadows.push_back(*shadow);
+      }
+      node.box_dirty = true;
+      break;
+    }
+    case WHISKER_OP_CLIP_PATH:
+      node.clip_path.reset();
+      if (op.payload) {
+        node.clip_path = ClipPath::From(*static_cast<const WhiskerMobileClipPath*>(op.payload));
+      }
+      UpdateClipPath(node);
+      break;
     case WHISKER_OP_CLIP:
       node.clip_horizontal = op.flags & 1;
       node.clip_vertical = op.flags & 2;
@@ -185,6 +220,7 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
     case WHISKER_OP_VISIBILITY:
       node.visible = op.integer != 0;
       node.background.IsVisible(node.visible);
+      if (node.shadow) node.shadow.IsVisible(node.visible);
       if (node.text_sprite) node.text_sprite.IsVisible(node.visible);
       break;
     case WHISKER_OP_Z_ORDER:
@@ -228,6 +264,7 @@ void HostScene::Flatten(Node& node) {
   node.group = compositor_.CreateContainerVisual();
   node.group.Size(size);
   auto children = node.group.Children();
+  if (node.shadow) children.InsertAtTop(node.shadow);
   children.InsertAtTop(node.background);
   if (node.text_sprite) children.InsertAtTop(node.text_sprite);
   children.InsertAtTop(node.children_visual);
@@ -315,6 +352,7 @@ void HostScene::Layout(Node& node, const WhiskerMobileLayoutGeometry& geometry) 
     node.group_sprite.Size({border.width, border.height});
   }
   UpdateClip(node);
+  UpdateClipPath(node);
   node.box_dirty = true;
   if (node.has_text) node.text_dirty = true;
 }
@@ -328,7 +366,8 @@ void HostScene::UpdateClip(Node& node) {
   if (node.clip_horizontal && node.clip_vertical) {
     auto rounded = RoundedRect::From(node.paint ? &*node.paint : nullptr, border.width, border.height);
     if (!rounded.IsRectilinear()) {
-      auto source = winrt::make<GeometrySource>(rounded);
+      auto source = winrt::make<GeometrySource>(
+          [rounded](ID2D1Factory* factory) { return rounded.Geometry(factory).as<ID2D1Geometry>(); });
       auto geometry = compositor_.CreatePathGeometry(comp::CompositionPath(source));
       node.children_visual.Clip(compositor_.CreateGeometricClip(geometry));
       return;
@@ -346,15 +385,30 @@ void HostScene::UpdateClip(Node& node) {
   node.children_visual.Clip(clip);
 }
 
+void HostScene::UpdateClipPath(Node& node) {
+  if (!node.clip_path) {
+    node.visual.Clip(nullptr);
+    return;
+  }
+  auto source = winrt::make<GeometrySource>(
+      [clip = *node.clip_path, boxes = Boxes(node.paint, node.geometry)](ID2D1Factory* factory) {
+        return clip.Geometry(factory, boxes);
+      });
+  auto geometry = compositor_.CreatePathGeometry(comp::CompositionPath(source));
+  node.visual.Clip(compositor_.CreateGeometricClip(geometry));
+}
+
 void HostScene::DrawBox(Node& node) {
   node.box_dirty = false;
+  DrawShadow(node);
   auto const& border = node.geometry.border;
-  if (!node.paint && node.layers.empty()) {
+  if (!node.paint && node.layers.empty() && !HasInsetShadow(node.shadows)) {
     node.background.Brush(nullptr);
     return;
   }
   auto const paint = node.paint.value_or(WhiskerMobileBoxPaint{});
-  if ((node.layers.empty() && !NeedsBoxSurface(paint, border.width, border.height)) ||
+  if ((node.layers.empty() && !HasInsetShadow(node.shadows) &&
+       !NeedsBoxSurface(paint, border.width, border.height)) ||
       border.width <= 0 || border.height <= 0) {
     node.background.Brush(compositor_.CreateColorBrush(ToColor(paint.background)));
     return;
@@ -369,8 +423,42 @@ void HostScene::DrawBox(Node& node) {
   node.background.Brush(brush);
   DrawSurface(surface, scale_, [&](ID2D1DeviceContext* context) {
     auto const& content = node.geometry.content;
-    PaintBox(context, paint, node.layers, border.width, border.height,
+    PaintBox(context, paint, node.layers, node.shadows, border.width, border.height,
              {content.x, content.y, content.x + content.width, content.y + content.height});
+  });
+}
+
+void HostScene::DrawShadow(Node& node) {
+  auto const& border = node.geometry.border;
+  float extent = OuterShadowExtent(node.shadows);
+  bool outer = std::any_of(node.shadows.begin(), node.shadows.end(),
+                           [](auto const& s) { return !s.inset; });
+  if (!outer || border.width <= 0 || border.height <= 0) {
+    if (node.shadow) node.shadow.Brush(nullptr);
+    return;
+  }
+  if (!node.shadow) {
+    node.shadow = compositor_.CreateSpriteVisual();
+    node.shadow.IsVisible(node.visible);
+    (node.group ? node.group : node.visual).Children().InsertAtBottom(node.shadow);
+  }
+  float width = border.width + extent * 2;
+  float height = border.height + extent * 2;
+  winrt::Windows::Graphics::SizeInt32 pixels{static_cast<int32_t>(std::ceil(width * scale_)),
+                                             static_cast<int32_t>(std::ceil(height * scale_))};
+  auto surface = graphics_.CreateDrawingSurface2(pixels, dx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                                                 dx::DirectXAlphaMode::Premultiplied);
+  auto brush = compositor_.CreateSurfaceBrush(surface);
+  brush.Stretch(comp::CompositionStretch::Fill);
+  node.shadow.Brush(brush);
+  node.shadow.Offset({-extent, -extent, 0});
+  node.shadow.Size({width, height});
+  auto rounded = RoundedRect::From(node.paint ? &*node.paint : nullptr, border.width, border.height);
+  DrawSurface(surface, scale_, [&](ID2D1DeviceContext* context) {
+    D2D1_MATRIX_3X2_F transform;
+    context->GetTransform(&transform);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(extent, extent) * transform);
+    PaintOuterShadows(context, node.shadows, rounded);
   });
 }
 
