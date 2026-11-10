@@ -41,21 +41,31 @@ fn module_packages_pin_the_runtime_version_the_cli_generates() {
     let packages = workspace.join("packages");
     // Absent when this crate is built from its published .crate,
     // which carries no sibling packages to check.
-    let Ok(entries) = std::fs::read_dir(&packages) else {
+    if !packages.is_dir() {
         return;
-    };
+    }
 
     let expected = format!(
         "\"https://github.com/whiskerrs/whisker.git\", exact: \"{WHISKER_IOS_SPM_VERSION}\""
     );
     let mut stale = Vec::new();
-    for entry in entries.flatten() {
-        let manifest = entry.path().join("Package.swift");
-        let Ok(source) = std::fs::read_to_string(&manifest) else {
-            continue;
-        };
-        if source.contains("whiskerrs/whisker.git") && !source.contains(&expected) {
-            stale.push(manifest.display().to_string());
+    let mut directories = vec![packages];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(&directory).unwrap().flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                // Build caches and CNG output hold untracked manifests.
+                if !name.starts_with('.') && name != "target" && name != "gen" {
+                    directories.push(path);
+                }
+            } else if name == "Package.swift" {
+                let source = std::fs::read_to_string(&path).unwrap();
+                if source.contains("whiskerrs/whisker.git") && !source.contains(&expected) {
+                    stale.push(path.display().to_string());
+                }
+            }
         }
     }
     assert!(
