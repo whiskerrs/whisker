@@ -1,0 +1,21 @@
+[package]
+name = "whisker-windows-host-conformance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Shared Host conformance fixtures against the WinUI 3 Host."
+
+# Runs only through `cargo xtask host-conformance windows`, which builds the C++ Host first.
+[target.'cfg(windows)'.dependencies]
+whisker-driver-sys = { workspace = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+whisker = { workspace = true }
+whisker-driver = { workspace = true, features = ["host-conformance"] }
+whisker-driver-sys = { workspace = true }
+whisker-engine = { workspace = true }
+whisker-host-conformance = { workspace = true }
+whisker-protocol = { workspace = true }
+csscolorparser = "0.7.2"

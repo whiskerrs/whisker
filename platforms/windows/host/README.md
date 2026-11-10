@@ -5,6 +5,9 @@ WinUI 3 Host that drives a Whisker app through the mobile C ABI
 
 - `WhiskerHost/` — static library; `whisker::WhiskerView` presents Rust frames
   as Composition visuals and measures/draws text with DirectWrite.
+- `WhiskerHostConformance/` — C entry points that present into a detached
+  Composition scene and capture it for `conformance/`, the shared Host
+  conformance runner (`cargo xtask host-conformance windows`).
 - `WhiskerApp/` — unpackaged development app that links `WhiskerHost` and a
   Rust staticlib (`/p:WhiskerRustLib=...`, default: `whisker_news.lib`).
 

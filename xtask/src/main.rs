@@ -43,7 +43,7 @@ fn main() -> Result<()> {
             rust_host_link_test::run(&workspace_root()?, host)
         }
         _ => bail!(
-            "usage: cargo xtask host-conformance <desktop|web|android|ios|macos|linux>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
+            "usage: cargo xtask host-conformance <desktop|web|android|ios|macos|linux|windows>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
         ),
     }
 }
@@ -76,8 +76,82 @@ fn host_conformance(host: &str) -> Result<()> {
                 "host-conformance",
             ]))
         }
-        _ => bail!("unknown Host {host:?}; expected desktop, web, android, ios, macos, or linux"),
+        "windows" => windows(&root),
+        _ => bail!(
+            "unknown Host {host:?}; expected desktop, web, android, ios, macos, linux, or windows"
+        ),
     }
+}
+
+fn windows(root: &Path) -> Result<()> {
+    if !cfg!(windows) {
+        bail!("Windows conformance runs only on Windows, from an interactive logon");
+    }
+    // MSBuild mis-evaluates the verbatim `\\?\` paths that `canonicalize` returns on Windows.
+    let root = root.to_str().context("workspace path is not UTF-8")?;
+    let host =
+        PathBuf::from(root.strip_prefix(r"\\?\").unwrap_or(root)).join(r"platforms\windows\host");
+    let packages = host.join("packages");
+    run(
+        Command::new(std::env::var_os("NUGET").unwrap_or_else(|| "nuget".into()))
+            .current_dir(&host)
+            .args([
+                "restore",
+                "packages.config",
+                "-NonInteractive",
+                "-PackagesDirectory",
+            ])
+            .arg(&packages),
+    )
+    .context("Windows conformance requires nuget.exe on PATH or NUGET")?;
+    let msbuild = capture(
+        Command::new(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe").args(
+            [
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.Component.MSBuild",
+                "-find",
+                r"MSBuild\**\Bin\MSBuild.exe",
+            ],
+        ),
+    )
+    .context("Windows conformance requires Visual Studio 2022 with MSBuild")?;
+    let msbuild = msbuild.lines().next().context("vswhere found no MSBuild")?;
+    let out = host.join(r"x64\Release\");
+    run(Command::new(msbuild)
+        .current_dir(&host)
+        .args([
+            r"WhiskerHostConformance\WhiskerHostConformance.vcxproj",
+            "/m",
+            "/nologo",
+            "/v:m",
+            "/p:Configuration=Release",
+            "/p:Platform=x64",
+        ])
+        .arg(format!("/p:OutDir={}", out.display())))?;
+    let foundation = fs::read_dir(&packages)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| name.starts_with("Microsoft.WindowsAppSDK.Foundation."))
+        })
+        .context("nuget restore did not produce Microsoft.WindowsAppSDK.Foundation")?;
+    let runtime = foundation.join(r"runtimes\win-x64\native");
+    let path = std::env::join_paths(std::iter::once(runtime).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))?;
+    run(Command::new(cargo())
+        .current_dir(root)
+        .args(["test", "-p", "whisker-windows-host-conformance"])
+        .env("WHISKER_HOST_LIB_DIR", &out)
+        .env(
+            "WHISKER_APP_SDK_BOOTSTRAP_LIB",
+            foundation.join(r"lib\native\x64\Microsoft.WindowsAppRuntime.Bootstrap.lib"),
+        )
+        .env("PATH", path))
 }
 
 fn web(root: &Path) -> Result<()> {

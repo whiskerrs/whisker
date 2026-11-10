@@ -15,7 +15,8 @@ namespace whisker {
 // Mirrors the Rust scene as one Composition visual subtree per node.
 class HostScene {
  public:
-  HostScene(winrt::Microsoft::UI::Composition::ContainerVisual root, const TextEngine& text);
+  HostScene(winrt::Microsoft::UI::Composition::ContainerVisual root, const TextEngine& text,
+            winrt::Microsoft::UI::Composition::CompositionGraphicsDevice graphics);
 
   void SetScale(float scale);
   bool Apply(const WhiskerMobileFrame& frame, WhiskerMobileApplyResponse& response);
@@ -23,6 +24,9 @@ class HostScene {
  private:
   struct Node {
     winrt::Microsoft::UI::Composition::ContainerVisual visual{nullptr};
+    winrt::Microsoft::UI::Composition::ContainerVisual group{nullptr};
+    winrt::Microsoft::UI::Composition::CompositionVisualSurface group_surface{nullptr};
+    winrt::Microsoft::UI::Composition::SpriteVisual group_sprite{nullptr};
     winrt::Microsoft::UI::Composition::SpriteVisual background{nullptr};
     winrt::Microsoft::UI::Composition::SpriteVisual text_sprite{nullptr};
     winrt::Microsoft::UI::Composition::ContainerVisual children_visual{nullptr};
@@ -47,6 +51,7 @@ class HostScene {
   void Insert(uint64_t parent, uint64_t child, uint32_t index);
   void Detach(uint64_t child);
   void Layout(Node& node, const WhiskerMobileLayoutGeometry& geometry);
+  void Flatten(Node& node);
   void UpdateClip(Node& node);
   void SyncChildren(uint64_t parent);
   void DrawBox(Node& node);

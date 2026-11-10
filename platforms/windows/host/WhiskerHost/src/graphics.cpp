@@ -1,7 +1,5 @@
 #include "graphics.h"
 
-#include <d3d11.h>
-
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -10,7 +8,8 @@ namespace whisker {
 
 namespace comp = winrt::Microsoft::UI::Composition;
 
-comp::CompositionGraphicsDevice CreateGraphicsDevice(comp::Compositor const& compositor) {
+comp::CompositionGraphicsDevice CreateGraphicsDevice(comp::Compositor const& compositor,
+                                                     winrt::com_ptr<ID3D11Device>* d3d_out) {
   winrt::com_ptr<ID3D11Device> d3d;
   for (auto driver : {D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP}) {
     if (SUCCEEDED(D3D11CreateDevice(nullptr, driver, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -25,6 +24,7 @@ comp::CompositionGraphicsDevice CreateGraphicsDevice(comp::Compositor const& com
   winrt::com_ptr<::IUnknown> device;
   winrt::check_hresult(
       compositor.as<ICompositorInterop>()->CreateGraphicsDevice(d2d.get(), device.put()));
+  if (d3d_out) *d3d_out = d3d;
   return device.as<comp::CompositionGraphicsDevice>();
 }
 

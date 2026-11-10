@@ -7,6 +7,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "WhiskerHost", "WhiskerHost\
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "WhiskerApp", "WhiskerApp\WhiskerApp.vcxproj", "{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A71}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "WhiskerHostConformance", "WhiskerHostConformance\WhiskerHostConformance.vcxproj", "{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A72}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -31,5 +33,13 @@ Global
 		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A71}.Debug|ARM64.Build.0 = Debug|ARM64
 		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A71}.Release|ARM64.ActiveCfg = Release|ARM64
 		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A71}.Release|ARM64.Build.0 = Release|ARM64
+		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A72}.Debug|x64.ActiveCfg = Debug|x64
+		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A72}.Debug|x64.Build.0 = Debug|x64
+		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A72}.Release|x64.ActiveCfg = Release|x64
+		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A72}.Release|x64.Build.0 = Release|x64
+		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A72}.Debug|ARM64.ActiveCfg = Debug|ARM64
+		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A72}.Debug|ARM64.Build.0 = Debug|ARM64
+		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A72}.Release|ARM64.ActiveCfg = Release|ARM64
+		{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A72}.Release|ARM64.Build.0 = Release|ARM64
 	EndGlobalSection
 EndGlobal

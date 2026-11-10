@@ -59,10 +59,11 @@ HRESULT __stdcall GeometrySource::GetGeometry(ID2D1Geometry** value) {
 
 }  // namespace
 
-HostScene::HostScene(comp::ContainerVisual root, const TextEngine& text)
+HostScene::HostScene(comp::ContainerVisual root, const TextEngine& text,
+                     comp::CompositionGraphicsDevice graphics)
     : compositor_(root.Compositor()),
       root_(std::move(root)),
-      graphics_(CreateGraphicsDevice(compositor_)),
+      graphics_(std::move(graphics)),
       text_(text) {}
 
 void HostScene::SetScale(float scale) {
@@ -164,7 +165,12 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       break;
     }
     case WHISKER_OP_OPACITY:
-      node.visual.Opacity(op.scalar);
+      if (op.scalar < 1 && !node.group) Flatten(node);
+      if (node.group) {
+        node.group_sprite.Opacity(op.scalar);
+      } else {
+        node.visual.Opacity(op.scalar);
+      }
       break;
     case WHISKER_OP_VISIBILITY:
       node.visible = op.integer != 0;
@@ -202,6 +208,26 @@ void HostScene::Create(uint64_t id) {
   nodes_.emplace(id, std::move(node));
   roots_.push_back(id);
   dirty_children_.insert(kRoot);
+}
+
+// Composition fades each child separately (even under a LayerVisual), so translucent nodes draw
+// their subtree into one surface and fade that.
+void HostScene::Flatten(Node& node) {
+  auto size = node.visual.Size();
+  node.visual.Children().RemoveAll();
+  node.group = compositor_.CreateContainerVisual();
+  node.group.Size(size);
+  auto children = node.group.Children();
+  children.InsertAtTop(node.background);
+  if (node.text_sprite) children.InsertAtTop(node.text_sprite);
+  children.InsertAtTop(node.children_visual);
+  node.group_surface = compositor_.CreateVisualSurface();
+  node.group_surface.SourceVisual(node.group);
+  node.group_surface.SourceSize(size);
+  node.group_sprite = compositor_.CreateSpriteVisual();
+  node.group_sprite.Size(size);
+  node.group_sprite.Brush(compositor_.CreateSurfaceBrush(node.group_surface));
+  node.visual.Children().InsertAtTop(node.group_sprite);
 }
 
 void HostScene::Delete(uint64_t id) {
@@ -273,6 +299,11 @@ void HostScene::Layout(Node& node, const WhiskerMobileLayoutGeometry& geometry) 
   node.visual.Size({border.width, border.height});
   node.background.Size({border.width, border.height});
   node.children_visual.Size({border.width, border.height});
+  if (node.group) {
+    node.group.Size({border.width, border.height});
+    node.group_surface.SourceSize({border.width, border.height});
+    node.group_sprite.Size({border.width, border.height});
+  }
   UpdateClip(node);
   node.box_dirty = true;
   if (node.has_text) node.text_dirty = true;
@@ -341,7 +372,8 @@ void HostScene::DrawText(Node& node) {
   if (!node.text_sprite) {
     node.text_sprite = compositor_.CreateSpriteVisual();
     node.text_sprite.IsVisible(node.visible);
-    node.visual.Children().InsertAbove(node.text_sprite, node.background);
+    auto parent = node.group ? node.group : node.visual;
+    parent.Children().InsertAbove(node.text_sprite, node.background);
   }
   winrt::Windows::Graphics::SizeInt32 pixels{
       static_cast<int32_t>(std::ceil(content.width * scale_)),

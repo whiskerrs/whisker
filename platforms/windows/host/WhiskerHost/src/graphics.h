@@ -4,6 +4,7 @@
 #undef GetCurrentTime
 
 #include <d2d1_1.h>
+#include <d3d11.h>
 #include <winrt/Microsoft.UI.Composition.h>
 
 namespace whisker {
@@ -23,8 +24,14 @@ struct __declspec(uuid("FAB19398-6D19-4D8A-B752-8F096C396069")) ICompositorInter
   virtual HRESULT __stdcall CreateGraphicsDevice(::IUnknown*, ::IUnknown**) = 0;
 };
 
+struct __declspec(uuid("D4B71A65-3052-4ABE-9183-E98DE02A41A9")) ICompositionDrawingSurfaceInterop2
+    : ICompositionDrawingSurfaceInterop {
+  virtual HRESULT __stdcall CopySurface(::IUnknown*, int, int, const RECT*) = 0;
+};
+
 winrt::Microsoft::UI::Composition::CompositionGraphicsDevice CreateGraphicsDevice(
-    winrt::Microsoft::UI::Composition::Compositor const& compositor);
+    winrt::Microsoft::UI::Composition::Compositor const& compositor,
+    winrt::com_ptr<ID3D11Device>* d3d_out = nullptr);
 
 // Calls `draw` with a context whose user space is logical pixels at `scale`.
 template <typename Draw>

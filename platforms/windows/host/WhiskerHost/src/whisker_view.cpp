@@ -6,34 +6,13 @@
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Windows.Foundation.h>
 
+#include "capabilities.h"
+#include "graphics.h"
 #include "host_scene.h"
 
 namespace whisker {
 
 namespace xaml = winrt::Microsoft::UI::Xaml;
-
-namespace {
-
-WhiskerMobileHostCapabilities Capabilities() {
-  WhiskerMobileHostCapabilities capabilities{};
-  capabilities.abi_major = WHISKER_MOBILE_ABI_MAJOR;
-  capabilities.abi_minor = WHISKER_MOBILE_ABI_MINOR;
-  capabilities.protocol_major = WHISKER_FRAME_PROTOCOL_MAJOR;
-  capabilities.protocol_minor = WHISKER_FRAME_PROTOCOL_MINOR;
-  capabilities.native = WHISKER_CAPABILITY_ELLIPTICAL_BORDER_RADIUS |
-                        WHISKER_CAPABILITY_VISUAL_EFFECTS | WHISKER_CAPABILITY_TEXT_EFFECTS |
-                        WHISKER_CAPABILITY_TEXT_TYPOGRAPHY | WHISKER_CAPABILITY_RICH_TEXT |
-                        WHISKER_CAPABILITY_CURSOR | WHISKER_CAPABILITY_RESOURCE_LIFECYCLE |
-                        WHISKER_CAPABILITY_LINEAR_GRADIENTS |
-                        WHISKER_CAPABILITY_RADIAL_GRADIENTS | WHISKER_CAPABILITY_CONIC_GRADIENTS |
-                        WHISKER_CAPABILITY_BACKGROUND_GEOMETRY |
-                        WHISKER_CAPABILITY_BACKGROUND_LAYER_STACKING |
-                        WHISKER_CAPABILITY_BACKGROUND_IMAGE_RESOURCES;
-  capabilities.emulated = WHISKER_CAPABILITY_BACKDROP_BLUR;
-  return capabilities;
-}
-
-}  // namespace
 
 struct WhiskerView::Impl {
   xaml::Controls::Panel host;
@@ -50,7 +29,7 @@ struct WhiskerView::Impl {
     auto compositor = xaml::Hosting::ElementCompositionPreview::GetElementVisual(host).Compositor();
     auto root = compositor.CreateContainerVisual();
     xaml::Hosting::ElementCompositionPreview::SetElementChildVisual(host, root);
-    scene.emplace(root, text);
+    scene.emplace(root, text, CreateGraphicsDevice(compositor));
     rendering = xaml::Media::CompositionTarget::Rendering(
         [this](auto&&, auto&&) { Tick(); });
   }
@@ -73,7 +52,7 @@ struct WhiskerView::Impl {
       frame_requested = true;
     }
     if (!handle) {
-      auto capabilities = Capabilities();
+      auto capabilities = HostCapabilities();
       handle = whisker_view_create(width, height, scale, &capabilities, &OnRequestFrame, this,
                                    &OnBootstrap, this, &OnMeasure, this, &OnPresent, this,
                                    &OnResourceCommand, this, &OnInvokeModule, &OnObserveModule,

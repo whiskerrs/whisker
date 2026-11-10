@@ -52,6 +52,8 @@ TextStyle TextStyle::From(const WhiskerMobileText& text) {
   style.weight = text.font_weight;
   style.style = text.font_style;
   style.wrap = text.wrap != 0;
+  style.ellipsis = text.overflow != 0;
+  style.max_lines = text.max_lines;
   style.line_height = text.line_height;
   style.alignment = text.alignment;
   style.direction = text.direction;
@@ -67,6 +69,8 @@ TextStyle TextStyle::From(const WhiskerMobileMeasureRequest& request) {
   style.weight = request.font_weight;
   style.style = request.font_style;
   style.wrap = request.wrap != 0;
+  style.ellipsis = request.overflow != 0;
+  style.max_lines = request.max_lines;
   style.line_height = request.line_height;
   style.alignment = request.alignment;
   style.direction = request.direction;
@@ -85,6 +89,12 @@ winrt::com_ptr<IDWriteTextLayout> TextEngine::Layout(const TextStyle& style,
       style.family.c_str(), nullptr, static_cast<DWRITE_FONT_WEIGHT>(style.weight),
       FontStyle(style.style), DWRITE_FONT_STRETCH_NORMAL, style.size, L"", format.put()));
   format->SetWordWrapping(style.wrap ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
+  if (style.ellipsis) {
+    DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+    winrt::com_ptr<IDWriteInlineObject> sign;
+    winrt::check_hresult(factory_->CreateEllipsisTrimmingSign(format.get(), sign.put()));
+    format->SetTrimming(&trimming, sign.get());
+  }
   if (style.line_height > 0) {
     format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, style.line_height,
                            style.line_height * 0.8f);
@@ -143,6 +153,7 @@ void TextEngine::Measure(const WhiskerMobileMeasureRequest& request,
   layout->GetLineMetrics(nullptr, 0, &line_count);
   std::vector<DWRITE_LINE_METRICS> lines(line_count);
   layout->GetLineMetrics(lines.data(), line_count, &line_count);
+  if (style.max_lines > 0 && lines.size() > style.max_lines) lines.resize(style.max_lines);
   float top = 0;
   float last_baseline = 0;
   for (auto const& line : lines) {
@@ -152,16 +163,27 @@ void TextEngine::Measure(const WhiskerMobileMeasureRequest& request,
   response.status = WHISKER_MEASURE_READY;
   response.width = known_width ? request.known_width
                                : std::ceil(metrics.widthIncludingTrailingWhitespace);
-  response.height = known_height ? request.known_height : std::ceil(metrics.height);
+  response.height = known_height ? request.known_height : std::ceil(top);
   response.first_baseline = lines.empty() ? 0 : lines.front().baseline;
   response.last_baseline = last_baseline;
   response.metrics_mask = 7;
+}
+
+static float VisibleHeight(IDWriteTextLayout* layout, uint32_t max_lines) {
+  UINT32 count = 0;
+  layout->GetLineMetrics(nullptr, 0, &count);
+  std::vector<DWRITE_LINE_METRICS> lines(count);
+  layout->GetLineMetrics(lines.data(), count, &count);
+  float height = 0;
+  for (uint32_t i = 0; i < count && i < max_lines; ++i) height += lines[i].height;
+  return height;
 }
 
 void TextEngine::Draw(ID2D1DeviceContext* context, const TextStyle& style, float width) const {
   // Half a pixel of slack keeps DirectWrite from wrapping text measured at exactly this width.
   auto layout = Layout(style, style.wrap ? width + 0.5f : kUnbounded);
   if (!style.wrap) layout->SetMaxWidth(width);
+  if (style.max_lines > 0) layout->SetMaxHeight(VisibleHeight(layout.get(), style.max_lines));
   winrt::com_ptr<ID2D1SolidColorBrush> brush;
   context->CreateSolidColorBrush(ToD2DColor(style.color), brush.put());
   context->DrawTextLayout({0, 0}, layout.get(), brush.get(),

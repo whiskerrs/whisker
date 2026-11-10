@@ -20,6 +20,8 @@ struct TextStyle {
   uint16_t weight = 400;
   uint8_t style = 0;
   bool wrap = true;
+  bool ellipsis = false;
+  uint32_t max_lines = 0;
   float line_height = 0;
   uint32_t alignment = 0;
   uint32_t direction = 0;

@@ -107,7 +107,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), FixtureError> {
         for host in &case.required_hosts {
             if !matches!(
                 host.as_str(),
-                "desktop" | "web" | "android" | "ios" | "macos" | "linux"
+                "desktop" | "web" | "android" | "ios" | "macos" | "linux" | "windows"
             ) {
                 return Err(FixtureError(format!(
                     "case {} names unknown Host {host}",
