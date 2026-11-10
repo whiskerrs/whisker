@@ -192,17 +192,15 @@ pub struct IosParams {
     pub device_override: Option<String>,
 }
 
-/// Flat parameters for the generated Cargo-based macOS Host.
+/// Flat parameters for the generated macOS Xcode project.
 #[derive(Debug, Clone)]
 pub struct MacosParams {
-    /// Generated `gen/macos` Cargo project.
+    /// Generated `gen/macos` directory holding the `.xcodeproj`.
     pub project_dir: PathBuf,
-    /// Dedicated Cargo target directory shared by builds and patches.
-    pub target_dir: PathBuf,
-    /// Human-readable `.app` bundle name.
-    pub app_name: String,
-    /// Generated Host executable and Cargo package name.
-    pub binary_name: String,
+    /// Xcode project, scheme, and executable name.
+    pub project_name: String,
+    /// `xcodebuild -derivedDataPath` shared by builds and relaunches.
+    pub derived_data: PathBuf,
 }
 
 /// Flat parameters for Whisker's generated browser Host.
@@ -423,8 +421,8 @@ impl DevServer {
 
         let hot_reload_init = if self.config.hot_patch_mode == HotPatchMode::HotReload {
             let feature = match self.config.target {
-                Target::Macos | Target::Web => "hot-reload",
-                Target::Android | Target::IosSimulator => "whisker/hot-reload",
+                Target::Web => "hot-reload",
+                Target::Android | Target::IosSimulator | Target::Macos => "whisker/hot-reload",
             };
             builder = builder.with_features(vec![feature.into()]);
             match prepare_hot_reload_capture(&self.config) {

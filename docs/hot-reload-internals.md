@@ -76,10 +76,8 @@ wired in (`prepare_hot_reload_capture` in `lib.rs`):
   (minus `CARGO_MAKEFLAGS`, whose jobserver fds die with cargo). The
   thin rebuild replays those vars so `env!("CARGO_PKG_*")` /
   `env!("OUT_DIR")` in user code still compiles under the raw
-  (cargo-less) rustc spawn. Mobile builds install it through
-  `RUSTC_WORKSPACE_WRAPPER`; the generated macOS Host is a separate Cargo
-  workspace with the app as a path dependency, so it uses `RUSTC_WRAPPER`
-  and lets the shim retain every path crate.
+  (cargo-less) rustc spawn. Android, iOS, and macOS builds install it
+  through `RUSTC_WORKSPACE_WRAPPER`.
 - `-C linker=whisker-linker-shim` — records each linker invocation's
   argv (keyed by output basename) to the linker-args cache, then
   forwards to the real linker.

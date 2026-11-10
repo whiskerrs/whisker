@@ -1,32 +1,31 @@
-//! Render the complete Cargo-based macOS Host project under `gen/macos/`.
+//! Render the AppKit Host Xcode project under `gen/macos/`.
 //!
-//! Unlike iOS, macOS does not require an Xcode project to create a native app.
-//! The generated project is nevertheless a complete platform project shared by
-//! both `whisker run desktop` and `whisker build macos`: it owns the Cargo
-//! composition root, bundle metadata, entitlements, and resources.
+//! The project mirrors `gen/ios`: a Swift application target links the Rust
+//! app as `libWhiskerDriver.dylib`, built by a run-script phase, and depends on
+//! a generated SwiftPM aggregator for the Host SDK and native modules.
 
 use anyhow::{Context, Result, bail};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use whisker_config::Config;
+use whisker_plugin::FileEntry;
+use whisker_plugin::project::{MacosProjectIr, ProjectIr};
 
-use crate::fingerprint;
+use crate::modules::ResolvedModule;
 use crate::render::render;
 
 pub mod application;
 pub(crate) mod icon;
-mod project_render;
-pub use project_render::{
-    MacosBuildPlan, MacosIcon, MacosProjectInputs, bundle_files, icon_files, load_build_plan,
-    render_project, signing_entitlements, sync_project,
-};
 
-const CARGO_TOML: &str = include_str!("templates/macos/Cargo.toml.template");
-const MAIN_RS: &str = include_str!("templates/macos/src/main.rs");
+const APP_DELEGATE_SWIFT: &str = include_str!("templates/macos/Sources/AppDelegate.swift");
+
+/// Rust app library name the Xcode target links and embeds.
+pub const DRIVER_LIBRARY: &str = "libWhiskerDriver.dylib";
 
 /// Fully resolved inputs for one generated macOS project.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct MacosInputs {
-    /// Human-readable application name and `.app` bundle name.
+    /// Human-readable application name, Xcode project name, and scheme.
     pub app_name: String,
     /// Static Host background configured in `whisker.rs` (`#RRGGBB`).
     pub background: String,
@@ -36,19 +35,15 @@ pub struct MacosInputs {
     pub version: String,
     /// Monotonic bundle build number.
     pub build_number: u32,
-    /// Cargo package name of the generated Host executable.
-    pub generated_package: String,
     /// Cargo package name of the user's application crate.
     pub user_package: String,
     /// Absolute path to the user's application crate.
     pub user_crate_path: PathBuf,
-    /// Complete Cargo dependency declaration for `whisker-macos`.
-    pub whisker_macos_dependency: String,
-    /// Complete Cargo dependency declaration for the shared Desktop Host API.
-    pub whisker_desktop_dependency: String,
-    /// Discovered external element definitions for Desktop.
-    pub element_modules: Vec<crate::RustElementModuleInput>,
-    /// Minimum supported macOS release placed in `Info.plist`.
+    /// Cargo workspace root the run-script phase builds from.
+    pub workspace_root: PathBuf,
+    /// Modules whose macOS SwiftPM packages join the aggregator.
+    pub modules: Vec<ResolvedModule>,
+    /// `MACOSX_DEPLOYMENT_TARGET` of the application target.
     pub minimum_system_version: String,
     /// Source PNG configured through the shared AppIcon plugin.
     pub app_icon_png: Option<Vec<u8>>,
@@ -58,19 +53,28 @@ pub struct MacosInputs {
     pub cargo_selection: crate::CargoSelection,
 }
 
+/// Final declarations and filesystem context for one macOS Xcode project.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MacosProjectInputs {
+    pub project: MacosProjectIr,
+    pub project_name: String,
+    pub app_crate_dir: Option<PathBuf>,
+    pub cargo_selection: crate::CargoSelection,
+    pub template_version: u32,
+}
+
 /// Generates or reuses the complete `gen/macos` project.
 pub fn sync(out_dir: &Path, inputs: &MacosInputs) -> Result<bool> {
-    let result = crate::ProjectEngine::with_macos_application(inputs.clone()).compose(
-        &Config::default(),
-        &whisker_plugin::project::ProjectIr::Macos(Default::default()),
-    )?;
-    let whisker_plugin::project::ProjectIr::Macos(project) = result.project else {
+    let result = crate::ProjectEngine::with_macos_application(inputs.clone())
+        .compose(&Config::default(), &ProjectIr::Macos(Default::default()))?;
+    let ProjectIr::Macos(project) = result.project else {
         unreachable!()
     };
     sync_project(
         out_dir,
         &MacosProjectInputs {
             project,
+            project_name: inputs.app_name.clone(),
             app_crate_dir: Some(inputs.user_crate_path.clone()),
             cargo_selection: inputs.cargo_selection.clone(),
             template_version: inputs.template_version,
@@ -78,12 +82,28 @@ pub fn sync(out_dir: &Path, inputs: &MacosInputs) -> Result<bool> {
     )
 }
 
+/// Render all native metadata and stage declared source/resource files.
+pub fn render_project(
+    inputs: &MacosProjectInputs,
+) -> Result<BTreeMap<whisker_plugin::project::ProjectPath, FileEntry>> {
+    crate::ios::render_apple(
+        &ProjectIr::Macos(inputs.project.clone()),
+        &inputs.project_name,
+        inputs.app_crate_dir.as_deref(),
+    )
+}
+
+/// Preflight every output and copied input before replacing the managed tree.
+pub fn sync_project(out: &Path, inputs: &MacosProjectInputs) -> Result<bool> {
+    crate::ios::sync_files(out, inputs, render_project(inputs)?, &inputs.project_name)
+}
+
 /// Resolves macOS fields from the declarative application config.
 pub fn inputs_from(
     app_config: &Config,
     user_package: String,
     user_crate_path: PathBuf,
-    whisker_macos_dependency: String,
+    workspace_root: PathBuf,
 ) -> Result<MacosInputs> {
     let crate::plugins::application::MacosApplication {
         app_name,
@@ -93,7 +113,6 @@ pub fn inputs_from(
         minimum_system_version,
     } = crate::plugins::application::macos(app_config)?;
     let background = crate::background::AppBackground::resolve(app_config)?;
-    let generated_package = format!("{user_package}-whisker-macos");
     let app_icon_png = icon::source(app_config, &user_crate_path)?;
     Ok(MacosInputs {
         app_name,
@@ -101,15 +120,13 @@ pub fn inputs_from(
         bundle_id,
         version,
         build_number,
-        generated_package,
         user_package,
         user_crate_path,
-        whisker_macos_dependency,
-        whisker_desktop_dependency: format!("{:?}", env!("CARGO_PKG_VERSION")),
-        element_modules: Vec::new(),
+        workspace_root,
+        modules: Vec::new(),
         minimum_system_version,
         app_icon_png,
-        template_version: 12,
+        template_version: 13,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -121,8 +138,21 @@ fn validate(inputs: &MacosInputs) -> Result<()> {
     if inputs.bundle_id.trim().is_empty() {
         bail!("macOS bundle id must not be empty");
     }
-    if inputs.generated_package.trim().is_empty() || inputs.user_package.trim().is_empty() {
-        bail!("macOS Cargo package names must not be empty");
+    if inputs.user_package.trim().is_empty() {
+        bail!("macOS Cargo package name must not be empty");
+    }
+    let major = inputs
+        .minimum_system_version
+        .split('.')
+        .next()
+        .and_then(|major| major.parse::<u32>().ok())
+        .context("invalid macOS deployment target")?;
+    if major < crate::ios_modules::MACOS_PLATFORM_MAJOR {
+        bail!(
+            "macOS deployment target {} is below the AppKit Host minimum {}.0",
+            inputs.minimum_system_version,
+            crate::ios_modules::MACOS_PLATFORM_MAJOR
+        );
     }
     crate::background::AppBackground::parse(&inputs.background)
         .context("validate macOS application background")?;
@@ -131,300 +161,47 @@ fn validate(inputs: &MacosInputs) -> Result<()> {
 
 fn template_vars(inputs: &MacosInputs) -> std::collections::HashMap<&'static str, String> {
     let mut vars = std::collections::HashMap::new();
-    vars.insert("app_title_rust", rust_string(&inputs.app_name));
+    vars.insert("app_title_swift", swift_string_body(&inputs.app_name));
     let background = crate::background::AppBackground::parse(&inputs.background)
         .expect("MacosInputs background is validated when it is resolved");
     let [red, green, blue] = background.rgb();
-    vars.insert("background_red", red.to_string());
-    vars.insert("background_green", green.to_string());
-    vars.insert("background_blue", blue.to_string());
-    vars.insert("generated_package", inputs.generated_package.clone());
+    vars.insert("background_red", color_component(red));
+    vars.insert("background_green", color_component(green));
+    vars.insert("background_blue", color_component(blue));
     vars.insert(
-        "user_cargo_options",
-        inputs.cargo_selection.dependency_options(),
-    );
-    vars.insert("user_package_toml", toml_string(&inputs.user_package));
-    vars.insert(
-        "user_crate_path_toml",
-        toml_string(&inputs.user_crate_path.display().to_string()),
+        "whisker_workspace_root",
+        shell_string_body(&inputs.workspace_root.display().to_string()),
     );
     vars.insert(
-        "whisker_macos_dependency",
-        inputs.whisker_macos_dependency.clone(),
-    );
-    vars.insert(
-        "whisker_desktop_dependency",
-        inputs.whisker_desktop_dependency.clone(),
-    );
-    vars.insert(
-        "element_module_dependencies",
-        crate::rust_element_module_dependencies(&inputs.element_modules),
-    );
-    vars.insert(
-        "element_module_config",
-        crate::rust_element_module_config(&inputs.element_modules),
+        "whisker_user_package",
+        shell_string_body(&inputs.user_package),
     );
     vars
 }
 
-fn toml_string(value: &str) -> String {
-    format!("{value:?}")
+fn color_component(value: u8) -> String {
+    format!("{:.6}", f32::from(value) / 255.0)
 }
 
-fn rust_string(value: &str) -> String {
-    format!("{value:?}")
+fn swift_string_body(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| match c {
+            '\\' => "\\\\".into(),
+            '"' => "\\\"".into(),
+            c if c.is_control() => format!("\\u{{{:x}}}", c as u32),
+            c => c.to_string(),
+        })
+        .collect()
 }
 
-fn clean_managed_tree(out_dir: &Path) -> Result<()> {
-    if !out_dir.exists() {
-        return Ok(());
-    }
-    for entry in
-        std::fs::read_dir(out_dir).with_context(|| format!("read {}", out_dir.display()))?
-    {
-        let path = entry?.path();
-        if path.file_name().is_some_and(|name| name == "target") {
-            continue;
-        }
-        if path.is_dir() && !path.is_symlink() {
-            std::fs::remove_dir_all(&path)
-                .with_context(|| format!("remove generated directory {}", path.display()))?;
-        } else {
-            std::fs::remove_file(&path)
-                .with_context(|| format!("remove generated file {}", path.display()))?;
-        }
-    }
-    Ok(())
-}
-
-fn write_text(path: &Path, contents: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    std::fs::write(path, contents).with_context(|| format!("write {}", path.display()))
+fn shell_string_body(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`")
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    fn tempdir() -> PathBuf {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "whisker-cng-macos-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    fn sample() -> MacosInputs {
-        MacosInputs {
-            app_name: "Hello Mac".into(),
-            background: "#FFFFFF".into(),
-            bundle_id: "rs.whisker.hello".into(),
-            version: "1.2.3".into(),
-            build_number: 7,
-            generated_package: "hello-whisker-macos".into(),
-            user_package: "hello".into(),
-            user_crate_path: PathBuf::from("/tmp/hello"),
-            whisker_macos_dependency: "{ path = \"/tmp/whisker/platforms/macos\" }".into(),
-            whisker_desktop_dependency: "{ path = \"/tmp/whisker/platforms/desktop\" }".into(),
-            element_modules: Vec::new(),
-            minimum_system_version: "12.0".into(),
-            app_icon_png: None,
-            template_version: 12,
-            cargo_selection: crate::CargoSelection::default(),
-        }
-    }
-
-    #[test]
-    fn feature_selection_updates_the_application_dependency_and_fingerprint() {
-        let root = tempdir();
-        let mut inputs = sample();
-        assert!(sync(&root, &inputs).unwrap());
-        inputs.cargo_selection.features = vec!["auth".into()];
-        inputs.cargo_selection.no_default_features = true;
-        assert!(sync(&root, &inputs).unwrap());
-        let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
-            .unwrap()
-            .parse()
-            .unwrap();
-        let app = &manifest["dependencies"]["whisker-app"];
-        assert_eq!(app["default-features"].as_bool(), Some(false));
-        assert_eq!(
-            app["features"].as_array().unwrap(),
-            &[toml::Value::String("auth".into())]
-        );
-        assert!(!sync(&root, &inputs).unwrap());
-        inputs.cargo_selection.features.clear();
-        assert!(sync(&root, &inputs).unwrap());
-        let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
-            .unwrap()
-            .parse()
-            .unwrap();
-        assert!(
-            manifest["dependencies"]["whisker-app"]["features"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn writes_complete_cargo_host_project_and_reuses_fingerprint() {
-        let root = tempdir();
-        let out = root.join("gen/macos");
-        assert!(sync(&out, &sample()).unwrap());
-        for path in [
-            "Cargo.toml",
-            "src/main.rs",
-            "Info.plist",
-            "Entitlements.plist",
-            "Resources",
-            ".whisker-fingerprint",
-        ] {
-            assert!(out.join(path).exists(), "missing {path}");
-        }
-        assert!(!sync(&out, &sample()).unwrap());
-        let plist = std::fs::read_to_string(out.join("Info.plist")).unwrap();
-        assert!(!plist.contains("CFBundleIconFile"));
-        let manifest = std::fs::read_to_string(out.join("Cargo.toml")).unwrap();
-        assert!(manifest.contains("package = \"hello\""));
-        assert!(manifest.contains("whisker-macos = { path ="));
-        assert!(manifest.contains("hot-reload = [\"whisker-macos/hot-reload\"]"));
-        assert!(manifest.contains("[profile.dev.package.\"*\"]\nopt-level = 2"));
-        assert!(manifest.contains("[profile.dev.package.\"hello\"]\nopt-level = 0"));
-        let main = std::fs::read_to_string(out.join("src/main.rs")).unwrap();
-        assert!(main.contains("whisker_app::__whisker_application"));
-        assert!(main.contains("whisker_app::__whisker_application_hash"));
-        assert!(main.contains("run_with_application_hash"));
-        assert!(main.contains(".with_background_rgb(255, 255, 255)"));
-        assert!(!main.contains("{{"));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn configured_background_is_projected_into_desktop_host_config() {
-        let mut config = Config::default();
-        config
-            .name("Desktop")
-            .bundle_id("rs.whisker.desktop")
-            .background("#101018");
-        let inputs = inputs_from(
-            &config,
-            "demo".into(),
-            PathBuf::from("/app"),
-            "\"0.12\"".into(),
-        )
-        .unwrap();
-        assert_eq!(inputs.background, "#101018");
-
-        let root = tempdir();
-        let out = root.join("gen/macos");
-        sync(&out, &inputs).unwrap();
-        let main = std::fs::read_to_string(out.join("src/main.rs")).unwrap();
-        assert!(main.contains(".with_background_rgb(16, 16, 24)"));
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn shared_icon_source_generates_iconset_and_invalidates_on_content_changes() {
-        let root = tempdir();
-        let source = root.join("icon.png");
-        let mut config = Config::default();
-        config.name("Chat").bundle_id("rs.whisker.chat");
-        config.plugin::<whisker_config::AppIcon>(|icon| {
-            icon.source("icon.png");
-        });
-        let resolve =
-            || inputs_from(&config, "chat".into(), root.clone(), "\"0.13\"".into()).unwrap();
-        let out = root.join("gen/macos");
-
-        for color in [[32, 40, 48, 128], [64, 72, 80, 128]] {
-            image::RgbaImage::from_pixel(1024, 1024, image::Rgba(color))
-                .save(&source)
-                .unwrap();
-            let inputs = resolve();
-            assert!(sync(&out, &inputs).unwrap());
-            assert!(!sync(&out, &inputs).unwrap());
-            let plist = std::fs::read_to_string(out.join("Info.plist")).unwrap();
-            assert!(
-                plist.contains("<key>CFBundleIconFile</key>")
-                    && plist.contains("<string>AppIcon.icns</string>")
-            );
-            assert_eq!(
-                std::fs::read_dir(out.join("AppIcon.iconset"))
-                    .unwrap()
-                    .count(),
-                10
-            );
-            for size in [16, 32, 128, 256, 512] {
-                for scale in [1, 2] {
-                    let suffix = if scale == 2 { "@2x" } else { "" };
-                    let path = out.join(format!("AppIcon.iconset/icon_{size}x{size}{suffix}.png"));
-                    let image = image::open(path).unwrap().to_rgba8();
-                    assert_eq!(image.dimensions(), (size * scale, size * scale));
-                    assert_eq!(image.get_pixel(0, 0).0, color);
-                }
-            }
-        }
-        let mut inputs = resolve();
-        inputs.app_icon_png = None;
-        assert!(sync(&out, &inputs).unwrap());
-        assert!(!out.join("AppIcon.iconset").exists());
-        assert!(
-            !std::fs::read_to_string(out.join("Info.plist"))
-                .unwrap()
-                .contains("CFBundleIconFile")
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn extracts_required_fields_from_config() {
-        let mut config = Config::default();
-        config
-            .name("Desktop")
-            .bundle_id("rs.whisker.desktop")
-            .version("2.0.0")
-            .build_number(9);
-        let inputs = inputs_from(
-            &config,
-            "demo".into(),
-            PathBuf::from("/app"),
-            "\"0.12\"".into(),
-        )
-        .unwrap();
-        assert_eq!(inputs.app_name, "Desktop");
-        assert_eq!(inputs.generated_package, "demo-whisker-macos");
-        assert_eq!(inputs.build_number, 9);
-    }
-
-    #[test]
-    fn generated_host_wires_discovered_desktop_module_definitions() {
-        let root = tempdir();
-        let out = root.join("gen/macos");
-        let mut inputs = sample();
-        inputs.element_modules.push(crate::RustElementModuleInput {
-            package: "whisker-example".into(),
-            crate_path: PathBuf::from("/modules/whisker-example"),
-            host_package: "whisker-example-desktop".into(),
-            host_dependency: crate::RustHostDependency::Path(PathBuf::from(
-                "/modules/whisker-example/desktop",
-            )),
-        });
-        sync(&out, &inputs).unwrap();
-        let manifest = std::fs::read_to_string(out.join("Cargo.toml")).unwrap();
-        assert!(manifest.contains("whisker-example = { package = \"whisker-example\""));
-        let main = std::fs::read_to_string(out.join("src/main.rs")).unwrap();
-        assert!(manifest.contains("whisker-example-desktop ="));
-        assert!(!main.contains("#[path ="));
-        assert!(main.contains(".with_module("));
-        assert!(main.contains("whisker_example_desktop::__whisker_module_definition()"));
-        std::fs::remove_dir_all(root).ok();
-    }
-}
+mod tests;

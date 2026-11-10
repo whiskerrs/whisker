@@ -304,8 +304,8 @@ fn watch_paths_for(manifest: &manifest::ResolvedManifest) -> Vec<PathBuf> {
     ]
 }
 
-/// Drive the first Desktop development loop. The generated Cargo project is
-/// exactly the one `whisker build macos` consumes; development adds only file
+/// Drive the macOS development loop. The generated Xcode project is exactly
+/// the one `whisker build macos` consumes; development adds only file
 /// watching and process supervision around its Debug build.
 fn run_macos(
     manifest: &manifest::ResolvedManifest,
@@ -321,9 +321,6 @@ fn run_macos(
         .name
         .as_deref()
         .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required for macOS"))?;
-    let binary_name = format!("{}-whisker-macos", manifest.package);
-    let target_dir = workspace_root.join("target/.whisker/macos");
-
     let watch_roots = explicit_watch_paths.to_vec();
     if let Some(tui) = tui {
         tui.set_dev_server(
@@ -353,9 +350,10 @@ fn run_macos(
         ios: None,
         macos: Some(whisker_dev_server::MacosParams {
             project_dir: gen_dir.to_path_buf(),
-            target_dir,
-            app_name: app_name.to_string(),
-            binary_name,
+            project_name: app_name.to_string(),
+            derived_data: workspace_root
+                .join("target/.whisker/macos-derived")
+                .join(&manifest.package),
         }),
         web: None,
     };
@@ -401,7 +399,7 @@ fn target_destination(config: &Config) -> String {
         Target::Macos => config
             .macos
             .as_ref()
-            .map(|params| format!("{} · local application", params.app_name))
+            .map(|params| format!("{} · local application", params.project_name))
             .unwrap_or_else(|| "Desktop application".into()),
         Target::Web => format!("http://127.0.0.1:{}/", config.bind_addr.port()),
     }

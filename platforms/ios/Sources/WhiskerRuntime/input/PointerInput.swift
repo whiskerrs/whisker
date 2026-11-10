@@ -1,4 +1,9 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
+import WhiskerModule
 
 /// The runtime viewport owns the complete Host view, including the regions
 /// behind the status bar and home indicator. Safe-area insets remain available
@@ -6,7 +11,7 @@ import UIKit
 /// surface itself.
 func edgeToEdgeViewportBounds(
     _ bounds: CGRect,
-    safeAreaInsets: UIEdgeInsets
+    safeAreaInsets: WhiskerPlatformEdgeInsets
 ) -> CGRect {
     _ = safeAreaInsets
     return bounds
@@ -45,6 +50,7 @@ enum HostPointerKind: UInt32, Equatable {
     }
 }
 
+#if canImport(UIKit)
 func hostPointerKind(for type: UITouch.TouchType) -> HostPointerKind {
     if #available(iOS 13.4, *), type == .indirectPointer { return .mouse }
     switch type {
@@ -54,6 +60,8 @@ func hostPointerKind(for type: UITouch.TouchType) -> HostPointerKind {
     default: return .unknown
     }
 }
+
+#endif
 
 struct HostTouchIdentityMap {
     private var pointerIDs = [ObjectIdentifier: UInt64]()
@@ -81,6 +89,7 @@ struct HostTouchIdentityMap {
     }
 }
 
+#if canImport(UIKit)
 /// Passive ancestor observer: it never recognizes, so descendant controls and
 /// scroll recognizers continue to receive and arbitrate the original touches.
 final class WhiskerTouchObserverGestureRecognizer: UIGestureRecognizer {
@@ -128,3 +137,4 @@ final class WhiskerTouchObserverGestureRecognizer: UIGestureRecognizer {
         activeTouches.removeAll(keepingCapacity: true)
     }
 }
+#endif

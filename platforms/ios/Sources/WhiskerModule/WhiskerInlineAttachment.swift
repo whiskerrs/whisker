@@ -1,4 +1,8 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 public struct WhiskerInlineAttachment {
     public let node: UInt64
@@ -10,7 +14,7 @@ public struct WhiskerInlineAttachment {
     public var truncation: Bool = false
     public var label: String? = nil
 
-    func resolvedBaseline(font: UIFont) -> CGFloat {
+    func resolvedBaseline(font: WhiskerPlatformFont) -> CGFloat {
         switch alignment {
         case 1: font.ascender
         case 2: (size.height + font.xHeight) / 2

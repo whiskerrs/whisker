@@ -77,7 +77,7 @@ impl App {
                     &inputs_cfg,
                     "asset-demo".into(),
                     self.0.clone(),
-                    "\"0.14\"".into(),
+                    self.0.clone(),
                 )?),
                 ProjectIr::Macos(Default::default()),
             ),
@@ -378,7 +378,7 @@ fn android_uses_current_application_identity_and_directory() {
 }
 
 #[test]
-fn macos_asset_resource_is_part_of_the_bundle_plan() {
+fn macos_stages_assets_as_one_bundle_resource_folder() {
     let app = App::new();
     app.fixtures();
     let ProjectIr::Macos(project) = app.compose("macos", &app.config()).unwrap() else {
@@ -386,26 +386,23 @@ fn macos_asset_resource_is_part_of_the_bundle_plan() {
     };
     let inputs = whisker_cng::macos::MacosProjectInputs {
         project,
+        project_name: "AssetDemo".into(),
         app_crate_dir: Some(app.0.clone()),
         cargo_selection: Default::default(),
-        template_version: 12,
+        template_version: 13,
     };
     let out = app.0.join("gen/macos");
     whisker_cng::macos::sync_project(&out, &inputs).unwrap();
-    let plan = whisker_cng::macos::load_build_plan(&out).unwrap();
-    let files = whisker_cng::macos::bundle_files(&out, &plan).unwrap();
     assert_eq!(
-        files[&path("Contents/Resources/whisker_assets/photos/nested/pic.jpg")]
-            .to_bytes()
-            .unwrap(),
+        std::fs::read(out.join("whisker_assets/photos/nested/pic.jpg")).unwrap(),
         [0, 255, 42]
     );
     assert_eq!(
-        files[&path("Contents/Resources/whisker_assets/logo.bin")]
-            .to_bytes()
-            .unwrap(),
+        std::fs::read(out.join("whisker_assets/logo.bin")).unwrap(),
         [0, 1, 128]
     );
+    let pbx = std::fs::read_to_string(out.join("AssetDemo.xcodeproj/project.pbxproj")).unwrap();
+    assert!(pbx.contains("whisker_assets in Resources"), "{pbx}");
 }
 
 #[test]

@@ -475,3 +475,63 @@ fn selective_identifiers_are_safe_and_legacy_plans_keep_their_publication_set_an
     assert_eq!(legacy.publishing().len(), 1);
     assert_eq!(legacy.tag(), "whisker-release-20260908.1");
 }
+
+fn remove_member(root: &Path, member: &str) {
+    let mut manifest = read_toml(&root.join("Cargo.toml")).unwrap();
+    manifest["workspace"]["members"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|value| value.as_str() != Some(member));
+    write(root, "Cargo.toml", &manifest.to_string());
+    fs::remove_dir_all(root.join(member)).unwrap();
+}
+
+#[test]
+fn only_retired_crates_may_leave_the_release_inventory() {
+    let directory = workspace();
+    let root = directory.path();
+    let mut manifest = read_toml(&root.join("Cargo.toml")).unwrap();
+    manifest["workspace"]["members"]
+        .as_array_mut()
+        .unwrap()
+        .push("platforms/macos");
+    write(root, "Cargo.toml", &manifest.to_string());
+    write(
+        root,
+        "platforms/macos/Cargo.toml",
+        "[package]\nname = 'whisker-macos'\nversion.workspace = true\nedition.workspace = true\n",
+    );
+    write(root, "platforms/macos/src/lib.rs", "");
+    let mut previous = plan(root);
+    previous.selective = None;
+    previous.crates = published_packages(root).unwrap();
+    write(
+        root,
+        PLAN_PATH,
+        &serde_json::to_string_pretty(&previous).unwrap(),
+    );
+    commit(root);
+
+    remove_member(root, "platforms/macos");
+    write(root, "packages/router/src/lib.rs", "pub fn changed() {}\n");
+    commit(root);
+    let mut retired = plan(root);
+    retired.selective.as_mut().unwrap().baseline = git(root, &["rev-parse", "HEAD~1"])
+        .unwrap()
+        .trim()
+        .to_owned();
+    prepare::prepare_selection(root, &mut retired, None).unwrap();
+    assert!(!retired.crates.contains_key("whisker-macos"));
+    write(root, &retired.notes_path(), "notes");
+    retired.validate_checkout(root).unwrap();
+
+    remove_member(root, "packages/untouched");
+    commit(root);
+    let mut removed = plan(root);
+    removed.selective.as_mut().unwrap().baseline = git(root, &["rev-parse", "HEAD~2"])
+        .unwrap()
+        .trim()
+        .to_owned();
+    let error = prepare::prepare_selection(root, &mut removed, None).unwrap_err();
+    assert!(error.to_string().contains("RETIRED_CRATES"), "{error:#}");
+}

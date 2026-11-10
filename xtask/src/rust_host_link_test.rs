@@ -10,15 +10,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail, ensure};
-use whisker_dev_server::Target;
+use whisker_cng::GenerationTarget;
 
 const PACKAGE: &str = "rust-host-link-test";
 
 pub fn run(root: &Path, host: &str) -> Result<()> {
     let fixture = root.join("tests/rust-host-link-test");
     let target = match host {
-        "desktop" => Target::Macos,
-        "web" => Target::Web,
+        "desktop" => GenerationTarget::Linux,
+        "web" => GenerationTarget::Web,
         _ => bail!("unknown Rust Host {host:?}; expected desktop or web"),
     };
     let gen_dir = sync_project(&fixture, target)?;
@@ -33,18 +33,18 @@ pub fn run(root: &Path, host: &str) -> Result<()> {
         .arg("check")
         .arg("--manifest-path")
         .arg(gen_dir.join("Cargo.toml"));
-    if matches!(target, Target::Web) {
+    if target == GenerationTarget::Web {
         command.args(["--target", "wasm32-unknown-unknown"]);
     }
     super::run(&mut command).with_context(|| format!("link generated {host} Host"))
 }
 
-fn sync_project(fixture: &Path, target: Target) -> Result<PathBuf> {
+fn sync_project(fixture: &Path, target: GenerationTarget) -> Result<PathBuf> {
     let manifest_path = fixture.join("Cargo.toml");
 
     let platform_dir = match target {
-        Target::Macos => "macos",
-        Target::Web => "web",
+        GenerationTarget::Linux => "linux",
+        GenerationTarget::Web => "web",
         _ => unreachable!("Rust Host link test only supports Desktop and Web"),
     };
     let gen_dir = fixture.join("gen").join(platform_dir);
@@ -53,13 +53,20 @@ fn sync_project(fixture: &Path, target: Target) -> Result<PathBuf> {
             .with_context(|| format!("remove stale {}", gen_dir.display()))?;
     }
 
-    let manifest = whisker_cli::manifest::resolve_for_target(Some(&manifest_path), target)
-        .context("generate the link-test application")?;
+    let manifest = whisker_cli::manifest::resolve_with_selection(
+        Some(&manifest_path),
+        target,
+        &Default::default(),
+    )
+    .context("generate the link-test application")?;
     ensure!(manifest.package == PACKAGE, "unexpected link-test package");
-    let sync = manifest.project(target)?;
+    let sync = manifest
+        .projects
+        .get(&target)
+        .context("generator did not produce the link-test project")?;
     ensure!(
         sync.regenerated,
         "clean link-test project was not regenerated"
     );
-    Ok(sync.gen_dir)
+    Ok(sync.gen_dir.clone())
 }

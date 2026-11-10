@@ -17,7 +17,15 @@ pub struct IosProjectInputs {
 }
 /// Preflight every output and copied input before replacing the managed tree.
 pub fn sync_project(out: &Path, inputs: &IosProjectInputs) -> Result<bool> {
-    let files = render_project(inputs)?;
+    sync_files(out, inputs, render_project(inputs)?, &inputs.project_name)
+}
+/// Replace the managed tree with `files` unless `inputs` and `files` are unchanged.
+pub(crate) fn sync_files(
+    out: &Path,
+    inputs: &impl serde::Serialize,
+    files: BTreeMap<ProjectPath, FileEntry>,
+    project_name: &str,
+) -> Result<bool> {
     let fp = fingerprint::fingerprint(&serde_json::to_vec(&(inputs, &files, 1u32))?);
     let stamp = out.join(".whisker-fingerprint");
     if std::fs::read_to_string(&stamp)
@@ -29,7 +37,7 @@ pub fn sync_project(out: &Path, inputs: &IosProjectInputs) -> Result<bool> {
     for path in files.keys() {
         check_destination(out, &out.join(path.as_str()))?;
     }
-    clean_managed_tree(out, &inputs.project_name)?;
+    clean_managed_tree(out, project_name)?;
     for (path, entry) in files {
         let path = out.join(path.as_str());
         write_file(&path, &entry.to_bytes()?)?;
@@ -40,9 +48,25 @@ pub fn sync_project(out: &Path, inputs: &IosProjectInputs) -> Result<bool> {
 }
 /// Render all native metadata and stage declared source/resource files.
 pub fn render_project(inputs: &IosProjectInputs) -> Result<BTreeMap<ProjectPath, FileEntry>> {
-    ProjectIr::Ios(inputs.project.clone()).validate_structure()?;
-    component(&inputs.project_name)?;
-    let apple = &inputs.project.apple;
+    render_apple(
+        &ProjectIr::Ios(inputs.project.clone()),
+        &inputs.project_name,
+        inputs.app_crate_dir.as_deref(),
+    )
+}
+/// Serialize any Apple project declaration to an Xcode project plus staged files.
+pub(crate) fn render_apple(
+    project: &ProjectIr,
+    project_name: &str,
+    app_crate_dir: Option<&Path>,
+) -> Result<BTreeMap<ProjectPath, FileEntry>> {
+    project.validate_structure()?;
+    component(project_name)?;
+    let apple = match project {
+        ProjectIr::Ios(ios) => &ios.apple,
+        ProjectIr::Macos(macos) => &macos.apple,
+        _ => bail!("Xcode projects serialize only Apple declarations"),
+    };
     let mut files = BTreeMap::new();
     let mut pbx = Pbx::default();
     let mut targets = Vec::new();
@@ -142,7 +166,7 @@ pub fn render_project(inputs: &IosProjectInputs) -> Result<BTreeMap<ProjectPath,
         ),
     )?;
     let root = pbx.object("project", "Project object", format!("isa = PBXProject; attributes = {{ BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; }}; buildConfigurationList = {project_configs}; compatibilityVersion = {}; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, ); mainGroup = {main}; productRefGroup = {product_group}; projectDirPath = {}; projectRoot = {}; packageReferences = {}; targets = {};", q("Xcode 14.0"), q(""), q(""), list(&packages), list(&targets)))?;
-    let dir = format!("{}.xcodeproj", inputs.project_name);
+    let dir = format!("{project_name}.xcodeproj");
     put(
         &mut files,
         &format!("{dir}/project.pbxproj"),
@@ -161,9 +185,30 @@ pub fn render_project(inputs: &IosProjectInputs) -> Result<BTreeMap<ProjectPath,
             scheme::render(scheme, apple, &dir)?,
         )?;
     }
-    stage_declared(&mut files, &apple.files, inputs.app_crate_dir.as_deref())?;
+    stage_declared(&mut files, &apple.files, app_crate_dir)?;
     crate::project_files::validate(&files)?;
+    reject_case_collisions(&files)?;
     Ok(files)
+}
+/// Apple's default filesystems are case-insensitive, so such outputs would overwrite each other.
+fn reject_case_collisions(files: &BTreeMap<ProjectPath, FileEntry>) -> Result<()> {
+    let mut lowered = std::collections::BTreeSet::new();
+    for path in files.keys() {
+        ensure!(
+            lowered.insert(path.as_str().to_lowercase()),
+            "generated paths differ only by case: {}",
+            path.as_str()
+        );
+    }
+    for path in &lowered {
+        for (i, _) in path.match_indices('/') {
+            ensure!(
+                !lowered.contains(&path[..i]),
+                "generated file overlaps a directory differing only by case: {path}"
+            );
+        }
+    }
+    Ok(())
 }
 fn component(s: &str) -> Result<()> {
     ProjectPath::new(s)?;

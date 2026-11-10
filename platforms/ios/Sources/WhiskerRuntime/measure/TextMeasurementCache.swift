@@ -1,8 +1,12 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import WhiskerModule
 
 final class TextMeasurementCache {
-    // Compare owned, platform-neutral inputs before constructing UIFont,
+    // Compare owned, platform-neutral inputs before constructing WhiskerPlatformFont,
     // NSParagraphStyle or bridged attribute dictionaries. No FFI pointers live
     // beyond the request that supplied them.
     struct Style: Equatable {

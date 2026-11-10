@@ -22,6 +22,8 @@ pub enum Host {
     Android,
     /// iOS UIKit renderer.
     Ios,
+    /// macOS AppKit renderer.
+    Macos,
 }
 
 impl Host {
@@ -32,6 +34,7 @@ impl Host {
             Self::Web => "web",
             Self::Android => "android",
             Self::Ios => "ios",
+            Self::Macos => "macos",
         }
     }
 }

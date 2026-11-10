@@ -43,7 +43,7 @@ fn main() -> Result<()> {
             rust_host_link_test::run(&workspace_root()?, host)
         }
         _ => bail!(
-            "usage: cargo xtask host-conformance <desktop|web|android|ios>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
+            "usage: cargo xtask host-conformance <desktop|web|android|ios|macos>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
         ),
     }
 }
@@ -61,7 +61,10 @@ fn host_conformance(host: &str) -> Result<()> {
         "web" => web(&root),
         "android" => android(&root),
         "ios" => ios(&root),
-        _ => bail!("unknown Host {host:?}; expected desktop, web, android, or ios"),
+        "macos" => run(Command::new("swift")
+            .current_dir(root.join("platforms/ios"))
+            .args(["test", "--filter", "WhiskerHostConformance"])),
+        _ => bail!("unknown Host {host:?}; expected desktop, web, android, ios, or macos"),
     }
 }
 

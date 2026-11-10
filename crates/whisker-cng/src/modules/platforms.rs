@@ -308,6 +308,17 @@ fn resolve_platform_manifest(
             "Package.swift",
             NativeManifestKind::SwiftPm,
         ),
+        ModulePlatform::Macos
+            if path.file_name().and_then(|name| name.to_str()) == Some("Package.swift") =>
+        {
+            resolve_native_manifest(
+                package,
+                platform,
+                &path,
+                "Package.swift",
+                NativeManifestKind::SwiftPm,
+            )
+        }
         ModulePlatform::Web
         | ModulePlatform::Desktop
         | ModulePlatform::Macos

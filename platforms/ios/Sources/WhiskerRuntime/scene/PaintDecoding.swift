@@ -1,4 +1,8 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import WhiskerModule
 
 func validBorrowedArray<T>(_ pointer: UnsafePointer<T>?, _ count: Int) -> Bool {

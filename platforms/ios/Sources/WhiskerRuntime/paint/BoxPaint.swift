@@ -1,10 +1,14 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import WhiskerModule
 
 struct HostBoxPaint {
-    let background: UIColor
+    let background: WhiskerPlatformColor
     let widths: [WhiskerMobileLengthPercentage]
-    let colors: [UIColor]
+    let colors: [WhiskerPlatformColor]
     let styles: [UInt32]
     let radiiHorizontal: [WhiskerMobileLengthPercentage]
     let radiiVertical: [WhiskerMobileLengthPercentage]
@@ -23,16 +27,16 @@ struct HostBoxShadow {
     let offset: CGSize
     let blurRadius: CGFloat
     let spreadRadius: CGFloat
-    let color: UIColor
+    let color: WhiskerPlatformColor
     let inset: Bool
 }
 
 final class HostBoxPainter {
     private let backgroundPainter = HostBackgroundPainter()
-    private var fillColor = UIColor.clear
+    private var fillColor = WhiskerPlatformColor.clear
     /// CSS order: top, right, bottom, left.
     private var borderWidths = [CGFloat](repeating: 0, count: 4)
-    private var borderColors = [UIColor](repeating: .clear, count: 4)
+    private var borderColors = [WhiskerPlatformColor](repeating: .clear, count: 4)
     private var borderStyles = [UInt32](repeating: 0, count: 4)
     private var cornerRadii = [CGSize](repeating: .zero, count: 4)
 
@@ -211,7 +215,7 @@ final class HostBoxPainter {
             width: max(0, bounds.width - left - right),
             height: max(0, bounds.height - top - bottom)
         )
-        guard horizontal || vertical else { return UIBezierPath(rect: visibleBounds).cgPath }
+        guard horizontal || vertical else { return WhiskerBezierPath(rect: visibleBounds).cgPath }
         let outer = normalizedRadii(cornerRadii, in: bounds)
         let inner = [
             CGSize(
@@ -264,8 +268,8 @@ final class HostBoxPainter {
         return path
     }
 
-    private func drawBorders(in bounds: CGRect, clippedBy outerPath: UIBezierPath) {
-        guard let context = UIGraphicsGetCurrentContext() else { return }
+    private func drawBorders(in bounds: CGRect, clippedBy outerPath: WhiskerBezierPath) {
+        guard let context = whiskerCurrentGraphicsContext() else { return }
         let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
         let colors = Array((borderColors + [.clear, .clear, .clear, .clear]).prefix(4))
         let styles = Array((borderStyles + [0, 0, 0, 0]).prefix(4))
@@ -324,7 +328,7 @@ final class HostBoxPainter {
         context.addPath(outerPath.cgPath)
         context.clip()
         for index in 0..<4 where widths[index] > 0 && paintsBorderStyle(styles[index]) {
-            let region = UIBezierPath()
+            let region = WhiskerBezierPath()
             region.move(to: regions[index][0])
             for point in regions[index].dropFirst() { region.addLine(to: point) }
             region.close()
@@ -439,7 +443,7 @@ final class HostBoxPainter {
         side: Int,
         width: CGFloat,
         style: UInt32,
-        color: UIColor,
+        color: WhiskerPlatformColor,
         context: CGContext
     ) {
         let topOrLeft = side == 0 || side == 3
@@ -530,11 +534,11 @@ func insetCornerRadii(
     ]
 }
 
-func roundedPath(in rect: CGRect, radii: [CGSize]) -> UIBezierPath {
+func roundedPath(in rect: CGRect, radii: [CGSize]) -> WhiskerBezierPath {
     let normalized = normalizedRadii(radii, in: rect)
 
     let k: CGFloat = 0.552_284_749_830_793_6
-    let path = UIBezierPath()
+    let path = WhiskerBezierPath()
     path.move(to: CGPoint(x: rect.minX + normalized[0].width, y: rect.minY))
     path.addLine(to: CGPoint(x: rect.maxX - normalized[1].width, y: rect.minY))
     path.addCurve(
@@ -637,12 +641,8 @@ private func isReliefBorderStyle(_ style: UInt32) -> Bool {
         style == borderStyleOutset
 }
 
-private func shadedBorderColor(_ color: UIColor, lighter: Bool) -> UIColor {
-    var red: CGFloat = 0
-    var green: CGFloat = 0
-    var blue: CGFloat = 0
-    var alpha: CGFloat = 0
-    guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return color }
+private func shadedBorderColor(_ color: WhiskerPlatformColor, lighter: Bool) -> WhiskerPlatformColor {
+    guard var (red, green, blue, alpha) = whiskerRGBAComponents(color) else { return color }
     let amount: CGFloat = 0.45
     if lighter {
         red += (1 - red) * amount
@@ -653,5 +653,5 @@ private func shadedBorderColor(_ color: UIColor, lighter: Bool) -> UIColor {
         green *= 1 - amount
         blue *= 1 - amount
     }
-    return UIColor(red: red, green: green, blue: blue, alpha: alpha)
+    return WhiskerPlatformColor(red: red, green: green, blue: blue, alpha: alpha)
 }

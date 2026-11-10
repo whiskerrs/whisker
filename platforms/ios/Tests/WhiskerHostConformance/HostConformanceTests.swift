@@ -1,6 +1,10 @@
 import CoreGraphics
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import WhiskerCBridge
 @testable import WhiskerRuntime
 @testable import WhiskerModule
@@ -46,6 +50,7 @@ private final class FailingElementModule: Module {
     }
 }
 
+#if canImport(UIKit)
 private final class ZOrderCountingView: UIView {
     var reorderCount = 0
 
@@ -54,7 +59,9 @@ private final class ZOrderCountingView: UIView {
         super.bringSubviewToFront(view)
     }
 }
+#endif
 
+#if canImport(UIKit)
 private final class WindowAttachmentProbe: UIView {
     var windowChanges = 0
     override func didMoveToWindow() {
@@ -62,6 +69,7 @@ private final class WindowAttachmentProbe: UIView {
         windowChanges += 1
     }
 }
+#endif
 
 @MainActor
 final class HostConformanceTests: XCTestCase {
@@ -127,6 +135,7 @@ final class HostConformanceTests: XCTestCase {
         }
     }
 
+#if canImport(UIKit)
     func testMoveKeepsSubtreeAttachedToWindow() throws {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
         let root = UIView(frame: window.bounds)
@@ -178,6 +187,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(scroll.contentOffset, CGPoint(x: 0, y: 137))
     }
 
+#endif
+#if canImport(UIKit)
     func testPaintOnlyFrameDoesNotReprojectRootZOrder() {
         let root = ZOrderCountingView()
         let scene = HostScene(
@@ -241,6 +252,7 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(root.reorderCount, 0)
     }
 
+#endif
     func testThrowingModulePropertyDisablesOnlyTheMountedElement() throws {
         WhiskerModuleKernel.install(FailingElementModule())
         let registration = WhiskerElementRegistration(
@@ -557,6 +569,7 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertTrue(pending.drain(epoch: 2).isEmpty)
     }
 
+#if canImport(UIKit)
     func testCommonAccessibilityMapsToUIKitNodeSemantics() {
         let node = WhiskerNodeView(element: "whisker.ui/View")
         node.setAccessibility(.map([
@@ -594,6 +607,7 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertTrue(node.shouldGroupAccessibilityChildren)
     }
 
+#endif
     func testEverySharedHostScenarioUsesProductionUIKitHost() throws {
         let manifest = try json(at: fixtureRoot.appendingPathComponent("manifest.json"))
         let cases = try XCTUnwrap(manifest["cases"] as? [[String: Any]])
@@ -660,6 +674,7 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual((0...34).map { hostCursorPresentation(keyword: Int32($0)) }, expected)
     }
 
+#if canImport(UIKit)
     func testTouchObserverDoesNotArbitrateDescendantGestures() {
         let observer = WhiskerTouchObserverGestureRecognizer(target: nil, action: nil)
         let controlGesture = UITapGestureRecognizer()
@@ -670,6 +685,7 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertFalse(observer.canBePrevented(by: controlGesture))
     }
 
+#endif
     func testTouchIdentityRemainsStableForTheStream() {
         let firstTouch = NSObject()
         let secondTouch = NSObject()
@@ -703,6 +719,7 @@ final class HostConformanceTests: XCTestCase {
         )
     }
 
+#if canImport(UIKit)
     func testScrollViewDoesNotInjectSafeAreaInsets() {
         let scrollView = WhiskerScrollContainerView(frame: .zero)
         XCTAssertEqual(scrollView.contentInsetAdjustmentBehavior, .never)
@@ -710,6 +727,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(scrollView.contentInset, .zero)
     }
 
+#endif
+#if canImport(UIKit)
     func testScrollViewEmitsLogicalScrollGeometry() {
         let scrollView = WhiskerScrollContainerView(
             frame: CGRect(x: 0, y: 0, width: 100, height: 80)
@@ -739,6 +758,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(presentedOffset, CGPoint(x: 0, y: 120))
     }
 
+#endif
+#if canImport(UIKit)
     func testScrollToBeyondTheContentIsAppliedOnceTheContentCanHoldIt() {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 80))
         let scroll = WhiskerScrollContainerView(frame: window.bounds)
@@ -760,6 +781,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(scroll.contentOffset.x, 500)
     }
 
+#endif
+#if canImport(UIKit)
     func testScrollDragLifecycleAndReleaseVelocityWithoutOffsetChange() {
         let scroll = WhiskerScrollContainerView(frame: CGRect(x: 0, y: 0, width: 100, height: 80))
         var events: [[String: WhiskerValue]] = []
@@ -781,6 +804,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(events.last?["velocityY"], .float(0), "release velocity must not leak into later events")
     }
 
+#endif
+#if canImport(UIKit)
     func testHorizontalScrollReleaseAndProgrammaticDelta() {
         let scroll = WhiskerScrollContainerView(frame: CGRect(x: 0, y: 0, width: 100, height: 80))
         scroll.setScrollOrientation("horizontal")
@@ -804,6 +829,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(events.last?["velocityX"], .float(0))
     }
 
+#endif
+#if canImport(UIKit)
     func testDisablingScrollCancelsDragOnlyOnceAndClearsReleaseVelocity() {
         let scroll = WhiskerScrollContainerView(frame: .zero)
         var events: [[String: WhiskerValue]] = []
@@ -826,6 +853,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(events.last?["velocityY"], .float(0))
     }
 
+#endif
+#if canImport(UIKit)
     func testHiddenScrollViewSuppressesOnlyItsNativeIndicators() throws {
         let registration = WhiskerElementRegistration(
             elementType: 3,
@@ -862,6 +891,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
     }
 
+#endif
+#if canImport(UIKit)
     func testHorizontalScrollViewSettlesOnNearestCarouselItem() {
         let scrollView = WhiskerScrollContainerView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 180)
@@ -888,6 +919,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(proposed.y, 0)
     }
 
+#endif
+#if canImport(UIKit)
     func testScrollOverflowClipUsesStationaryViewportInsteadOfMovingContent() throws {
         let registration = WhiskerElementRegistration(
             elementType: 3,
@@ -941,6 +974,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(scrollView.layer.mask?.frame.minY, scrollView.bounds.minY)
     }
 
+#endif
+#if canImport(UIKit)
     func testOneAxisOverflowClipTracksAncestorScrollOffset() throws {
         let root = UIView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
         let scrollView = UIScrollView(frame: root.bounds)
@@ -965,6 +1000,8 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(mask.frame.minY, initialY + 60, accuracy: 0.001)
     }
 
+#endif
+#if canImport(UIKit)
     func testUIKitTouchTypesMapToProtocolPointerKinds() {
         XCTAssertEqual(hostPointerKind(for: .direct), .touch)
         XCTAssertEqual(hostPointerKind(for: .pencil), .pen)
@@ -979,6 +1016,7 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(HostPointerKind.pen.changedButton(for: .cancel), -1)
     }
 
+#endif
     func testContentBoxRadiiUseTheCompleteInsetFromTheBorderBox() {
         XCTAssertEqual(
             insetCornerRadii(
@@ -1263,6 +1301,7 @@ final class HostConformanceTests: XCTestCase {
         )
     }
 
+#if canImport(UIKit)
     func testResourceServiceDecodesJPEGDataURLs() throws {
         let png = try fixturePNGData()
         let image = try XCTUnwrap(UIImage(data: png))
@@ -1278,6 +1317,7 @@ final class HostConformanceTests: XCTestCase {
         )
     }
 
+#endif
     func testResourceChannelCopiesBorrowedBytesAndEncodesTypedEvents() throws {
         let view = WhiskerView(frame: .zero)
         var bytes = try fixturePNGData()
@@ -2655,7 +2695,7 @@ private final class Driver {
         ) else { throw Failure("create UIKit checkpoint context") }
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: 1, y: -1)
-        view.layer.render(in: context)
+        renderLayer(of: view, in: context)
         return Pixels(width: width, height: height, bytes: bytes)
     }
 }
@@ -3649,7 +3689,7 @@ private func findNodeViews(_ view: UIView) -> [WhiskerNodeView] {
 }
 
 private func containsProjectiveTransform(_ view: UIView) -> Bool {
-    let transform = view.layer.transform
+    let transform = layerTransform(of: view)
     if abs(transform.m14) > 0.000_001 || abs(transform.m24) > 0.000_001 {
         return true
     }

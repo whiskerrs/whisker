@@ -12,18 +12,64 @@
 
 import Foundation
 import Kingfisher
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import WhiskerModule
 
+#if canImport(UIKit)
+public typealias WhiskerImageContentView = UIImageView
+#else
+/// `NSImageView` has no aspect-fill scaling, so the image is shown through
+/// the layer's contents gravity instead.
+public final class WhiskerImageContentView: NSImageView {
+    enum ContentMode { case scaleAspectFill, scaleAspectFit, scaleToFill, center }
+
+    var contentMode = ContentMode.scaleAspectFill {
+        didSet { updateContents() }
+    }
+
+    public override var image: NSImage? {
+        didSet { updateContents() }
+    }
+
+    public override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    public required init?(coder: NSCoder) { nil }
+
+    public override var wantsUpdateLayer: Bool { true }
+
+    public override func updateLayer() {
+        updateContents()
+    }
+
+    private func updateContents() {
+        guard let layer else { return }
+        layer.contents = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        layer.contentsGravity = switch contentMode {
+        case .scaleAspectFill: .resizeAspectFill
+        case .scaleAspectFit: .resizeAspect
+        case .scaleToFill: .resize
+        case .center: .center
+        }
+    }
+}
+#endif
+
 @objc(WhiskerImageView)
-public final class WhiskerImageView: WhiskerUI<UIImageView> {
+public final class WhiskerImageView: WhiskerUI<WhiskerImageContentView> {
 
     private var currentSrc: String?
     private var currentHeaders: [String: String] = [:]
     private var loadScheduled = false
 
-    @objc public override func createView() -> UIImageView {
-        let v = UIImageView()
+    @objc public override func createView() -> WhiskerImageContentView {
+        let v = WhiskerImageContentView()
         // `aspectFill` is the module default, and needs
         // `clipsToBounds` so the overflowing edges don't paint beyond the
         // element's frame.
@@ -80,8 +126,9 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
     private func load() {
         guard let value = currentSrc else { return }
 
-        let imageView: UIImageView = self.view()
-        guard let url = URL(string: value) else {
+        let imageView: WhiskerImageContentView = self.view()
+        // macOS bundles resolve `whisker-asset` paths to absolute file paths rather than URLs.
+        guard let url = value.hasPrefix("/") ? URL(fileURLWithPath: value) : URL(string: value) else {
             // Clear the previous image so a bad URL doesn't leave a stale
             // shot on screen.
             imageView.kf.cancelDownloadTask()
@@ -96,7 +143,7 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
         var options: KingfisherOptionsInfo = [
             .transition(.fade(0.2)),
             .cacheOriginalImage,
-            .scaleFactor(UIScreen.main.scale),
+            .scaleFactor(Self.screenScale),
         ]
 
         // Hot-link protection is the reason: those hosts answer 403
@@ -123,8 +170,8 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
                     from: self,
                     name: "load",
                     params: [
-                        "width": loaded.image.size.width * loaded.image.scale,
-                        "height": loaded.image.size.height * loaded.image.scale,
+                        "width": Self.pixelSize(of: loaded.image).width,
+                        "height": Self.pixelSize(of: loaded.image).height,
                     ]
                 )
             case .failure(let error):
@@ -153,6 +200,25 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
             )
             imageView.kf.setImage(with: resource, options: options, completionHandler: done)
         }
+    }
+
+    private static func pixelSize(of image: KFCrossPlatformImage) -> CGSize {
+        #if canImport(UIKit)
+        CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+        #else
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return image.size
+        }
+        return CGSize(width: cgImage.width, height: cgImage.height)
+        #endif
+    }
+
+    private static var screenScale: CGFloat {
+        #if canImport(UIKit)
+        UIScreen.main.scale
+        #else
+        NSScreen.main?.backingScaleFactor ?? 2
+        #endif
     }
 
     /// URL plus the headers that shape the answer. Shared with `prefetch`
@@ -200,7 +266,7 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
     /// `scaleToFill` cases that don't overflow: it is also what makes
     /// the common presentation wrapper clip the painted bitmap.
     public func setMode(_ value: String) {
-        let imageView: UIImageView = self.view()
+        let imageView: WhiskerImageContentView = self.view()
         switch value {
         case "aspectFill":
             imageView.contentMode = .scaleAspectFill

@@ -113,15 +113,16 @@ impl Installer {
                 let params = self.macos.as_ref().context(
                     "target=Macos but no MacosParams — cli must provide the generated Host",
                 )?;
-                let executable = params
-                    .target_dir
-                    .join("bundles/debug")
-                    .join(format!("{}.app", params.app_name))
-                    .join("Contents/MacOS")
-                    .join(&params.binary_name);
+                let executable = whisker_build::macos::app_executable(
+                    &params
+                        .derived_data
+                        .join("Build/Products/Debug")
+                        .join(format!("{}.app", params.project_name)),
+                    &params.project_name,
+                );
                 if !executable.is_file() {
                     anyhow::bail!(
-                        "macOS Host executable is missing at {}",
+                        "macOS app executable is missing at {}",
                         executable.display()
                     );
                 }
@@ -141,7 +142,7 @@ impl Installer {
                 *slot = Some(
                     command
                         .spawn()
-                        .with_context(|| format!("launch macOS Host {}", executable.display()))?,
+                        .with_context(|| format!("launch macOS app {}", executable.display()))?,
                 );
                 Ok(())
             }

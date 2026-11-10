@@ -20,13 +20,15 @@ pub mod application;
 pub(crate) mod builtins;
 mod project_render;
 pub use project_render::{IosProjectInputs, render_project, sync_project};
+pub(crate) use project_render::{render_apple, sync_files};
 const XCWORKSPACEDATA: &str =
     include_str!("templates/ios/Project.xcodeproj/project.xcworkspace/contents.xcworkspacedata");
 const APP_DELEGATE_SWIFT: &str = include_str!("templates/ios/Sources/AppDelegate.swift");
 const LAUNCH_SCREEN_STORYBOARD: &str =
     include_str!("templates/ios/Resources/LaunchScreen.storyboard");
-const ASSET_CATALOG: &str = include_str!("templates/ios/Resources/Assets.xcassets/Contents.json");
-const BACKGROUND_COLORSET: &str = include_str!(
+pub(crate) const ASSET_CATALOG: &str =
+    include_str!("templates/ios/Resources/Assets.xcassets/Contents.json");
+pub(crate) const BACKGROUND_COLORSET: &str = include_str!(
     "templates/ios/Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json"
 );
 

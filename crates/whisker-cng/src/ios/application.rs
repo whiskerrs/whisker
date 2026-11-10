@@ -33,7 +33,7 @@ impl ProjectPlugin for ApplicationPlugin {
         })
     }
 }
-pub(super) fn settings(entries: &[(&str, &str)]) -> BTreeMap<String, AppleBuildSetting> {
+pub(crate) fn settings(entries: &[(&str, &str)]) -> BTreeMap<String, AppleBuildSetting> {
     entries
         .iter()
         .map(|(k, v)| (k.to_string(), AppleBuildSetting::String(v.to_string())))
@@ -328,7 +328,11 @@ fn declarations(inputs: &IosInputs) -> Result<IosProjectIr> {
             },
         );
     }
-    for (path, entry) in crate::ios_modules::module_files(&inputs.modules, &inputs.workspace_root) {
+    for (path, entry) in crate::ios_modules::module_files(
+        &inputs.modules,
+        &inputs.workspace_root,
+        crate::modules::ModulePlatform::Ios,
+    ) {
         apple.files.insert(path, ProjectFile::Generated { entry });
     }
     for (path, entry) in &inputs.extra_files {

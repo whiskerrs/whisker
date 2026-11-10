@@ -1,5 +1,9 @@
 import CoreText
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import WhiskerModule
 
 let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses in
@@ -85,7 +89,7 @@ private func measureText(
     }
     let source = hostString(request.text)
     let payload = request.paragraph.map { WhiskerValue.from(raw: $0.pointee) }
-    func prepareAttributes(alignment: NSTextAlignment? = nil) -> (UIFont, [NSAttributedString.Key: Any]) {
+    func prepareAttributes(alignment: NSTextAlignment? = nil) -> (WhiskerPlatformFont, [NSAttributedString.Key: Any]) {
         let style: WhiskerTextFontStyle = switch request.font_style {
         case 0: .normal
         case 1: .italic
@@ -266,9 +270,9 @@ private func validOpenTypeTag<T>(_ tag: T) -> Bool {
 }
 
 private func configuredMeasureFont(
-    _ base: UIFont,
+    _ base: WhiskerPlatformFont,
     _ request: WhiskerMobileMeasureRequest
-) -> UIFont {
+) -> WhiskerPlatformFont {
     var font = base as CTFont
     var attributes: [CFString: Any] = [:]
     if let pointer = request.font_features, request.font_feature_count > 0 {
@@ -298,7 +302,7 @@ private func configuredMeasureFont(
         let descriptor = CTFontDescriptorCreateWithAttributes(attributes as CFDictionary)
         font = CTFontCreateCopyWithAttributes(font, CGFloat(request.font_size), nil, descriptor)
     }
-    return font as UIFont
+    return font as WhiskerPlatformFont
 }
 
 private func openTypeCode<T>(_ tag: T) -> UInt32 {

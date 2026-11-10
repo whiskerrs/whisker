@@ -136,7 +136,11 @@ fn main() {
     assert_eq!(isolated.projects.len(), 6);
     assert_eq!(isolated.config.android.min_sdk, Some(24));
     assert!(app.0.join("gen/android/settings.gradle.kts").is_file());
-    assert!(app.0.join("gen/macos/Cargo.toml").is_file());
+    assert!(
+        app.0
+            .join("gen/macos/GenerationTest.xcodeproj/project.pbxproj")
+            .is_file()
+    );
     assert!(app.0.join("gen/web/Cargo.toml").is_file());
     assert!(app.0.join("gen/windows/Cargo.toml").is_file());
     assert!(app.0.join("gen/linux/Cargo.toml").is_file());
@@ -419,7 +423,7 @@ impl ProjectPlugin for Fixture {
     );
     assert!(app.0.join("gen/ios/whisker_assets/message.txt").is_file());
     assert!(
-        std::fs::read_to_string(app.0.join("gen/macos/Info.plist"))
+        std::fs::read_to_string(app.0.join("gen/macos/Metadata/app/Info.plist"))
             .unwrap()
             .contains("CngProjectFeature")
     );
@@ -452,7 +456,7 @@ impl ProjectPlugin for Fixture {
     assert!(!app.0.join("gen/android/extra").exists());
     assert!(!ios_has_plugin("Pure"));
     assert!(
-        !std::fs::read_to_string(app.0.join("gen/macos/Info.plist"))
+        !std::fs::read_to_string(app.0.join("gen/macos/Metadata/app/Info.plist"))
             .unwrap()
             .contains("CngProjectFeature")
     );

@@ -1,4 +1,8 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 extension WhiskerParagraph {
     public func prepare(attributes: [NSAttributedString.Key: Any], width: CGFloat, maxLines: Int, overflow: WhiskerTextOverflow) -> (WhiskerParagraphLayout, WhiskerParagraph) {

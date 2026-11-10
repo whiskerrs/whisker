@@ -1,5 +1,10 @@
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
+#if canImport(UIKit)
 final class WhiskerTextSelection: NSObject, UITextViewDelegate {
     weak var label: WhiskerTextLabel?
     let view: UITextView
@@ -49,6 +54,15 @@ final class WhiskerTextSelection: NSObject, UITextViewDelegate {
         if !sameSource { emitSelection() }
     }
 
+    var selectedRange: NSRange {
+        get { view.selectedRange }
+        set { view.selectedRange = newValue }
+    }
+
+    var paragraphLayout: WhiskerParagraphLayout {
+        WhiskerParagraphLayout(storage: view.textStorage, manager: view.layoutManager, container: view.textContainer)
+    }
+
     func textViewDidChangeSelection(_ textView: UITextView) {
         if !updating { emitSelection() }
     }
@@ -74,6 +88,7 @@ private final class WhiskerSelectableTextView: UITextView {
         UIPasteboard.general.string = label?.richParagraph?.copyText(selectedRange) ?? (textStorage.string as NSString).substring(with: selectedRange)
     }
 }
+#endif
 
 extension WhiskerTextLabel {
     func setSelectable(_ selectable: Bool) {
@@ -85,13 +100,13 @@ extension WhiskerTextLabel {
     func setTextSelection(_ value: WhiskerValue) {
         guard case .map(let fields) = value, matchesRevision(fields),
               let range = textRange(fields), let selectionController else { return }
-        selectionController.view.selectedRange = range
+        selectionController.selectedRange = range
         selectionController.emitSelection()
     }
 
     func clearTextSelection(_ value: WhiskerValue) {
         guard case .map(let fields) = value, matchesRevision(fields), let selectionController else { return }
-        selectionController.view.selectedRange = NSRange(location: 0, length: 0)
+        selectionController.selectedRange = NSRange(location: 0, length: 0)
         selectionController.emitSelection()
     }
 
@@ -100,15 +115,15 @@ extension WhiskerTextLabel {
         var reply: [String: WhiskerValue] = ["id": .int(id)]
         if !matchesRevision(fields) { reply["error"] = .string("stale-layout") }
         else if fields["kind"]?.asString == "selectedText" {
-            let selected = selectionController?.view.selectedRange ?? NSRange(location: 0, length: 0)
+            let selected = selectionController?.selectedRange ?? NSRange(location: 0, length: 0)
             let source = richParagraph?.source ?? (richContent ?? attributedText)?.string ?? text ?? ""
             if selected.location <= (source as NSString).length && selected.length <= (source as NSString).length - selected.location {
                 reply["text"] = .string(richParagraph?.copyText(selected) ?? (source as NSString).substring(with: selected))
             } else { reply["error"] = .string("invalid-range") }
         } else if fields["kind"]?.asString == "boundingRects", let range = textRange(fields) {
             let layout: WhiskerParagraphLayout
-            if let view = selectionController?.view {
-                layout = WhiskerParagraphLayout(storage: view.textStorage, manager: view.layoutManager, container: view.textContainer)
+            if let selectionController {
+                layout = selectionController.paragraphLayout
             } else {
                 layout = preparedParagraphLayout(width: bounds.width) ?? WhiskerParagraphLayout(text: attributedText ?? NSAttributedString(string: text ?? ""), width: bounds.width, maxLines: numberOfLines, overflow: richOverflow)
             }

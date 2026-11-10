@@ -1,9 +1,13 @@
 import CoreGraphics
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import WhiskerModule
 
 struct HostLinearGradientStop {
-    let color: UIColor
+    let color: WhiskerPlatformColor
     let position: WhiskerMobileLengthPercentage
 
     init(_ raw: WhiskerMobileGradientStop) {
@@ -250,7 +254,7 @@ final class HostBackgroundPainter {
         paddingClip: CGPath,
         contentClip: CGPath
     ) {
-        guard let context = UIGraphicsGetCurrentContext() else { return }
+        guard let context = whiskerCurrentGraphicsContext() else { return }
         for layer in layers.reversed() {
             draw(
                 layer,
@@ -344,7 +348,7 @@ final class HostBackgroundPainter {
     private func drawRaster(_ image: CGImage, in bounds: CGRect, context: CGContext) {
         context.saveGState()
         context.interpolationQuality = imageRendering.interpolationQuality
-        UIImage(cgImage: image, scale: 1, orientation: .up).draw(in: bounds)
+        drawPlatformImage(image, scale: 1, in: bounds)
         context.restoreGState()
     }
 
@@ -456,7 +460,7 @@ final class HostBackgroundPainter {
             image = rendered
         }
 
-        UIImage(cgImage: image, scale: scale, orientation: .up).draw(in: bounds)
+        drawPlatformImage(image, scale: scale, in: bounds)
     }
 }
 
@@ -525,7 +529,7 @@ private func resolve(
 private func resolveStops(
     _ stops: [HostLinearGradientStop],
     lineLength: CGFloat
-) -> [(color: UIColor, position: CGFloat)] {
+) -> [(color: WhiskerPlatformColor, position: CGFloat)] {
     stops.map { stop in
         (
             color: stop.color,
@@ -536,7 +540,7 @@ private func resolveStops(
 }
 
 private func makeGradient(
-    _ input: [(color: UIColor, position: CGFloat)]
+    _ input: [(color: WhiskerPlatformColor, position: CGFloat)]
 ) -> ResolvedGradient? {
     guard input.count >= 2 else { return nil }
     var resolved = input
@@ -564,10 +568,10 @@ private func makeGradient(
 
 private func normalizedConicStops(
     _ input: [HostLinearGradientStop]
-) -> [(color: UIColor, position: CGFloat)] {
+) -> [(color: WhiskerPlatformColor, position: CGFloat)] {
     guard input.count >= 2 else { return [] }
     var previous = -CGFloat.infinity
-    let ordered = input.map { stop -> (color: UIColor, position: CGFloat) in
+    let ordered = input.map { stop -> (color: WhiskerPlatformColor, position: CGFloat) in
         let position = max(previous, CGFloat(stop.position.fraction))
         previous = position
         return (stop.color, position)
@@ -581,8 +585,8 @@ private func normalizedConicStops(
 /// Evaluates the resolved, non-repeating stop list at one turn fraction.
 private func color(
     at position: CGFloat,
-    in stops: [(color: UIColor, position: CGFloat)]
-) -> UIColor {
+    in stops: [(color: WhiskerPlatformColor, position: CGFloat)]
+) -> WhiskerPlatformColor {
     guard let first = stops.first, position > first.position else {
         return stops.first?.color ?? .clear
     }
@@ -596,7 +600,7 @@ private func color(
 
 private func rasterizeConic(
     _ gradient: HostConicGradient,
-    stops: [(color: UIColor, position: CGFloat)],
+    stops: [(color: WhiskerPlatformColor, position: CGFloat)],
     size: CGSize,
     scale: CGFloat
 ) -> CGImage? {
@@ -645,7 +649,7 @@ private struct RGBA {
     let alpha: CGFloat
 }
 
-private func rgba(_ color: UIColor) -> RGBA {
+private func rgba(_ color: WhiskerPlatformColor) -> RGBA {
     let components = rgbaComponents(color)
     return RGBA(
         red: components[0],
@@ -680,10 +684,10 @@ private func byte(_ value: CGFloat) -> UInt8 {
     UInt8((max(0, min(1, value)) * 255).rounded())
 }
 
-private func interpolate(_ left: UIColor, _ right: UIColor, amount: CGFloat) -> UIColor {
+private func interpolate(_ left: WhiskerPlatformColor, _ right: WhiskerPlatformColor, amount: CGFloat) -> WhiskerPlatformColor {
     let lhs = rgbaComponents(left)
     let rhs = rgbaComponents(right)
-    return UIColor(
+    return WhiskerPlatformColor(
         red: lhs[0] + (rhs[0] - lhs[0]) * amount,
         green: lhs[1] + (rhs[1] - lhs[1]) * amount,
         blue: lhs[2] + (rhs[2] - lhs[2]) * amount,
@@ -691,13 +695,7 @@ private func interpolate(_ left: UIColor, _ right: UIColor, amount: CGFloat) -> 
     )
 }
 
-private func rgbaComponents(_ color: UIColor) -> [CGFloat] {
-    var red: CGFloat = 0
-    var green: CGFloat = 0
-    var blue: CGFloat = 0
-    var alpha: CGFloat = 0
-    guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
-        return [0, 0, 0, 0]
-    }
-    return [red, green, blue, alpha]
+private func rgbaComponents(_ color: WhiskerPlatformColor) -> [CGFloat] {
+    guard let rgba = whiskerRGBAComponents(color) else { return [0, 0, 0, 0] }
+    return [rgba.red, rgba.green, rgba.blue, rgba.alpha]
 }

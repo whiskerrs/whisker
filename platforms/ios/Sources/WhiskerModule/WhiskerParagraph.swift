@@ -1,5 +1,9 @@
 import CoreText
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 public struct WhiskerParagraph {
     public let attachments: [WhiskerInlineAttachment]
@@ -99,7 +103,7 @@ public struct WhiskerParagraph {
                 variations[NSNumber(value: try fontCode("opsz"))] = NSNumber(value: Double(size))
             }
             if !variations.isEmpty { descriptor[kCTFontVariationAttribute] = variations }
-            let font = descriptor.isEmpty ? base : CTFontCreateCopyWithAttributes(base, size, nil, CTFontDescriptorCreateWithAttributes(descriptor as CFDictionary)) as UIFont
+            let font = descriptor.isEmpty ? base : CTFontCreateCopyWithAttributes(base, size, nil, CTFontDescriptorCreateWithAttributes(descriptor as CFDictionary)) as WhiskerPlatformFont
             var attributes: [NSAttributedString.Key: Any] = [.font: font, .kern: try fields.number("spacing")]
             let alignment = fields["alignment"]?.asInt ?? 0
             guard alignment >= 0 && alignment <= 4 else { throw ParagraphError.invalidContent }
@@ -125,7 +129,7 @@ public struct WhiskerParagraph {
         for attachment in attachments {
             let offset = attachment.truncation ? visibleEnd ?? result.length : attachment.offset
             guard offset < result.length, (attachment.truncation ? visibleEnd != nil : offset < NSMaxRange(visible)) else { continue }
-            let font = result.attribute(.font, at: offset, effectiveRange: nil) as? UIFont ?? UIFont.systemFont(ofSize: 14)
+            let font = result.attribute(.font, at: offset, effectiveRange: nil) as? WhiskerPlatformFont ?? WhiskerPlatformFont.systemFont(ofSize: 14)
             let inline = attachment.truncation ? WhiskerTruncationAttachment() : NSTextAttachment()
             inline.bounds = CGRect(x: 0, y: attachment.resolvedBaseline(font: font) - attachment.size.height, width: attachment.size.width, height: attachment.size.height)
             result.addAttributes([.attachment: inline, .whiskerInlineAttachment: attachment], range: NSRange(location: offset, length: 1))
@@ -193,14 +197,14 @@ private func paintAttributes(_ value: WhiskerValue) throws -> [NSAttributedStrin
     return attributes
 }
 
-private func paragraphColor(_ value: WhiskerValue) throws -> UIColor {
+private func paragraphColor(_ value: WhiskerValue) throws -> WhiskerPlatformColor {
     let channels = try value.paragraphItems()
     guard channels.count == 4 else { throw ParagraphError.invalidContent }
     let values = try channels.map { value -> CGFloat in
         guard let number = value.asDouble, number.isFinite else { throw ParagraphError.invalidContent }
         return CGFloat(number)
     }
-    return UIColor(red: values[0] / 255, green: values[1] / 255, blue: values[2] / 255, alpha: values[3])
+    return WhiskerPlatformColor(red: values[0] / 255, green: values[1] / 255, blue: values[2] / 255, alpha: values[3])
 }
 
 private extension WhiskerValue {

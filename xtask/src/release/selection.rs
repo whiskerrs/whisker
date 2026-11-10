@@ -39,7 +39,7 @@ impl SelectivePlan {
             previous
                 .crates
                 .keys()
-                .all(|name| versions.contains_key(name)),
+                .all(|name| versions.contains_key(name) || RETIRED_CRATES.contains(&name.as_str())),
             "a published crate was removed from the release inventory"
         );
         let updated: BTreeSet<_> = versions

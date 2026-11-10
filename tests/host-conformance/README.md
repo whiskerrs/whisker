@@ -33,7 +33,8 @@ DOM has no synchronous texture readback API. Android's instrumentation tests
 live with `platforms/android/runtime`, inject ABI-equivalent operations, and
 compare bitmaps on an emulator. iOS's SwiftPM tests live with
 `platforms/ios`, inject the mobile C ABI frame, and compare UIKit layer captures
-in a Simulator. All four runners consume the fixtures in this directory.
+in a Simulator; the same suite runs natively on macOS against AppKit layer
+captures. All five runners consume the fixtures in this directory.
 
 Manual visual WPT adaptations may attach logical-pixel `samples` to a paint
 checkpoint instead of inventing an exact reference image for behavior whose

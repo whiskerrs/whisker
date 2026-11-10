@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 public typealias WhiskerElementEventSink = (WhiskerEventBinding, WhiskerValue) -> Void
 
@@ -62,7 +66,7 @@ public struct WhiskerTextContent {
     public let fontFeatures: [WhiskerFontFeature]
     public let fontVariations: [WhiskerFontVariation]
     public let fontOpticalSizing: WhiskerFontOpticalSizing
-    public let color: UIColor
+    public let color: WhiskerPlatformColor
     public let direction: WhiskerTextDirection
     public let alignment: WhiskerTextAlignment
     public let indent: WhiskerTextIndent
@@ -86,7 +90,7 @@ public struct WhiskerTextContent {
         fontFeatures: [WhiskerFontFeature] = [],
         fontVariations: [WhiskerFontVariation] = [],
         fontOpticalSizing: WhiskerFontOpticalSizing = .none,
-        color: UIColor,
+        color: WhiskerPlatformColor,
         direction: WhiskerTextDirection = .auto,
         alignment: WhiskerTextAlignment = .start,
         indent: WhiskerTextIndent = WhiskerTextIndent(),
@@ -133,7 +137,7 @@ public struct WhiskerTextStyle {
     public let fontFeatures: [WhiskerFontFeature]
     public let fontVariations: [WhiskerFontVariation]
     public let fontOpticalSizing: WhiskerFontOpticalSizing
-    public let color: UIColor
+    public let color: WhiskerPlatformColor
     public let direction: WhiskerTextDirection
     public let alignment: WhiskerTextAlignment
     public let decoration: WhiskerTextDecoration?
@@ -208,12 +212,12 @@ public struct WhiskerTextIndent: Equatable {
 public struct WhiskerTextDecoration {
     public let line: WhiskerTextDecorationLine
     public let style: WhiskerTextDecorationStyle
-    public let color: UIColor
+    public let color: WhiskerPlatformColor
 
     public init(
         line: WhiskerTextDecorationLine,
         style: WhiskerTextDecorationStyle,
-        color: UIColor
+        color: WhiskerPlatformColor
     ) {
         self.line = line
         self.style = style
@@ -227,9 +231,9 @@ public enum WhiskerTextDecorationStyle: Equatable { case solid, double, dotted, 
 public struct WhiskerTextShadow {
     public let offset: CGSize
     public let blurRadius: CGFloat
-    public let color: UIColor
+    public let color: WhiskerPlatformColor
 
-    public init(offset: CGSize, blurRadius: CGFloat, color: UIColor) {
+    public init(offset: CGSize, blurRadius: CGFloat, color: WhiskerPlatformColor) {
         self.offset = offset
         self.blurRadius = blurRadius
         self.color = color
@@ -238,11 +242,11 @@ public struct WhiskerTextShadow {
 
 public final class WhiskerMountedElement {
     public let registration: WhiskerElementRegistration
-    public let view: UIView
+    public let view: WhiskerPlatformView
     private let eventSource: WhiskerEventSource?
-    private let textUpdater: ((UIView, WhiskerTextContent) throws -> Void)?
-    private let textStyleUpdater: ((UIView, WhiskerTextStyle) throws -> Void)?
-    private let childrenHostProvider: ((UIView) throws -> UIView)?
+    private let textUpdater: ((WhiskerPlatformView, WhiskerTextContent) throws -> Void)?
+    private let textStyleUpdater: ((WhiskerPlatformView, WhiskerTextStyle) throws -> Void)?
+    private let childrenHostProvider: ((WhiskerPlatformView) throws -> WhiskerPlatformView)?
     private let properties: [Int: WhiskerPropComponent]
     private let commands: [Int: WhiskerCommandComponent]
     private let eventsByName: [String: WhiskerEventBinding]
@@ -253,10 +257,10 @@ public final class WhiskerMountedElement {
 
     fileprivate init(
         registration: WhiskerElementRegistration,
-        view: UIView,
-        textUpdater: ((UIView, WhiskerTextContent) throws -> Void)?,
-        textStyleUpdater: ((UIView, WhiskerTextStyle) throws -> Void)?,
-        childrenHost: ((UIView) throws -> UIView)?,
+        view: WhiskerPlatformView,
+        textUpdater: ((WhiskerPlatformView, WhiskerTextContent) throws -> Void)?,
+        textStyleUpdater: ((WhiskerPlatformView, WhiskerTextStyle) throws -> Void)?,
+        childrenHost: ((WhiskerPlatformView) throws -> WhiskerPlatformView)?,
         properties: [Int: WhiskerPropComponent],
         commands: [Int: WhiskerCommandComponent],
         eventsByName: [String: WhiskerEventBinding],
@@ -318,7 +322,7 @@ public final class WhiskerMountedElement {
         return true
     }
 
-    public func childrenHost() -> UIView? {
+    public func childrenHost() -> WhiskerPlatformView? {
         guard !failed else { return nil }
         if !isolatesFailures {
             do { return try childrenHostProvider?(view) } catch {
@@ -379,19 +383,19 @@ public final class WhiskerMountedElement {
 /** Host-owned declaration. It contains names and behavior, never Rust IDs. */
 public struct WhiskerElementFactory {
     public let name: String
-    fileprivate let textUpdater: ((UIView, WhiskerTextContent) throws -> Void)?
-    fileprivate let textStyleUpdater: ((UIView, WhiskerTextStyle) throws -> Void)?
-    fileprivate let childrenHost: ((UIView) throws -> UIView)?
+    fileprivate let textUpdater: ((WhiskerPlatformView, WhiskerTextContent) throws -> Void)?
+    fileprivate let textStyleUpdater: ((WhiskerPlatformView, WhiskerTextStyle) throws -> Void)?
+    fileprivate let childrenHost: ((WhiskerPlatformView) throws -> WhiskerPlatformView)?
     fileprivate let measurer: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)?
-    fileprivate let makeView: () throws -> UIView
+    fileprivate let makeView: () throws -> WhiskerPlatformView
 
     public init(
         name: String,
-        textUpdater: ((UIView, WhiskerTextContent) throws -> Void)? = nil,
-        textStyleUpdater: ((UIView, WhiskerTextStyle) throws -> Void)? = nil,
-        childrenHost: ((UIView) throws -> UIView)? = nil,
+        textUpdater: ((WhiskerPlatformView, WhiskerTextContent) throws -> Void)? = nil,
+        textStyleUpdater: ((WhiskerPlatformView, WhiskerTextStyle) throws -> Void)? = nil,
+        childrenHost: ((WhiskerPlatformView) throws -> WhiskerPlatformView)? = nil,
         measurer: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)? = nil,
-        makeView: @escaping () throws -> UIView
+        makeView: @escaping () throws -> WhiskerPlatformView
     ) {
         precondition(!name.isEmpty && !name.contains("@"))
         self.name = name
@@ -403,7 +407,7 @@ public struct WhiskerElementFactory {
     }
 
     fileprivate func withTextStyleUpdater(
-        _ updater: ((UIView, WhiskerTextStyle) throws -> Void)?
+        _ updater: ((WhiskerPlatformView, WhiskerTextStyle) throws -> Void)?
     ) -> WhiskerElementFactory {
         WhiskerElementFactory(
             name: name,
@@ -565,7 +569,7 @@ public enum WhiskerElementRegistry {
         default:
             isolatesFailures = true
         }
-        let view: UIView
+        let view: WhiskerPlatformView
         let factoryFailed: Bool
         do {
             view = try element.factory.makeView()
@@ -581,7 +585,7 @@ public enum WhiskerElementRegistry {
                 element.registration.name,
                 String(describing: error)
             )
-            view = UIView(frame: .zero)
+            view = WhiskerPlatformView(frame: .zero)
             factoryFailed = true
         }
         return WhiskerMountedElement(

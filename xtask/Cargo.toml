@@ -19,5 +19,6 @@ toml_edit = "0.22"
 ureq = { version = "2", features = ["json"] }
 whisker-build = { workspace = true }
 whisker-cli = { workspace = true }
+whisker-cng = { workspace = true }
 whisker-dev-server = { workspace = true }
 zip = { version = "9", default-features = false, features = ["deflate"] }

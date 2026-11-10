@@ -108,7 +108,7 @@ pub fn WhiskerModule(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// pub fn __whisker_application() -> Element { /* hot-patch dispatch to app */ }
 /// pub fn __whisker_application_hash() -> u64 { /* root-remount signal */ }
 ///
-/// // Android/iOS only: retained-runtime C ABI.
+/// // Android, iOS, and macOS only: retained-runtime C ABI.
 /// #[unsafe(no_mangle)]
 /// pub unsafe extern "C" fn whisker_view_create(/* Host callbacks */) -> *mut c_void;
 /// #[unsafe(no_mangle)]
@@ -185,7 +185,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // Platform-neutral retained renderer entry points. Android and iOS
         // provide only wake/present callbacks; application construction,
         // layout, and frame production stay in shared Rust.
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_create(
             width: f32,
@@ -229,7 +229,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ) }
         }
 
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_tick(
             handle: *mut ::std::ffi::c_void,
@@ -249,7 +249,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_pause(
             handle: *mut ::std::ffi::c_void,
@@ -257,7 +257,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             unsafe { ::whisker::__driver_runtime::pause(handle) }
         }
 
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_resume(
             handle: *mut ::std::ffi::c_void,
@@ -265,7 +265,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             unsafe { ::whisker::__driver_runtime::resume(handle) }
         }
 
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_destroy(
             handle: *mut ::std::ffi::c_void,
@@ -273,7 +273,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             unsafe { ::whisker::__driver_runtime::destroy(handle) }
         }
 
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_dispatch_event(
             handle: *mut ::std::ffi::c_void,
@@ -295,7 +295,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_dispatch_pointer(
             handle: *mut ::std::ffi::c_void,
@@ -329,7 +329,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_dispatch_module_event(
             handle: *mut ::std::ffi::c_void,
@@ -351,7 +351,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_dispatch_resource_event(
             handle: *mut ::std::ffi::c_void,
