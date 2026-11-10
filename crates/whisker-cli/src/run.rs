@@ -31,8 +31,7 @@ pub struct Args {
 
     /// Where to deploy the rebuilt artifact. Positional so the
     /// common case (`whisker run android` / `whisker run ios` /
-    /// `whisker run desktop`) reads
-    /// naturally without a `--target=` prefix.
+    /// `whisker run macos`) reads naturally without a `--target=` prefix.
     #[arg(value_enum)]
     pub target: CliTarget,
 
@@ -62,7 +61,7 @@ pub struct Args {
 pub enum CliTarget {
     Android,
     Ios,
-    Desktop,
+    Macos,
     Web,
 }
 
@@ -71,7 +70,7 @@ impl From<CliTarget> for Target {
         match t {
             CliTarget::Android => Target::Android,
             CliTarget::Ios => Target::IosSimulator,
-            CliTarget::Desktop => Target::Macos,
+            CliTarget::Macos => Target::Macos,
             CliTarget::Web => Target::Web,
         }
     }
@@ -85,9 +84,7 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
     // it first paints.
     let target: Target = args.target.into();
     if target == Target::Macos && !cfg!(target_os = "macos") {
-        return Err(anyhow!(
-            "`whisker run desktop` currently supports the macOS Host only"
-        ));
+        return Err(anyhow!("`whisker run macos` runs only on macOS"));
     }
     let mut selection = args.cargo.selection();
     if target == Target::IosSimulator {
@@ -400,7 +397,7 @@ fn target_destination(config: &Config) -> String {
             .macos
             .as_ref()
             .map(|params| format!("{} · local application", params.project_name))
-            .unwrap_or_else(|| "Desktop application".into()),
+            .unwrap_or_else(|| "macOS application".into()),
         Target::Web => format!("http://127.0.0.1:{}/", config.bind_addr.port()),
     }
 }
@@ -443,7 +440,7 @@ fn target_label(target: Target) -> &'static str {
     match target {
         Target::Android => "Android",
         Target::IosSimulator => "iOS Simulator",
-        Target::Macos => "Desktop (macOS)",
+        Target::Macos => "macOS",
         Target::Web => "Web",
     }
 }
@@ -550,7 +547,7 @@ mod tests {
     fn cli_target_maps_to_dev_server_target() {
         assert_eq!(Target::from(CliTarget::Android), Target::Android);
         assert_eq!(Target::from(CliTarget::Ios), Target::IosSimulator);
-        assert_eq!(Target::from(CliTarget::Desktop), Target::Macos);
+        assert_eq!(Target::from(CliTarget::Macos), Target::Macos);
         assert_eq!(Target::from(CliTarget::Web), Target::Web);
     }
 }
