@@ -14,14 +14,15 @@ whisker {
     workspace = whiskerWorkspace
     userPackage = "{{whisker_user_package}}"
 }
-val localAndroidSdk = whiskerWorkspace.resolve("platforms/android")
+val whiskerHostSdk = file("{{whisker_host_sdk_path}}")
+val localAndroidSdk = whiskerHostSdk.resolve("platforms/android")
 if (localAndroidSdk.isDirectory) {
     include(":whisker-module")
     project(":whisker-module").projectDir = localAndroidSdk.resolve("module")
     include(":whisker-runtime")
     project(":whisker-runtime").projectDir = localAndroidSdk.resolve("runtime")
 }
-val localKsp = whiskerWorkspace.resolve("platforms/android/ksp")
+val localKsp = whiskerHostSdk.resolve("platforms/android/ksp")
 if (localKsp.isDirectory) {
     includeBuild(localKsp) {
         dependencySubstitution {

@@ -38,6 +38,8 @@ pub mod discovery;
 #[cfg(feature = "generate")]
 mod fingerprint;
 #[cfg(feature = "generate")]
+mod host_sdk;
+#[cfg(feature = "generate")]
 pub mod ios;
 #[cfg(feature = "generate")]
 pub mod ios_modules;
