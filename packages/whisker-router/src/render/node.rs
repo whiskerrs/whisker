@@ -32,10 +32,11 @@ use whisker::css::{
 use whisker::runtime::reactive::{Owner, effect};
 use whisker::runtime::view::{
     Element, append_child, create_element, create_phantom_element, insert_child_at,
-    on_next_frame_applied, remove_child,
+    on_next_frame_applied, remove_child, set_accessibility,
 };
 use whisker::{
-    AnimationController, ElementTag, apply_style, computed, provide_context, use_context,
+    Accessibility, AnimationController, ElementTag, apply_style, computed, provide_context,
+    use_context,
 };
 
 use crate::core::{NodePath, RouteState, RouteTree};
@@ -205,6 +206,7 @@ fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
         let sel = selected.get().unwrap_or(0);
         for (i, w) in wrappers.iter().enumerate() {
             apply_style(*w, branch_base_style(i == sel));
+            set_accessibility(*w, Accessibility::new().hidden(i != sel));
         }
     });
 
@@ -295,6 +297,8 @@ struct StackWrapper {
     /// The pose mode — the route transition normally, flipped to
     /// `Predictive(edge)` by a back gesture for the Material preview.
     pose_mode: whisker::RwSignal<PoseMode>,
+    /// Fully covered by the entry above: hidden from paint and accessibility.
+    covered: whisker::RwSignal<bool>,
     /// The transition kind chosen for this entry's route.
     transition: RouteTransition,
 }
@@ -424,6 +428,7 @@ fn reconcile_stack(
                         // child owner, and therefore still animates in lockstep.
                         under.content_owner.pause();
                         set_pose(under, &drive, Role::Under, Direction::Push);
+                        cover_on_push_finish(under, &drive);
                     }
                 }
                 if w.transition.is_instant() {
@@ -558,6 +563,7 @@ fn reconcile_stack(
             let pose_animating = preparing_push || w.pose_ctrl.get_untracked().is_animating();
             if i == top {
                 w.content_owner.resume();
+                w.covered.set(false);
                 if !pose_animating {
                     // Steady top: own controller, fully present (0%).
                     w.ctrl.set_value(1.0);
@@ -568,6 +574,7 @@ fn reconcile_stack(
                 if !pose_animating {
                     // A buried entry not part of an in-flight transition:
                     // freeze its presentation fully covered.
+                    w.covered.set(true);
                     w.ctrl.set_value(1.0);
                     set_pose(w, &w.ctrl.clone(), Role::Under, Direction::Push);
                 }
@@ -604,6 +611,7 @@ fn reconcile_stack(
         ctrl: w.pose_ctrl,
         role: w.pose_role,
         mode: w.pose_mode,
+        covered: w.covered,
     };
     let bridge = crate::render::handle::StackBridge {
         owner: Owner::current().expect("stack reconcile owner"),
@@ -614,6 +622,10 @@ fn reconcile_stack(
         under_pose: under_w.map(pose_of),
         #[cfg(test)]
         under_content_owner: under_w.map(|w| w.content_owner),
+        #[cfg(test)]
+        top_wrapper: top_w.map(|w| w.wrapper),
+        #[cfg(test)]
+        under_wrapper: under_w.map(|w| w.wrapper),
         dim_drive: Some(dim_drive),
         can_back: l.len() > 1,
     };
@@ -648,6 +660,7 @@ fn run_pop(
             // Navigation state already points at this entry when reconcile
             // runs, so its content can safely become reactive again.
             w.content_owner.resume();
+            w.covered.set(false);
             set_pose(w, &drive, Role::Under, Direction::Pop);
             SurvivorHandle {
                 wrapper: w.wrapper,
@@ -745,6 +758,7 @@ fn mount_wrapper(
     // owner by `create_element`), the style effect, the child subtree,
     // and deregisters the controller.
     let owner = Owner::new(None);
+    let covered = owner.with(|| whisker::RwSignal::new(false));
     let (wrapper, content_owner, ctrl, pose_ctrl, pose_role, pose_mode) = owner.with(|| {
         // A real `view` (not a phantom): the wrapper carries the
         // transition `transform` / `opacity` and `position: absolute`
@@ -782,9 +796,10 @@ fn mount_wrapper(
         // transform/opacity AND the clip view's animated corner radius.
         effect(move || {
             let pose = style.get();
-            apply_style(wrapper, wrapper_style(&pose));
+            apply_style(wrapper, wrapper_style(&pose, covered.get()));
             apply_style(clip, clip_view_style(pose.radius_px));
         });
+        effect(move || set_accessibility(wrapper, Accessibility::new().hidden(covered.get())));
 
         let content_owner = Owner::new(Some(owner));
         let child = content_owner.with(|| mount_node(handle, child_path));
@@ -813,6 +828,7 @@ fn mount_wrapper(
         pose_ctrl,
         pose_role,
         pose_mode,
+        covered,
         transition,
     }
 }
@@ -837,6 +853,19 @@ fn start_push_after_frame(w: &StackWrapper) {
         w.pending_push.set(false);
         w.ctrl.forward();
     }
+}
+
+/// Cover `under` on `drive`'s first completion unless a pop interrupted the push.
+fn cover_on_push_finish(under: &StackWrapper, drive: &AnimationController) {
+    let covered = under.covered;
+    let done = Rc::new(Cell::new(false));
+    under.owner.with(|| {
+        drive.on_finish(move |finished| {
+            if !done.replace(true) && finished {
+                covered.set(true);
+            }
+        });
+    });
 }
 
 /// Point `w`'s pose at controller `c` playing `role` in `direction`, in the
@@ -865,8 +894,8 @@ fn stack_container_style() -> Css {
 /// the inner [`clip_view_style`], NOT here — see `mount_wrapper`. The
 /// transform origin is centred so the predictive-back scale shrinks the
 /// card around its middle.
-fn wrapper_style(pose: &Pose) -> Css {
-    Css::new()
+fn wrapper_style(pose: &Pose, covered: bool) -> Css {
+    let style = Css::new()
         .position(PositionKind::Absolute)
         .left(px(0))
         .top(px(0))
@@ -875,8 +904,12 @@ fn wrapper_style(pose: &Pose) -> Css {
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .transform_origin(Position::Coords(percent(50).into(), percent(50).into()))
-        .transform(pose.transform.clone())
-        .opacity(pose.opacity)
+        .transform(pose.transform.clone());
+    if covered {
+        style.visibility(Visibility::Hidden).opacity(0.0)
+    } else {
+        style.visibility(Visibility::Visible).opacity(pose.opacity)
+    }
 }
 
 /// Style for the per-screen **clip view** — the direct parent of the
