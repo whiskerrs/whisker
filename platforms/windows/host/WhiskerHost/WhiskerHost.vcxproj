@@ -42,6 +42,7 @@
     <ClInclude Include="src\graphics.h" />
     <ClInclude Include="src\host_scene.h" />
     <ClInclude Include="src\paint.h" />
+    <ClInclude Include="src\resources.h" />
     <ClInclude Include="src\shadow.h" />
     <ClInclude Include="src\text.h" />
     <ClInclude Include="src\value.h" />
@@ -52,6 +53,7 @@
     <ClCompile Include="src\graphics.cpp" />
     <ClCompile Include="src\host_scene.cpp" />
     <ClCompile Include="src\paint.cpp" />
+    <ClCompile Include="src\resources.cpp" />
     <ClCompile Include="src\shadow.cpp" />
     <ClCompile Include="src\text.cpp" />
     <ClCompile Include="src\whisker_view.cpp" />

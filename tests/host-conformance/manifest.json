@@ -48,28 +48,28 @@
       "id": "wpt.css-backgrounds.background-resource-image",
       "feature": "background-image-resource",
       "fixture": "wpt/css/css-backgrounds/background-resource-image.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "windows"],
       "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
     },
     {
       "id": "core.resource-raster-lifecycle",
       "feature": "resource-raster-lifecycle",
       "fixture": "core/resource-raster-lifecycle.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "windows"],
       "checkpoints": ["resource-lifecycle", "semantic-projection", "pixel-samples"]
     },
     {
       "id": "core.image-rendering-pixelated",
       "feature": "image-rendering-pixelated",
       "fixture": "core/image-rendering-pixelated.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "core.image-rendering-crisp-edges",
       "feature": "image-rendering-crisp-edges",
       "fixture": "core/image-rendering-crisp-edges.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
@@ -83,28 +83,28 @@
       "id": "wpt.css-backgrounds.background-size-intrinsic-auto",
       "feature": "background-size-intrinsic-auto",
       "fixture": "wpt/css/css-backgrounds/background-size-intrinsic-auto.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "windows"],
       "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-size-auto-round-aspect-ratio",
       "feature": "background-size-auto-round-aspect-ratio",
       "fixture": "wpt/css/css-backgrounds/background-size-auto-round-aspect-ratio.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "windows"],
       "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-size-contain-001-intrinsic",
       "feature": "background-size-contain",
       "fixture": "wpt/css/css-backgrounds/background-size-contain-001-intrinsic.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "windows"],
       "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-size-cover-001-intrinsic",
       "feature": "background-size-cover",
       "fixture": "wpt/css/css-backgrounds/background-size-cover-001-intrinsic.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "windows"],
       "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
     },
     {

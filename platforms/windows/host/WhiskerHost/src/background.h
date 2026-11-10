@@ -8,6 +8,7 @@
 #include <d2d1_1.h>
 
 #include "paint.h"
+#include "resources.h"
 #include "whisker_mobile.h"
 
 namespace whisker {
@@ -26,9 +27,12 @@ struct BackgroundLayer {
   WhiskerMobileLengthPercentage radius_x{};
   WhiskerMobileLengthPercentage radius_y{};
   std::vector<GradientStop> stops;
+  std::optional<Raster> raster;
   WhiskerMobileBackgroundLayer geometry{};
 
-  static std::optional<BackgroundLayer> From(const WhiskerMobileBackgroundLayer& raw);
+  // A resource layer whose raster is not ready yet yields nothing.
+  static std::optional<BackgroundLayer> From(const WhiskerMobileBackgroundLayer& raw,
+                                             const ResourceService& resources);
 };
 
 // The border, padding, and content boxes of one node in its own border-box space.
@@ -40,6 +44,6 @@ struct BoxGeometry {
 
 // `layers` are ordered front to back, as CSS lists them.
 void PaintBackgroundLayers(ID2D1DeviceContext* context, const std::vector<BackgroundLayer>& layers,
-                           const BoxGeometry& boxes);
+                           const BoxGeometry& boxes, uint32_t image_rendering);
 
 }  // namespace whisker

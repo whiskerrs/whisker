@@ -4,6 +4,7 @@
 #include <cmath>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <winrt/Microsoft.UI.Input.h>
@@ -73,6 +74,8 @@ double Now() { return static_cast<double>(GetTickCount64()); }
 struct WhiskerView::Impl {
   xaml::Controls::Panel host;
   TextEngine text;
+  ResourceService resources;
+  std::vector<WhiskerMobileResourceEvent> resource_events;
   std::optional<HostScene> scene;
   void* handle = nullptr;
   bool frame_requested = true;
@@ -86,7 +89,12 @@ struct WhiskerView::Impl {
     auto compositor = xaml::Hosting::ElementCompositionPreview::GetElementVisual(host).Compositor();
     auto root = compositor.CreateContainerVisual();
     xaml::Hosting::ElementCompositionPreview::SetElementChildVisual(host, root);
-    scene.emplace(root, text, CreateGraphicsDevice(compositor));
+    scene.emplace(root, text, resources, CreateGraphicsDevice(compositor));
+    // Events go out from the next tick so they never re-enter the runtime mid-command.
+    resources.SetEventSink([this](const WhiskerMobileResourceEvent& event) {
+      resource_events.push_back(event);
+      frame_requested = true;
+    });
     rendering = xaml::Media::CompositionTarget::Rendering(
         [this](auto&&, auto&&) { Tick(); });
     host.PointerPressed([this](auto&&, xaml::Input::PointerRoutedEventArgs const& e) {
@@ -143,6 +151,9 @@ struct WhiskerView::Impl {
       if (!handle) return;
     }
     DispatchScrollEvents();
+    for (auto const& event : std::exchange(resource_events, {})) {
+      whisker_view_dispatch_resource_event(handle, &event);
+    }
     if (!frame_requested) return;
     frame_requested = false;
     whisker_view_tick(handle, Now(), width, height, scale);
@@ -234,7 +245,9 @@ struct WhiskerView::Impl {
     return static_cast<Impl*>(data)->scene->Apply(*frame, *response);
   }
 
-  static bool OnResourceCommand(void*, const WhiskerMobileResourceCommand*) { return false; }
+  static bool OnResourceCommand(void* data, const WhiskerMobileResourceCommand* command) {
+    return static_cast<Impl*>(data)->resources.Apply(*command);
+  }
 
   static bool OnInvokeModule(void*, const uint8_t*, size_t, const uint8_t*, size_t,
                              const WhiskerValueRaw*, size_t, bool,

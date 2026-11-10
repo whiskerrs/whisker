@@ -70,6 +70,7 @@ void Pump(Operation const& operation) {
 struct WhiskerHostConformance {
   comp::ContainerVisual root{nullptr};
   whisker::TextEngine text;
+  whisker::ResourceService resources;
   std::optional<whisker::HostScene> scene;
 };
 
@@ -78,7 +79,7 @@ extern "C" WhiskerHostConformance* whisker_host_conformance_create(void) {
     auto process = SharedProcess();
     auto host = new WhiskerHostConformance;
     host->root = process->compositor.CreateContainerVisual();
-    host->scene.emplace(host->root, host->text, process->graphics);
+    host->scene.emplace(host->root, host->text, host->resources, process->graphics);
     return host;
   } catch (winrt::hresult_error const& error) {
     Report(error);
@@ -109,6 +110,31 @@ extern "C" bool whisker_host_conformance_measure(void* host,
   auto& text = static_cast<WhiskerHostConformance*>(host)->text;
   for (size_t i = 0; i < count; ++i) text.Measure(requests[i], responses[i]);
   return true;
+}
+
+extern "C" bool whisker_host_conformance_resource(WhiskerHostConformance* host,
+                                                  const WhiskerMobileResourceCommand* command) {
+  return host->resources.Apply(*command);
+}
+
+extern "C" bool whisker_host_conformance_register_raster(WhiskerHostConformance* host,
+                                                         uint64_t id, uint32_t width,
+                                                         uint32_t height, const uint8_t* rgba) {
+  return host->resources.Register(id, width, height, rgba);
+}
+
+extern "C" uint32_t whisker_host_conformance_resource_state(WhiskerHostConformance* host,
+                                                            uint64_t id, uint64_t generation,
+                                                            uint32_t* width, uint32_t* height) {
+  auto state = host->resources.State(id, generation);
+  if (!state) return 0;
+  if (*state == whisker::ResourceState::Ready) {
+    if (auto raster = host->resources.Find(id)) {
+      *width = raster->width;
+      *height = raster->height;
+    }
+  }
+  return static_cast<uint32_t>(*state) + 1;
 }
 
 extern "C" bool whisker_host_conformance_capture(WhiskerHostConformance* host, uint32_t width,

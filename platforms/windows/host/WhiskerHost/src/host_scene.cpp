@@ -109,11 +109,12 @@ bool HostScene::Bootstrap(const WhiskerMobileBootstrap& bootstrap) {
 }
 
 HostScene::HostScene(comp::ContainerVisual root, const TextEngine& text,
-                     comp::CompositionGraphicsDevice graphics)
+                     const ResourceService& resources, comp::CompositionGraphicsDevice graphics)
     : compositor_(root.Compositor()),
       root_(std::move(root)),
       graphics_(std::move(graphics)),
-      text_(text) {}
+      text_(text),
+      resources_(resources) {}
 
 void HostScene::SetScale(float scale) {
   if (scale == scale_) return;
@@ -217,7 +218,9 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       node.layers.clear();
       auto layers = static_cast<const WhiskerMobileBackgroundLayer*>(op.payload);
       for (size_t i = 0; i < op.payload_count; ++i) {
-        if (auto layer = BackgroundLayer::From(layers[i])) node.layers.push_back(std::move(*layer));
+        if (auto layer = BackgroundLayer::From(layers[i], resources_)) {
+          node.layers.push_back(std::move(*layer));
+        }
       }
       node.box_dirty = true;
       break;
@@ -232,6 +235,10 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       node.box_dirty = true;
       break;
     }
+    case WHISKER_OP_IMAGE_RENDERING:
+      node.image_rendering = static_cast<uint32_t>(op.integer);
+      node.box_dirty = true;
+      break;
     case WHISKER_OP_CLIP_PATH:
       node.clip_path.reset();
       if (op.payload) {
@@ -489,7 +496,8 @@ void HostScene::DrawBox(Node& node) {
   node.background.Brush(brush);
   DrawSurface(surface, scale_, [&](ID2D1DeviceContext* context) {
     auto const& content = node.geometry.content;
-    PaintBox(context, paint, node.layers, node.shadows, border.width, border.height,
+    PaintBox(context, paint, node.layers, node.shadows, node.image_rendering, border.width,
+             border.height,
              {content.x, content.y, content.x + content.width, content.y + content.height});
   });
 }

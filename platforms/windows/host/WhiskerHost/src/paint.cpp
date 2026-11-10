@@ -390,7 +390,7 @@ bool NeedsBoxSurface(const WhiskerMobileBoxPaint& paint, float width, float heig
 
 void PaintBox(ID2D1DeviceContext* context, const WhiskerMobileBoxPaint& paint,
               const std::vector<BackgroundLayer>& layers, const std::vector<BoxShadow>& shadows,
-              float width, float height, D2D1_RECT_F content) {
+              uint32_t image_rendering, float width, float height, D2D1_RECT_F content) {
   winrt::com_ptr<ID2D1Factory> factory;
   context->GetFactory(factory.put());
   auto border = RoundedRect::From(&paint, width, height);
@@ -406,7 +406,8 @@ void PaintBox(ID2D1DeviceContext* context, const WhiskerMobileBoxPaint& paint,
     PaintBackgroundLayers(context, layers,
                           {border, padding,
                            border.Shrink(content.top, width - content.right,
-                                         height - content.bottom, content.left)});
+                                         height - content.bottom, content.left)},
+                          image_rendering);
   }
   PaintInsetShadows(context, shadows, padding);
   PaintBorder(context, paint, width, height);

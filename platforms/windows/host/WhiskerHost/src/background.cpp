@@ -177,27 +177,62 @@ std::vector<float> TileOrigins(float base, float tile, float lo, float hi, float
   }
 }
 
-D2D1_RECT_F ImageBounds(const WhiskerMobileBackgroundLayer& g, D2D1_RECT_F box) {
+void PaintRaster(ID2D1DeviceContext* context, const Raster& raster, D2D1_RECT_F tile,
+                 uint32_t image_rendering) {
+  winrt::com_ptr<ID2D1Bitmap> bitmap;
+  if (FAILED(context->CreateBitmapFromWicBitmap(raster.pixels.get(), nullptr, bitmap.put()))) return;
+  auto size = bitmap->GetSize();
+  // Cubic filtering rings past sharp edges when magnifying, so it is kept for minification.
+  bool minifying = Width(tile) < size.width || Height(tile) < size.height;
+  auto mode = image_rendering != WHISKER_IMAGE_RENDERING_AUTO ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+              : minifying ? D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC
+                          : D2D1_INTERPOLATION_MODE_LINEAR;
+  context->DrawBitmap(bitmap.get(), tile, 1, mode, D2D1::RectF(0, 0, size.width, size.height));
+}
+
+// `natural` is the intrinsic size of a raster image, when there is one.
+D2D1_RECT_F ImageBounds(const WhiskerMobileBackgroundLayer& g, D2D1_RECT_F box,
+                        std::optional<D2D1_SIZE_F> natural) {
   float box_w = Width(box);
   float box_h = Height(box);
-  float w = box_w;
-  float h = box_h;
+  float w = natural ? natural->width : box_w;
+  float h = natural ? natural->height : box_h;
   switch (g.size_kind) {
     case WHISKER_BACKGROUND_SIZE_EXPLICIT:
       w = Resolve(g.size_width, box_w);
       h = Resolve(g.size_height, box_h);
       break;
-    case WHISKER_BACKGROUND_SIZE_WIDTH: w = Resolve(g.size_width, box_w); break;
-    case WHISKER_BACKGROUND_SIZE_HEIGHT: h = Resolve(g.size_height, box_h); break;
+    case WHISKER_BACKGROUND_SIZE_WIDTH:
+      w = Resolve(g.size_width, box_w);
+      if (natural) h = w * natural->height / natural->width;
+      break;
+    case WHISKER_BACKGROUND_SIZE_HEIGHT:
+      h = Resolve(g.size_height, box_h);
+      if (natural) w = h * natural->width / natural->height;
+      break;
+    case WHISKER_BACKGROUND_SIZE_COVER:
+    case WHISKER_BACKGROUND_SIZE_CONTAIN:
+      if (natural) {
+        float sx = box_w / natural->width;
+        float sy = box_h / natural->height;
+        float s = g.size_kind == WHISKER_BACKGROUND_SIZE_COVER ? std::max(sx, sy) : std::min(sx, sy);
+        w = natural->width * s;
+        h = natural->height * s;
+      }
+      break;
     default: break;
   }
   float tile_w = RoundTile(w, box_w, g.repeat_x);
   float tile_h = RoundTile(h, box_h, g.repeat_y);
   bool round_x = g.repeat_x == WHISKER_BACKGROUND_ROUND;
   bool round_y = g.repeat_y == WHISKER_BACKGROUND_ROUND;
-  if (g.size_kind == WHISKER_BACKGROUND_SIZE_WIDTH && round_x && !round_y && w > 0) {
+  bool auto_height = g.size_kind == WHISKER_BACKGROUND_SIZE_WIDTH ||
+                     (natural && g.size_kind == WHISKER_BACKGROUND_SIZE_AUTO);
+  bool auto_width = g.size_kind == WHISKER_BACKGROUND_SIZE_HEIGHT ||
+                    (natural && g.size_kind == WHISKER_BACKGROUND_SIZE_AUTO);
+  if (auto_height && round_x && !round_y && w > 0) {
     tile_h = h * tile_w / w;
-  } else if (g.size_kind == WHISKER_BACKGROUND_SIZE_HEIGHT && round_y && !round_x && h > 0) {
+  } else if (auto_width && round_y && !round_x && h > 0) {
     tile_w = w * tile_h / h;
   }
   float x = box.left + g.position_x.length + g.position_x.fraction * (box_w - tile_w);
@@ -214,10 +249,15 @@ const RoundedRect& BoxFor(uint32_t value, const BoxGeometry& boxes) {
 }
 
 void PaintLayer(ID2D1DeviceContext* context, ID2D1Factory* factory, const BackgroundLayer& layer,
-                const BoxGeometry& boxes) {
+                const BoxGeometry& boxes, uint32_t image_rendering) {
   auto const& g = layer.geometry;
   auto positioning = BoxFor(g.origin, boxes).rect;
-  auto image = ImageBounds(g, positioning);
+  std::optional<D2D1_SIZE_F> natural;
+  if (layer.raster) {
+    natural = D2D1::SizeF(static_cast<float>(layer.raster->width),
+                          static_cast<float>(layer.raster->height));
+  }
+  auto image = ImageBounds(g, positioning, natural);
   if (Width(image) <= 0 || Height(image) <= 0) return;
   auto const& clip = BoxFor(g.clip, boxes);
   winrt::com_ptr<ID2D1Geometry> mask;
@@ -235,7 +275,7 @@ void PaintLayer(ID2D1DeviceContext* context, ID2D1Factory* factory, const Backgr
   float dpi_y = 96;
   context->GetDpi(&dpi_x, &dpi_y);
   // Keeps a gradient tile's antialiased leading edge from bleeding into the pixel before it.
-  float inset = 0.5f / std::max(dpi_x / 96, 1.0f);
+  float inset = layer.raster ? 0 : 0.5f / std::max(dpi_x / 96, 1.0f);
   auto cover = clip.rect;
   auto xs = TileOrigins(image.left, Width(image), positioning.left, positioning.right, cover.left,
                         cover.right, g.repeat_x);
@@ -258,6 +298,9 @@ void PaintLayer(ID2D1DeviceContext* context, ID2D1Factory* factory, const Backgr
         case WHISKER_BACKGROUND_LINEAR: PaintLinear(context, layer, tile); break;
         case WHISKER_BACKGROUND_RADIAL: PaintRadial(context, layer, tile); break;
         case WHISKER_BACKGROUND_CONIC: PaintConic(context, layer, tile); break;
+        case WHISKER_BACKGROUND_RESOURCE:
+          PaintRaster(context, *layer.raster, tile, image_rendering);
+          break;
         default: break;
       }
       context->PopAxisAlignedClip();
@@ -268,13 +311,20 @@ void PaintLayer(ID2D1DeviceContext* context, ID2D1Factory* factory, const Backgr
 
 }  // namespace
 
-std::optional<BackgroundLayer> BackgroundLayer::From(const WhiskerMobileBackgroundLayer& raw) {
+std::optional<BackgroundLayer> BackgroundLayer::From(const WhiskerMobileBackgroundLayer& raw,
+                                                     const ResourceService& resources) {
   if (!raw.image.payload) return std::nullopt;
   BackgroundLayer layer;
   layer.kind = raw.image.kind;
   layer.degrees = raw.image.scalar;
   layer.geometry = raw;
   layer.geometry.image = {};
+  if (raw.image.kind == WHISKER_BACKGROUND_RESOURCE) {
+    if (raw.image.payload_count != 1) return std::nullopt;
+    layer.raster = resources.Find(*static_cast<const uint64_t*>(raw.image.payload));
+    if (!layer.raster) return std::nullopt;
+    return layer;
+  }
   const WhiskerMobileGradientStop* stops = nullptr;
   size_t count = 0;
   switch (raw.image.kind) {
@@ -311,11 +361,11 @@ std::optional<BackgroundLayer> BackgroundLayer::From(const WhiskerMobileBackgrou
 }
 
 void PaintBackgroundLayers(ID2D1DeviceContext* context, const std::vector<BackgroundLayer>& layers,
-                           const BoxGeometry& boxes) {
+                           const BoxGeometry& boxes, uint32_t image_rendering) {
   winrt::com_ptr<ID2D1Factory> factory;
   context->GetFactory(factory.put());
   for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
-    PaintLayer(context, factory.get(), *it, boxes);
+    PaintLayer(context, factory.get(), *it, boxes, image_rendering);
   }
 }
 

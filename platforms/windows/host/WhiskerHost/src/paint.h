@@ -41,6 +41,6 @@ struct BoxShadow;
 // `content` is the content box in border-box space.
 void PaintBox(ID2D1DeviceContext* context, const WhiskerMobileBoxPaint& paint,
               const std::vector<BackgroundLayer>& layers, const std::vector<BoxShadow>& shadows,
-              float width, float height, D2D1_RECT_F content);
+              uint32_t image_rendering, float width, float height, D2D1_RECT_F content);
 
 }  // namespace whisker

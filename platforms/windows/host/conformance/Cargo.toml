@@ -12,6 +12,7 @@ description = "Shared Host conformance fixtures against the WinUI 3 Host."
 whisker-driver-sys = { workspace = true }
 
 [target.'cfg(windows)'.dev-dependencies]
+base64 = { workspace = true }
 whisker = { workspace = true }
 whisker-driver = { workspace = true, features = ["host-conformance"] }
 whisker-driver-sys = { workspace = true }

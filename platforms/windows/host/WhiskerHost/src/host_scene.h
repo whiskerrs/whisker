@@ -11,6 +11,7 @@
 #include "background.h"
 #include "clip_path.h"
 #include "graphics.h"
+#include "resources.h"
 #include "shadow.h"
 #include "text.h"
 #include "whisker_mobile.h"
@@ -21,6 +22,7 @@ namespace whisker {
 class HostScene {
  public:
   HostScene(winrt::Microsoft::UI::Composition::ContainerVisual root, const TextEngine& text,
+            const ResourceService& resources,
             winrt::Microsoft::UI::Composition::CompositionGraphicsDevice graphics);
 
   struct ScrollEvent {
@@ -76,6 +78,7 @@ class HostScene {
     WhiskerMobileLayoutGeometry geometry{};
     std::optional<WhiskerMobileBoxPaint> paint;
     std::vector<BackgroundLayer> layers;
+    uint32_t image_rendering = 0;
     std::vector<BoxShadow> shadows;
     std::optional<ClipPath> clip_path;
     bool box_dirty = false;
@@ -114,6 +117,7 @@ class HostScene {
   winrt::Microsoft::UI::Composition::ContainerVisual root_;
   winrt::Microsoft::UI::Composition::CompositionGraphicsDevice graphics_;
   const TextEngine& text_;
+  const ResourceService& resources_;
   std::unordered_map<uint64_t, Node> nodes_;
   std::vector<uint64_t> roots_;
   std::unordered_set<uint64_t> dirty_children_;

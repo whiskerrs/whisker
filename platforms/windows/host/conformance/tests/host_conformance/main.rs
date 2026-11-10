@@ -2,6 +2,8 @@
 
 use std::ffi::c_void;
 
+use base64::Engine as _;
+
 use whisker::standard_element_registrations;
 use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
@@ -11,8 +13,8 @@ use whisker_host_conformance::{
     CursorFixture, FillRuleFixture, Host, ImageRenderingFixture, ImageRepeatFixture,
     LinearGradientFixture, LoadedCase, OverflowClipFixture, PathCommandFixture,
     PixelRelationFixture, PixelRelationKind, PixelSampleFixture, PointerEventsFixture,
-    RadialGradientFixture, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
-    load_required,
+    RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture, Scenario, ScenarioSide,
+    SceneNodeFixture, VisibilityFixture, load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
@@ -31,6 +33,9 @@ use whisker_protocol::{
 use whisker_driver::ffi_runtime::host_conformance::{frame_sink, measurement_provider};
 use whisker_driver_sys::{
     MobileApplyResponse, MobileFrame, MobileMeasureRequest, MobileMeasureResponse,
+    MobileResourceCommand, RESOURCE_COMMAND_LOAD, RESOURCE_COMMAND_RELEASE, RESOURCE_RASTER_IMAGE,
+    RESOURCE_SOURCE_BYTES, RESOURCE_SOURCE_NONE, RESOURCE_SOURCE_URL, WhiskerBytesRef,
+    WhiskerStringRef,
 };
 
 use whisker_windows_host_conformance::*;
@@ -602,11 +607,108 @@ impl Driver {
                     [*min_height, *max_height],
                     *prepared_content,
                 ),
-                Command::RegisterRasterResource { .. }
-                | Command::LoadRasterResource { .. }
-                | Command::ReleaseRasterResource { .. }
-                | Command::CheckpointResource { .. } => {
-                    panic!("Windows Host does not implement raster resources")
+                Command::RegisterRasterResource {
+                    id,
+                    width,
+                    height,
+                    pixels,
+                } => {
+                    assert_eq!(pixels.len(), (*width * *height) as usize);
+                    let rgba = pixels
+                        .iter()
+                        .flat_map(|color| sample_rgba(&color_protocol(color)))
+                        .collect::<Vec<_>>();
+                    // SAFETY: `rgba` holds `width * height` pixels and outlives the call.
+                    let registered = unsafe {
+                        whisker_host_conformance_register_raster(
+                            self.host,
+                            *id,
+                            *width,
+                            *height,
+                            rgba.as_ptr(),
+                        )
+                    };
+                    assert!(registered, "WinUI Host rejected raster {id}");
+                }
+                Command::LoadRasterResource {
+                    id,
+                    generation,
+                    source,
+                } => {
+                    let (kind, identifier, data) = match source {
+                        ResourceSourceFixture::Url { value } => {
+                            (RESOURCE_SOURCE_URL, value.clone(), Vec::new())
+                        }
+                        ResourceSourceFixture::Bytes { media_type, base64 } => (
+                            RESOURCE_SOURCE_BYTES,
+                            media_type.clone(),
+                            base64::engine::general_purpose::STANDARD
+                                .decode(base64)
+                                .expect("validated fixture base64"),
+                        ),
+                    };
+                    self.resource_command(MobileResourceCommand {
+                        command: RESOURCE_COMMAND_LOAD,
+                        kind: RESOURCE_RASTER_IMAGE,
+                        source: kind,
+                        _reserved: 0,
+                        resource: *id,
+                        generation: *generation,
+                        identifier: WhiskerStringRef {
+                            ptr: identifier.as_ptr().cast(),
+                            len: identifier.len(),
+                        },
+                        data: WhiskerBytesRef {
+                            ptr: data.as_ptr(),
+                            len: data.len(),
+                        },
+                    });
+                }
+                Command::ReleaseRasterResource { id, generation } => {
+                    self.resource_command(MobileResourceCommand {
+                        command: RESOURCE_COMMAND_RELEASE,
+                        kind: 0,
+                        source: RESOURCE_SOURCE_NONE,
+                        _reserved: 0,
+                        resource: *id,
+                        generation: *generation,
+                        identifier: WhiskerStringRef {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                        data: WhiskerBytesRef {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                    });
+                }
+                Command::CheckpointResource {
+                    id,
+                    generation,
+                    state,
+                    width,
+                    height,
+                } => {
+                    let mut size = [0, 0];
+                    // SAFETY: `size` provides both out-parameters.
+                    let actual = unsafe {
+                        whisker_host_conformance_resource_state(
+                            self.host,
+                            *id,
+                            *generation,
+                            &mut size[0],
+                            &mut size[1],
+                        )
+                    };
+                    let expected = match state {
+                        ResourceStateFixture::Ready => 2,
+                        ResourceStateFixture::Failed => 3,
+                        ResourceStateFixture::Released => 4,
+                    };
+                    assert_eq!(actual, expected, "resource {id}@{generation} state");
+                    if let (Some(width), Some(height)) = (width, height) {
+                        assert_eq!(size, [*width, *height], "resource {id}@{generation} size");
+                    }
                 }
                 Command::EmitPointer { .. } | Command::CheckpointInput { .. } => {
                     panic!("Windows pointer translation is not implemented")
@@ -614,6 +716,16 @@ impl Driver {
             }
         }
         checkpoints
+    }
+
+    fn resource_command(&mut self, command: MobileResourceCommand) {
+        // SAFETY: the command borrows locals that outlive the synchronous call.
+        let accepted = unsafe { whisker_host_conformance_resource(self.host, &command) };
+        assert!(
+            accepted,
+            "WinUI Host rejected resource {}@{}",
+            command.resource, command.generation
+        );
     }
 
     fn attach(&mut self, width: f32, height: f32) {

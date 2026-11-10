@@ -6,7 +6,7 @@ use std::ffi::c_void;
 
 use whisker_driver_sys::{
     MobileApplyResponse, MobileFrame, MobileHostCapabilities, MobileMeasureRequest,
-    MobileMeasureResponse,
+    MobileMeasureResponse, MobileResourceCommand,
 };
 
 #[repr(C)]
@@ -29,6 +29,25 @@ unsafe extern "C" {
         count: usize,
         responses: *mut MobileMeasureResponse,
     ) -> bool;
+    pub fn whisker_host_conformance_resource(
+        host: *mut WhiskerHostConformance,
+        command: *const MobileResourceCommand,
+    ) -> bool;
+    pub fn whisker_host_conformance_register_raster(
+        host: *mut WhiskerHostConformance,
+        id: u64,
+        width: u32,
+        height: u32,
+        rgba: *const u8,
+    ) -> bool;
+    /// Returns 0 for an unknown generation, then loading, ready, failed, released from 1.
+    pub fn whisker_host_conformance_resource_state(
+        host: *mut WhiskerHostConformance,
+        id: u64,
+        generation: u64,
+        width: *mut u32,
+        height: *mut u32,
+    ) -> u32;
     pub fn whisker_host_conformance_capture(
         host: *mut WhiskerHostConformance,
         width: u32,
