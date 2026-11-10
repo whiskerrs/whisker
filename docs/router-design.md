@@ -202,6 +202,13 @@ iOS uses a slide transition, Android uses its native-style transition, and
 Web/Desktop switch screens immediately. An explicit `transition` on the
 `Route` overrides that default on every platform.
 
+A `replace` transition pairs the incoming screen (`Role::Top`) with the
+replaced screen (`Role::Under`) using the incoming route's transition and
+one controller. The outgoing content remains paused while its wrapper
+animates, and is disposed when the transition finishes or is cancelled.
+Custom transitions can fade out transparent outgoing content before fading
+in the incoming content without changing the shared background.
+
 ### Chrome (tab bar) is a layout `Route`, not the `Switch`
 
 A `Switch` is **navigation logic only** — it decides which branch is

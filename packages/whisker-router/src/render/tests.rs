@@ -1957,6 +1957,99 @@ mod replace_repro {
         });
     }
 
+    /// A transparent incoming screen must be able to fade the replaced
+    /// screen out, even when that screen used a different transition.
+    #[test]
+    fn replace_drives_outgoing_opacity_with_the_incoming_transition() {
+        use crate::render::transition::{Pose, PoseContext, Role, Transition};
+
+        struct SequentialFade;
+        impl Transition for SequentialFade {
+            fn config(&self) -> whisker::AnimConfig {
+                whisker::AnimConfig::ease_out(240)
+            }
+            fn pose(&self, ctx: PoseContext) -> Pose {
+                let p = ctx.progress.clamp(0.0, 1.0);
+                let opacity = match ctx.role {
+                    Role::Top => (2.0 * p - 1.0).max(0.0),
+                    Role::Under => (1.0 - 2.0 * p).max(0.0),
+                };
+                Pose::new(whisker::css::Transform::new(), opacity)
+            }
+        }
+
+        with_runtime(|| {
+            whisker_animation::__reset_for_tests();
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle_with_transition(RouteTransition::custom(SequentialFade));
+                let slot = mount_node(&h, NodePath::root());
+                flush();
+                let old_content = rec.by_cid("home").unwrap();
+                let old = rec.direct_child_ancestor(slot, old_content).unwrap();
+                h.replace("/detail/1").unwrap();
+                flush();
+                let new_content = rec.by_cid("1").unwrap();
+                let new = rec.direct_child_ancestor(slot, new_content).unwrap();
+                let ctrl = h
+                    .active_stack_bridge_for_test(&NodePath::root())
+                    .unwrap()
+                    .top_ctrl
+                    .unwrap();
+                let mut saw_exit = false;
+                let mut saw_enter = false;
+                for frame in 0..16 {
+                    whisker_animation::__step_for_tests(1000.0 + frame as f64 * 16.0);
+                    flush();
+                    let p = ctrl.value().get_untracked();
+                    let inner = rec.0.borrow();
+                    let top = inner.opacity.get(&new).copied().unwrap_or(1.0);
+                    assert_eq!(top, (2.0 * p - 1.0).max(0.0));
+                    if p < 1.0 {
+                        let under = inner.opacity.get(&old).copied().unwrap_or(1.0);
+                        assert_eq!(under, (1.0 - 2.0 * p).max(0.0));
+                        assert!(top == 0.0 || under == 0.0);
+                        saw_exit |= under > 0.0 && under < 1.0;
+                        saw_enter |= top > 0.0 && top < 1.0;
+                    }
+                }
+                assert!(saw_exit && saw_enter);
+                settle_animations();
+                assert!(!rec.reachable(slot, old_content));
+                assert!(rec.reachable(slot, new_content));
+            });
+        });
+    }
+
+    #[test]
+    fn back_during_replace_removes_both_replaced_and_popped_contents() {
+        with_runtime(|| {
+            whisker_animation::__reset_for_tests();
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle_with_transition(RouteTransition::fade());
+                let slot = mount_node(&h, NodePath::root());
+                h.push("/detail/1").unwrap();
+                flush();
+                settle_animations();
+                let old = rec.by_cid("1").unwrap();
+                h.replace("/detail/2").unwrap();
+                flush();
+                let new = rec.by_cid("2").unwrap();
+                whisker_animation::__step_for_tests(1000.0);
+                whisker_animation::__step_for_tests(1016.0);
+                flush();
+                assert!(rec.reachable(slot, old));
+                h.back().unwrap();
+                flush();
+                settle_animations();
+                assert!(!rec.reachable(slot, old));
+                assert!(!rec.reachable(slot, new));
+                assert!(rec.reachable(slot, rec.by_cid("home").unwrap()));
+            });
+        });
+    }
+
     #[test]
     fn replace_attaches_new_leaf_content_to_the_real_tree() {
         with_runtime(|| {
