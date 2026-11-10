@@ -42,7 +42,7 @@ CLI generates the native projects and runs the dev loop.
 cargo install whisker-cli
 whisker new my-app && cd my-app
 whisker doctor            # reports missing Rust targets, SDKs and Xcode
-whisker run ios           # or: android, web, desktop (positional, not --ios)
+whisker run ios           # or: android, web, macos (positional, not --ios)
 ```
 
 Start from the generated counter in `src/lib.rs` rather than writing the
