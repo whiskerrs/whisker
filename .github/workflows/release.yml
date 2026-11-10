@@ -16,6 +16,8 @@ on:
         description: Gradle plugin version (blank to reuse the current plugin)
       ios_version:
         description: SwiftPM version (blank to reuse the current SDK)
+      windows_version:
+        description: Windows Host NuGet version (blank to reuse the current package)
       subsecond_version:
         description: Fork crate version (only when whisker-subsecond changes)
   push:
@@ -59,6 +61,7 @@ jobs:
           SDK_VERSION: ${{ inputs.sdk_version }}
           GRADLE_VERSION: ${{ inputs.gradle_version }}
           IOS_VERSION: ${{ inputs.ios_version }}
+          WINDOWS_VERSION: ${{ inputs.windows_version }}
           SUBSECOND_VERSION: ${{ inputs.subsecond_version }}
         run: cargo xtask release prepare
 
@@ -71,6 +74,7 @@ jobs:
       sdk: ${{ steps.plan.outputs.sdk }}
       gradle: ${{ steps.plan.outputs.gradle }}
       ios: ${{ steps.plan.outputs.ios }}
+      windows: ${{ steps.plan.outputs.windows }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -109,14 +113,24 @@ jobs:
       publish: true
     secrets: inherit
 
+  windows-host:
+    needs: plan
+    if: needs.plan.outputs.release == 'true' && needs.plan.outputs.windows != ''
+    uses: ./.github/workflows/publish-windows-host.yml
+    with:
+      version: ${{ needs.plan.outputs.windows }}
+      publish: true
+    secrets: inherit
+
   crates:
     name: Publish Rust and one GitHub Release
-    needs: [plan, android-sdk, gradle-plugin, swiftpm]
+    needs: [plan, android-sdk, gradle-plugin, swiftpm, windows-host]
     if: >-
       !cancelled() && needs.plan.outputs.release == 'true' &&
       (needs.android-sdk.result == 'success' || needs.android-sdk.result == 'skipped') &&
       (needs.gradle-plugin.result == 'success' || needs.gradle-plugin.result == 'skipped') &&
-      (needs.swiftpm.result == 'success' || needs.swiftpm.result == 'skipped')
+      (needs.swiftpm.result == 'success' || needs.swiftpm.result == 'skipped') &&
+      (needs.windows-host.result == 'success' || needs.windows-host.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:

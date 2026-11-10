@@ -24,6 +24,7 @@ mod tests;
 const PLAN_PATH: &str = ".github/release.json";
 const CNG_PATH: &str = "crates/whisker-cng/src/generator.rs";
 const IOS_PATH: &str = "crates/whisker-cng/src/ios_modules.rs";
+const WINDOWS_PATH: &str = "platforms/windows/build.rs";
 const REPOSITORY: &str = "whiskerrs/whisker";
 /// Published crates deliberately removed from the workspace; they stay on crates.io at their last version.
 const RETIRED_CRATES: &[&str] = &["whisker-macos"];
@@ -36,6 +37,9 @@ struct ReleasePlan {
     sdk: Option<String>,
     gradle: Option<String>,
     ios: Option<String>,
+    // Plans written before the Windows Host stream have no `windows` key.
+    #[serde(default)]
+    windows: Option<String>,
     subsecond: Option<String>,
     crates: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,13 +53,26 @@ impl ReleasePlan {
         if let Some(selection) = &plan.selective {
             selection::validate_id(&selection.id)?;
         }
-        for value in [&plan.sdk, &plan.gradle, &plan.ios, &plan.subsecond]
+        for value in plan
+            .native_streams()
             .into_iter()
+            .map(|(_, selected)| selected)
+            .chain([&plan.subsecond])
             .flatten()
         {
             version(value)?;
         }
         Ok(plan)
+    }
+
+    /// Native streams in publishing order, with the version each one publishes.
+    fn native_streams(&self) -> [(&'static str, &Option<String>); 4] {
+        [
+            ("sdk", &self.sdk),
+            ("gradle", &self.gradle),
+            ("ios", &self.ios),
+            ("windows", &self.windows),
+        ]
     }
 
     fn notes_path(&self) -> String {
@@ -97,11 +114,7 @@ impl ReleasePlan {
             manifest["workspace"]["package"]["version"].as_str() == Some(&self.version),
             "workspace version differs from release plan"
         );
-        for (stream, selected) in [
-            ("sdk", &self.sdk),
-            ("gradle", &self.gradle),
-            ("ios", &self.ios),
-        ] {
+        for (stream, selected) in self.native_streams() {
             if let Some(selected) = selected {
                 ensure!(
                     &native::pin(root, stream)? == selected,
@@ -124,11 +137,7 @@ impl ReleasePlan {
     fn validate_selected_streams(&self, root: &Path) -> Result<()> {
         // Main can advance between preparation and merge. Re-evaluate omitted
         // streams against the actual release commit before publishing anything.
-        for (stream, selected) in [
-            ("sdk", &self.sdk),
-            ("gradle", &self.gradle),
-            ("ios", &self.ios),
-        ] {
+        for (stream, selected) in self.native_streams() {
             if selected.is_none() {
                 native::check_selection(root, stream, None)?;
             }
@@ -166,7 +175,7 @@ pub fn run(root: &Path, mode: &str, args: Vec<String>) -> Result<()> {
         ("native-tag", [stream, value]) => native::tag(root, stream, value),
         ("native-verify", [stream, value]) => native::verify(stream, value),
         _ => bail!(
-            "usage: cargo xtask release <preview|prepare|plan|publish>\n       cargo xtask release <native-check|native-stamp|native-tag|native-verify> <sdk|gradle|ios> <version>"
+            "usage: cargo xtask release <preview|prepare|plan|publish>\n       cargo xtask release <native-check|native-stamp|native-tag|native-verify> <sdk|gradle|ios|windows> <version>"
         ),
     }
 }
@@ -184,11 +193,7 @@ fn plan(root: &Path) -> Result<()> {
     plan.validate_selected_streams(root)?;
     output("release", "true")?;
     output("version", &plan.version)?;
-    for (key, value) in [
-        ("sdk", plan.sdk),
-        ("gradle", plan.gradle),
-        ("ios", plan.ios),
-    ] {
+    for (key, value) in plan.native_streams() {
         output(key, value.as_deref().unwrap_or(""))?;
     }
     Ok(())

@@ -1,0 +1,65 @@
+name: publish-windows-host
+
+# Standalone dispatch builds a smoke package. Real publishing is called by release.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Windows Host smoke-build version
+        default: '0.0.0-dev'
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      publish:
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-windows-host
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Check release version and immutable tag
+        id: check
+        if: inputs.publish
+        run: cargo xtask release native-check windows "$VERSION"
+      - name: Build and pack the x64 and ARM64 Host libraries
+        if: steps.check.outputs.published != 'true'
+        run: cargo xtask windows-host-pack "$VERSION"
+      - uses: actions/upload-artifact@v4
+        if: steps.check.outputs.published != 'true'
+        with:
+          name: windows-host-nuget
+          path: target/nuget/*.nupkg
+      - name: Tag built Windows Host
+        if: inputs.publish && steps.check.outputs.published != 'true'
+        run: cargo xtask release native-tag windows "$VERSION"
+      - name: Publish to nuget.org
+        if: inputs.publish && steps.check.outputs.published != 'true'
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: nuget push "target/nuget/Whisker.WindowsHost.$VERSION.nupkg" -Source https://api.nuget.org/v3/index.json -ApiKey "$NUGET_API_KEY" -NonInteractive
+      - name: Verify the public package
+        if: inputs.publish
+        run: cargo xtask release native-verify windows "$VERSION"
