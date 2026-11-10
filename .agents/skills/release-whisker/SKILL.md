@@ -113,7 +113,7 @@ the unified workflow through `workflow_call`.
 The source pins are `WHISKER_SDK_VERSION` and
 `WHISKER_GRADLE_PLUGIN_VERSION` in `crates/whisker-cng/src/generator.rs`, and
 `WHISKER_IOS_SPM_VERSION` in `crates/whisker-cng/src/ios_modules.rs` plus
-`packages/*/Package.swift`. The preparation command keeps these consistent.
+`packages/**/Package.swift`. The preparation command keeps these consistent.
 
 ## Resume a partial release
 
