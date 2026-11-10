@@ -1,0 +1,42 @@
+use whisker_protocol::CursorKeyword;
+
+/// GTK cursor names follow the CSS keyword spellings.
+pub(crate) const fn name(value: CursorKeyword) -> &'static str {
+    match value {
+        CursorKeyword::Auto => "default",
+        CursorKeyword::Default => "default",
+        CursorKeyword::None => "none",
+        CursorKeyword::ContextMenu => "context-menu",
+        CursorKeyword::Help => "help",
+        CursorKeyword::Pointer => "pointer",
+        CursorKeyword::Progress => "progress",
+        CursorKeyword::Wait => "wait",
+        CursorKeyword::Cell => "cell",
+        CursorKeyword::Crosshair => "crosshair",
+        CursorKeyword::Text => "text",
+        CursorKeyword::VerticalText => "vertical-text",
+        CursorKeyword::Alias => "alias",
+        CursorKeyword::Copy => "copy",
+        CursorKeyword::Move => "move",
+        CursorKeyword::NoDrop => "no-drop",
+        CursorKeyword::NotAllowed => "not-allowed",
+        CursorKeyword::Grab => "grab",
+        CursorKeyword::Grabbing => "grabbing",
+        CursorKeyword::ColResize => "col-resize",
+        CursorKeyword::RowResize => "row-resize",
+        CursorKeyword::NResize => "n-resize",
+        CursorKeyword::EResize => "e-resize",
+        CursorKeyword::SResize => "s-resize",
+        CursorKeyword::WResize => "w-resize",
+        CursorKeyword::NeResize => "ne-resize",
+        CursorKeyword::NwResize => "nw-resize",
+        CursorKeyword::SeResize => "se-resize",
+        CursorKeyword::SwResize => "sw-resize",
+        CursorKeyword::EwResize => "ew-resize",
+        CursorKeyword::NsResize => "ns-resize",
+        CursorKeyword::NeswResize => "nesw-resize",
+        CursorKeyword::NwseResize => "nwse-resize",
+        CursorKeyword::ZoomIn => "zoom-in",
+        CursorKeyword::ZoomOut => "zoom-out",
+    }
+}

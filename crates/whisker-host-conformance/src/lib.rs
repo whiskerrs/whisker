@@ -24,6 +24,8 @@ pub enum Host {
     Ios,
     /// macOS AppKit renderer.
     Macos,
+    /// Linux GTK4 renderer.
+    Linux,
 }
 
 impl Host {
@@ -35,6 +37,7 @@ impl Host {
             Self::Android => "android",
             Self::Ios => "ios",
             Self::Macos => "macos",
+            Self::Linux => "linux",
         }
     }
 }

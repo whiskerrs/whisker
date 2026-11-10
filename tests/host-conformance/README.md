@@ -34,7 +34,9 @@ live with `platforms/android/runtime`, inject ABI-equivalent operations, and
 compare bitmaps on an emulator. iOS's SwiftPM tests live with
 `platforms/ios`, inject the mobile C ABI frame, and compare UIKit layer captures
 in a Simulator; the same suite runs natively on macOS against AppKit layer
-captures. All five runners consume the fixtures in this directory.
+captures. Linux drives the real GTK4 frame sink and rasterizes the widget tree
+with the window's GSK renderer under X11. All six runners consume the fixtures
+in this directory.
 
 Manual visual WPT adaptations may attach logical-pixel `samples` to a paint
 checkpoint instead of inventing an exact reference image for behavior whose
@@ -55,6 +57,7 @@ cargo xtask host-conformance desktop
 cargo xtask host-conformance web
 cargo xtask host-conformance android
 cargo xtask host-conformance ios
+xvfb-run -a cargo xtask host-conformance linux
 ```
 
 Desktop conformance is gated by the `whisker-desktop/host-conformance` feature,
@@ -67,7 +70,8 @@ Chrome version and caches a compatible ChromeDriver under `target/xtask`; set
 `GOOGLE_CHROME_BIN` for a non-standard Chrome location or `CHROMEDRIVER` to use
 an explicit driver. Android and iOS require a locally installed platform SDK.
 `xtask` uses the running Android emulator and boots an available iPhone
-Simulator. The same entry points are used by CI.
+Simulator. Linux requires the GTK 4.14 development packages and an X display;
+`xvfb-run` provides one headlessly. The same entry points are used by CI.
 
 `capabilities.json` is the cross-Host implementation checklist. Its property
 lists describe semantic ownership rather than one Host function per CSS

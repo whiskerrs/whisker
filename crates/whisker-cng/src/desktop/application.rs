@@ -75,8 +75,7 @@ publish = false
 [dependencies]
 whisker-app = {{ package = {:?}, path = {:?}{} }}
 whisker-{platform} = {}
-whisker-desktop = {}
-{}
+{}{}
 [profile.dev.package."*"]
 opt-level = 2
 [profile.dev.package.{:?}]
@@ -87,7 +86,11 @@ opt-level = 0
         i.user_crate_path.to_str().context("non-UTF-8 app path")?,
         i.cargo_selection.dependency_options(),
         i.host_dependency,
-        i.desktop_dependency,
+        if windows {
+            format!("whisker-desktop = {}\n", i.desktop_dependency)
+        } else {
+            String::new()
+        },
         crate::rust_element_module_dependencies(&i.element_modules),
         i.user_package
     );
