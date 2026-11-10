@@ -335,15 +335,15 @@ public final class WhiskerTextLabel: UILabel, WhiskerEventSource {
         didSet { setNeedsDisplay() }
     }
 
+    /// Prepared layouts are shared by every label that shows the same measured
+    /// text, so this label applies its paint each time it uses the layout.
     public func installPreparedParagraph(_ layout: WhiskerParagraphLayout) {
         applyWhiskerIndent()
         if let richContent {
             guard richContent.string == layout.storage.string else { return }
-            layout.applyPaint(richContent)
             richLayout = layout
         } else {
             guard let attributedText, attributedText.string == layout.storage.string else { return }
-            layout.applyPaint(attributedText)
             plainLayout = layout
         }
         selectionController?.synchronize()
@@ -352,7 +352,10 @@ public final class WhiskerTextLabel: UILabel, WhiskerEventSource {
 
     func preparedParagraphLayout(width: CGFloat) -> WhiskerParagraphLayout? {
         guard let richContent else { return nil }
-        if let richLayout, richLayout.container.size.width == width { return richLayout }
+        if let richLayout, richLayout.container.size.width == width {
+            richLayout.applyPaint(richContent)
+            return richLayout
+        }
         let layout = WhiskerParagraphLayout(text: richContent, width: width, maxLines: numberOfLines, overflow: richOverflow)
         richLayout = layout
         return layout
@@ -364,7 +367,10 @@ public final class WhiskerTextLabel: UILabel, WhiskerEventSource {
             layout.draw(at: rect.origin)
             return
         }
-        if let plainLayout, drawPlain(plainLayout, in: rect) { return }
+        if let plainLayout, let attributedText {
+            plainLayout.applyPaint(attributedText)
+            if drawPlain(plainLayout, in: rect) { return }
+        }
         super.drawText(in: rect)
         guard let decoration = whiskerDecoration, decoration.style == .wavy else { return }
         let textRect = self.textRect(forBounds: rect, limitedToNumberOfLines: numberOfLines)
