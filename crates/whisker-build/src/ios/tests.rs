@@ -77,6 +77,25 @@ fn bridge_exports_have_leading_underscore() {
     }
 }
 
+/// rustc strips Apple dylibs with `rust-objcopy`, whose misaligned
+/// LINKEDIT string pool Xcode's `ld` refuses to link the app against.
+#[test]
+fn apple_slices_never_let_rustc_strip() {
+    for hot_reload in [false, true] {
+        assert!(
+            release_profile_env(hot_reload).contains(&("CARGO_PROFILE_RELEASE_STRIP", "none")),
+            "hot_reload={hot_reload}",
+        );
+        assert!(strip_link_args(hot_reload).contains(&"-Clink-arg=-Wl,-S"));
+    }
+}
+
+#[test]
+fn only_production_slices_drop_local_symbols() {
+    assert!(strip_link_args(false).contains(&"-Clink-arg=-Wl,-x"));
+    assert!(!strip_link_args(true).contains(&"-Clink-arg=-Wl,-x"));
+}
+
 #[test]
 fn framework_info_plist_contains_executable_name() {
     let plist = framework_info_plist(DEFAULT_MIN_OS);
