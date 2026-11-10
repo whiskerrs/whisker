@@ -269,6 +269,26 @@ impl fmt::Debug for DesktopEventEmitter {
     }
 }
 
+/// One frame of GPU content for a module-owned Desktop element.
+///
+/// The Host owns the device and composites `target` with common Whisker layout,
+/// clipping, transforms, and opacity. Commands the module submits to `queue`
+/// run before that composite.
+pub struct DesktopGpuFrame<'a> {
+    /// The Host's GPU device.
+    pub device: &'a wgpu::Device,
+    /// The Host's GPU queue.
+    pub queue: &'a wgpu::Queue,
+    /// The element-sized render target.
+    pub target: &'a wgpu::TextureView,
+    /// Format of `target`.
+    pub format: wgpu::TextureFormat,
+    /// Physical pixel width of `target`.
+    pub width: u32,
+    /// Physical pixel height of `target`.
+    pub height: u32,
+}
+
 /// RGBA8 content produced by a module-owned Desktop element.
 ///
 /// The module keeps vector decoding or native drawing dependencies on its own
@@ -452,6 +472,14 @@ pub trait DesktopNativeElement: fmt::Debug + 'static {
     fn has_raster_content(&self) -> bool {
         false
     }
+
+    /// Whether this element draws through [`Self::render_gpu`] on every frame.
+    fn has_gpu_content(&self) -> bool {
+        false
+    }
+
+    /// Draws this element's content into the Host-owned target.
+    fn render_gpu(&self, _frame: &DesktopGpuFrame<'_>) {}
 
     /// Whether this native element participates in Desktop text editing.
     fn accepts_text_input(&self) -> bool {
@@ -702,7 +730,9 @@ impl DesktopElementContent {
 
     pub(crate) fn rasterizer(&self) -> Option<&dyn DesktopNativeElement> {
         match self {
-            Self::Native { implementation, .. } if implementation.has_raster_content() => {
+            Self::Native { implementation, .. }
+                if implementation.has_raster_content() || implementation.has_gpu_content() =>
+            {
                 Some(implementation.as_ref())
             }
             Self::Native { .. } => None,

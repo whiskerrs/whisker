@@ -52,9 +52,10 @@ mod host_conformance_tests;
 pub use app::{DesktopAppConfig, DesktopAppError, run, run_with_application_hash};
 use element::DesktopElementRegistry;
 pub use element::{
-    BuiltInElementModule, DesktopElementFactory, DesktopEventEmitter, DesktopModuleDefinition,
-    DesktopNativeElement, DesktopNativeEvent, DesktopRaster, DesktopRasterError,
-    DesktopTextInputEvent, DesktopTextInputKey, DesktopViewDefinition, DesktopViewImplementation,
+    BuiltInElementModule, DesktopElementFactory, DesktopEventEmitter, DesktopGpuFrame,
+    DesktopModuleDefinition, DesktopNativeElement, DesktopNativeEvent, DesktopRaster,
+    DesktopRasterError, DesktopTextInputEvent, DesktopTextInputKey, DesktopViewDefinition,
+    DesktopViewImplementation,
 };
 pub use input::{
     DesktopMouseButton, DesktopPointerAdapter, DesktopPointerEvent, DesktopPointerPhase,
@@ -424,7 +425,8 @@ impl DesktopRuntime {
         Ok(DesktopFrameResult {
             needs_frame: drive.needs_frame
                 || dispatched_resource_event
-                || self.surface.has_active_scroll_animations(),
+                || self.surface.has_active_scroll_animations()
+                || self.surface.has_gpu_content(),
         })
     }
 

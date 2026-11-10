@@ -73,6 +73,10 @@ impl DesktopSurface {
             .render(&self.scene.paint_commands(), text, logical_size, scale)
     }
 
+    pub(crate) fn has_gpu_content(&self) -> bool {
+        self.gpu.has_gpu_content
+    }
+
     pub(crate) fn text_pointer(
         &mut self,
         text: &NativeTextHost,
