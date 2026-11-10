@@ -30,7 +30,8 @@ defaults:
 
 jobs:
   publish:
-    runs-on: windows-latest
+    # windows-latest (VS 2026) lacks v143 ARM64 tools, and v145 libraries would not link under VS 2022.
+    runs-on: windows-2022
     timeout-minutes: 45
     env:
       VERSION: ${{ inputs.version }}
