@@ -86,6 +86,7 @@ members = [
     "packages/whisker-audio",
     "packages/whisker-audio/web",
     "packages/whisker-audio/example",
+    "packages/whisker-mixer",
     "packages/whisker-webview",
     "packages/whisker-webview/example",
 ]

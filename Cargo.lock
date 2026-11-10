@@ -7653,6 +7653,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-mixer"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "whisker-news"
 version = "0.1.0"
 dependencies = [
