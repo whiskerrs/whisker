@@ -68,6 +68,8 @@ pub(crate) struct PoseBinding {
     /// back gesture flips this to `Predictive(edge)` for the drag, then
     /// the settle/cancel restores the route transition.
     pub mode: RwSignal<crate::render::transition::PoseMode>,
+    /// Whether the wrapper is hidden as fully covered.
+    pub covered: RwSignal<bool>,
 }
 
 /// A live bridge a rendered [`Stack`](crate::render::Stack) registers so
@@ -93,6 +95,10 @@ pub(crate) struct StackBridge {
     /// covered `detail/:id` from adopting the current top route's params.
     #[cfg(test)]
     pub under_content_owner: Option<Owner>,
+    #[cfg(test)]
+    pub top_wrapper: Option<whisker::runtime::view::Element>,
+    #[cfg(test)]
+    pub under_wrapper: Option<whisker::runtime::view::Element>,
     /// The stack's backdrop-dim **drive**: when `Some(ctrl)`, the dim
     /// opacity reactively follows `(1 - ctrl.value()) * PB_MAX_DIM`, so it
     /// darkens during the drag AND animates in lockstep with the settle

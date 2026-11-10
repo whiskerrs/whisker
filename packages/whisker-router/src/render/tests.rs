@@ -1469,6 +1469,7 @@ mod replace_repro {
         visibility: HashMap<Element, String>,
         opacity: HashMap<Element, f32>,
         pointer_events: HashMap<Element, String>,
+        a11y_hidden: HashMap<Element, bool>,
         ops: Vec<String>,
         /// A positioned insert whose reference wasn't a live child — the
         /// on-device silent drop. Non-empty = the bug is reproduced.
@@ -1582,6 +1583,26 @@ mod replace_repro {
             )
         }
 
+        fn path_a11y_hidden(&self, root: Element, el: Element) -> Option<Vec<bool>> {
+            let path = self.path_elements(root, el)?;
+            let inner = self.0.borrow();
+            Some(
+                path.iter()
+                    .map(|e| inner.a11y_hidden.get(e).copied().unwrap_or(false))
+                    .collect(),
+            )
+        }
+
+        /// `(a11y hidden, visibility, opacity)` last applied to `el`.
+        fn concealment(&self, el: Element) -> (bool, Option<String>, Option<f32>) {
+            let inner = self.0.borrow();
+            (
+                inner.a11y_hidden.get(&el).copied().unwrap_or(false),
+                inner.visibility.get(&el).cloned(),
+                inner.opacity.get(&el).copied(),
+            )
+        }
+
         fn path_opacities(&self, root: Element, el: Element) -> Option<Vec<Option<f32>>> {
             let path = self.path_elements(root, el)?;
             let inner = self.0.borrow();
@@ -1623,6 +1644,12 @@ mod replace_repro {
                 .entry(handle)
                 .or_default()
                 .insert(key.to_string(), value.to_string());
+        }
+        fn set_accessibility(&self, handle: Element, accessibility: whisker::Accessibility) {
+            self.0
+                .borrow_mut()
+                .a11y_hidden
+                .insert(handle, accessibility.hidden);
         }
         fn set_specified_style(
             &self,
@@ -2135,6 +2162,98 @@ mod replace_repro {
         });
     }
 
+    const COVERED: (bool, Option<&str>, Option<f32>) = (true, Some("hidden"), Some(0.0));
+
+    fn concealment_of(rec: &Rec, el: Element) -> (bool, Option<&'static str>, Option<f32>) {
+        let (hidden, visibility, opacity) = rec.concealment(el);
+        let visibility = visibility.map(|v| if v == "hidden" { "hidden" } else { "visible" });
+        (hidden, visibility, opacity)
+    }
+
+    fn covered_under_after_push(rec: &Rec) -> (RouterHandle, Element) {
+        let h = real_leaf_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+        let under = h
+            .active_stack_bridge()
+            .and_then(|b| b.under_wrapper)
+            .expect("under wrapper after push");
+        assert_eq!(concealment_of(rec, under), COVERED, "precondition");
+        (h, under)
+    }
+
+    #[test]
+    fn push_hides_the_covered_under_once_the_slide_settles() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle();
+                let _slot = mount_node(&h, NodePath::root());
+                flush();
+                h.navigate("/detail/1").unwrap();
+                flush();
+                whisker_animation::__step_for_tests(0.0);
+                flush();
+                let bridge = h.active_stack_bridge().expect("bridge mid-push");
+                let under = bridge.under_wrapper.expect("under wrapper");
+                assert!(
+                    !rec.concealment(under).0,
+                    "the under stays exposed while the push slides"
+                );
+
+                settle_animations();
+                assert_eq!(concealment_of(&rec, under), COVERED);
+                let top = bridge.top_wrapper.expect("top wrapper");
+                assert!(!rec.concealment(top).0, "the top stays accessible");
+            });
+        });
+    }
+
+    #[test]
+    fn pop_start_reveals_the_covered_under() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let (h, under) = covered_under_after_push(&rec);
+                assert!(h.back().is_ok());
+                flush();
+                assert_eq!(
+                    concealment_of(&rec, under),
+                    (false, Some("visible"), Some(1.0)),
+                    "the revealed screen is exposed from the pop's first frame"
+                );
+                settle_animations();
+                assert!(!rec.concealment(under).0);
+            });
+        });
+    }
+
+    #[test]
+    fn cancelled_back_gesture_re_hides_the_under() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let (h, under) = covered_under_after_push(&rec);
+                let bridge = begin(&h, SwipeEdge::Left).expect("detail can reveal home");
+                flush();
+                assert!(
+                    !rec.concealment(under).0,
+                    "a starting back gesture exposes the under"
+                );
+                scrub(&bridge, 0.4);
+                flush();
+                assert_eq!(rec.concealment(under).1.as_deref(), Some("visible"));
+
+                settle(&h, &bridge, /* commit = */ false, None);
+                settle_animations();
+                assert_eq!(concealment_of(&rec, under), COVERED);
+            });
+        });
+    }
+
     /// Two-tab `Switch`; the NON-first branch's leaf renders a
     /// `create_element_by_name` element (standing in for a
     /// `module_element` / `whisker-svg` `SvgRenderer`, i.e. what
@@ -2234,6 +2353,19 @@ mod replace_repro {
                     "inactive branch must reject pointer input\nops:\n{}",
                     rec.0.borrow().ops.join("\n")
                 );
+                assert!(
+                    rec.path_a11y_hidden(root, native_b)
+                        .expect("native leaf reachable from root")
+                        .contains(&true),
+                    "inactive branch must be hidden from accessibility"
+                );
+                let native_a = rec.by_cid("native-a").expect("first branch leaf");
+                assert!(
+                    !rec.path_a11y_hidden(root, native_a)
+                        .expect("first branch leaf reachable from root")
+                        .contains(&true),
+                    "the selected branch must stay accessible"
+                );
 
                 // Selecting the branch restores paint and input without any
                 // 0→real layout transition.
@@ -2270,6 +2402,18 @@ mod replace_repro {
                     pointer_events.iter().all(|v| v.as_deref() != Some("none")),
                     "selected branch must accept pointer input\nops:\n{}",
                     rec.0.borrow().ops.join("\n")
+                );
+                assert!(
+                    !rec.path_a11y_hidden(root, native_b)
+                        .expect("native leaf still reachable after group navigation")
+                        .contains(&true),
+                    "selected branch must be accessible"
+                );
+                assert!(
+                    rec.path_a11y_hidden(root, native_a)
+                        .expect("first branch leaf reachable from root")
+                        .contains(&true),
+                    "the deselected branch must leave the accessibility tree"
                 );
             });
         });
