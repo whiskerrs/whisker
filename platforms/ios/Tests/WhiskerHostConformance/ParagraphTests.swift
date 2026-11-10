@@ -151,6 +151,48 @@ extension ParagraphTests {
         XCTAssertEqual(label.accessibilityLabel, "")
     }
 
+    func testLabelsSharingPreparedLayoutKeepTheirOwnPaint() throws {
+        let font = UIFont.systemFont(ofSize: 36, weight: .black)
+        let layout = WhiskerParagraphLayout(text: NSAttributedString(string: "B", attributes: [.font: font]), width: 100, maxLines: 0, overflow: .clip)
+        for rich in [false, true] {
+            func label(_ color: UIColor) -> WhiskerTextLabel {
+                let label = WhiskerTextLabel(frame: CGRect(x: 0, y: 0, width: 100, height: 60))
+                let text = NSAttributedString(string: "B", attributes: [.font: font, .foregroundColor: color])
+                if rich { label.richContent = text } else { label.attributedText = text }
+                label.installPreparedParagraph(layout)
+                return label
+            }
+            let red = label(.red)
+            let blue = label(.blue)
+            XCTAssertEqual(try inkColor(red), .red, "rich: \(rich)")
+            XCTAssertEqual(try inkColor(blue), .blue, "rich: \(rich)")
+        }
+    }
+
+    private enum Ink { case red, blue }
+
+    private func inkColor(_ label: WhiskerTextLabel) throws -> Ink? {
+        let size = label.bounds.size
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { _ in label.drawText(in: label.bounds) }
+        let cgImage = try XCTUnwrap(image.cgImage)
+        let width = Int(size.width), height = Int(size.height)
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        pixels.withUnsafeMutableBytes { bytes in
+            let context = CGContext(data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        var reds = 0, blues = 0
+        for index in stride(from: 0, to: pixels.count, by: 4) where pixels[index + 3] > 200 {
+            if pixels[index] > 200 && pixels[index + 2] < 30 { reds += 1 }
+            if pixels[index + 2] > 200 && pixels[index] < 30 { blues += 1 }
+        }
+        if reds > 0 && blues == 0 { return .red }
+        if blues > 0 && reds == 0 { return .blue }
+        return nil
+    }
+
     func testPreparationLeaseRetainsLayoutUntilCacheRelease() {
         let cache = PreparedParagraphs()
         var layout: WhiskerParagraphLayout? = WhiskerParagraphLayout(text: NSAttributedString(string: "kept", attributes: [.font: UIFont.systemFont(ofSize: 16)]), width: 100, maxLines: 0, overflow: .clip)
