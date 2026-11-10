@@ -17,6 +17,7 @@ include = [
     "build.gradle.kts",
     "src/lib.rs",
     "android/**/*.kt",
+    "android/**/*.xml",
     "ios/**/*.swift",
     "README.md",
 ]
