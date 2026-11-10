@@ -216,11 +216,12 @@ They differ in how they connect to the operating system or browser.
 | [Android](../platforms/android/runtime/) | Kotlin/JNI and the mobile FFI Driver | Android views, frame callbacks, text measurement, drawing, and native modules |
 | [iOS](../platforms/ios/) | Swift and the mobile FFI Driver | UIKit views, frame callbacks, text measurement, drawing, and native modules |
 | [macOS](../platforms/ios/) | Swift and the mobile FFI Driver | The iOS Host built against AppKit: AppKit views, frame callbacks, text measurement, drawing, and native modules |
+| [Linux](../platforms/linux/src/lib.rs) | Direct Rust calls | GTK4 widgets placed with Rust geometry, Pango text measurement, GSK snapshot drawing, and the GLib frame clock |
 | [Web](../platforms/web/src/lib.rs) | Direct Rust calls from WebAssembly | DOM presentation, browser measurement and input, `requestAnimationFrame` scheduling |
 | [Desktop](../platforms/desktop/src/lib.rs) | Direct Rust calls | A shared `winit` window/event loop, `cosmic-text` measurement, and `wgpu` drawing |
 
-The Windows and Linux target crates sit above the common Desktop Host.
-They provide OS-named entry points and a place for platform-specific integration;
+The Windows target crate sits above the common Desktop Host.
+It provides an OS-named entry point and a place for platform-specific integration;
 the common renderer lives in `platforms/desktop`.
 
 Android, iOS, and macOS need a foreign-function interface because their launch
