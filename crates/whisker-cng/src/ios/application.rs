@@ -330,7 +330,7 @@ fn declarations(inputs: &IosInputs) -> Result<IosProjectIr> {
     }
     for (path, entry) in crate::ios_modules::module_files(
         &inputs.modules,
-        &inputs.workspace_root,
+        inputs.host_sdk.as_deref().unwrap_or(&inputs.workspace_root),
         crate::modules::ModulePlatform::Ios,
     ) {
         apple.files.insert(path, ProjectFile::Generated { entry });

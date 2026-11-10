@@ -57,6 +57,11 @@ pub struct IosInputs {
     /// aggregator as part of this CNG transaction.
     #[serde(default)]
     pub modules: Vec<ResolvedModule>,
+    /// Local Swift package root for the Host SDK, named `whisker`. `None`
+    /// resolves the released package unless `workspace_root` is a Whisker
+    /// source checkout.
+    #[serde(default)]
+    pub host_sdk: Option<PathBuf>,
     /// Legacy plugin plist entries merged into the application declaration.
     /// Nested dictionaries and mixed arrays are preserved by the plist serializer.
     #[serde(default)]
@@ -298,13 +303,14 @@ pub fn inputs_from_with_engine(
         workspace_root,
         user_package,
         modules: Vec::new(),
+        host_sdk: None,
         extra_info_plist,
         extra_files,
         pbxproj_ops,
         // Bump on any template or renderer change: it feeds the sync
         // fingerprint, and without it existing `gen/ios/` trees keep
         // their stale output.
-        template_version: 40,
+        template_version: 41,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -336,6 +342,7 @@ mod tests {
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
             modules: Vec::new(),
+            host_sdk: None,
             extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),

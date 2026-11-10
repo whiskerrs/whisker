@@ -63,6 +63,7 @@ pub(super) fn declarations(inputs: &AndroidInputs) -> Result<AndroidProjectIr> {
     // snippets; model-owned IDs/metadata are rendered separately below.
     for key in [
         "whisker_workspace_path",
+        "whisker_host_sdk_path",
         "whisker_user_package",
         "whisker_gradle_plugin_version",
         "rust_lib_name",

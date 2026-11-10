@@ -19,8 +19,9 @@ pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.19";
 /// `gen/ios/whisker_modules/`. Module sources stay in their own
 /// package directories — each module ships a hand-written
 /// `Package.swift` — and the aggregator depends on them via
-/// `.package(path: …)`. The Host SDK itself is the released Whisker
-/// package pinned by [`WHISKER_IOS_SPM_VERSION`].
+/// `.package(path: …)`. The Host SDK is the local Whisker source tree
+/// when one is available, otherwise the released package pinned by
+/// [`WHISKER_IOS_SPM_VERSION`].
 ///
 /// Mirror of Android's module-aggregator generation for iOS. The Android path
 /// generates `settings.gradle.kts` includes;
@@ -82,7 +83,7 @@ pub fn stage_module_swift_sources(
 /// Declare the aggregator files without writing to the native project.
 pub(crate) fn module_files(
     modules: &[ResolvedModule],
-    workspace_root: &Path,
+    whisker_source: &Path,
     platform: ModulePlatform,
 ) -> std::collections::BTreeMap<whisker_plugin::project::ProjectPath, whisker_plugin::FileEntry> {
     // The module manifest is authoritative; unsupported and common-only
@@ -96,14 +97,14 @@ pub(crate) fn module_files(
         .collect();
 
     // A Whisker source checkout contains the root Swift package that owns
-    // WhiskerModule, WhiskerRuntime, and the codegen plugin. Prefer it while
-    // developing the framework itself so the generated app tests the current
-    // Host sources instead of the last published SDK tag. Consumer workspaces
-    // do not have this layout and continue to resolve the released package.
-    let local_whisker_package = workspace_root
+    // WhiskerModule, WhiskerRuntime, and the codegen plugin. Prefer it for the
+    // framework workspace and for git or path `whisker` dependencies so the
+    // Host sources match the Rust revision. Registry consumers do not have
+    // this layout and continue to resolve the released package.
+    let local_whisker_package = whisker_source
         .join("platforms/ios/Sources/WhiskerRuntime")
         .is_dir()
-        .then_some(workspace_root);
+        .then_some(whisker_source);
 
     use whisker_plugin::{FileEntry, project::ProjectPath};
     [

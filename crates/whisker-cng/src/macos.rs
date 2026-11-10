@@ -43,6 +43,10 @@ pub struct MacosInputs {
     pub workspace_root: PathBuf,
     /// Modules whose macOS SwiftPM packages join the aggregator.
     pub modules: Vec<ResolvedModule>,
+    /// Local Swift package root for the Host SDK, named `whisker`. `None`
+    /// resolves the released package unless `workspace_root` is a Whisker
+    /// source checkout.
+    pub host_sdk: Option<PathBuf>,
     /// `MACOSX_DEPLOYMENT_TARGET` of the application target.
     pub minimum_system_version: String,
     /// Source PNG configured through the shared AppIcon plugin.
@@ -124,9 +128,10 @@ pub fn inputs_from(
         user_crate_path,
         workspace_root,
         modules: Vec::new(),
+        host_sdk: None,
         minimum_system_version,
         app_icon_png,
-        template_version: 13,
+        template_version: 14,
         cargo_selection: crate::CargoSelection::default(),
     })
 }

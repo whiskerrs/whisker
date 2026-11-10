@@ -249,7 +249,7 @@ fn sync_android(
     project_config
         .plugins
         .retain(|name, _| !has_legacy || project_names.contains(name.as_str()));
-    let inputs = crate::android::inputs_from_with_engine(
+    let mut inputs = crate::android::inputs_from_with_engine(
         &legacy,
         &legacy_config,
         package.replace('-', "_"),
@@ -259,6 +259,7 @@ fn sync_android(
         WHISKER_GRADLE_PLUGIN_VERSION.to_string(),
         WHISKER_MAVEN_URL.to_string(),
     )?;
+    inputs.whisker_host_sdk_path = graph.host_sdk.clone();
     let template_version = inputs.template_version;
     let mut projects = if has_legacy {
         // Built-in and legacy changes are already in inputs. The application
@@ -381,6 +382,7 @@ fn sync_ios(
     )?;
     inputs.cargo_selection = selection.clone();
     inputs.modules = graph.modules.clone();
+    inputs.host_sdk = swift_host_sdk(crate_dir, graph)?;
     let project_name = inputs.scheme.clone();
     let template_version = inputs.template_version;
     let mut projects = if has_legacy {
@@ -430,6 +432,15 @@ fn sync_ios(
     })
 }
 
+/// Swift package root for the Host SDK resolved with the Rust crates.
+fn swift_host_sdk(crate_dir: &Path, graph: &ProjectDependencyGraph) -> Result<Option<PathBuf>> {
+    graph
+        .host_sdk
+        .as_deref()
+        .map(|root| crate::host_sdk::swift_package_root(&crate_dir.join("gen"), root))
+        .transpose()
+}
+
 fn sync_macos(
     app_config: &Config,
     crate_dir: &Path,
@@ -447,6 +458,7 @@ fn sync_macos(
     )?;
     inputs.cargo_selection = selection.clone();
     inputs.modules = graph.modules.clone();
+    inputs.host_sdk = swift_host_sdk(crate_dir, graph)?;
     let template_version = inputs.template_version;
     let project_name = inputs.app_name.clone();
     let discovered: Vec<_> = graph
