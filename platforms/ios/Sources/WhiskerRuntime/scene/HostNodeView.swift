@@ -25,6 +25,7 @@ final class WhiskerNodeView: UIView {
     private var overflowMaskCompositionBounds = CGRect.zero
     private var ancestorScrollObservations: [NSKeyValueObservation] = []
     private let clipPathMask = CAShapeLayer()
+    private let contentClipMask = OverflowMaskLayer()
     private var clipPath: HostClipPath?
     private var boxShadows: [HostBoxShadow] = []
     private var boxShadowLayers: [CAShapeLayer] = []
@@ -141,6 +142,7 @@ final class WhiskerNodeView: UIView {
         updateBoxShadowLayers()
         updateOverflowMask()
         updateClipPathMask()
+        updateContentClipMask()
         paintView.setNeedsDisplay()
     }
 
@@ -258,6 +260,7 @@ final class WhiskerNodeView: UIView {
         updateBoxShadowLayers()
         updateOverflowMask()
         updateClipPathMask()
+        updateContentClipMask()
     }
 
     func setClipPath(_ clipPath: HostClipPath?) {
@@ -569,6 +572,26 @@ final class WhiskerNodeView: UIView {
         clipPathMask.fillColor = UIColor.white.cgColor
         clipPathMask.fillRule = clipPath.fillRule
         layer.mask = clipPathMask
+    }
+
+    /// Rounds a childless element's native content like a CSS replaced element.
+    private func updateContentClipMask() {
+        guard let mountedElement else { return }
+        let contentLayer = mountedElement.view.layer
+        guard mountedElement.registration.childPolicy == .none,
+              let path = boxPainter.contentBoxClipPath(in: bounds, contentBox: contentFrame)
+        else {
+            if contentLayer.mask === contentClipMask { contentLayer.mask = nil }
+            return
+        }
+        var translation = CGAffineTransform(
+            translationX: -contentFrame.minX,
+            y: -contentFrame.minY
+        )
+        contentClipMask.frame = CGRect(origin: .zero, size: contentFrame.size)
+        contentClipMask.path = path.copy(using: &translation)
+        contentClipMask.fillColor = UIColor.white.cgColor
+        contentLayer.mask = contentClipMask
     }
 
     private func hostCompositionBounds() -> CGRect {

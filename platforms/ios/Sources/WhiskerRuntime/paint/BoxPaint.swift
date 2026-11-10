@@ -198,6 +198,20 @@ final class HostBoxPainter {
         roundedPath(in: bounds, radii: cornerRadii).cgPath
     }
 
+    /// Returns the rounded content-box path, or nil when every content corner is square.
+    func contentBoxClipPath(in bounds: CGRect, contentBox: CGRect) -> CGPath? {
+        guard !contentBox.isEmpty else { return nil }
+        let radii = insetCornerRadii(
+            normalizedRadii(cornerRadii, in: bounds),
+            top: max(0, contentBox.minY - bounds.minY),
+            right: max(0, bounds.maxX - contentBox.maxX),
+            bottom: max(0, bounds.maxY - contentBox.maxY),
+            left: max(0, contentBox.minX - bounds.minX)
+        )
+        guard radii.contains(where: { $0.width > 0 && $0.height > 0 }) else { return nil }
+        return roundedPath(in: contentBox, radii: radii).cgPath
+    }
+
     func overflowClipPath(
         in bounds: CGRect,
         visibleBounds: CGRect,

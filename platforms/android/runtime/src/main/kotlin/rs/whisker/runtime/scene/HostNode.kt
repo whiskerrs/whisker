@@ -13,6 +13,7 @@ import android.view.PointerIcon
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import rs.whisker.runtime.WhiskerView
+import rs.whisker.runtime.WhiskerChildPolicy
 import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerMountedElement
 import rs.whisker.runtime.paint.HostBoxPaint
@@ -89,6 +90,7 @@ internal class HostNode(
     private var needsSoftwareCanvasTransform = false
     private var overflowClipRect = RectF()
     private var overflowClipPath: Path? = null
+    private var contentClipPath: Path? = null
     private var paintClipPath: Path? = null
     private var resolvedBoxGeometry: ResolvedBoxGeometry? = null
     private var backdropRenderer: HostBackdropBlurRenderer? = null
@@ -220,38 +222,67 @@ internal class HostNode(
     override fun onTouchEvent(event: MotionEvent): Boolean =
         whiskerVisible && super.onTouchEvent(event)
 
-    fun setOverflowClipGeometry(geometry: ResolvedBoxGeometry) {
+    /** [contentBox] is in physical pixels relative to this node's border box. */
+    fun setOverflowClipGeometry(geometry: ResolvedBoxGeometry, contentBox: RectF) {
         resolvedBoxGeometry = geometry
         val top = geometry.borderWidths[0].coerceIn(0f, geometry.height)
         val right = geometry.borderWidths[1].coerceIn(0f, geometry.width)
         val bottom = geometry.borderWidths[2].coerceIn(0f, geometry.height)
         val left = geometry.borderWidths[3].coerceIn(0f, geometry.width)
         overflowClipRect = RectF(left, top, geometry.width - right, geometry.height - bottom)
+        contentClipPath = leafContentClipPath(geometry, contentBox)
         if (overflowClipRect.isEmpty) {
             overflowClipPath = Path()
             invalidate()
             return
         }
-        val outer = geometry.cornerRadii
-        val inner = normalizeRadii(
-            floatArrayOf(
-                (outer[0] - left).coerceAtLeast(0f),
-                (outer[1] - top).coerceAtLeast(0f),
-                (outer[2] - right).coerceAtLeast(0f),
-                (outer[3] - top).coerceAtLeast(0f),
-                (outer[4] - right).coerceAtLeast(0f),
-                (outer[5] - bottom).coerceAtLeast(0f),
-                (outer[6] - left).coerceAtLeast(0f),
-                (outer[7] - bottom).coerceAtLeast(0f),
-            ),
-            overflowClipRect.width(),
-            overflowClipRect.height(),
-        )
+        val inner = insetRadii(geometry.cornerRadii, top, right, bottom, left, overflowClipRect)
         overflowClipPath = Path().apply {
             addRoundRect(overflowClipRect, inner, Path.Direction.CW)
         }
         invalidate()
     }
+
+    /**
+     * Rounds a childless element's native content like a CSS replaced element,
+     * or returns null when its content corners are square.
+     */
+    private fun leafContentClipPath(geometry: ResolvedBoxGeometry, contentBox: RectF): Path? {
+        if (mountedElement?.registration?.childPolicy != WhiskerChildPolicy.None) return null
+        if (contentBox.isEmpty) return null
+        val radii = insetRadii(
+            geometry.cornerRadii,
+            contentBox.top.coerceAtLeast(0f),
+            (geometry.width - contentBox.right).coerceAtLeast(0f),
+            (geometry.height - contentBox.bottom).coerceAtLeast(0f),
+            contentBox.left.coerceAtLeast(0f),
+            contentBox,
+        )
+        if (radii.all { it == 0f }) return null
+        return Path().apply { addRoundRect(contentBox, radii, Path.Direction.CW) }
+    }
+
+    private fun insetRadii(
+        outer: FloatArray,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        left: Float,
+        box: RectF,
+    ): FloatArray = normalizeRadii(
+        floatArrayOf(
+            (outer[0] - left).coerceAtLeast(0f),
+            (outer[1] - top).coerceAtLeast(0f),
+            (outer[2] - right).coerceAtLeast(0f),
+            (outer[3] - top).coerceAtLeast(0f),
+            (outer[4] - right).coerceAtLeast(0f),
+            (outer[5] - bottom).coerceAtLeast(0f),
+            (outer[6] - left).coerceAtLeast(0f),
+            (outer[7] - bottom).coerceAtLeast(0f),
+        ),
+        box.width(),
+        box.height(),
+    )
 
     fun setPaintClipPath(path: Path?) {
         paintClipPath = path
@@ -337,7 +368,17 @@ internal class HostNode(
         }
     }
 
-    override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean =
+    override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
+        val clip = contentClipPath?.takeIf { child === mountedElement?.view }
+            ?: return drawUnclippedChild(canvas, child, drawingTime)
+        val save = canvas.save()
+        canvas.clipPath(clip)
+        val result = drawUnclippedChild(canvas, child, drawingTime)
+        canvas.restoreToCount(save)
+        return result
+    }
+
+    private fun drawUnclippedChild(canvas: Canvas, child: View, drawingTime: Long): Boolean =
         root?.drawBackdropCaptureChild(canvas, child) ?: super.drawChild(canvas, child, drawingTime)
 
     override fun draw(canvas: Canvas) {
