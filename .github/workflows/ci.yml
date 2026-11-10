@@ -217,6 +217,24 @@ jobs:
         run: bash .github/scripts/install-ubuntu-packages.sh libgtk-4-dev libgl1-mesa-dri xvfb fonts-dejavu-core fonts-noto-core
       - run: xvfb-run -a cargo xtask host-conformance linux
 
+  host-conformance-windows:
+    name: Host conformance (Windows / WinUI 3)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Restore the Windows App SDK and install its runtime
+        shell: pwsh
+        working-directory: platforms/windows/host
+        run: |
+          nuget restore packages.config -PackagesDirectory packages -NonInteractive
+          $msix = Resolve-Path packages/Microsoft.WindowsAppSDK.Runtime.*/tools/MSIX/win10-x64
+          foreach ($name in 'Microsoft.WindowsAppRuntime.2.msix', 'Microsoft.WindowsAppRuntime.Main.2.msix', 'Microsoft.WindowsAppRuntime.Singleton.2.msix', 'Microsoft.WindowsAppRuntime.DDLM.2.msix') {
+            Add-AppxPackage -Path (Join-Path $msix $name)
+          }
+      - run: cargo xtask host-conformance windows
+
   host-conformance-web:
     name: Host conformance (Web / Chrome)
     runs-on: ubuntu-latest
