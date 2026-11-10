@@ -1,5 +1,7 @@
 #include "text.h"
 
+#include "paint.h"
+
 #include <cmath>
 #include <vector>
 
@@ -53,7 +55,7 @@ TextStyle TextStyle::From(const WhiskerMobileText& text) {
   style.line_height = text.line_height;
   style.alignment = text.alignment;
   style.direction = text.direction;
-  style.color = text.color;
+  style.color = OwnedColor(text.color);
   return style;
 }
 
@@ -160,12 +162,8 @@ void TextEngine::Draw(ID2D1DeviceContext* context, const TextStyle& style, float
   // Half a pixel of slack keeps DirectWrite from wrapping text measured at exactly this width.
   auto layout = Layout(style, style.wrap ? width + 0.5f : kUnbounded);
   if (!style.wrap) layout->SetMaxWidth(width);
-  auto const& color = style.color;
   winrt::com_ptr<ID2D1SolidColorBrush> brush;
-  context->CreateSolidColorBrush(
-      D2D1::ColorF(color.red / 255.0f, color.green / 255.0f, color.blue / 255.0f,
-                   color.kind == 1 ? color.alpha : 1.0f),
-      brush.put());
+  context->CreateSolidColorBrush(ToD2DColor(style.color), brush.put());
   context->DrawTextLayout({0, 0}, layout.get(), brush.get(),
                           D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
 }

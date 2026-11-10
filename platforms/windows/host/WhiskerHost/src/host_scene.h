@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -29,6 +30,8 @@ class HostScene {
     uint64_t parent = 0;
     int32_t z_order = 0;
     WhiskerMobileLayoutGeometry geometry{};
+    std::optional<WhiskerMobileBoxPaint> paint;
+    bool box_dirty = false;
     bool clip_horizontal = false;
     bool clip_vertical = false;
     bool visible = true;
@@ -46,6 +49,7 @@ class HostScene {
   void Layout(Node& node, const WhiskerMobileLayoutGeometry& geometry);
   void UpdateClip(Node& node);
   void SyncChildren(uint64_t parent);
+  void DrawBox(Node& node);
   void DrawText(Node& node);
 
   winrt::Microsoft::UI::Composition::Compositor compositor_;

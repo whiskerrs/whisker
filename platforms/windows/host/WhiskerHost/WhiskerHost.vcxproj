@@ -38,11 +38,13 @@
     <ClInclude Include="include\whisker\whisker_view.h" />
     <ClInclude Include="src\graphics.h" />
     <ClInclude Include="src\host_scene.h" />
+    <ClInclude Include="src\paint.h" />
     <ClInclude Include="src\text.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\graphics.cpp" />
     <ClCompile Include="src\host_scene.cpp" />
+    <ClCompile Include="src\paint.cpp" />
     <ClCompile Include="src\text.cpp" />
     <ClCompile Include="src\whisker_view.cpp" />
   </ItemGroup>

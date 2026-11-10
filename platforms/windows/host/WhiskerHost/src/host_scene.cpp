@@ -1,9 +1,13 @@
 #include "host_scene.h"
 
+#include "paint.h"
+
 #include <algorithm>
 #include <cmath>
 
+#include <windows.graphics.interop.h>
 #include <winrt/Microsoft.Graphics.DirectX.h>
+#include <winrt/Windows.Graphics.h>
 #include <winrt/Windows.Foundation.Numerics.h>
 #include <winrt/Windows.UI.h>
 
@@ -18,9 +22,33 @@ constexpr float kUnclipped = 1.0e5f;
 constexpr uint64_t kRoot = 0;
 
 winrt::Windows::UI::Color ToColor(const WhiskerMobileColor& color) {
-  if (color.kind != 1) return {0, 0, 0, 0};
-  return {static_cast<uint8_t>(std::lround(color.alpha * 255.0f)), color.red, color.green,
-          color.blue};
+  auto c = ToD2DColor(color);
+  auto byte = [](float v) { return static_cast<uint8_t>(std::lround(v * 255.0f)); };
+  return {byte(c.a), byte(c.r), byte(c.g), byte(c.b)};
+}
+
+struct GeometrySource
+    : winrt::implements<GeometrySource, winrt::Windows::Graphics::IGeometrySource2D,
+                        ABI::Windows::Graphics::IGeometrySource2DInterop> {
+  explicit GeometrySource(winrt::com_ptr<ID2D1Geometry> geometry) : geometry_(std::move(geometry)) {}
+  HRESULT __stdcall GetGeometry(ID2D1Geometry** value) override {
+    geometry_.copy_to(value);
+    return S_OK;
+  }
+  HRESULT __stdcall TryGetGeometryUsingFactory(ID2D1Factory*, ID2D1Geometry** value) override {
+    *value = nullptr;
+    return E_NOTIMPL;
+  }
+  winrt::com_ptr<ID2D1Geometry> geometry_;
+};
+
+ID2D1Factory* SharedFactory() {
+  static winrt::com_ptr<ID2D1Factory> factory = [] {
+    winrt::com_ptr<ID2D1Factory> created;
+    winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, created.put()));
+    return created;
+  }();
+  return factory.get();
 }
 
 }  // namespace
@@ -35,6 +63,7 @@ void HostScene::SetScale(float scale) {
   if (scale == scale_) return;
   scale_ = scale;
   for (auto& [id, node] : nodes_) {
+    node.box_dirty = true;
     if (node.has_text) node.text_dirty = true;
   }
 }
@@ -66,6 +95,7 @@ bool HostScene::Apply(const WhiskerMobileFrame& frame, WhiskerMobileApplyRespons
   for (auto parent : dirty_children_) SyncChildren(parent);
   dirty_children_.clear();
   for (auto& [id, node] : nodes_) {
+    if (node.box_dirty) DrawBox(node);
     if (node.text_dirty) DrawText(node);
   }
   scene_epoch_ = frame.scene_epoch;
@@ -110,8 +140,9 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       break;
     case WHISKER_OP_PAINT: {
       if (!op.payload) return false;
-      auto const& paint = *static_cast<const WhiskerMobileBoxPaint*>(op.payload);
-      node.background.Brush(compositor_.CreateColorBrush(ToColor(paint.background)));
+      node.paint = OwnedPaint(*static_cast<const WhiskerMobileBoxPaint*>(op.payload));
+      node.box_dirty = true;
+      UpdateClip(node);
       break;
     }
     case WHISKER_OP_CLIP:
@@ -237,6 +268,7 @@ void HostScene::Layout(Node& node, const WhiskerMobileLayoutGeometry& geometry) 
   node.background.Size({border.width, border.height});
   node.children_visual.Size({border.width, border.height});
   UpdateClip(node);
+  node.box_dirty = true;
   if (node.has_text) node.text_dirty = true;
 }
 
@@ -244,6 +276,16 @@ void HostScene::UpdateClip(Node& node) {
   if (!node.clip_horizontal && !node.clip_vertical) {
     node.children_visual.Clip(nullptr);
     return;
+  }
+  auto const& border = node.geometry.border;
+  if (node.clip_horizontal && node.clip_vertical) {
+    auto rounded = RoundedRect::From(node.paint ? &*node.paint : nullptr, border.width, border.height);
+    if (!rounded.IsRectilinear()) {
+      auto source = winrt::make<GeometrySource>(rounded.Geometry(SharedFactory()).as<ID2D1Geometry>());
+      auto geometry = compositor_.CreatePathGeometry(comp::CompositionPath(source));
+      node.children_visual.Clip(compositor_.CreateGeometricClip(geometry));
+      return;
+    }
   }
   auto clip = compositor_.CreateInsetClip();
   if (!node.clip_horizontal) {
@@ -255,6 +297,32 @@ void HostScene::UpdateClip(Node& node) {
     clip.BottomInset(-kUnclipped);
   }
   node.children_visual.Clip(clip);
+}
+
+void HostScene::DrawBox(Node& node) {
+  node.box_dirty = false;
+  auto const& border = node.geometry.border;
+  if (!node.paint) {
+    node.background.Brush(nullptr);
+    return;
+  }
+  auto const& paint = *node.paint;
+  if (!NeedsBoxSurface(paint, border.width, border.height) || border.width <= 0 ||
+      border.height <= 0) {
+    node.background.Brush(compositor_.CreateColorBrush(ToColor(paint.background)));
+    return;
+  }
+  winrt::Windows::Graphics::SizeInt32 pixels{
+      static_cast<int32_t>(std::ceil(border.width * scale_)),
+      static_cast<int32_t>(std::ceil(border.height * scale_))};
+  auto surface = graphics_.CreateDrawingSurface2(pixels, dx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                                                 dx::DirectXAlphaMode::Premultiplied);
+  auto brush = compositor_.CreateSurfaceBrush(surface);
+  brush.Stretch(comp::CompositionStretch::Fill);
+  node.background.Brush(brush);
+  DrawSurface(surface, scale_, [&](ID2D1DeviceContext* context) {
+    PaintBox(context, paint, border.width, border.height);
+  });
 }
 
 void HostScene::DrawText(Node& node) {
