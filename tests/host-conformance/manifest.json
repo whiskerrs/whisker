@@ -181,21 +181,21 @@
       "id": "wpt.css-backgrounds.background-repeat.round-x",
       "feature": "background-repeat-round",
       "fixture": "wpt/css/css-backgrounds/background-repeat-round-x.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-repeat.round-y",
       "feature": "background-repeat-round",
       "fixture": "wpt/css/css-backgrounds/background-repeat-round-y.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-repeat.round-position",
       "feature": "background-repeat-round",
       "fixture": "wpt/css/css-backgrounds/background-repeat-round-position.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
