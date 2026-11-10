@@ -322,10 +322,25 @@ impl GtkFrameSink {
             };
             offset[0] = ((width - natural) * factor).max(0.0);
         }
+        text::apply_decoration(&layout, &content.paint.decoration);
         widget.state_mut().text = Some(PaintedText {
             layout,
             color: crate::color::rgba(&content.paint.foreground),
             offset,
+            shadows: content
+                .paint
+                .shadows
+                .iter()
+                .rev()
+                .map(|shadow| {
+                    gtk::gsk::Shadow::new(
+                        crate::color::rgba(&shadow.color),
+                        shadow.offset_x,
+                        shadow.offset_y,
+                        shadow.blur_radius,
+                    )
+                })
+                .collect(),
         });
         widget.queue_draw();
         Ok(())
@@ -517,9 +532,17 @@ impl GtkFrameSink {
             Operation::SetCursor { node, cursor } => {
                 self.node(*node)?.state_mut().cursor = cursor.fallback;
             }
-            Operation::SetBackgroundLayers { .. }
-            | Operation::SetVisualEffects { .. }
-            | Operation::SetTextStyle { .. }
+            Operation::SetBackgroundLayers { node, layers } => {
+                let widget = self.node(*node)?;
+                widget.state_mut().layers = layers.clone();
+                widget.queue_draw();
+            }
+            Operation::SetVisualEffects { node, effects } => {
+                let widget = self.node(*node)?;
+                widget.state_mut().effects = effects.clone();
+                widget.queue_draw();
+            }
+            Operation::SetTextStyle { .. }
             | Operation::SetAccessibility { .. }
             | Operation::SetHitTest { .. }
             | Operation::SetPointerCapture { .. }

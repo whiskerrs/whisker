@@ -10,7 +10,8 @@ use whisker_protocol::{
     AvailableSpace, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextAlignment,
     MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasuredSize,
     MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse,
-    PreparedContentId, SurfaceId, TextMeasurePayload, UnsupportedMeasurementReason,
+    PreparedContentId, SurfaceId, TextDecoration, TextDecorationStyle, TextMeasurePayload,
+    UnsupportedMeasurementReason,
 };
 
 /// Creates a shaping context on GTK's default font map without a display.
@@ -196,6 +197,41 @@ pub(crate) fn set_layout_width(
         layout.set_ellipsize(pango::EllipsizeMode::None);
         layout.set_height(-1);
     }
+}
+
+/// Adds paint-only decoration lines to a measured layout without changing its metrics.
+pub(crate) fn apply_decoration(layout: &pango::Layout, decoration: &TextDecoration) {
+    let lines = decoration.lines;
+    if !(lines.underline || lines.overline || lines.line_through) {
+        return;
+    }
+    let attributes = layout.attributes().unwrap_or_default();
+    let color = crate::color::rgba(&decoration.color);
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 65535.0).round() as u16;
+    let (red, green, blue) = (
+        channel(color.red()),
+        channel(color.green()),
+        channel(color.blue()),
+    );
+    if lines.underline {
+        attributes.insert(pango::AttrInt::new_underline(match decoration.style {
+            TextDecorationStyle::Double => pango::Underline::Double,
+            TextDecorationStyle::Wavy => pango::Underline::Error,
+            TextDecorationStyle::Solid
+            | TextDecorationStyle::Dotted
+            | TextDecorationStyle::Dashed => pango::Underline::Single,
+        }));
+        attributes.insert(pango::AttrColor::new_underline_color(red, green, blue));
+    }
+    if lines.overline {
+        attributes.insert(pango::AttrInt::new_overline(pango::Overline::Single));
+        attributes.insert(pango::AttrColor::new_overline_color(red, green, blue));
+    }
+    if lines.line_through {
+        attributes.insert(pango::AttrInt::new_strikethrough(true));
+        attributes.insert(pango::AttrColor::new_strikethrough_color(red, green, blue));
+    }
+    layout.set_attributes(Some(&attributes));
 }
 
 fn font_description(payload: &TextMeasurePayload) -> pango::FontDescription {

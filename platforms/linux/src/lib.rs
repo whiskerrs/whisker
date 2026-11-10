@@ -15,6 +15,7 @@ mod app;
 mod color;
 mod cursor;
 mod node;
+mod paint;
 mod scene;
 mod text;
 

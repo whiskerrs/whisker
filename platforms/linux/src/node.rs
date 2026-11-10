@@ -5,11 +5,11 @@ use gtk::subclass::prelude::*;
 use gtk::{gdk, glib, graphene, gsk, pango};
 use gtk4 as gtk;
 use whisker_protocol::{
-    BorderLineStyle, BoxClip, BoxPaint, CursorKeyword, LayoutGeometry, OverflowClip,
-    PaintCornerRadius, PaintLengthPercentage, Transform, Visibility,
+    BackgroundLayer, BoxClip, BoxPaint, CursorKeyword, LayoutGeometry, OverflowClip, Transform,
+    Visibility, VisualEffects,
 };
 
-use crate::color;
+use crate::paint;
 
 /// Text painted from the exact Pango layout accepted by measurement.
 #[derive(Clone)]
@@ -18,6 +18,7 @@ pub(crate) struct PaintedText {
     pub(crate) color: gdk::RGBA,
     /// Inline alignment offset for unwrapped text inside the content box.
     pub(crate) offset: [f32; 2],
+    pub(crate) shadows: Vec<gsk::Shadow>,
 }
 
 /// Native scroll position of a ScrollView node.
@@ -42,6 +43,8 @@ pub(crate) struct NodeState {
     pub(crate) id: Option<whisker_protocol::NodeId>,
     pub(crate) geometry: LayoutGeometry,
     pub(crate) paint: Option<BoxPaint>,
+    pub(crate) layers: Vec<BackgroundLayer>,
+    pub(crate) effects: VisualEffects,
     pub(crate) clip: BoxClip,
     pub(crate) transform: Option<Transform>,
     pub(crate) opacity: f32,
@@ -62,6 +65,8 @@ impl Default for NodeState {
             id: None,
             geometry: LayoutGeometry::default(),
             paint: None,
+            layers: Vec::new(),
+            effects: VisualEffects::default(),
             clip: BoxClip {
                 horizontal: OverflowClip::Visible,
                 vertical: OverflowClip::Visible,
@@ -203,22 +208,25 @@ impl NodeWidget {
         }
         let rect = state.geometry.border_box;
         let bounds = graphene::Rect::new(0.0, 0.0, rect.width, rect.height);
-        if state.visibility == Visibility::Visible {
-            if let Some(paint) = &state.paint {
-                paint_box(snapshot, paint, &bounds);
+        let visible = state.visibility == Visibility::Visible;
+        let paint = state.paint.as_ref();
+        if visible {
+            let shadows = &state.effects.box_shadows;
+            paint::paint_box_shadows(snapshot, shadows, paint, &state.geometry, false);
+            paint::paint_background(snapshot, paint, &state.layers, &state.geometry);
+            paint::paint_box_shadows(snapshot, shadows, paint, &state.geometry, true);
+            if let Some(paint) = paint {
+                paint::paint_border(snapshot, paint, &bounds);
             }
             if let Some(text) = &state.text {
-                let content = state.geometry.content_box;
-                snapshot.save();
-                snapshot.translate(&graphene::Point::new(
-                    content.x + text.offset[0],
-                    content.y + text.offset[1],
-                ));
-                snapshot.append_layout(&text.layout, &text.color);
-                snapshot.restore();
+                paint_text(snapshot, text, &state.geometry);
             }
         }
         let clip = clip_rect(&state, &bounds);
+        let outline = visible
+            .then(|| state.effects.outline.clone())
+            .flatten()
+            .map(|outline| (outline, state.paint.clone()));
         drop(state);
         if let Some(clip) = &clip {
             snapshot.push_rounded_clip(clip);
@@ -229,84 +237,30 @@ impl NodeWidget {
         if clip.is_some() {
             snapshot.pop();
         }
+        if let Some((outline, paint)) = outline {
+            paint::paint_outline(snapshot, &outline, paint.as_ref(), &bounds);
+        }
         if translucent {
             snapshot.pop();
         }
     }
 }
 
-fn resolve(value: PaintLengthPercentage, basis: f32) -> f32 {
-    value.length + value.fraction * basis
-}
-
-fn corner(radius: PaintCornerRadius, bounds: &graphene::Rect) -> graphene::Size {
-    graphene::Size::new(
-        resolve(radius.horizontal, bounds.width()),
-        resolve(radius.vertical, bounds.height()),
-    )
-}
-
-pub(crate) fn rounded_rect(paint: Option<&BoxPaint>, bounds: &graphene::Rect) -> gsk::RoundedRect {
-    let Some(paint) = paint else {
-        return gsk::RoundedRect::from_rect(*bounds, 0.0);
-    };
-    let radii = &paint.border_radii;
-    let mut rect = gsk::RoundedRect::new(
-        *bounds,
-        corner(radii.top_left, bounds),
-        corner(radii.top_right, bounds),
-        corner(radii.bottom_right, bounds),
-        corner(radii.bottom_left, bounds),
-    );
-    rect.normalize();
-    rect
-}
-
-fn paint_box(snapshot: &gtk::Snapshot, paint: &BoxPaint, bounds: &graphene::Rect) {
-    let outline = rounded_rect(Some(paint), bounds);
-    let background = color::rgba(&paint.background_color);
-    if !color::is_transparent(&background) {
-        if outline.is_rectilinear() {
-            snapshot.append_color(&background, bounds);
-        } else {
-            snapshot.push_rounded_clip(&outline);
-            snapshot.append_color(&background, bounds);
-            snapshot.pop();
-        }
+fn paint_text(snapshot: &gtk::Snapshot, text: &PaintedText, geometry: &LayoutGeometry) {
+    let content = geometry.content_box;
+    snapshot.save();
+    snapshot.translate(&graphene::Point::new(
+        content.x + text.offset[0],
+        content.y + text.offset[1],
+    ));
+    if !text.shadows.is_empty() {
+        snapshot.push_shadow(&text.shadows);
     }
-    let edges = [
-        (
-            paint.border_widths.top,
-            paint.border_styles.top,
-            &paint.border_colors.top,
-        ),
-        (
-            paint.border_widths.right,
-            paint.border_styles.right,
-            &paint.border_colors.right,
-        ),
-        (
-            paint.border_widths.bottom,
-            paint.border_styles.bottom,
-            &paint.border_colors.bottom,
-        ),
-        (
-            paint.border_widths.left,
-            paint.border_styles.left,
-            &paint.border_colors.left,
-        ),
-    ];
-    let widths = edges.map(|(width, style, _)| {
-        if matches!(style, BorderLineStyle::None | BorderLineStyle::Hidden) {
-            0.0
-        } else {
-            resolve(width, bounds.width())
-        }
-    });
-    if widths.iter().any(|width| *width > 0.0) {
-        let colors = edges.map(|(_, _, color)| color::rgba(color));
-        snapshot.append_border(&outline, &widths, &colors);
+    snapshot.append_layout(&text.layout, &text.color);
+    if !text.shadows.is_empty() {
+        snapshot.pop();
     }
+    snapshot.restore();
 }
 
 fn clip_rect(state: &NodeState, bounds: &graphene::Rect) -> Option<gsk::RoundedRect> {
@@ -317,7 +271,7 @@ fn clip_rect(state: &NodeState, bounds: &graphene::Rect) -> Option<gsk::RoundedR
         return None;
     }
     if horizontal && vertical {
-        return Some(rounded_rect(state.paint.as_ref(), bounds));
+        return Some(paint::rounded_rect(state.paint.as_ref(), bounds));
     }
     const UNBOUNDED: f32 = 1.0e7;
     let (x, width) = if horizontal {
