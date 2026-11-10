@@ -2,9 +2,9 @@ use gtk::prelude::*;
 use gtk::{gdk, graphene, gsk};
 use gtk4 as gtk;
 use whisker_protocol::{
-    BackgroundLayer, BackgroundSize, BorderLineStyle, BoxPaint, BoxShadow, GradientStop,
-    ImageRepeat, LayoutGeometry, OutlineLineStyle, OutlinePaint, PaintBox, PaintCoordinate,
-    PaintImage, PaintLengthPercentage, PaintPosition,
+    BackgroundLayer, BackgroundSize, BorderLineStyle, BoxPaint, BoxShadow, ClipShape, FillRule,
+    GradientStop, ImageRepeat, LayoutGeometry, OutlineLineStyle, OutlinePaint, PaintBox,
+    PaintCoordinate, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand,
 };
 
 use crate::color;
@@ -39,10 +39,13 @@ pub(crate) fn rounded_rect(paint: Option<&BoxPaint>, bounds: &graphene::Rect) ->
         return gsk::RoundedRect::from_rect(*bounds, 0.0);
     };
     let corner = |radius: whisker_protocol::PaintCornerRadius| {
-        graphene::Size::new(
-            resolve(radius.horizontal, bounds.width()),
-            resolve(radius.vertical, bounds.height()),
-        )
+        let width = resolve(radius.horizontal, bounds.width()).max(0.0);
+        let height = resolve(radius.vertical, bounds.height()).max(0.0);
+        if width == 0.0 || height == 0.0 {
+            graphene::Size::zero()
+        } else {
+            graphene::Size::new(width, height)
+        }
     };
     let radii = &paint.border_radii;
     let mut rect = gsk::RoundedRect::new(
@@ -116,8 +119,180 @@ fn fill(snapshot: &gtk::Snapshot, rect: &gsk::RoundedRect, color: &gdk::RGBA) {
     }
 }
 
-pub(crate) fn paint_border(snapshot: &gtk::Snapshot, paint: &BoxPaint, bounds: &graphene::Rect) {
-    let widths = border_widths(paint, bounds);
+/// The `clip-path` shape resolved against its reference box, with its fill rule.
+pub(crate) fn clip_path(
+    paint: Option<&BoxPaint>,
+    geometry: &LayoutGeometry,
+    reference: PaintBox,
+    shape: &ClipShape,
+) -> (gsk::Path, gsk::FillRule) {
+    let area = *paint_box_rect(reference, paint, geometry).bounds();
+    let (x, y, width, height) = (area.x(), area.y(), area.width(), area.height());
+    let point = |position: PaintPosition| {
+        graphene::Point::new(
+            coordinate(position.x, x, width),
+            coordinate(position.y, y, height),
+        )
+    };
+    let builder = gsk::PathBuilder::new();
+    let mut fill_rule = gsk::FillRule::Winding;
+    match shape {
+        ClipShape::Inset { edges, radii } => {
+            let top = coordinate(edges.top, 0.0, height);
+            let right = coordinate(edges.right, 0.0, width);
+            let bottom = coordinate(edges.bottom, 0.0, height);
+            let left = coordinate(edges.left, 0.0, width);
+            let rect = graphene::Rect::new(
+                x + left,
+                y + top,
+                (width - left - right).max(0.0),
+                (height - top - bottom).max(0.0),
+            );
+            let corner = |radius: whisker_protocol::PaintCornerRadius| {
+                graphene::Size::new(
+                    resolve(radius.horizontal, rect.width()),
+                    resolve(radius.vertical, rect.height()),
+                )
+            };
+            let mut rounded = gsk::RoundedRect::new(
+                rect,
+                corner(radii.top_left),
+                corner(radii.top_right),
+                corner(radii.bottom_right),
+                corner(radii.bottom_left),
+            );
+            rounded.normalize();
+            builder.add_rounded_rect(&rounded);
+        }
+        ClipShape::Circle { radius, center } => {
+            let radius = resolve(*radius, width.hypot(height) / 2.0_f32.sqrt());
+            builder.add_circle(&point(*center), radius.max(0.0));
+        }
+        ClipShape::Ellipse {
+            radius_x,
+            radius_y,
+            center,
+        } => {
+            let center = point(*center);
+            let (rx, ry) = (resolve(*radius_x, width), resolve(*radius_y, height));
+            let corner = graphene::Size::new(rx, ry);
+            builder.add_rounded_rect(&gsk::RoundedRect::new(
+                graphene::Rect::new(center.x() - rx, center.y() - ry, 2.0 * rx, 2.0 * ry),
+                corner,
+                corner,
+                corner,
+                corner,
+            ));
+        }
+        ClipShape::Polygon {
+            fill_rule: rule,
+            points,
+        } => {
+            if *rule == FillRule::EvenOdd {
+                fill_rule = gsk::FillRule::EvenOdd;
+            }
+            for (index, position) in points.iter().enumerate() {
+                let to = point(*position);
+                if index == 0 {
+                    builder.move_to(to.x(), to.y());
+                } else {
+                    builder.line_to(to.x(), to.y());
+                }
+            }
+            builder.close();
+        }
+        ClipShape::Path {
+            fill_rule: rule,
+            commands,
+        } => {
+            if *rule == FillRule::EvenOdd {
+                fill_rule = gsk::FillRule::EvenOdd;
+            }
+            for command in commands {
+                match command {
+                    PathCommand::MoveTo(to) => {
+                        let to = point(*to);
+                        builder.move_to(to.x(), to.y());
+                    }
+                    PathCommand::LineTo(to) => {
+                        let to = point(*to);
+                        builder.line_to(to.x(), to.y());
+                    }
+                    PathCommand::QuadraticTo { control, end } => {
+                        let (control, end) = (point(*control), point(*end));
+                        builder.quad_to(control.x(), control.y(), end.x(), end.y());
+                    }
+                    PathCommand::CubicTo {
+                        control_1,
+                        control_2,
+                        end,
+                    } => {
+                        let (first, second, end) =
+                            (point(*control_1), point(*control_2), point(*end));
+                        builder.cubic_to(
+                            first.x(),
+                            first.y(),
+                            second.x(),
+                            second.y(),
+                            end.x(),
+                            end.y(),
+                        );
+                    }
+                    PathCommand::Close => builder.close(),
+                }
+            }
+        }
+    }
+    (builder.to_path(), fill_rule)
+}
+
+/// The area between the border edge and the padding edge.
+fn border_ring(paint: Option<&BoxPaint>, geometry: &LayoutGeometry) -> gsk::Path {
+    let builder = gsk::PathBuilder::new();
+    builder.add_rounded_rect(&paint_box_rect(PaintBox::Border, paint, geometry));
+    builder.add_rounded_rect(&paint_box_rect(PaintBox::Padding, paint, geometry));
+    builder.to_path()
+}
+
+/// Lightens toward white for positive `amount` and darkens toward black for negative.
+fn shade(color: gdk::RGBA, amount: f32) -> gdk::RGBA {
+    let channel = |value: f32| {
+        if amount < 0.0 {
+            value * (1.0 + amount)
+        } else {
+            value + (1.0 - value) * amount
+        }
+    };
+    gdk::RGBA::new(
+        channel(color.red()),
+        channel(color.green()),
+        channel(color.blue()),
+        color.alpha(),
+    )
+}
+
+/// Solid bands of `style` as `(start depth, end depth, shade)`, with depth 0 at the outer edge.
+fn border_bands(style: BorderLineStyle, top_or_left: bool) -> &'static [(f32, f32, f32)] {
+    let outer = if top_or_left { -0.35 } else { 0.35 };
+    match (style, outer < 0.0) {
+        (BorderLineStyle::Solid, _) => &[(0.0, 1.0, 0.0)],
+        (BorderLineStyle::Double, _) => &[(0.0, 1.0 / 3.0, 0.0), (2.0 / 3.0, 1.0, 0.0)],
+        (BorderLineStyle::Inset, true) | (BorderLineStyle::Outset, false) => &[(0.0, 1.0, -0.35)],
+        (BorderLineStyle::Inset, false) | (BorderLineStyle::Outset, true) => &[(0.0, 1.0, 0.35)],
+        (BorderLineStyle::Groove, true) | (BorderLineStyle::Ridge, false) => {
+            &[(0.0, 0.5, -0.35), (0.5, 1.0, 0.35)]
+        }
+        (BorderLineStyle::Groove, false) | (BorderLineStyle::Ridge, true) => {
+            &[(0.0, 0.5, 0.35), (0.5, 1.0, -0.35)]
+        }
+        _ => &[],
+    }
+}
+
+pub(crate) fn paint_border(snapshot: &gtk::Snapshot, paint: &BoxPaint, geometry: &LayoutGeometry) {
+    let border = geometry.border_box;
+    let bounds = graphene::Rect::new(0.0, 0.0, border.width, border.height);
+    let widths = border_widths(paint, &bounds);
     if widths.iter().all(|width| *width <= 0.0) {
         return;
     }
@@ -128,7 +303,145 @@ pub(crate) fn paint_border(snapshot: &gtk::Snapshot, paint: &BoxPaint, bounds: &
         &paint.border_colors.left,
     ]
     .map(color::rgba);
-    snapshot.append_border(&rounded_rect(Some(paint), bounds), &widths, &colors);
+    let styles = [
+        paint.border_styles.top,
+        paint.border_styles.right,
+        paint.border_styles.bottom,
+        paint.border_styles.left,
+    ];
+    let outer = rounded_rect(Some(paint), &bounds);
+    let mut ranges = Vec::<(f32, f32)>::new();
+    for (side, style) in styles.iter().enumerate() {
+        for (start, end, _) in border_bands(*style, side == 0 || side == 3) {
+            if !ranges.contains(&(*start, *end)) {
+                ranges.push((*start, *end));
+            }
+        }
+    }
+    for (start, end) in ranges {
+        let band_colors: [Option<gdk::RGBA>; 4] = std::array::from_fn(|side| {
+            border_bands(styles[side], side == 0 || side == 3)
+                .iter()
+                .find(|band| (band.0, band.1) == (start, end))
+                .filter(|_| widths[side] > 0.0)
+                .map(|(_, _, amount)| shade(colors[side], *amount))
+        });
+        let ring = gsk::PathBuilder::new();
+        for depth in [start, end] {
+            let mut rect = outer;
+            rect.shrink(
+                widths[0] * depth,
+                widths[1] * depth,
+                widths[2] * depth,
+                widths[3] * depth,
+            );
+            ring.add_rounded_rect(&rect);
+        }
+        let ring = ring.to_path();
+        if band_colors.iter().all(|color| *color == band_colors[0]) {
+            if let Some(color) = &band_colors[0] {
+                snapshot.append_fill(&ring, gsk::FillRule::EvenOdd, color);
+            }
+            continue;
+        }
+        for (side, color) in band_colors.iter().enumerate() {
+            if let Some(color) = color {
+                snapshot.push_fill(&side_region(side, &widths, &bounds), gsk::FillRule::Winding);
+                snapshot.append_fill(&ring, gsk::FillRule::EvenOdd, color);
+                snapshot.pop();
+            }
+        }
+    }
+    if styles
+        .iter()
+        .any(|style| matches!(style, BorderLineStyle::Dashed | BorderLineStyle::Dotted))
+    {
+        snapshot.push_fill(&border_ring(Some(paint), geometry), gsk::FillRule::EvenOdd);
+        for side in 0..4 {
+            paint_patterned_side(
+                snapshot,
+                side,
+                styles[side],
+                &widths,
+                &bounds,
+                &colors[side],
+            );
+        }
+        snapshot.pop();
+    }
+}
+
+/// The trapezoid one side owns, joined to its neighbours along the corner diagonals.
+fn side_region(side: usize, widths: &[f32; 4], bounds: &graphene::Rect) -> gsk::Path {
+    let (w, h) = (bounds.width(), bounds.height());
+    let [top, right, bottom, left] = *widths;
+    let corners = [
+        [(0.0, 0.0), (w, 0.0), (w - right, top), (left, top)],
+        [(w, 0.0), (w, h), (w - right, h - bottom), (w - right, top)],
+        [
+            (w, h),
+            (0.0, h),
+            (left, h - bottom),
+            (w - right, h - bottom),
+        ],
+        [(0.0, h), (0.0, 0.0), (left, top), (left, h - bottom)],
+    ][side];
+    let region = gsk::PathBuilder::new();
+    region.move_to(corners[0].0, corners[0].1);
+    for (x, y) in &corners[1..] {
+        region.line_to(*x, *y);
+    }
+    region.close();
+    region.to_path()
+}
+
+/// Paints one dashed or dotted side, phased along the clockwise perimeter from the top-left.
+fn paint_patterned_side(
+    snapshot: &gtk::Snapshot,
+    side: usize,
+    style: BorderLineStyle,
+    widths: &[f32; 4],
+    bounds: &graphene::Rect,
+    color: &gdk::RGBA,
+) {
+    let width = widths[side];
+    if width <= 0.0 || !matches!(style, BorderLineStyle::Dashed | BorderLineStyle::Dotted) {
+        return;
+    }
+    let (w, h) = (bounds.width(), bounds.height());
+    let (start, length) = [(0.0, w), (w, h), (w + h, w), (2.0 * w + h, h)][side];
+    // Maps a perimeter position and a depth from the outer edge to box coordinates.
+    let point = |position: f32, depth: f32| {
+        let along = position - start;
+        match side {
+            0 => graphene::Point::new(along, depth),
+            1 => graphene::Point::new(w - depth, along),
+            2 => graphene::Point::new(w - along, h - depth),
+            _ => graphene::Point::new(depth, h - along),
+        }
+    };
+    snapshot.push_fill(&side_region(side, widths, bounds), gsk::FillRule::Winding);
+    let shapes = gsk::PathBuilder::new();
+    let dotted = style == BorderLineStyle::Dotted;
+    let period = width * if dotted { 2.0 } else { 4.0 };
+    let mut position = (start / period).floor() * period;
+    while position < start + length {
+        if dotted {
+            shapes.add_circle(&point(position + width, width / 2.0), width / 2.0);
+        } else {
+            let from = point(position.max(start), 0.0);
+            let to = point((position + 3.0 * width).min(start + length), width);
+            shapes.add_rect(&graphene::Rect::new(
+                from.x().min(to.x()),
+                from.y().min(to.y()),
+                (from.x() - to.x()).abs(),
+                (from.y() - to.y()).abs(),
+            ));
+        }
+        position += period;
+    }
+    snapshot.append_fill(&shapes.to_path(), gsk::FillRule::Winding, color);
+    snapshot.pop();
 }
 
 /// Paints shadows in CSS order: outset ones under the box, inset ones over its background.
@@ -277,7 +590,11 @@ fn paint_layer(
     );
     let tile = graphene::Rect::new(x.origin, y.origin, x.size, y.size);
     let clip = paint_box_rect(layer.clip, paint, geometry);
-    snapshot.push_rounded_clip(&clip);
+    if layer.clip == PaintBox::BorderArea {
+        snapshot.push_fill(&border_ring(paint, geometry), gsk::FillRule::EvenOdd);
+    } else {
+        snapshot.push_rounded_clip(&clip);
+    }
     if x.repeats || y.repeats {
         let bounds = clip.bounds();
         let repeat_bounds = graphene::Rect::new(

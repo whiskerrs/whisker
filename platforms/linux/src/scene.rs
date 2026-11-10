@@ -9,8 +9,8 @@ use whisker::{SCROLL_BY_COMMAND, SCROLL_TO_COMMAND, SCROLL_VIEW_ELEMENT_NAME, TE
 use whisker_engine::FrameSink;
 use whisker_protocol::{
     ApplyResult, CursorKeyword, ElementRegistration, ElementTypeId, FrameMode, FramePacket,
-    HostPresentationUpdate, InputPoint, MeasureTextAlignment, MeasureTextWrap, NodeId, Operation,
-    RenderCapabilities, SceneProjection, SurfaceId, TextContent, WhiskerValue,
+    HostPresentationUpdate, InputPoint, MeasureTextWrap, NodeId, Operation, RenderCapabilities,
+    SceneProjection, SurfaceId, TextContent, WhiskerValue,
 };
 
 use crate::LinuxError;
@@ -315,10 +315,15 @@ impl GtkFrameSink {
         let mut offset = [0.0, 0.0];
         if !wraps {
             let (natural, _) = text::layout_size(&layout, None);
-            let factor = match payload.alignment {
-                MeasureTextAlignment::Center => 0.5,
-                MeasureTextAlignment::End | MeasureTextAlignment::Right => 1.0,
-                MeasureTextAlignment::Start | MeasureTextAlignment::Left => 0.0,
+            let factor = match layout.alignment() {
+                pango::Alignment::Center => 0.5,
+                pango::Alignment::Right => 1.0,
+                _ => 0.0,
+            };
+            let factor = if layout.is_auto_dir() && layout.direction(0) == pango::Direction::Rtl {
+                1.0 - factor
+            } else {
+                factor
             };
             offset[0] = ((width - natural) * factor).max(0.0);
         }

@@ -182,7 +182,7 @@ impl NodeWidget {
             rect.y - parent_scroll[1],
         ));
         if let Some(matrix) = state.transform {
-            transform = transform.matrix(&graphene::Matrix::from_float(matrix.0));
+            transform = apply_matrix(transform, matrix.0);
         }
         let (width, height) = (rect.width.ceil() as i32, rect.height.ceil() as i32);
         drop(state);
@@ -202,6 +202,12 @@ impl NodeWidget {
         if translucent {
             snapshot.push_opacity(f64::from(state.opacity.max(0.0)));
         }
+        let clip_path = state.effects.clip_path.as_ref().map(|(reference, shape)| {
+            paint::clip_path(state.paint.as_ref(), &state.geometry, *reference, shape)
+        });
+        if let Some((path, fill_rule)) = &clip_path {
+            snapshot.push_fill(path, *fill_rule);
+        }
         if let Some(background) = state.background {
             let bounds = graphene::Rect::new(0.0, 0.0, self.width() as f32, self.height() as f32);
             snapshot.append_color(&background, &bounds);
@@ -216,7 +222,7 @@ impl NodeWidget {
             paint::paint_background(snapshot, paint, &state.layers, &state.geometry);
             paint::paint_box_shadows(snapshot, shadows, paint, &state.geometry, true);
             if let Some(paint) = paint {
-                paint::paint_border(snapshot, paint, &bounds);
+                paint::paint_border(snapshot, paint, &state.geometry);
             }
             if let Some(text) = &state.text {
                 paint_text(snapshot, text, &state.geometry);
@@ -240,10 +246,38 @@ impl NodeWidget {
         if let Some((outline, paint)) = outline {
             paint::paint_outline(snapshot, &outline, paint.as_ref(), &bounds);
         }
+        if clip_path.is_some() {
+            snapshot.pop();
+        }
         if translucent {
             snapshot.pop();
         }
     }
+}
+
+// GSK categorizes any raw matrix as 3D, which the Cairo renderer cannot draw.
+fn apply_matrix(transform: gsk::Transform, m: [f32; 16]) -> gsk::Transform {
+    let affine = [m[2], m[3], m[6], m[7], m[8], m[9], m[11], m[14]] == [0.0; 8]
+        && m[10] == 1.0
+        && m[15] == 1.0;
+    if !affine {
+        return transform.matrix(&graphene::Matrix::from_float(m));
+    }
+    let [a, b, c, d, tx, ty] = [m[0], m[1], m[4], m[5], m[12], m[13]];
+    let scale_x = a.hypot(b);
+    let angle = b.atan2(a);
+    let (sin, cos) = angle.sin_cos();
+    let shear = c * cos + d * sin;
+    let scale_y = d * cos - c * sin;
+    let transform = transform
+        .translate(&graphene::Point::new(tx, ty))
+        .rotate(angle.to_degrees());
+    let transform = if scale_y == 0.0 {
+        transform
+    } else {
+        transform.skew((shear / scale_y).atan().to_degrees(), 0.0)
+    };
+    transform.scale(scale_x, scale_y)
 }
 
 fn paint_text(snapshot: &gtk::Snapshot, text: &PaintedText, geometry: &LayoutGeometry) {
@@ -273,7 +307,7 @@ fn clip_rect(state: &NodeState, bounds: &graphene::Rect) -> Option<gsk::RoundedR
     if horizontal && vertical {
         return Some(paint::rounded_rect(state.paint.as_ref(), bounds));
     }
-    const UNBOUNDED: f32 = 1.0e7;
+    const UNBOUNDED: f32 = 1.0e6;
     let (x, width) = if horizontal {
         (bounds.x(), bounds.width())
     } else {

@@ -134,17 +134,22 @@ pub(crate) fn build_layout(
     payload: &TextMeasurePayload,
     width: Option<f32>,
 ) -> pango::Layout {
-    let layout = pango::Layout::new(context);
-    layout.set_auto_dir(payload.direction == MeasureTextDirection::Auto);
-    if payload.direction != MeasureTextDirection::Auto {
-        let context = layout.context();
+    let layout = if payload.direction == MeasureTextDirection::Auto {
+        pango::Layout::new(context)
+    } else {
+        // The base direction lives on the context, so explicit directions need their own.
+        let context = context
+            .font_map()
+            .map_or_else(new_context, |font_map| font_map.create_context());
         context.set_base_dir(if payload.direction == MeasureTextDirection::RightToLeft {
             pango::Direction::Rtl
         } else {
             pango::Direction::Ltr
         });
-        layout.context_changed();
-    }
+        let layout = pango::Layout::new(&context);
+        layout.set_auto_dir(false);
+        layout
+    };
     layout.set_font_description(Some(&font_description(payload)));
     let attributes = pango::AttrList::new();
     if let MeasureLineHeight::LogicalPixels(height) = payload.style.line_height {
@@ -157,12 +162,28 @@ pub(crate) fn build_layout(
             payload.style.letter_spacing,
         )));
     }
+    if !payload.style.features.is_empty() {
+        let features = payload
+            .style
+            .features
+            .iter()
+            .map(|feature| format!("{} {}", tag_name(feature.tag), feature.value))
+            .collect::<Vec<_>>()
+            .join(",");
+        attributes.insert(pango::AttrFontFeatures::new(&features));
+    }
     layout.set_attributes(Some(&attributes));
     layout.set_text(&payload.text);
-    layout.set_alignment(match payload.alignment {
-        MeasureTextAlignment::Start | MeasureTextAlignment::Left => pango::Alignment::Left,
-        MeasureTextAlignment::End | MeasureTextAlignment::Right => pango::Alignment::Right,
-        MeasureTextAlignment::Center => pango::Alignment::Center,
+    // Pango mirrors alignment only for auto-direction right-to-left paragraphs.
+    let rtl = payload.direction == MeasureTextDirection::RightToLeft;
+    layout.set_alignment(match (payload.alignment, rtl) {
+        (MeasureTextAlignment::Start, false)
+        | (MeasureTextAlignment::End, true)
+        | (MeasureTextAlignment::Left, _) => pango::Alignment::Left,
+        (MeasureTextAlignment::End, false)
+        | (MeasureTextAlignment::Start, true)
+        | (MeasureTextAlignment::Right, _) => pango::Alignment::Right,
+        (MeasureTextAlignment::Center, _) => pango::Alignment::Center,
     });
     set_layout_width(layout.clone(), payload, width);
     layout
@@ -262,12 +283,26 @@ fn font_description(payload: &TextMeasurePayload) -> pango::FontDescription {
         851..=950 => pango::Weight::Heavy,
         _ => pango::Weight::Ultraheavy,
     });
+    if !payload.style.variations.is_empty() {
+        let variations = payload
+            .style
+            .variations
+            .iter()
+            .map(|variation| format!("{}={}", tag_name(variation.tag), variation.value))
+            .collect::<Vec<_>>()
+            .join(",");
+        description.set_variations(Some(&variations));
+    }
     description.set_style(match payload.style.font_style {
         MeasureFontStyle::Normal => pango::Style::Normal,
         MeasureFontStyle::Italic => pango::Style::Italic,
         MeasureFontStyle::Oblique => pango::Style::Oblique,
     });
     description
+}
+
+fn tag_name(tag: whisker_protocol::FontTag) -> String {
+    String::from_utf8_lossy(&tag.get()).into_owned()
 }
 
 /// Logical size of the first `max_lines` lines in logical pixels.
