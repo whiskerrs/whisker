@@ -152,6 +152,16 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       UpdateClip(node);
       break;
     }
+    case WHISKER_OP_BACKGROUND_LAYERS: {
+      if (op.payload_count && !op.payload) return false;
+      node.layers.clear();
+      auto layers = static_cast<const WhiskerMobileBackgroundLayer*>(op.payload);
+      for (size_t i = 0; i < op.payload_count; ++i) {
+        if (auto layer = BackgroundLayer::From(layers[i])) node.layers.push_back(std::move(*layer));
+      }
+      node.box_dirty = true;
+      break;
+    }
     case WHISKER_OP_CLIP:
       node.clip_horizontal = op.flags & 1;
       node.clip_vertical = op.flags & 2;
@@ -339,13 +349,13 @@ void HostScene::UpdateClip(Node& node) {
 void HostScene::DrawBox(Node& node) {
   node.box_dirty = false;
   auto const& border = node.geometry.border;
-  if (!node.paint) {
+  if (!node.paint && node.layers.empty()) {
     node.background.Brush(nullptr);
     return;
   }
-  auto const& paint = *node.paint;
-  if (!NeedsBoxSurface(paint, border.width, border.height) || border.width <= 0 ||
-      border.height <= 0) {
+  auto const paint = node.paint.value_or(WhiskerMobileBoxPaint{});
+  if ((node.layers.empty() && !NeedsBoxSurface(paint, border.width, border.height)) ||
+      border.width <= 0 || border.height <= 0) {
     node.background.Brush(compositor_.CreateColorBrush(ToColor(paint.background)));
     return;
   }
@@ -358,7 +368,9 @@ void HostScene::DrawBox(Node& node) {
   brush.Stretch(comp::CompositionStretch::Fill);
   node.background.Brush(brush);
   DrawSurface(surface, scale_, [&](ID2D1DeviceContext* context) {
-    PaintBox(context, paint, border.width, border.height);
+    auto const& content = node.geometry.content;
+    PaintBox(context, paint, node.layers, border.width, border.height,
+             {content.x, content.y, content.x + content.width, content.y + content.height});
   });
 }
 

@@ -13,35 +13,35 @@
       "id": "wpt.css-images.linear-gradient-1",
       "feature": "background-image-linear-gradient",
       "fixture": "wpt/css/css-images/linear-gradient-1.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-images.radial-gradient-container-relative-units-001",
       "feature": "background-image-radial-gradient",
       "fixture": "wpt/css/css-images/radial-gradient-container-relative-units-001.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-images.conic-gradient-angle",
       "feature": "background-image-conic-gradient",
       "fixture": "wpt/css/css-images/conic-gradient-angle.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-layer-stacking",
       "feature": "background-image-layer-stacking",
       "fixture": "wpt/css/css-backgrounds/background-layer-stacking.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "core.background-layer-geometry-symmetry",
       "feature": "background-layer-geometry-symmetry",
       "fixture": "core/background-layer-geometry-symmetry.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
@@ -76,7 +76,7 @@
       "id": "wpt.css-backgrounds.background-size-009",
       "feature": "background-size-no-repeat",
       "fixture": "wpt/css/css-backgrounds/background-size-009.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
@@ -111,70 +111,70 @@
       "id": "wpt.css-backgrounds.background-position-three-four-values.test1",
       "feature": "background-position",
       "fixture": "wpt/css/css-backgrounds/background-position-three-four-values.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.css3-background-origin-border-box",
       "feature": "background-origin-border-box",
       "fixture": "wpt/css/css-backgrounds/css3-background-origin-border-box.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.clip-padding-box-with-size",
       "feature": "background-clip-padding-box",
       "fixture": "wpt/css/css-backgrounds/clip-padding-box-with-size.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-origin.content-box",
       "feature": "background-origin-content-box",
       "fixture": "wpt/css/css-backgrounds/background-origin-content-box.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-clip.content-box",
       "feature": "background-clip-content-box",
       "fixture": "wpt/css/css-backgrounds/background-clip-content-box.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-clip.border-area-background-geometry",
       "feature": "background-clip-border-area",
       "fixture": "wpt/css/css-backgrounds/background-clip-border-area-background-geometry.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-repeat.repeat-x",
       "feature": "background-repeat-x",
       "fixture": "wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-x.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-repeat.repeat-y",
       "feature": "background-repeat-y",
       "fixture": "wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-y.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-repeat.space",
       "feature": "background-repeat-space",
       "fixture": "wpt/css/css-backgrounds/background-repeat-space.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
       "id": "wpt.css-backgrounds.background-repeat.space-single",
       "feature": "background-repeat-space",
       "fixture": "wpt/css/css-backgrounds/background-repeat-space-single.json",
-      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux"],
+      "required_hosts": ["desktop", "web", "android", "ios", "macos", "linux", "windows"],
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {

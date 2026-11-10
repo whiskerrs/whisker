@@ -1,5 +1,7 @@
 #include "paint.h"
 
+#include "background.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -379,16 +381,25 @@ bool NeedsBoxSurface(const WhiskerMobileBoxPaint& paint, float width, float heig
   return bordered || !RoundedRect::From(&paint, width, height).IsRectilinear();
 }
 
-void PaintBox(ID2D1DeviceContext* context, const WhiskerMobileBoxPaint& paint, float width,
-              float height) {
+void PaintBox(ID2D1DeviceContext* context, const WhiskerMobileBoxPaint& paint,
+              const std::vector<BackgroundLayer>& layers, float width, float height,
+              D2D1_RECT_F content) {
   winrt::com_ptr<ID2D1Factory> factory;
   context->GetFactory(factory.put());
+  auto border = RoundedRect::From(&paint, width, height);
   auto background = ToD2DColor(paint.background);
   if (background.a > 0) {
     winrt::com_ptr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(background, brush.put());
-    context->FillGeometry(RoundedRect::From(&paint, width, height).Geometry(factory.get()).get(),
-                          brush.get());
+    context->FillGeometry(border.Geometry(factory.get()).get(), brush.get());
+  }
+  if (!layers.empty()) {
+    auto widths = BorderWidths(paint, width);
+    PaintBackgroundLayers(
+        context, layers,
+        {border, border.Shrink(widths[0], widths[1], widths[2], widths[3]),
+         border.Shrink(content.top, width - content.right, height - content.bottom,
+                       content.left)});
   }
   PaintBorder(context, paint, width, height);
 }

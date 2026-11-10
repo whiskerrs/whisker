@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <array>
+#include <vector>
 #include <d2d1_1.h>
 #include <winrt/base.h>
 
@@ -33,7 +34,11 @@ std::array<float, 4> BorderWidths(const WhiskerMobileBoxPaint& paint, float widt
 // True when the paint needs more than a flat rectangle of its background color.
 bool NeedsBoxSurface(const WhiskerMobileBoxPaint& paint, float width, float height);
 
-void PaintBox(ID2D1DeviceContext* context, const WhiskerMobileBoxPaint& paint, float width,
-              float height);
+struct BackgroundLayer;
+
+// `content` is the content box in border-box space.
+void PaintBox(ID2D1DeviceContext* context, const WhiskerMobileBoxPaint& paint,
+              const std::vector<BackgroundLayer>& layers, float width, float height,
+              D2D1_RECT_F content);
 
 }  // namespace whisker

@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "background.h"
 #include "graphics.h"
 #include "text.h"
 #include "whisker_mobile.h"
@@ -35,6 +36,7 @@ class HostScene {
     int32_t z_order = 0;
     WhiskerMobileLayoutGeometry geometry{};
     std::optional<WhiskerMobileBoxPaint> paint;
+    std::vector<BackgroundLayer> layers;
     bool box_dirty = false;
     bool clip_horizontal = false;
     bool clip_vertical = false;
