@@ -262,6 +262,30 @@ mod tests {
     }
 
     #[test]
+    fn a_self_posting_dispatch_runs_once_per_drain() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        fn post_again(dispatcher: crate::RuntimeDispatcher, runs: Arc<AtomicUsize>) {
+            let next = dispatcher.clone();
+            dispatcher.post(move || {
+                runs.fetch_add(1, Ordering::SeqCst);
+                post_again(next, runs);
+            });
+        }
+
+        let context = context();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let dispatcher = context.enter(|| crate::runtime_dispatcher().unwrap());
+        post_again(dispatcher, Arc::clone(&runs));
+
+        context.enter(crate::dispatch::drain_runtime_dispatches);
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+        context.enter(crate::dispatch::drain_runtime_dispatches);
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
     fn shutdown_rejects_work_from_retained_dispatchers() {
         let context = context();
         let dispatcher = context.enter(|| crate::runtime_dispatcher().unwrap());

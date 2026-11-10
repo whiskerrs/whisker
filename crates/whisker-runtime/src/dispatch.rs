@@ -62,6 +62,14 @@ impl RuntimeDispatcher {
             .pop_front()
     }
 
+    fn pending(&self) -> usize {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .queue
+            .len()
+    }
+
     pub(crate) fn close(&self) {
         let mut state = self
             .state
@@ -95,11 +103,16 @@ pub fn drain_runtime_dispatches() {
     let Some(dispatcher) = dispatcher else {
         return;
     };
-    for _ in 0..DISPATCH_CAP {
+    // A callback that posts again waits for the next drain, or a self-posting loop would never yield to the Host.
+    let pending = dispatcher.pending();
+    for _ in 0..pending.min(DISPATCH_CAP) {
         let Some(callback) = dispatcher.pop() else {
             return;
         };
         callback();
+    }
+    if pending <= DISPATCH_CAP {
+        return;
     }
     crate::runtime_wake::wake_runtime();
     eprintln!(
