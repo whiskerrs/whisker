@@ -486,7 +486,18 @@ async fn android_launch(p: &AndroidParams) -> Result<()> {
     let launch_step =
         whisker_build::ui::step(whisker_build::ui::OperationKind::Launch, component.clone());
     let mut launch_cmd = adb();
-    launch_cmd.args(["shell", "am", "start", "-n", &component]);
+    // Launcher action/category so a later launcher tap resumes this task instead of stacking a new Activity.
+    launch_cmd.args([
+        "shell",
+        "am",
+        "start",
+        "-a",
+        "android.intent.action.MAIN",
+        "-c",
+        "android.intent.category.LAUNCHER",
+        "-n",
+        &component,
+    ]);
     let launch = run_filtered(launch_cmd, SimctlNoise::AdbAmStart)
         .await
         .context("spawn adb am start")?;

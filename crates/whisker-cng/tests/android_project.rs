@@ -36,7 +36,7 @@ fn base() -> AndroidProjectInputs {
         },
         app_crate_dir: None,
         cargo_selection: Default::default(),
-        template_version: 39,
+        template_version: 40,
     }
 }
 fn text(files: &std::collections::BTreeMap<ProjectPath, FileEntry>, path: &str) -> String {
@@ -357,7 +357,7 @@ fn application_declarations_can_be_edited_and_final_validation_requires_a_main_p
                 project: *project,
                 app_crate_dir: None,
                 cargo_selection: Default::default(),
-                template_version: 39,
+                template_version: 40,
             })
             .unwrap();
             let script = text(&files, "app/build.gradle.kts");
