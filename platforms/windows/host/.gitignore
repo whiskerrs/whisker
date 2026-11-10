@@ -1,0 +1,6 @@
+packages/
+**/x64/
+**/ARM64/
+**/Generated Files/
+*.user
+.vs/

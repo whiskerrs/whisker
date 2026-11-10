@@ -26,6 +26,8 @@ pub enum Host {
     Macos,
     /// Linux GTK4 renderer.
     Linux,
+    /// Windows WinUI 3 renderer.
+    Windows,
 }
 
 impl Host {
@@ -38,6 +40,7 @@ impl Host {
             Self::Ios => "ios",
             Self::Macos => "macos",
             Self::Linux => "linux",
+            Self::Windows => "windows",
         }
     }
 }

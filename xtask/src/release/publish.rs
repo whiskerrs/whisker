@@ -25,7 +25,7 @@ pub(super) fn run(root: &Path) -> Result<()> {
     ensure_tag(root, &plan.tag(), false)?;
     // Reused SDKs also have to be reachable: a tag or a green native build alone
     // doesn't guarantee that a downstream app can resolve its dependencies.
-    for stream in ["sdk", "gradle"] {
+    for stream in ["sdk", "gradle", "windows"] {
         native::verify(stream, &native::pin(root, stream)?)?;
     }
     let swift_tag = format!("v{}", native::pin(root, "ios")?);

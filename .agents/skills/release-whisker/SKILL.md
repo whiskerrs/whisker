@@ -19,7 +19,7 @@ Run the `release` workflow on **main** with these inputs:
 | `release_id` | Required identifier independent of versions, such as `20260908.1`; increment the suffix for another release that day |
 | `version` | New core version; leave blank for packages-only releases |
 | `package_versions` | Optional JSON overrides such as `{"whisker-router":"minor","whisker-input":"0.15.0"}`; values accept `patch`, `minor`, `major`, or a stable version |
-| `sdk_version`, `gradle_version`, `ios_version` | New native versions when those sources changed; blanks reuse current pins |
+| `sdk_version`, `gradle_version`, `ios_version`, `windows_version` | New native versions when those sources changed; blanks reuse current pins |
 | `subsecond_version` | Explicit version for the independently versioned fork |
 
 Core means publishable crates in `crates/` and `platforms/`, except
@@ -69,7 +69,7 @@ RELEASE_ID=20260908.1 RELEASE_VERSION=0.13.9 cargo xtask release preview
 
 Omit `RELEASE_VERSION` for packages-only changes; `PACKAGE_VERSIONS` accepts
 the same JSON as Actions. Native inputs use `SDK_VERSION`, `GRADLE_VERSION`,
-and `IOS_VERSION`. Preview prepares a temporary worktree and prints the plan;
+`IOS_VERSION`, and `WINDOWS_VERSION`. Preview prepares a temporary worktree and prints the plan;
 it does not modify the checkout, create a PR, or publish. Uncommitted edits
 are not included. Actions preparation additionally verifies remote release
 and native tags before creating the PR.
@@ -84,18 +84,21 @@ The release-plan merge triggers the same workflow's publishing jobs:
 2. Build the public Swift package before creating its selected `v<version>`
    tag. SwiftPM consumes the tag directly; never move a published tag.
    SwiftPM can build in parallel with the Maven jobs.
+   The Windows Host builds x64 and ARM64 libraries, tags `windows-host-v<version>`,
+   and pushes `Whisker.WindowsHost` to nuget.org through Trusted Publishing
+   (`NuGet/login` with the `NUGET_USER` secret; no long-lived API key).
 3. After all selected native jobs succeed, verify reused SDKs too, then use
    Cargo workspace publishing for the unpublished Rust versions. Publishing
    uses Cargo 1.98.1; the framework's consumer MSRV is unchanged.
 4. Verify every selected crate version in the registry, then create **one**
    GitHub Release, `Whisker <release_id>`, at `whisker-release-<release_id>`.
 
-`sdk-v*`, `gradle-plugin-v*`, and SwiftPM's `v*` tags remain as artifact
+`sdk-v*`, `gradle-plugin-v*`, `windows-host-v*`, and SwiftPM's `v*` tags remain as artifact
 identifiers. New per-crate GitHub Releases are not created. Historical
 per-crate CHANGELOGs and Releases are retained; new release notes are
 consolidated under `releases/`.
 
-The standalone `publish-sdk`, `publish-gradle-plugin`, and `publish-ios`
+The standalone `publish-sdk`, `publish-gradle-plugin`, `publish-ios`, and `publish-windows-host`
 dispatches are verification/smoke builds. Real publishing is requested by
 the unified workflow through `workflow_call`.
 
@@ -106,14 +109,17 @@ the unified workflow through `workflow_call`.
 | Android runtime/module/KSP sources or their shared build configuration | Android SDK |
 | `platforms/android/gradle-plugin/**` | Gradle plugin |
 | Root `Package.swift` or `platforms/ios/**` | SwiftPM |
-| Only `crates/whisker-driver-sys/bridge/**` C/C++ sources | Rust (the bridge ships in the crate) |
+| `platforms/windows/host/**` (Host library, NuGet spec, Windows App SDK pins) or `crates/whisker-driver-sys/bridge/include/**` | Windows Host |
+| Only `crates/whisker-driver-sys/bridge/**` C/C++ sources outside `include/` | Rust (the bridge ships in the crate) |
 | Rust framework sources | Rust |
 | `crates/whisker-subsecond/**` | Explicit fork version, included in the same release |
 
 The source pins are `WHISKER_SDK_VERSION` and
 `WHISKER_GRADLE_PLUGIN_VERSION` in `crates/whisker-cng/src/generator.rs`, and
 `WHISKER_IOS_SPM_VERSION` in `crates/whisker-cng/src/ios_modules.rs` plus
-`packages/**/Package.swift`. The preparation command keeps these consistent.
+`packages/**/Package.swift`, and `WHISKER_WINDOWS_HOST_VERSION` in
+`platforms/windows/build.rs` (`0.0.0` until the first package is published, which
+makes `windows_version` required). The preparation command keeps these consistent.
 
 ## Resume a partial release
 

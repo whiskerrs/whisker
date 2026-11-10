@@ -24,6 +24,7 @@ pub(crate) use project_render::{render_apple, sync_files};
 const XCWORKSPACEDATA: &str =
     include_str!("templates/ios/Project.xcodeproj/project.xcworkspace/contents.xcworkspacedata");
 const APP_DELEGATE_SWIFT: &str = include_str!("templates/ios/Sources/AppDelegate.swift");
+const SCENE_DELEGATE_SWIFT: &str = include_str!("templates/ios/Sources/SceneDelegate.swift");
 const LAUNCH_SCREEN_STORYBOARD: &str =
     include_str!("templates/ios/Resources/LaunchScreen.storyboard");
 pub(crate) const ASSET_CATALOG: &str =
@@ -304,7 +305,7 @@ pub fn inputs_from_with_engine(
         // Bump on any template or renderer change: it feeds the sync
         // fingerprint, and without it existing `gen/ios/` trees keep
         // their stale output.
-        template_version: 40,
+        template_version: 41,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -346,8 +347,9 @@ mod tests {
 
     #[test]
     fn generated_delegate_only_composes_the_sdk_view() {
-        assert!(APP_DELEGATE_SWIFT.contains("WhiskerView(frame:"));
-        assert!(!APP_DELEGATE_SWIFT.contains("class WhiskerView"));
+        assert!(SCENE_DELEGATE_SWIFT.contains("WhiskerView(frame:"));
+        assert!(!SCENE_DELEGATE_SWIFT.contains("class WhiskerView"));
+        assert!(!APP_DELEGATE_SWIFT.contains("UIWindow"));
     }
 
     #[test]
@@ -359,6 +361,7 @@ mod tests {
         for expected in [
             "Info.plist",
             "Sources/AppDelegate.swift",
+            "Sources/SceneDelegate.swift",
             "Resources/LaunchScreen.storyboard",
             "Resources/Assets.xcassets/Contents.json",
             "Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json",
@@ -392,7 +395,7 @@ mod tests {
         let plist = std::fs::read_to_string(out.join("Info.plist")).unwrap();
         let storyboard =
             std::fs::read_to_string(out.join("Resources/LaunchScreen.storyboard")).unwrap();
-        let delegate = std::fs::read_to_string(out.join("Sources/AppDelegate.swift")).unwrap();
+        let delegate = std::fs::read_to_string(out.join("Sources/SceneDelegate.swift")).unwrap();
         let pbxproj =
             std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
 

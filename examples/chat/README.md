@@ -30,7 +30,7 @@ From the repository root, select a target with its platform toolchain installed:
 cargo run -p whisker-cli --bin whisker -- run ios --manifest-path examples/chat/Cargo.toml
 cargo run -p whisker-cli --bin whisker -- run android --manifest-path examples/chat/Cargo.toml
 cargo run -p whisker-cli --bin whisker -- run web --manifest-path examples/chat/Cargo.toml
-cargo run -p whisker-cli --bin whisker -- run desktop --manifest-path examples/chat/Cargo.toml
+cargo run -p whisker-cli --bin whisker -- run macos --manifest-path examples/chat/Cargo.toml
 ```
 
 When no API key is available, connection setup opens before the chat, including

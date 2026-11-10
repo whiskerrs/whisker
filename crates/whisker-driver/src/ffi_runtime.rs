@@ -28,6 +28,9 @@ use whisker_runtime::view::Element;
 use whisker_runtime::{ElementRegistry, RuntimeInstance, RuntimeWakeHandle, SurfaceRuntime};
 
 mod frame;
+#[cfg(feature = "host-conformance")]
+#[doc(hidden)]
+pub mod host_conformance;
 mod measurement;
 mod paragraph;
 mod paragraph_response;

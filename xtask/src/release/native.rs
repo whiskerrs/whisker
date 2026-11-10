@@ -1,12 +1,19 @@
 use super::*;
 
 const MAVEN: &str = "https://whiskerrs.github.io/whisker/maven";
+const NUGET_PACKAGES: &str = "https://api.nuget.org/v3-flatcontainer";
+const WINDOWS_HOST_PACKAGE: &str = "whisker.windowshost";
 
 fn definition(stream: &str) -> Result<(&'static str, &'static str, &'static str)> {
     match stream {
         "sdk" => Ok((CNG_PATH, "WHISKER_SDK_VERSION", "sdk-v")),
         "gradle" => Ok((CNG_PATH, "WHISKER_GRADLE_PLUGIN_VERSION", "gradle-plugin-v")),
         "ios" => Ok((IOS_PATH, "WHISKER_IOS_SPM_VERSION", "v")),
+        "windows" => Ok((
+            WINDOWS_PATH,
+            "WHISKER_WINDOWS_HOST_VERSION",
+            "windows-host-v",
+        )),
         _ => bail!("unknown native stream {stream:?}"),
     }
 }
@@ -107,6 +114,10 @@ pub(super) fn check_selection(root: &Path, stream: &str, selected: Option<&str>)
             "{stream} {next} is already tagged; choose a new version"
         );
     } else {
+        ensure!(
+            current != "0.0.0",
+            "{stream} has never been published; specify a {stream} version"
+        );
         let previous = format!("{prefix}{current}");
         ensure!(
             remote_tag(root, &previous)?.is_some(),
@@ -123,6 +134,14 @@ pub(super) fn check_selection(root: &Path, stream: &str, selected: Option<&str>)
             ],
             "gradle" => vec!["platforms/android/gradle-plugin"],
             "ios" => vec!["Package.swift", "platforms/ios"],
+            "windows" => vec![
+                "platforms/windows/host/WhiskerHost",
+                "platforms/windows/host/nuget",
+                "platforms/windows/host/packages.config",
+                "platforms/windows/host/WinAppSdk.props",
+                "platforms/windows/host/WinAppSdk.targets",
+                "crates/whisker-driver-sys/bridge/include",
+            ],
             _ => unreachable!(),
         });
         let changed = git(root, &args)?;
@@ -153,6 +172,21 @@ pub(super) fn check(root: &Path, stream: &str, value: &str) -> Result<()> {
     ensure_tag(root, &tag, false)?;
     let published = if stream == "ios" {
         remote_tag(root, &tag)?.is_some()
+    } else if stream == "windows" {
+        let index = format!("{NUGET_PACKAGES}/{WINDOWS_HOST_PACKAGE}/index.json");
+        let published = match http().get(&index).call() {
+            Ok(response) => response.into_json::<serde_json::Value>()?["versions"]
+                .as_array()
+                .is_some_and(|versions| versions.iter().any(|v| v == value)),
+            Err(ureq::Error::Status(404, _)) => false,
+            Err(error) => return Err(error.into()),
+        };
+        // nuget.org versions are immutable, so the tag is the only link back to a commit.
+        ensure!(
+            !published || remote_tag(root, &tag)?.is_some(),
+            "NuGet version {value} was published without a source tag"
+        );
+        published
     } else {
         let endpoint = format!(
             "repos/{REPOSITORY}/contents/maven/whisker-releases/{stream}-{value}.json?ref=gh-pages"
@@ -221,7 +255,7 @@ pub(super) fn tag(root: &Path, stream: &str, value: &str) -> Result<()> {
     }
     let (_, _, prefix) = definition(stream)?;
     ensure_tag(root, &format!("{prefix}{value}"), true)?;
-    if stream != "ios" {
+    if matches!(stream, "sdk" | "gradle") {
         // Published atomically alongside Maven files. On retry this receipt lets
         // us skip the upload even while Pages/CDN propagation is still pending.
         let receipts = root.join("maven-out/whisker-releases");
@@ -253,7 +287,12 @@ pub(super) fn artifact_urls(stream: &str, value: &str) -> Result<Vec<String>> {
                 "pom",
             ),
         ],
-        _ => bail!("{stream} has no Maven artifacts"),
+        "windows" => {
+            return Ok(vec![format!(
+                "{NUGET_PACKAGES}/{WINDOWS_HOST_PACKAGE}/{value}/{WINDOWS_HOST_PACKAGE}.{value}.nupkg"
+            )]);
+        }
+        _ => bail!("{stream} has no published artifacts"),
     };
     let mut urls = Vec::new();
     for (group, artifact, extension) in artifacts {
@@ -289,7 +328,7 @@ pub(super) fn verify(stream: &str, value: &str) -> Result<()> {
         }
     }
     bail!(
-        "Maven artifacts are not reachable after waiting: {}",
+        "{stream} artifacts are not reachable after waiting: {}",
         missing.join(", ")
     )
 }

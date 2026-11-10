@@ -297,6 +297,11 @@ pub(super) fn fixture() -> tempfile::TempDir {
     );
     write(
         root,
+        WINDOWS_PATH,
+        "const WHISKER_WINDOWS_HOST_VERSION: &str = \"0.0.0\";\n",
+    );
+    write(
+        root,
         "packages/test/Package.swift",
         ".package(url: \"https://github.com/whiskerrs/whisker.git\", exact: \"0.1.13\")\n",
     );
@@ -321,6 +326,7 @@ fn fixture_plan(root: &Path) -> ReleasePlan {
         sdk: Some("0.1.22".into()),
         gradle: None,
         ios: Some("0.1.14".into()),
+        windows: Some("0.1.0".into()),
         subsecond: None,
         crates: BTreeMap::new(),
         selective: None,
@@ -346,6 +352,7 @@ fn prepared_workspace_resolves_with_inheritance_fork_and_all_native_pins() {
     assert_eq!(native::pin(root, "sdk").unwrap(), "0.1.22");
     assert_eq!(native::pin(root, "gradle").unwrap(), "0.5.0");
     native::check_swift_pins(root, "0.1.14").unwrap();
+    assert_eq!(native::pin(root, "windows").unwrap(), "0.1.0");
     write(root, &plan.notes_path(), "Release notes");
     plan.validate_checkout(root).unwrap();
     plan.crates.insert("whisker".into(), "9.9.9".into());
@@ -448,4 +455,30 @@ fn verifies_sdk_artifacts_and_both_gradle_plugin_markers() {
             .iter()
             .any(|url| url.contains("/rs/whisker/gradle/rs.whisker.gradle.gradle.plugin/"))
     );
+}
+
+#[test]
+fn windows_host_is_a_nuget_package_that_must_be_published_before_reuse() {
+    assert_eq!(
+        native::artifact_urls("windows", "0.1.0").unwrap(),
+        [
+            "https://api.nuget.org/v3-flatcontainer/whisker.windowshost/0.1.0/whisker.windowshost.0.1.0.nupkg"
+        ]
+    );
+    let directory = fixture();
+    let root = directory.path();
+    let error = native::check_selection(root, "windows", None).unwrap_err();
+    assert!(error.to_string().contains("never been published"));
+    native::update_pin(root, "windows", "0.1.0").unwrap();
+    assert_eq!(native::pin(root, "windows").unwrap(), "0.1.0");
+}
+
+#[test]
+fn plans_written_before_the_windows_stream_still_parse() {
+    let plan: ReleasePlan = serde_json::from_str(
+        r#"{"version":"0.16.0","source":"abc","sdk":null,"gradle":null,"ios":"0.1.19","subsecond":null,"crates":{"whisker":"0.16.0"}}"#,
+    )
+    .unwrap();
+    assert_eq!(plan.windows, None);
+    assert_eq!(plan.native_streams()[3], ("windows", &None));
 }
