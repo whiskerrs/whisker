@@ -40,6 +40,7 @@ members = [
     "platforms/desktop",
     "crates/whisker-subsecond",
     "platforms/windows",
+    "platforms/windows/host/conformance",
     "platforms/linux",
     "platforms/web",
     "examples/chat",

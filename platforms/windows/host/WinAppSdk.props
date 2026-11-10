@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <WhiskerPackagesDir>$(MSBuildThisFileDirectory)packages\</WhiskerPackagesDir>
+    <CppWinRTOptimized>true</CppWinRTOptimized>
+    <MinimalCoreWin>true</MinimalCoreWin>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformMinVersion>10.0.17763.0</WindowsTargetPlatformMinVersion>
+    <WindowsPackageType>None</WindowsPackageType>
+  </PropertyGroup>
+  <Import Project="$(WhiskerPackagesDir)Microsoft.Windows.CppWinRT.3.0.260818.1\build\native\Microsoft.Windows.CppWinRT.props" Condition="Exists('$(WhiskerPackagesDir)Microsoft.Windows.CppWinRT.3.0.260818.1\build\native\Microsoft.Windows.CppWinRT.props')" />
+  <Import Project="$(WhiskerPackagesDir)Microsoft.Windows.SDK.BuildTools.10.0.26100.4654\build\native\Microsoft.Windows.SDK.BuildTools.props" Condition="Exists('$(WhiskerPackagesDir)Microsoft.Windows.SDK.BuildTools.10.0.26100.4654\build\native\Microsoft.Windows.SDK.BuildTools.props')" />
+  <Import Project="$(WhiskerPackagesDir)Microsoft.Windows.SDK.BuildTools.MSIX.1.7.251221100\build\native\Microsoft.Windows.SDK.BuildTools.MSIX.props" Condition="Exists('$(WhiskerPackagesDir)Microsoft.Windows.SDK.BuildTools.MSIX.1.7.251221100\build\native\Microsoft.Windows.SDK.BuildTools.MSIX.props')" />
+  <Import Project="$(WhiskerPackagesDir)Microsoft.WindowsAppSDK.Base.2.6.5\build\native\Microsoft.WindowsAppSDK.Base.props" Condition="Exists('$(WhiskerPackagesDir)Microsoft.WindowsAppSDK.Base.2.6.5\build\native\Microsoft.WindowsAppSDK.Base.props')" />
+  <Import Project="$(WhiskerPackagesDir)Microsoft.WindowsAppSDK.Foundation.2.6.5\build\native\Microsoft.WindowsAppSDK.Foundation.props" Condition="Exists('$(WhiskerPackagesDir)Microsoft.WindowsAppSDK.Foundation.2.6.5\build\native\Microsoft.WindowsAppSDK.Foundation.props')" />
+  <Import Project="$(WhiskerPackagesDir)Microsoft.WindowsAppSDK.InteractiveExperiences.2.6.5\build\native\Microsoft.WindowsAppSDK.InteractiveExperiences.props" Condition="Exists('$(WhiskerPackagesDir)Microsoft.WindowsAppSDK.InteractiveExperiences.2.6.5\build\native\Microsoft.WindowsAppSDK.InteractiveExperiences.props')" />
+  <Import Project="$(WhiskerPackagesDir)Microsoft.WindowsAppSDK.Runtime.2.6.5\build\native\Microsoft.WindowsAppSDK.Runtime.props" Condition="Exists('$(WhiskerPackagesDir)Microsoft.WindowsAppSDK.Runtime.2.6.5\build\native\Microsoft.WindowsAppSDK.Runtime.props')" />
+  <Import Project="$(WhiskerPackagesDir)Microsoft.WindowsAppSDK.WinUI.2.6.5\build\native\Microsoft.WindowsAppSDK.WinUI.props" Condition="Exists('$(WhiskerPackagesDir)Microsoft.WindowsAppSDK.WinUI.2.6.5\build\native\Microsoft.WindowsAppSDK.WinUI.props')" />
+</Project>

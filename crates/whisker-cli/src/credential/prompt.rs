@@ -57,4 +57,9 @@ pub fn open_in_browser(url: &str) {
     let _ = std::process::Command::new("open").arg(url).status();
     #[cfg(target_os = "linux")]
     let _ = std::process::Command::new("xdg-open").arg(url).status();
+    // `cmd /c start` would reparse `&` in query strings.
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .status();
 }
