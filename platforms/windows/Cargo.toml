@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Native Windows application shell for Whisker."
+exclude = ["host"]
 
 [features]
 hot-reload = ["whisker-desktop/hot-reload"]
