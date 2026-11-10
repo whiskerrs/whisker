@@ -7962,13 +7962,14 @@ dependencies = [
 name = "whisker-windows"
 version = "0.16.0"
 dependencies = [
- "whisker-desktop",
+ "whisker",
 ]
 
 [[package]]
 name = "whisker-windows-host-conformance"
 version = "0.16.0"
 dependencies = [
+ "base64 0.22.1",
  "csscolorparser",
  "whisker",
  "whisker-driver",

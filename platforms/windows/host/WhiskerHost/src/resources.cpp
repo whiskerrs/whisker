@@ -48,10 +48,11 @@ std::optional<std::vector<uint8_t>> DataUrl(std::string_view url) {
   return Base64(url.substr(comma + 1));
 }
 
+// Bundled assets resolve against the executable's directory, as iOS resolves them against the bundle.
 std::filesystem::path AssetRoot() {
   wchar_t module[MAX_PATH];
   GetModuleFileNameW(nullptr, module, MAX_PATH);
-  return std::filesystem::path(module).parent_path() / L"assets";
+  return std::filesystem::path(module).parent_path();
 }
 
 }  // namespace

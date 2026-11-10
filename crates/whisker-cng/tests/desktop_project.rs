@@ -79,6 +79,9 @@ fn application_features_and_metadata_are_lowered_for_both_platforms() {
             manifest["dependencies"]["whisker-app"]["features"][0].as_str(),
             Some("auth")
         );
+        let dependencies = manifest["dependencies"].as_table().unwrap();
+        assert!(dependencies.contains_key(&format!("whisker-{}", target.as_str())));
+        assert!(!dependencies.contains_key("whisker-desktop"));
         let main = text(&files, "src/main.rs");
         assert!(main.contains(".with_background_rgb(16, 32, 48)"));
         assert!(main.contains("run_with_application_hash"));

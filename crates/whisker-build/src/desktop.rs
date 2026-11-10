@@ -12,6 +12,8 @@ use whisker_plugin::{
     project::{ExecutableSource, ProjectPath},
 };
 
+const WINDOWS_APP_RUNTIME_BOOTSTRAP: &str = "Microsoft.WindowsAppRuntime.Bootstrap.dll";
+
 /// A generated Windows or Linux project and its build output location.
 pub struct DesktopBuild<'a> {
     pub project_dir: &'a Path,
@@ -107,6 +109,18 @@ pub fn build_app(inputs: &DesktopBuild<'_>) -> Result<PathBuf> {
             entry
         };
         executables.insert(executable.destination.clone(), entry);
+        // whisker-windows' build script stages the Windows App Runtime bootstrapper beside the executable.
+        let bootstrap = path.with_file_name(WINDOWS_APP_RUNTIME_BOOTSTRAP);
+        if plan.platform == whisker_cng::GenerationTarget::Windows && bootstrap.is_file() {
+            let destination = match executable.destination.as_str().rsplit_once('/') {
+                Some((parent, _)) => format!("{parent}/{WINDOWS_APP_RUNTIME_BOOTSTRAP}"),
+                None => WINDOWS_APP_RUNTIME_BOOTSTRAP.to_owned(),
+            };
+            executables.insert(
+                ProjectPath::new(destination)?,
+                FileEntry::binary(&std::fs::read(&bootstrap)?),
+            );
+        }
     }
     let out = target.join("dist").join(inputs.profile.dir_name());
     assemble(&out, files, executables)?;

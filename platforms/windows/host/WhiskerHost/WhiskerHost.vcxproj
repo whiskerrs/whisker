@@ -35,6 +35,7 @@
     <ClCompile><Optimization>Disabled</Optimization><BasicRuntimeChecks>Default</BasicRuntimeChecks></ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="include\whisker\whisker_app.h" />
     <ClInclude Include="include\whisker\whisker_view.h" />
     <ClInclude Include="src\background.h" />
     <ClInclude Include="src\capabilities.h" />
@@ -56,6 +57,7 @@
     <ClCompile Include="src\resources.cpp" />
     <ClCompile Include="src\shadow.cpp" />
     <ClCompile Include="src\text.cpp" />
+    <ClCompile Include="src\whisker_app.cpp" />
     <ClCompile Include="src\whisker_view.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

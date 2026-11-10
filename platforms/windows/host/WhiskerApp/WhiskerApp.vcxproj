@@ -5,6 +5,7 @@
     <ProjectGuid>{6B1E4F2A-8C3D-4E5F-9A1B-2C3D4E5F6A71}</ProjectGuid>
     <RootNamespace>WhiskerApp</RootNamespace>
     <UseWinUI>true</UseWinUI>
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
     <!-- The Rust staticlib exporting the whisker_view_* C ABI. -->
     <WhiskerRustLib Condition="'$(WhiskerRustLib)'==''">$(MSBuildThisFileDirectory)..\..\..\..\target\x86_64-pc-windows-msvc\release\whisker_news.lib</WhiskerRustLib>
   </PropertyGroup>

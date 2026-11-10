@@ -539,11 +539,6 @@ fn sync_desktop(
         crate_dir.to_path_buf(),
         dependency,
     )?;
-    let in_tree_desktop = workspace_root.join("platforms/desktop");
-    if in_tree_desktop.join("Cargo.toml").is_file() {
-        inputs.desktop_dependency =
-            format!("{{ path = {:?} }}", in_tree_desktop.display().to_string());
-    }
     inputs.cargo_selection = selection.clone();
     let module_platform = if target == Target::Windows {
         crate::modules::ModulePlatform::Windows

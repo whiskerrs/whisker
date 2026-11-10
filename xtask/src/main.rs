@@ -42,8 +42,11 @@ fn main() -> Result<()> {
         (Some("rust-host-link-test"), Some(host)) if arguments.next().is_none() => {
             rust_host_link_test::run(&workspace_root()?, host)
         }
+        (Some("windows-host-pack"), Some(version)) => {
+            windows_host_pack(&workspace_root()?, version, arguments.collect())
+        }
         _ => bail!(
-            "usage: cargo xtask host-conformance <desktop|web|android|ios|macos|linux|windows>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
+            "usage: cargo xtask host-conformance <desktop|web|android|ios|macos|linux|windows>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask windows-host-pack <version> [x64] [ARM64]\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
         ),
     }
 }
@@ -87,40 +90,10 @@ fn windows(root: &Path) -> Result<()> {
     if !cfg!(windows) {
         bail!("Windows conformance runs only on Windows, from an interactive logon");
     }
-    // MSBuild mis-evaluates the verbatim `\\?\` paths that `canonicalize` returns on Windows.
-    let root = root.to_str().context("workspace path is not UTF-8")?;
-    let host =
-        PathBuf::from(root.strip_prefix(r"\\?\").unwrap_or(root)).join(r"platforms\windows\host");
-    let packages = host.join("packages");
-    run(
-        Command::new(std::env::var_os("NUGET").unwrap_or_else(|| "nuget".into()))
-            .current_dir(&host)
-            .args([
-                "restore",
-                "packages.config",
-                "-NonInteractive",
-                "-PackagesDirectory",
-            ])
-            .arg(&packages),
-    )
-    .context("Windows conformance requires nuget.exe on PATH or NUGET")?;
-    let msbuild = capture(
-        Command::new(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe").args(
-            [
-                "-latest",
-                "-products",
-                "*",
-                "-requires",
-                "Microsoft.Component.MSBuild",
-                "-find",
-                r"MSBuild\**\Bin\MSBuild.exe",
-            ],
-        ),
-    )
-    .context("Windows conformance requires Visual Studio 2022 with MSBuild")?;
-    let msbuild = msbuild.lines().next().context("vswhere found no MSBuild")?;
+    let (root, host) = windows_host_dir(root)?;
+    let packages = windows_host_restore(&host)?;
     let out = host.join(r"x64\Release\");
-    run(Command::new(msbuild)
+    run(Command::new(msbuild()?)
         .current_dir(&host)
         .args([
             r"WhiskerHostConformance\WhiskerHostConformance.vcxproj",
@@ -144,7 +117,7 @@ fn windows(root: &Path) -> Result<()> {
         &std::env::var_os("PATH").unwrap_or_default(),
     )))?;
     run(Command::new(cargo())
-        .current_dir(root)
+        .current_dir(&root)
         .args(["test", "-p", "whisker-windows-host-conformance"])
         .env("WHISKER_HOST_LIB_DIR", &out)
         .env(
@@ -152,6 +125,101 @@ fn windows(root: &Path) -> Result<()> {
             foundation.join(r"lib\native\x64\Microsoft.WindowsAppRuntime.Bootstrap.lib"),
         )
         .env("PATH", path))
+}
+
+/// Builds `WhiskerHost.lib` for each platform and packs `Whisker.WindowsHost.<version>.nupkg`
+/// into `target/nuget`.
+fn windows_host_pack(root: &Path, version: &str, platforms: Vec<String>) -> Result<()> {
+    if !cfg!(windows) {
+        bail!("the Windows Host package builds only on Windows");
+    }
+    let platforms = if platforms.is_empty() {
+        vec!["x64".to_owned(), "ARM64".to_owned()]
+    } else {
+        platforms
+    };
+    let (root, host) = windows_host_dir(root)?;
+    windows_host_restore(&host)?;
+    let msbuild = msbuild()?;
+    for platform in &platforms {
+        run(Command::new(&msbuild)
+            .current_dir(&host)
+            .args([
+                r"WhiskerHost\WhiskerHost.vcxproj",
+                "/m",
+                "/nologo",
+                "/v:m",
+                "/p:Configuration=Release",
+            ])
+            .arg(format!("/p:Platform={platform}"))
+            .arg(format!(
+                "/p:OutDir={}",
+                host.join(platform).join(r"Release\").display()
+            )))?;
+    }
+    let out = root.join(r"target\nuget");
+    fs::create_dir_all(&out)?;
+    run(Command::new(nuget())
+        .current_dir(&host)
+        .args([
+            r"pack",
+            r"nuget\Whisker.WindowsHost.nuspec",
+            "-NonInteractive",
+            "-NoDefaultExcludes",
+        ])
+        .args(["-Version", version, "-BasePath", "."])
+        .arg("-OutputDirectory")
+        .arg(&out))
+    .context("pack Whisker.WindowsHost")
+}
+
+/// The workspace root and `platforms\windows\host`, without the verbatim prefix MSBuild mis-evaluates.
+fn windows_host_dir(root: &Path) -> Result<(PathBuf, PathBuf)> {
+    let root = root.to_str().context("workspace path is not UTF-8")?;
+    let root = PathBuf::from(root.strip_prefix(r"\\?\").unwrap_or(root));
+    let host = root.join(r"platforms\windows\host");
+    Ok((root, host))
+}
+
+fn windows_host_restore(host: &Path) -> Result<PathBuf> {
+    let packages = host.join("packages");
+    run(Command::new(nuget())
+        .current_dir(host)
+        .args([
+            "restore",
+            "packages.config",
+            "-NonInteractive",
+            "-PackagesDirectory",
+        ])
+        .arg(&packages))
+    .context("the Windows Host requires nuget.exe on PATH or NUGET")?;
+    Ok(packages)
+}
+
+fn nuget() -> OsString {
+    std::env::var_os("NUGET").unwrap_or_else(|| "nuget".into())
+}
+
+fn msbuild() -> Result<String> {
+    let found = capture(
+        Command::new(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe").args(
+            [
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.Component.MSBuild",
+                "-find",
+                r"MSBuild\**\Bin\MSBuild.exe",
+            ],
+        ),
+    )
+    .context("the Windows Host requires Visual Studio 2022 with MSBuild")?;
+    Ok(found
+        .lines()
+        .next()
+        .context("vswhere found no MSBuild")?
+        .to_owned())
 }
 
 fn web(root: &Path) -> Result<()> {

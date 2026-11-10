@@ -9,11 +9,8 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Native Windows application shell for Whisker."
+description = "Native WinUI 3 Windows Host for Whisker."
 exclude = ["host"]
 
-[features]
-hot-reload = ["whisker-desktop/hot-reload"]
-
 [target.'cfg(target_os = "windows")'.dependencies]
-whisker-desktop = { workspace = true }
+whisker = { workspace = true }
