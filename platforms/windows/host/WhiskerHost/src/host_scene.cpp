@@ -27,19 +27,21 @@ winrt::Windows::UI::Color ToColor(const WhiskerMobileColor& color) {
   return {byte(c.a), byte(c.r), byte(c.g), byte(c.b)};
 }
 
+// Composition may ask for the geometry in its own factory, so it is rebuilt on demand.
 struct GeometrySource
     : winrt::implements<GeometrySource, winrt::Windows::Graphics::IGeometrySource2D,
                         ABI::Windows::Graphics::IGeometrySource2DInterop> {
-  explicit GeometrySource(winrt::com_ptr<ID2D1Geometry> geometry) : geometry_(std::move(geometry)) {}
-  HRESULT __stdcall GetGeometry(ID2D1Geometry** value) override {
-    geometry_.copy_to(value);
+  explicit GeometrySource(RoundedRect shape) : shape_(shape) {}
+  HRESULT __stdcall GetGeometry(ID2D1Geometry** value) override;
+  HRESULT __stdcall TryGetGeometryUsingFactory(ID2D1Factory* factory,
+                                               ID2D1Geometry** value) override try {
+    shape_.Geometry(factory).as<ID2D1Geometry>().copy_to(value);
     return S_OK;
-  }
-  HRESULT __stdcall TryGetGeometryUsingFactory(ID2D1Factory*, ID2D1Geometry** value) override {
+  } catch (...) {
     *value = nullptr;
-    return E_NOTIMPL;
+    return winrt::to_hresult();
   }
-  winrt::com_ptr<ID2D1Geometry> geometry_;
+  RoundedRect shape_;
 };
 
 ID2D1Factory* SharedFactory() {
@@ -49,6 +51,10 @@ ID2D1Factory* SharedFactory() {
     return created;
   }();
   return factory.get();
+}
+
+HRESULT __stdcall GeometrySource::GetGeometry(ID2D1Geometry** value) {
+  return TryGetGeometryUsingFactory(SharedFactory(), value);
 }
 
 }  // namespace
@@ -281,7 +287,7 @@ void HostScene::UpdateClip(Node& node) {
   if (node.clip_horizontal && node.clip_vertical) {
     auto rounded = RoundedRect::From(node.paint ? &*node.paint : nullptr, border.width, border.height);
     if (!rounded.IsRectilinear()) {
-      auto source = winrt::make<GeometrySource>(rounded.Geometry(SharedFactory()).as<ID2D1Geometry>());
+      auto source = winrt::make<GeometrySource>(rounded);
       auto geometry = compositor_.CreatePathGeometry(comp::CompositionPath(source));
       node.children_visual.Clip(compositor_.CreateGeometricClip(geometry));
       return;
