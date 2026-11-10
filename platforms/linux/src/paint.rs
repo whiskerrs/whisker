@@ -552,6 +552,8 @@ fn axis_tiles(
     }
 }
 
+const MAX_DIRECT_TILES: usize = 1024;
+
 fn paint_layer(
     snapshot: &gtk::Snapshot,
     layer: &BackgroundLayer,
@@ -597,24 +599,52 @@ fn paint_layer(
     }
     if x.repeats || y.repeats {
         let bounds = clip.bounds();
-        let repeat_bounds = graphene::Rect::new(
-            if x.repeats { bounds.x() } else { tile.x() },
-            if y.repeats { bounds.y() } else { tile.y() },
-            if x.repeats {
-                bounds.width()
-            } else {
-                tile.width()
-            },
-            if y.repeats {
-                bounds.height()
-            } else {
-                tile.height()
-            },
-        );
-        let period = graphene::Rect::new(tile.x(), tile.y(), x.stride, y.stride);
-        snapshot.push_repeat(&repeat_bounds, Some(&period));
-        paint_image(snapshot, &layer.image, &tile);
-        snapshot.pop();
+        let span = |repeats: bool, origin: f32, stride: f32, start: f32, extent: f32| {
+            if !repeats || stride <= 0.0 {
+                return (origin, 1);
+            }
+            let first = origin - ((origin - start) / stride).ceil() * stride;
+            (
+                first,
+                ((start + extent - first) / stride).ceil().max(0.0) as usize,
+            )
+        };
+        let (first_x, columns) = span(x.repeats, tile.x(), x.stride, bounds.x(), bounds.width());
+        let (first_y, rows) = span(y.repeats, tile.y(), y.stride, bounds.y(), bounds.height());
+        if columns * rows > MAX_DIRECT_TILES {
+            let repeat_bounds = graphene::Rect::new(
+                if x.repeats { bounds.x() } else { tile.x() },
+                if y.repeats { bounds.y() } else { tile.y() },
+                if x.repeats {
+                    bounds.width()
+                } else {
+                    tile.width()
+                },
+                if y.repeats {
+                    bounds.height()
+                } else {
+                    tile.height()
+                },
+            );
+            let period = graphene::Rect::new(tile.x(), tile.y(), x.stride, y.stride);
+            snapshot.push_repeat(&repeat_bounds, Some(&period));
+            paint_image(snapshot, &layer.image, &tile);
+            snapshot.pop();
+            snapshot.pop();
+            return;
+        }
+        // Drawing tiles directly keeps edges exact; GL samples push_repeat's offscreen tile with filtering.
+        for row in 0..rows {
+            for column in 0..columns {
+                let placed = graphene::Rect::new(
+                    first_x + column as f32 * x.stride,
+                    first_y + row as f32 * y.stride,
+                    tile.width(),
+                    tile.height(),
+                );
+                paint_image(snapshot, &layer.image, &placed);
+            }
+        }
     } else {
         paint_image(snapshot, &layer.image, &tile);
     }
