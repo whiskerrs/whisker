@@ -98,6 +98,9 @@ class HostScene {
   void Detach(uint64_t child);
   void Layout(Node& node, const WhiskerMobileLayoutGeometry& geometry);
   void Flatten(Node& node);
+  void FitGroup(Node& node);
+  // Node-local bounds of everything the node and its unclipped descendants paint.
+  D2D1_RECT_F PaintBounds(const Node& node) const;
   void UpdateClip(Node& node);
   void UpdateClipPath(Node& node);
   void SyncChildren(uint64_t parent);

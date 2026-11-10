@@ -155,6 +155,9 @@ bool HostScene::Apply(const WhiskerMobileFrame& frame, WhiskerMobileApplyRespons
     if (node.box_dirty) DrawBox(node);
     if (node.text_dirty) DrawText(node);
   }
+  for (auto& [id, node] : nodes_) {
+    if (node.group) FitGroup(node);
+  }
   scene_epoch_ = frame.scene_epoch;
   revision_ = frame.target_revision;
   response.status = WHISKER_APPLY_ACCEPTED;
@@ -345,6 +348,59 @@ void HostScene::Flatten(Node& node) {
   node.group_sprite.Size(size);
   node.group_sprite.Brush(compositor_.CreateSurfaceBrush(node.group_surface));
   node.visual.Children().InsertAtTop(node.group_sprite);
+  FitGroup(node);
+}
+
+void HostScene::FitGroup(Node& node) {
+  auto bounds = PaintBounds(node);
+  D2D1_SIZE_F size{std::max(0.0f, bounds.right - bounds.left), std::max(0.0f, bounds.bottom - bounds.top)};
+  node.group_surface.SourceOffset({bounds.left, bounds.top});
+  node.group_surface.SourceSize({size.width, size.height});
+  node.group_sprite.Offset({bounds.left, bounds.top, 0});
+  node.group_sprite.Size({size.width, size.height});
+}
+
+D2D1_RECT_F HostScene::PaintBounds(const Node& node) const {
+  auto const& border = node.geometry.border;
+  float extent = OuterShadowExtent(node.shadows);
+  D2D1_RECT_F bounds{-extent, -extent, border.width + extent, border.height + extent};
+  auto unite = [&bounds](D2D1_RECT_F r) {
+    if (r.right <= r.left || r.bottom <= r.top) return;
+    bounds = {std::min(bounds.left, r.left), std::min(bounds.top, r.top),
+              std::max(bounds.right, r.right), std::max(bounds.bottom, r.bottom)};
+  };
+  if (node.has_text) {
+    auto const& content = node.geometry.content;
+    float overflow = node.text.PaintOverflow();
+    unite({content.x - overflow, content.y - overflow, content.x + content.width + overflow,
+           content.y + content.height + overflow});
+  }
+  bool clip_x = node.clip_horizontal || node.scroll;
+  bool clip_y = node.clip_vertical || node.scroll;
+  for (auto id : node.children) {
+    auto const& child = nodes_.at(id);
+    auto r = PaintBounds(child);
+    auto const& m = child.transform;
+    float xs[4];
+    float ys[4];
+    D2D1_POINT_2F corners[] = {{r.left, r.top}, {r.right, r.top}, {r.left, r.bottom}, {r.right, r.bottom}};
+    for (int i = 0; i < 4; ++i) {
+      xs[i] = corners[i].x * m[0] + corners[i].y * m[2] + m[4] + child.geometry.border.x;
+      ys[i] = corners[i].x * m[1] + corners[i].y * m[3] + m[5] + child.geometry.border.y;
+    }
+    D2D1_RECT_F mapped{*std::min_element(xs, xs + 4), *std::min_element(ys, ys + 4),
+                       *std::max_element(xs, xs + 4), *std::max_element(ys, ys + 4)};
+    if (clip_x) {
+      mapped.left = std::max(mapped.left, 0.0f);
+      mapped.right = std::min(mapped.right, border.width);
+    }
+    if (clip_y) {
+      mapped.top = std::max(mapped.top, 0.0f);
+      mapped.bottom = std::min(mapped.bottom, border.height);
+    }
+    unite(mapped);
+  }
+  return bounds;
 }
 
 void HostScene::Delete(uint64_t id) {
@@ -417,11 +473,7 @@ void HostScene::Layout(Node& node, const WhiskerMobileLayoutGeometry& geometry) 
   node.background.Size({border.width, border.height});
   node.children_visual.Size({border.width, border.height});
   if (node.scroll_content) node.scroll_content.Size({border.width, border.height});
-  if (node.group) {
-    node.group.Size({border.width, border.height});
-    node.group_surface.SourceSize({border.width, border.height});
-    node.group_sprite.Size({border.width, border.height});
-  }
+  if (node.group) node.group.Size({border.width, border.height});
   UpdateClip(node);
   UpdateClipPath(node);
   node.box_dirty = true;
