@@ -12,6 +12,13 @@ fn main() {
         return;
     };
     let bootstrap = PathBuf::from(bootstrap);
+    let host = PathBuf::from(host);
+    for library in ["WhiskerHostConformance", "WhiskerHost"] {
+        println!(
+            "cargo::rerun-if-changed={}",
+            host.join(format!("{library}.lib")).display()
+        );
+    }
     println!("cargo::rustc-link-search=native={}", host.display());
     println!(
         "cargo::rustc-link-search=native={}",
