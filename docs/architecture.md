@@ -284,8 +284,12 @@ program in a generated Cargo package under `target/.whisker/generator`. This
 avoids compiling the application library, which a direct `cargo run` of the
 application's configuration bin also compiles. The generated package uses the
 application's resolved CNG dependency and discovered plugin dependencies;
-arbitrary application dependencies and features are not inherited. Legacy
-`configure(&mut Config)` files receive an entry point that calls `whisker_cng::run`.
+arbitrary application dependencies and features are not inherited. Each
+dependency keeps its resolved source (registry version, git reference, or path)
+so it unifies with the application's `[patch]` entries, and the package starts
+from the application's `Cargo.lock` so git branches stay on the locked commits.
+Legacy `configure(&mut Config)` files receive an entry point that calls
+`whisker_cng::run`.
 There is no configuration-only execution mode or configuration-output cache.
 
 Each execution performs generation and its fingerprint checks. After all requested
