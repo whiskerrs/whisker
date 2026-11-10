@@ -151,6 +151,21 @@ extension ParagraphTests {
         XCTAssertEqual(label.accessibilityLabel, "")
     }
 
+    func testFixedLineHeightCentersTheContentAreaLikeCSS() {
+        let font = UIFont.systemFont(ofSize: 15)
+        for lineHeight: CGFloat in [12, 16, 30] {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = lineHeight
+            paragraph.maximumLineHeight = lineHeight
+            let text = NSAttributedString(string: "B+\nB+", attributes: [.font: font, .paragraphStyle: paragraph])
+            let layout = WhiskerParagraphLayout(text: text, width: 200, maxLines: 0, overflow: .clip)
+            let halfLeading = (lineHeight - (font.ascender - font.descender)) / 2
+            XCTAssertEqual(layout.baselines.first, halfLeading + font.ascender, accuracy: 0.01, "line-height \(lineHeight)")
+            XCTAssertEqual(layout.baselines.last, lineHeight + halfLeading + font.ascender, accuracy: 0.01, "line-height \(lineHeight)")
+            XCTAssertEqual(layout.size.height, lineHeight * 2, accuracy: 0.01, "line-height \(lineHeight)")
+        }
+    }
+
     func testPreparationLeaseRetainsLayoutUntilCacheRelease() {
         let cache = PreparedParagraphs()
         var layout: WhiskerParagraphLayout? = WhiskerParagraphLayout(text: NSAttributedString(string: "kept", attributes: [.font: UIFont.systemFont(ofSize: 16)]), width: 100, maxLines: 0, overflow: .clip)
