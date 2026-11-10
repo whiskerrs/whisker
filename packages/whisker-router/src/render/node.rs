@@ -523,6 +523,10 @@ fn reconcile_stack(
             let instant = w.transition.is_instant();
             w.ctrl.set_value(0.0);
             set_pose(&w, &drive, Role::Top, Direction::Push);
+            old.pose_ctrl.set(drive.clone());
+            old.pose_role.set(Role::Under);
+            old.pose_mode
+                .set(PoseMode::Transition(w.transition.clone(), Direction::Push));
             live.borrow_mut().insert(top_idx, w);
 
             if instant {
