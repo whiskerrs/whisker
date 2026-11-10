@@ -19,6 +19,10 @@ mod paint;
 mod scene;
 mod text;
 
+#[cfg(all(test, feature = "host-conformance"))]
+#[path = "../tests/host_conformance/mod.rs"]
+mod host_conformance_tests;
+
 /// Configuration for one standalone Linux window.
 #[derive(Clone, Debug)]
 pub struct LinuxAppConfig {

@@ -7603,6 +7603,7 @@ dependencies = [
  "pangocairo",
  "whisker",
  "whisker-engine",
+ "whisker-host-conformance",
  "whisker-protocol",
  "whisker-style",
  "whisker-value",
