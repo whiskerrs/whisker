@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: publish-windows-host
@@ -55,10 +56,16 @@ jobs:
       - name: Tag built Windows Host
         if: inputs.publish && steps.check.outputs.published != 'true'
         run: cargo xtask release native-tag windows "$VERSION"
+      - name: Exchange the GitHub OIDC token for a nuget.org API key
+        id: nuget-login
+        if: inputs.publish && steps.check.outputs.published != 'true'
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
       - name: Publish to nuget.org
         if: inputs.publish && steps.check.outputs.published != 'true'
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: nuget push "target/nuget/Whisker.WindowsHost.$VERSION.nupkg" -Source https://api.nuget.org/v3/index.json -ApiKey "$NUGET_API_KEY" -NonInteractive
       - name: Verify the public package
         if: inputs.publish

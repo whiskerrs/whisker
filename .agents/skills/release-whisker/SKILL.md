@@ -85,7 +85,8 @@ The release-plan merge triggers the same workflow's publishing jobs:
    tag. SwiftPM consumes the tag directly; never move a published tag.
    SwiftPM can build in parallel with the Maven jobs.
    The Windows Host builds x64 and ARM64 libraries, tags `windows-host-v<version>`,
-   and pushes `Whisker.WindowsHost` to nuget.org with the `NUGET_API_KEY` secret.
+   and pushes `Whisker.WindowsHost` to nuget.org through Trusted Publishing
+   (`NuGet/login` with the `NUGET_USER` secret; no long-lived API key).
 3. After all selected native jobs succeed, verify reused SDKs too, then use
    Cargo workspace publishing for the unpublished Rust versions. Publishing
    uses Cargo 1.98.1; the framework's consumer MSRV is unchanged.

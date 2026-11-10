@@ -117,6 +117,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.release == 'true' && needs.plan.outputs.windows != ''
     uses: ./.github/workflows/publish-windows-host.yml
+    permissions:
+      contents: write
+      id-token: write
     with:
       version: ${{ needs.plan.outputs.windows }}
       publish: true
