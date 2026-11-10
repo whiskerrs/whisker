@@ -44,6 +44,7 @@
     <ClInclude Include="src\paint.h" />
     <ClInclude Include="src\shadow.h" />
     <ClInclude Include="src\text.h" />
+    <ClInclude Include="src\value.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\background.cpp" />

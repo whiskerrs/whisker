@@ -1,6 +1,7 @@
 #include "host_scene.h"
 
 #include "paint.h"
+#include "value.h"
 
 #include <algorithm>
 #include <cmath>
@@ -28,23 +29,6 @@ constexpr uint32_t kScrollByCommand = 2;
 constexpr int32_t kHitTestNone = 1;
 constexpr int32_t kHitTestBoxOnly = 2;
 constexpr int32_t kHitTestDescendantsOnly = 3;
-
-std::string_view View(const WhiskerStringRef& value) { return {value.ptr, value.len}; }
-
-const WhiskerValueRaw* MapEntry(const WhiskerValueRaw* value, std::string_view key) {
-  if (!value || value->type != WHISKER_VALUE_MAP) return nullptr;
-  for (size_t i = 0; i < value->v.map.count; ++i) {
-    if (View(value->v.map.entries[i].key) == key) return &value->v.map.entries[i].value;
-  }
-  return nullptr;
-}
-
-float Number(const WhiskerValueRaw* value) {
-  if (!value) return 0;
-  if (value->type == WHISKER_VALUE_FLOAT) return static_cast<float>(value->v.f);
-  if (value->type == WHISKER_VALUE_INT) return static_cast<float>(value->v.i);
-  return 0;
-}
 
 winrt::Windows::UI::Color ToColor(const WhiskerMobileColor& color) {
   auto c = ToD2DColor(color);
@@ -557,18 +541,24 @@ void HostScene::DrawText(Node& node) {
     auto parent = node.group ? node.group : node.visual;
     parent.Children().InsertAbove(node.text_sprite, node.background);
   }
-  winrt::Windows::Graphics::SizeInt32 pixels{
-      static_cast<int32_t>(std::ceil(content.width * scale_)),
-      static_cast<int32_t>(std::ceil(content.height * scale_))};
+  float overflow = node.text.PaintOverflow();
+  float width = content.width + overflow * 2;
+  float height = content.height + overflow * 2;
+  winrt::Windows::Graphics::SizeInt32 pixels{static_cast<int32_t>(std::ceil(width * scale_)),
+                                             static_cast<int32_t>(std::ceil(height * scale_))};
   auto surface = graphics_.CreateDrawingSurface2(pixels, dx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
                                                  dx::DirectXAlphaMode::Premultiplied);
   auto brush = compositor_.CreateSurfaceBrush(surface);
   brush.Stretch(comp::CompositionStretch::Fill);
   node.text_sprite.Brush(brush);
-  node.text_sprite.Offset({content.x, content.y, 0});
-  node.text_sprite.Size({content.width, content.height});
-  DrawSurface(surface, scale_,
-              [&](ID2D1DeviceContext* context) { text_.Draw(context, node.text, content.width); });
+  node.text_sprite.Offset({content.x - overflow, content.y - overflow, 0});
+  node.text_sprite.Size({width, height});
+  DrawSurface(surface, scale_, [&](ID2D1DeviceContext* context) {
+    D2D1_MATRIX_3X2_F transform;
+    context->GetTransform(&transform);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(overflow, overflow) * transform);
+    text_.Draw(context, node.text, content.width);
+  });
 }
 
 const HostScene::Element* HostScene::ElementOf(const Node& node) const {
