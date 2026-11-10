@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <string_view>
+#include <utility>
 
 #include <windows.graphics.interop.h>
 #include <winrt/Microsoft.Graphics.DirectX.h>
@@ -21,6 +23,28 @@ namespace {
 
 constexpr float kUnclipped = 1.0e5f;
 constexpr uint64_t kRoot = 0;
+constexpr uint32_t kScrollToCommand = 1;
+constexpr uint32_t kScrollByCommand = 2;
+constexpr int32_t kHitTestNone = 1;
+constexpr int32_t kHitTestBoxOnly = 2;
+constexpr int32_t kHitTestDescendantsOnly = 3;
+
+std::string_view View(const WhiskerStringRef& value) { return {value.ptr, value.len}; }
+
+const WhiskerValueRaw* MapEntry(const WhiskerValueRaw* value, std::string_view key) {
+  if (!value || value->type != WHISKER_VALUE_MAP) return nullptr;
+  for (size_t i = 0; i < value->v.map.count; ++i) {
+    if (View(value->v.map.entries[i].key) == key) return &value->v.map.entries[i].value;
+  }
+  return nullptr;
+}
+
+float Number(const WhiskerValueRaw* value) {
+  if (!value) return 0;
+  if (value->type == WHISKER_VALUE_FLOAT) return static_cast<float>(value->v.f);
+  if (value->type == WHISKER_VALUE_INT) return static_cast<float>(value->v.i);
+  return 0;
+}
 
 winrt::Windows::UI::Color ToColor(const WhiskerMobileColor& color) {
   auto c = ToD2DColor(color);
@@ -75,6 +99,30 @@ bool HasInsetShadow(const std::vector<BoxShadow>& shadows) {
 }
 
 }  // namespace
+
+bool HostScene::Bootstrap(const WhiskerMobileBootstrap& bootstrap) {
+  if (bootstrap.abi_major != WHISKER_MOBILE_ABI_MAJOR ||
+      (bootstrap.registration_count && !bootstrap.registrations)) {
+    return false;
+  }
+  elements_.clear();
+  for (size_t i = 0; i < bootstrap.registration_count; ++i) {
+    auto const& raw = bootstrap.registrations[i];
+    Element element;
+    element.kind = View(raw.name) == "whisker.ui/ScrollView" ? Kind::ScrollView : Kind::View;
+    for (size_t p = 0; p < raw.property_count; ++p) {
+      element.properties.emplace(raw.properties[p].id, std::string(View(raw.properties[p].name)));
+    }
+    for (size_t e = 0; e < raw.event_count; ++e) {
+      auto id = raw.events[e].id;
+      if (View(raw.events[e].name) == "scroll" && id >= 1 && id <= 64) {
+        element.scroll_event_mask = uint64_t{1} << (id - 1);
+      }
+    }
+    elements_.emplace(raw.element_type, std::move(element));
+  }
+  return true;
+}
 
 HostScene::HostScene(comp::ContainerVisual root, const TextEngine& text,
                      comp::CompositionGraphicsDevice graphics)
@@ -134,12 +182,22 @@ void HostScene::Clear() {
   nodes_.clear();
   roots_.clear();
   dirty_children_.clear();
+  scroll_events_.clear();
+  scroll_offsets_.clear();
 }
 
 bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
   if (op.tag == WHISKER_OP_CREATE) {
     if (op.node == 0 || nodes_.contains(op.node)) return false;
     Create(op.node);
+    auto& node = nodes_.at(op.node);
+    node.element_type = op.member;
+    if (auto element = ElementOf(node); element && element->kind == Kind::ScrollView) {
+      node.scroll.emplace();
+      node.scroll_content = compositor_.CreateContainerVisual();
+      node.children_visual.Children().InsertAtTop(node.scroll_content);
+      UpdateClip(node);
+    }
     return true;
   }
   if (op.tag == WHISKER_OP_INSERT || op.tag == WHISKER_OP_MOVE || op.tag == WHISKER_OP_REMOVE) {
@@ -205,6 +263,7 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
     case WHISKER_OP_TRANSFORM: {
       if (!op.payload || op.payload_count != 16) return false;
       auto m = static_cast<const float*>(op.payload);
+      node.transform = {m[0], m[1], m[4], m[5], m[12], m[13]};
       node.visual.TransformMatrix({m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9],
                                    m[10], m[11], m[12], m[13], m[14], m[15]});
       break;
@@ -226,6 +285,26 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
     case WHISKER_OP_Z_ORDER:
       node.z_order = op.integer;
       dirty_children_.insert(node.parent);
+      break;
+    case WHISKER_OP_PROPERTY:
+      if (!op.payload) return false;
+      SetProperty(node, op.member, static_cast<const WhiskerValueRaw*>(op.payload));
+      break;
+    case WHISKER_OP_CLEAR_PROPERTY:
+      SetProperty(node, op.member, nullptr);
+      break;
+    case WHISKER_OP_EVENT_MASK:
+      node.event_mask = op.wide;
+      break;
+    case WHISKER_OP_HIT_TEST:
+      node.hit_test = op.integer;
+      break;
+    case WHISKER_OP_CURSOR:
+      node.cursor = op.integer;
+      break;
+    case WHISKER_OP_COMMAND:
+      if (!op.payload) return false;
+      Invoke(op.node, op.member, static_cast<const WhiskerValueRaw*>(op.payload));
       break;
     case WHISKER_OP_TEXT:
     case WHISKER_OP_TEXT_STYLE: {
@@ -286,6 +365,7 @@ void HostScene::Delete(uint64_t id) {
   dirty_children_.insert(kRoot);
   dirty_children_.erase(id);
   nodes_.erase(id);
+  scroll_offsets_.erase(id);
 }
 
 void HostScene::Detach(uint64_t child) {
@@ -326,11 +406,10 @@ void HostScene::SyncChildren(uint64_t parent) {
     auto it = nodes_.find(parent);
     if (it == nodes_.end()) return;
     order = it->second.children;
-    collection = it->second.children_visual.Children();
+    auto const& node = it->second;
+    collection = (node.scroll_content ? node.scroll_content : node.children_visual).Children();
   }
-  std::stable_sort(order.begin(), order.end(), [this](uint64_t a, uint64_t b) {
-    return nodes_.at(a).z_order < nodes_.at(b).z_order;
-  });
+  order = PaintOrder(order);
   collection.RemoveAll();
   for (auto id : order) {
     auto visual = nodes_.at(id).visual;
@@ -346,6 +425,7 @@ void HostScene::Layout(Node& node, const WhiskerMobileLayoutGeometry& geometry) 
   node.visual.Size({border.width, border.height});
   node.background.Size({border.width, border.height});
   node.children_visual.Size({border.width, border.height});
+  if (node.scroll_content) node.scroll_content.Size({border.width, border.height});
   if (node.group) {
     node.group.Size({border.width, border.height});
     node.group_surface.SourceSize({border.width, border.height});
@@ -358,12 +438,14 @@ void HostScene::Layout(Node& node, const WhiskerMobileLayoutGeometry& geometry) 
 }
 
 void HostScene::UpdateClip(Node& node) {
-  if (!node.clip_horizontal && !node.clip_vertical) {
+  bool horizontal = node.clip_horizontal || node.scroll;
+  bool vertical = node.clip_vertical || node.scroll;
+  if (!horizontal && !vertical) {
     node.children_visual.Clip(nullptr);
     return;
   }
   auto const& border = node.geometry.border;
-  if (node.clip_horizontal && node.clip_vertical) {
+  if (horizontal && vertical) {
     auto rounded = RoundedRect::From(node.paint ? &*node.paint : nullptr, border.width, border.height);
     if (!rounded.IsRectilinear()) {
       auto source = winrt::make<GeometrySource>(
@@ -374,11 +456,11 @@ void HostScene::UpdateClip(Node& node) {
     }
   }
   auto clip = compositor_.CreateInsetClip();
-  if (!node.clip_horizontal) {
+  if (!horizontal) {
     clip.LeftInset(-kUnclipped);
     clip.RightInset(-kUnclipped);
   }
-  if (!node.clip_vertical) {
+  if (!vertical) {
     clip.TopInset(-kUnclipped);
     clip.BottomInset(-kUnclipped);
   }
@@ -487,6 +569,149 @@ void HostScene::DrawText(Node& node) {
   node.text_sprite.Size({content.width, content.height});
   DrawSurface(surface, scale_,
               [&](ID2D1DeviceContext* context) { text_.Draw(context, node.text, content.width); });
+}
+
+const HostScene::Element* HostScene::ElementOf(const Node& node) const {
+  auto it = elements_.find(node.element_type);
+  return it == elements_.end() ? nullptr : &it->second;
+}
+
+void HostScene::SetProperty(Node& node, uint32_t property, const WhiskerValueRaw* value) {
+  auto element = ElementOf(node);
+  if (!node.scroll || !element) return;
+  auto name = element->properties.find(property);
+  if (name == element->properties.end()) return;
+  if (name->second == "scroll-orientation") {
+    node.scroll->horizontal = value && value->type == WHISKER_VALUE_STRING &&
+                              View(value->v.s) == "horizontal";
+  } else if (name->second == "enable-scroll") {
+    node.scroll->enabled = !value || value->type != WHISKER_VALUE_BOOL || value->v.b;
+  }
+}
+
+void HostScene::Invoke(uint64_t id, uint32_t command, const WhiskerValueRaw* arguments) {
+  auto const& node = nodes_.at(id);
+  if (!node.scroll || (command != kScrollToCommand && command != kScrollByCommand)) return;
+  float distance = Number(MapEntry(arguments, "offset"));
+  auto offset = node.scroll->offset;
+  size_t axis = node.scroll->horizontal ? 0 : 1;
+  offset[axis] = command == kScrollByCommand ? offset[axis] + distance : distance;
+  ScrollTo(id, offset);
+}
+
+std::array<float, 2> HostScene::ContentExtent(const Node& node) const {
+  auto const& border = node.geometry.border;
+  auto const& content = node.geometry.content;
+  float trailing_x = border.width - content.x - content.width;
+  float trailing_y = border.height - content.y - content.height;
+  std::array<float, 2> extent{border.width, border.height};
+  for (auto child : node.children) {
+    auto const& rect = nodes_.at(child).geometry.border;
+    extent[0] = std::max(extent[0], rect.x + rect.width + trailing_x);
+    extent[1] = std::max(extent[1], rect.y + rect.height + trailing_y);
+  }
+  return extent;
+}
+
+std::array<float, 2> HostScene::MaxScrollOffset(const Node& node) const {
+  if (!node.scroll) return {0, 0};
+  auto extent = ContentExtent(node);
+  auto const& border = node.geometry.border;
+  std::array<float, 2> max{std::max(0.0f, extent[0] - border.width),
+                           std::max(0.0f, extent[1] - border.height)};
+  max[node.scroll->horizontal ? 1 : 0] = 0;
+  return max;
+}
+
+bool HostScene::ScrollTo(uint64_t id, std::array<float, 2> offset) {
+  auto& node = nodes_.at(id);
+  if (!node.scroll) return false;
+  auto max = MaxScrollOffset(node);
+  std::array<float, 2> clamped{std::clamp(offset[0], 0.0f, max[0]),
+                               std::clamp(offset[1], 0.0f, max[1])};
+  if (clamped == node.scroll->offset) return false;
+  node.scroll->offset = clamped;
+  node.scroll_content.Offset({-clamped[0], -clamped[1], 0});
+  scroll_offsets_[id] = clamped;
+  auto element = ElementOf(node);
+  if (element && (node.event_mask & element->scroll_event_mask)) {
+    auto extent = ContentExtent(node);
+    scroll_events_.push_back({id, clamped[0], clamped[1], extent[0], extent[1],
+                              node.geometry.border.width, node.geometry.border.height});
+  }
+  return true;
+}
+
+std::vector<uint64_t> HostScene::PaintOrder(const std::vector<uint64_t>& ids) const {
+  auto order = ids;
+  std::stable_sort(order.begin(), order.end(), [this](uint64_t a, uint64_t b) {
+    return nodes_.at(a).z_order < nodes_.at(b).z_order;
+  });
+  return order;
+}
+
+std::optional<uint64_t> HostScene::HitTest(const std::vector<uint64_t>& ids, float x,
+                                           float y) const {
+  auto order = PaintOrder(ids);
+  for (auto it = order.rbegin(); it != order.rend(); ++it) {
+    auto const& node = nodes_.at(*it);
+    if (!node.visible || node.hit_test == kHitTestNone) continue;
+    auto const& border = node.geometry.border;
+    auto const& m = node.transform;
+    float px = x - border.x - m[4];
+    float py = y - border.y - m[5];
+    float determinant = m[0] * m[3] - m[1] * m[2];
+    if (determinant == 0) continue;
+    float lx = (px * m[3] - py * m[2]) / determinant;
+    float ly = (py * m[0] - px * m[1]) / determinant;
+    bool inside = lx >= 0 && ly >= 0 && lx < border.width && ly < border.height;
+    bool clips = node.scroll || (node.clip_horizontal && node.clip_vertical);
+    if (node.hit_test != kHitTestBoxOnly && (inside || !clips)) {
+      float sx = node.scroll ? node.scroll->offset[0] : 0;
+      float sy = node.scroll ? node.scroll->offset[1] : 0;
+      if (auto hit = HitTest(node.children, lx + sx, ly + sy)) return hit;
+    }
+    if (inside && node.hit_test != kHitTestDescendantsOnly) return *it;
+  }
+  return std::nullopt;
+}
+
+int32_t HostScene::CursorAt(float x, float y) const {
+  auto hit = HitTest(roots_, x, y);
+  for (auto id = hit; id && *id != kRoot;) {
+    auto const& node = nodes_.at(*id);
+    if (node.cursor != 0) return node.cursor;
+    id = node.parent;
+  }
+  return 0;
+}
+
+bool HostScene::ScrollAt(float x, float y, float dx, float dy) {
+  auto hit = HitTest(roots_, x, y);
+  for (auto id = hit; id && *id != kRoot;) {
+    auto const& node = nodes_.at(*id);
+    if (node.scroll && node.scroll->enabled) {
+      size_t axis = node.scroll->horizontal ? 0 : 1;
+      std::array<float, 2> delta{dx, dy};
+      float amount = delta[axis] == 0 ? delta[1 - axis] : delta[axis];
+      auto offset = node.scroll->offset;
+      offset[axis] += amount;
+      if (ScrollTo(*id, offset)) return true;
+    }
+    id = node.parent;
+  }
+  return false;
+}
+
+std::vector<HostScene::ScrollEvent> HostScene::TakeScrollEvents() {
+  return std::exchange(scroll_events_, {});
+}
+
+std::vector<std::pair<uint64_t, std::array<float, 2>>> HostScene::TakeScrollOffsets() {
+  std::vector<std::pair<uint64_t, std::array<float, 2>>> offsets(scroll_offsets_.begin(),
+                                                                 scroll_offsets_.end());
+  scroll_offsets_.clear();
+  return offsets;
 }
 
 }  // namespace whisker
