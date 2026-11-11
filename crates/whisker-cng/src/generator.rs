@@ -525,6 +525,62 @@ fn sync_macos(
     })
 }
 
+/// Cargo dependency on the Rust Host crate in `platforms/<platform>`, from
+/// the source the application resolved `whisker` from.
+fn rust_host_dependency(
+    workspace_root: &Path,
+    graph: &ProjectDependencyGraph,
+    platform: &str,
+) -> String {
+    let in_tree_host = workspace_root.join("platforms").join(platform);
+    let source_host = graph
+        .host_sdk
+        .as_ref()
+        .map(|root| root.join("platforms").join(platform));
+    if in_tree_host.join("Cargo.toml").is_file() {
+        format!("{{ path = {:?} }}", in_tree_host.display().to_string())
+    } else if let Some(git) = &graph.whisker_git {
+        format!("{{ {} }}", git.dependency_fields())
+    } else if let Some(host) = source_host.filter(|host| host.join("Cargo.toml").is_file()) {
+        format!("{{ path = {:?} }}", host.display().to_string())
+    } else {
+        format!("{:?}", env!("CARGO_PKG_VERSION"))
+    }
+}
+
+/// Element modules with a Rust Host for `platform`, each named from the
+/// source its package resolved from.
+fn rust_element_modules(
+    graph: &ProjectDependencyGraph,
+    platform: crate::modules::ModulePlatform,
+) -> Vec<crate::RustElementModuleInput> {
+    graph
+        .modules
+        .iter()
+        .filter_map(|module| {
+            let contribution = module.rust_host(platform)?.clone();
+            let host_dependency = match (contribution.source, &module.git) {
+                (crate::modules::ResolvedRustHostSource::Path(_), Some(git)) => {
+                    crate::RustHostDependency::Git(git.clone())
+                }
+                (crate::modules::ResolvedRustHostSource::Path(path), None) => {
+                    crate::RustHostDependency::Path(path)
+                }
+                (crate::modules::ResolvedRustHostSource::Registry { version }, _) => {
+                    crate::RustHostDependency::Registry { version }
+                }
+            };
+            Some(crate::RustElementModuleInput {
+                package: module.package.clone(),
+                crate_path: module.manifest_dir.clone(),
+                git: module.git.clone(),
+                host_package: contribution.package,
+                host_dependency,
+            })
+        })
+        .collect()
+}
+
 fn sync_desktop(
     target: Target,
     app_config: &Config,
@@ -535,15 +591,7 @@ fn sync_desktop(
     selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen").join(target.as_str());
-    // Inside the Whisker monorepo, point at the in-tree Host so examples
-    // exercise the current checkout. Installed projects use the published
-    // crate at the generator's matching version.
-    let in_tree_host = workspace_root.join("platforms").join(target.as_str());
-    let dependency = if in_tree_host.join("Cargo.toml").is_file() {
-        format!("{{ path = {:?} }}", in_tree_host.display().to_string())
-    } else {
-        format!("{:?}", env!("CARGO_PKG_VERSION"))
-    };
+    let dependency = rust_host_dependency(workspace_root, graph, target.as_str());
     let mut inputs = crate::desktop::inputs_from(
         app_config,
         target,
@@ -557,28 +605,7 @@ fn sync_desktop(
     } else {
         crate::modules::ModulePlatform::Linux
     };
-    inputs.element_modules = graph
-        .modules
-        .iter()
-        .cloned()
-        .filter_map(|module| {
-            let contribution = module.rust_host(module_platform)?.clone();
-            let host_dependency = match contribution.source {
-                crate::modules::ResolvedRustHostSource::Path(path) => {
-                    crate::RustHostDependency::Path(path)
-                }
-                crate::modules::ResolvedRustHostSource::Registry { version } => {
-                    crate::RustHostDependency::Registry { version }
-                }
-            };
-            Some(crate::RustElementModuleInput {
-                package: module.package,
-                crate_path: module.manifest_dir,
-                host_package: contribution.package,
-                host_dependency,
-            })
-        })
-        .collect();
+    inputs.element_modules = rust_element_modules(graph, module_platform);
     let application_name = if target == Target::Windows {
         crate::desktop::application::WindowsApplicationPlugin::NAME
     } else {
@@ -645,12 +672,7 @@ fn sync_web(
     selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/web");
-    let in_tree_host = workspace_root.join("platforms/web");
-    let dependency = if in_tree_host.join("Cargo.toml").is_file() {
-        format!("{{ path = {:?} }}", in_tree_host.display().to_string())
-    } else {
-        format!("{:?}", env!("CARGO_PKG_VERSION"))
-    };
+    let dependency = rust_host_dependency(workspace_root, graph, "web");
     let mut inputs = crate::web::inputs_from(
         app_config,
         package.to_string(),
@@ -658,30 +680,7 @@ fn sync_web(
         dependency,
     )?;
     inputs.cargo_selection = selection.clone();
-    inputs.element_modules = graph
-        .modules
-        .iter()
-        .cloned()
-        .filter_map(|module| {
-            let contribution = module
-                .rust_host(crate::modules::ModulePlatform::Web)?
-                .clone();
-            let host_dependency = match contribution.source {
-                crate::modules::ResolvedRustHostSource::Path(path) => {
-                    crate::RustHostDependency::Path(path)
-                }
-                crate::modules::ResolvedRustHostSource::Registry { version } => {
-                    crate::RustHostDependency::Registry { version }
-                }
-            };
-            Some(crate::RustElementModuleInput {
-                package: module.package,
-                crate_path: module.manifest_dir,
-                host_package: contribution.package,
-                host_dependency,
-            })
-        })
-        .collect();
+    inputs.element_modules = rust_element_modules(graph, crate::modules::ModulePlatform::Web);
     let template_version = inputs.template_version;
     let base_path = inputs.base_path.clone();
     let generated_package = inputs.generated_package.clone();
@@ -890,5 +889,64 @@ mod tests {
         assert!(registrar.contains("_whiskerRegisterModules_CngTestWidget()"));
         assert!(!registrar.contains("CngTestService"));
         std::fs::remove_dir_all(crate_dir).ok();
+    }
+
+    fn git_graph(modules: Vec<crate::ResolvedModule>) -> ProjectDependencyGraph {
+        ProjectDependencyGraph {
+            modules,
+            cng_plugins: Vec::new(),
+            host_sdk: Some(PathBuf::from("/cargo/git/checkouts/whisker-1/1dc9ebc")),
+            whisker_git: crate::GitSource::parse(
+                "git+https://github.com/whiskerrs/whisker?branch=next#1dc9ebcdbaba82ec",
+            ),
+        }
+    }
+
+    #[test]
+    fn rust_hosts_share_the_git_source_of_whisker() {
+        let dependency = rust_host_dependency(&tempdir(), &git_graph(Vec::new()), "web");
+        assert_eq!(
+            dependency,
+            r#"{ git = "https://github.com/whiskerrs/whisker", branch = "next" }"#
+        );
+    }
+
+    #[test]
+    fn git_modules_link_their_crate_and_host_from_git() {
+        let module = crate::ResolvedModule {
+            package: "whisker-svg".into(),
+            manifest_dir: PathBuf::from(
+                "/cargo/git/checkouts/whisker-1/1dc9ebc/packages/whisker-svg",
+            ),
+            ios_swift_sources: Vec::new(),
+            android_kotlin_sources: Vec::new(),
+            android_jni_sources: Vec::new(),
+            platforms: crate::modules::ResolvedModulePlatforms {
+                web: Some(crate::ResolvedPlatformImplementation::RustHost(
+                    crate::ResolvedRustModuleContribution {
+                        package: "whisker-svg-web".into(),
+                        source: crate::ResolvedRustHostSource::Path(PathBuf::from(
+                            "/cargo/git/checkouts/whisker-1/1dc9ebc/packages/whisker-svg/web",
+                        )),
+                    },
+                )),
+                ..Default::default()
+            },
+            git: crate::GitSource::parse(
+                "git+https://github.com/whiskerrs/whisker?branch=next#1dc9ebcdbaba82ec",
+            ),
+        };
+        let dependencies = crate::rust_element_module_dependencies(&rust_element_modules(
+            &git_graph(vec![module]),
+            crate::modules::ModulePlatform::Web,
+        ));
+        let git = r#"git = "https://github.com/whiskerrs/whisker", branch = "next""#;
+        assert!(dependencies.contains(&format!(
+            r#"whisker-svg = {{ package = "whisker-svg", {git}, default-features = false }}"#
+        )));
+        assert!(dependencies.contains(&format!(
+            r#"whisker-svg-web = {{ package = "whisker-svg-web", {git} }}"#
+        )));
+        assert!(!dependencies.contains("/cargo/git/checkouts"));
     }
 }
