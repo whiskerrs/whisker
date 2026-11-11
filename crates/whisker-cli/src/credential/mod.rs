@@ -24,6 +24,7 @@ mod android;
 mod ios;
 mod playstore;
 mod prompt;
+mod trust;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Subcommand};
@@ -74,7 +75,9 @@ pub fn run(args: CredentialArgs) -> Result<()> {
 /// permanently undecryptable and must not be left behind.
 pub(crate) fn open_or_bootstrap(project_root: &Path) -> Result<Store> {
     if Store::exists(project_root) {
-        return Store::open(project_root);
+        let store = Store::open(project_root)?;
+        trust::verify(project_root, &store)?;
+        return Ok(store);
     }
     if !prompt::is_interactive() {
         bail!(
@@ -119,6 +122,7 @@ pub(crate) fn open_or_bootstrap(project_root: &Path) -> Result<Store> {
         whisker_credentials::IDENTITY_ENV,
     );
     println!();
+    trust::verify(project_root, &store)?;
     Ok(store)
 }
 

@@ -114,6 +114,17 @@ impl Store {
         ))
     }
 
+    /// Canonical public recipient keys used for encryption
+    ///
+    /// Callers that accept repository-controlled recipient files should compare
+    /// this set with an independently trusted list before writing credentials.
+    pub fn recipient_keys(&self) -> Vec<String> {
+        let mut keys: Vec<_> = self.recipients.iter().map(ToString::to_string).collect();
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
     /// Does `<rel>.age` exist? `rel` is the plaintext-relative path
     /// (e.g. `android/com.example.app/keystore.jks`).
     pub fn has(&self, rel: &str) -> bool {
@@ -123,6 +134,11 @@ impl Store {
     /// Encrypt `plaintext` to **all** recipients and write
     /// `<dir>/<rel>.age`. Needs no secret key — see module docs.
     pub fn put(&self, rel: &str, plaintext: &[u8]) -> Result<()> {
+        let current = Self::open(self.dir.parent().context("credential store root")?)?;
+        anyhow::ensure!(
+            current.recipient_keys() == self.recipient_keys(),
+            "credential recipients changed after the store was opened; review them before saving"
+        );
         let path = self.age_path(rel);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -242,6 +258,20 @@ mod tests {
         assert!(!wrong.matches(&store_a));
         store_a.put("ios/default/asc.json", b"x").unwrap();
         assert!(store_a.get("ios/default/asc.json", &wrong).is_err());
+    }
+
+    #[test]
+    fn put_rejects_recipient_changes_after_open() {
+        let root = tmp();
+        let (store, _) = Store::bootstrap(root.path()).unwrap();
+        let other = x25519::Identity::generate().to_public();
+        std::fs::write(
+            Store::dir_for(root.path()).join(crate::RECIPIENTS_FILE),
+            format!("{other}\n"),
+        )
+        .unwrap();
+        assert!(store.put("ios/default/asc.json", b"secret").is_err());
+        assert!(!store.has("ios/default/asc.json"));
     }
 
     #[test]
