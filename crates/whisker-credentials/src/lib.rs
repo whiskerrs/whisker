@@ -52,7 +52,7 @@ pub use entries::{
     AndroidSigning, AscKey, IosSigning, KeystoreMeta, PlaystoreServiceAccount,
     android_keystore_rel, android_meta_rel, android_playstore_rel, ios_asc_rel,
 };
-pub use materialize::MaterializedDir;
+pub use materialize::{MaterializedDir, cleanup_staging};
 pub use store::{Identity, Store};
 
 /// Environment variable carrying the age secret key
