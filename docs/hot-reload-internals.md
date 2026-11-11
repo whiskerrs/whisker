@@ -379,3 +379,10 @@ the next save anyway.
   function, type, or constant leaves every component hash unchanged, and
   editing the application's root component has no parent to remount into;
   both fall back to a full remount, which resets all state.
+
+## Compiler environment capture
+
+Thin rebuild capture persists only Cargo package metadata, crate and binary names,
+manifest paths, the Cargo executable, and OUT_DIR. Registry configuration,
+authentication tokens, arbitrary CARGO_* variables, and jobserver descriptors
+are excluded. Do not use secret environment variables as compile-time app data.
