@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.iOS(.v15), .macOS(.v13)],
     products: [.library(name: "WhiskerFirebaseAnalytics", targets: ["WhiskerFirebaseAnalytics"])],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.17"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.19"),
         .package(url: "https://github.com/firebase/firebase-ios-sdk.git", exact: "12.19.2"),
     ],
     targets: [

@@ -385,6 +385,40 @@ fn mismatched_swift_module_pin_prevents_release() {
 }
 
 #[test]
+fn nested_swift_module_pins_are_checked_and_bumped() {
+    let directory = fixture();
+    let root = directory.path();
+    let nested = "packages/group/nested/Package.swift";
+    write(
+        root,
+        nested,
+        ".package(url: \"https://github.com/whiskerrs/whisker.git\", exact: \"0.1.12\")\n",
+    );
+    assert!(native::check_swift_pins(root, "0.1.13").is_err());
+    write(
+        root,
+        nested,
+        ".package(url: \"https://github.com/whiskerrs/whisker.git\", exact: \"0.1.13\")\n",
+    );
+    for ignored in [
+        "packages/group/nested/.build/checkouts/whisker/Package.swift",
+        "packages/test/example/gen/ios/whisker_modules/Package.swift",
+    ] {
+        write(
+            root,
+            ignored,
+            ".package(url: \"https://github.com/whiskerrs/whisker.git\", exact: \"0.1.0\")\n",
+        );
+    }
+    native::update_pin(root, "ios", "0.1.14").unwrap();
+    assert!(
+        fs::read_to_string(root.join(nested))
+            .unwrap()
+            .contains("whiskerrs/whisker.git\", exact: \"0.1.14\"")
+    );
+}
+
+#[test]
 fn immutable_tags_resume_same_commit_but_never_move() {
     let directory = fixture();
     let remote = tempfile::tempdir().unwrap();
