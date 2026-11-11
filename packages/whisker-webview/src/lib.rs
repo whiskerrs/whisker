@@ -51,6 +51,7 @@
 //!     WebView(
 //!         url: url,
 //!         webview_ref: webview,
+//!         message_origins: vec!["https://example.com".into()],
 //!         // JS → Rust: the page calls window.whisker.postMessage("…").
 //!         on_message: move |msg: String| log::info!("from page: {msg}"),
 //!     )
@@ -87,6 +88,7 @@
 //! | `javascript_enabled`| `bool`                     | `true`                        | Allow JavaScript execution. |
 //! | `scroll_enabled`    | `bool`                     | `true`                        | Allow the web content to scroll. |
 //! | `origin_whitelist`  | `Vec<String>`              | `["https://*", "http://*"]`   | Navigation origins the native side permits (glob). |
+//! | `message_origins`   | `Vec<String>`              | `[]`                          | Exact HTTP(S) origins allowed to send main-frame bridge messages. |
 //! | `on_message`        | `Fn(String)`               | —                             | JS → Rust message (`window.whisker.postMessage`). |
 //! | `on_load_start`     | `Fn(String)`               | —                             | A navigation started; carries the URL. |
 //! | `on_load`           | `Fn(String)`               | —                             | A navigation finished; carries the URL. |
@@ -97,6 +99,11 @@
 //! | `webview_ref`       | [`WebViewRef`]             | —                             | Imperative handle (see [Methods](#methods)). |
 //!
 //! ## JS bridge
+//!
+//! Incoming messages require an explicit `message_origins` allowlist and a main
+//! frame. Empty or malformed lists reject all messages; wildcards and opaque
+//! origins (including inline HTML) are unsupported. Android requires
+//! WEB_MESSAGE_LISTENER support and disables receiving when it is unavailable.
 //!
 //! A single message channel connects the page and Rust. The native side
 //! injects a global **`window.whisker`** object at document start:
@@ -391,6 +398,7 @@ pub fn native_webview(
     javascript_enabled: Signal<bool>,
     scroll_enabled: Signal<bool>,
     origin_whitelist: Signal<String>,
+    message_origins: Signal<String>,
     url: Signal<String>,
     html: Signal<String>,
     style: Style,
@@ -427,6 +435,10 @@ pub fn web_view(
     /// Navigation origins the native side permits (glob patterns).
     #[prop(default = default_origin_whitelist())]
     origin_whitelist: Vec<String>,
+    /// Exact HTTP(S) origins permitted to send main-frame bridge messages.
+    /// Empty rejects all messages; navigation permission is configured separately.
+    #[prop(default = Vec::new())]
+    message_origins: Vec<String>,
     /// JS → Rust message (`window.whisker.postMessage`).
     on_message: Option<Callback<String>>,
     /// A navigation started; carries the URL.
@@ -508,6 +520,7 @@ pub fn web_view(
         .javascript_enabled(javascript_enabled)
         .scroll_enabled(scroll_enabled)
         .origin_whitelist(origin_whitelist_attr)
+        .message_origins(origin_whitelist_json(&message_origins))
         .url(url_prop)
         .html(html_prop)
         .style(style_prop)
@@ -605,6 +618,7 @@ mod tests {
                 "javascript-enabled",
                 "scroll-enabled",
                 "origin-whitelist",
+                "message-origins",
                 "url",
                 "html",
             ]

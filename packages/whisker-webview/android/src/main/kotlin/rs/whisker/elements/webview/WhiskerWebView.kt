@@ -14,7 +14,7 @@
 // `window.whisker` is injected at document start via
 // WebViewCompat.addDocumentStartJavaScript, falling back to onPageStarted
 // injection where that feature is unsupported. The shim wires
-// `window.whisker.postMessage(data)` up to the JavascriptInterface, and
+// `window.whisker.postMessage(data)` up to an origin-scoped message listener, and
 // `window.whisker._receive(…)` down from `postMessageToPage`.
 //
 // ## Event dispatch
@@ -24,11 +24,6 @@
 // that is only safe because the Rust renderer is re-entrancy-safe
 // (whisker #3: `with_renderer` takes a shared borrow and every renderer
 // field borrow is scoped so it never spans a re-entrant FFI call).
-//
-// The ONE exception is `@JavascriptInterface`, which fires on JavaBridge,
-// a background thread. That path must hop to the UI thread via
-// `view().post { … }` before touching any Android View / Host event emitter
-// state — a genuine thread transition, not a reentrancy guard.
 //
 // ## Teardown
 //
@@ -43,7 +38,6 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -69,7 +63,7 @@ open class WhiskerWebView(context: WhiskerContext) :
          *
          * - `window.whisker.postMessage(data)` — page → Rust.
          *   Delegates to `__whisker_android.postMessage(s)` (the
-         *   JavascriptInterface), serialising non-string args to JSON.
+         *   WebMessageListener), serialising non-string args to JSON.
          * - `window.whisker._receive(data)` — Rust → page.
          *   Calls `window.whisker.onMessage` if the page has set it.
          */
@@ -106,6 +100,8 @@ open class WhiskerWebView(context: WhiskerContext) :
     private val cleanupHandler = Handler(Looper.getMainLooper())
 
     /** Glob patterns; an empty list means "allow all". */
+    private var bridgeOrigins: Set<String> = emptySet()
+
     private var originWhitelist: List<String> = listOf("https://*", "http://*")
 
     // -------------------------------------------------------------------------
@@ -131,10 +127,6 @@ open class WhiskerWebView(context: WhiskerContext) :
                 mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             }
         }
-
-        // Installed before any load, so it is present by the time page
-        // scripts run.
-        wv.addJavascriptInterface(WhiskerBridge(), "__whisker_android")
 
         // The onPageStarted fallback injects slightly later than a
         // document-start script, but still before user scripts that wait on
@@ -274,7 +266,9 @@ open class WhiskerWebView(context: WhiskerContext) :
                     cleanupHandler.post {
                         if (!webView.isAttachedToWindow) {
                             webView.stopLoading()
-                            webView.removeJavascriptInterface("__whisker_android")
+                            if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                                WebViewCompat.removeWebMessageListener(webView, "__whisker_android")
+                            }
                             webView.destroy()
                         }
                     }
@@ -415,22 +409,23 @@ open class WhiskerWebView(context: WhiskerContext) :
     // Inner JS bridge interface
     // -------------------------------------------------------------------------
 
-    /**
-     * Receives `window.whisker.postMessage(data)` calls from the page.
-     *
-     * `@JavascriptInterface` methods run on the JavaBridge background
-     * thread, so the hop back to the UI thread via `view().post { … }` must
-     * happen before any View API or Host event emitter state is touched.
-     */
-    private inner class WhiskerBridge {
-        @JavascriptInterface
-        fun postMessage(data: String) {
-            view().post {
-                WhiskerCustomEvent.dispatch(
-                    ui = this@WhiskerWebView,
-                    name = "message",
-                    params = mapOf("data" to data),
-                )
+    fun setMessageOrigins(json: String) {
+        bridgeOrigins = try {
+            val array = org.json.JSONArray(json)
+            (0 until array.length()).map { index ->
+                val value = array.get(index)
+                require(value is String)
+                requireNotNull(BridgeOrigins.canonical(value))
+            }.toSet()
+        } catch (_: Exception) { emptySet() }
+        val webView = view()
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+        WebViewCompat.removeWebMessageListener(webView, "__whisker_android")
+        if (bridgeOrigins.isEmpty()) return
+        WebViewCompat.addWebMessageListener(webView, "__whisker_android", bridgeOrigins) { _, message, origin, mainFrame, _ ->
+            if (BridgeOrigins.permits(origin.toString(), mainFrame, bridgeOrigins)) {
+                val data = runCatching { message.data }.getOrNull() ?: return@addWebMessageListener
+                WhiskerCustomEvent.dispatch(ui = this@WhiskerWebView, name = "message", params = mapOf("data" to data))
             }
         }
     }
