@@ -7,22 +7,11 @@
 //!
 //! ## Wire format
 //!
-//! Two frame types:
-//!
-//! **Patches** — *binary* frames laid out as:
-//!
-//! ```text
-//! [8 bytes: u64 BE — JSON header length]
-//! [N bytes:        JSON header { "kind": "patch", "table": {...} } ]
-//! [rest:           raw patch dylib bytes (no encoding) ]
-//! ```
-//!
-//! No base64 — the dylib lands on the device with its original byte
-//! count.
-//!
-//! **Hello** — *text* frame, `{"kind":"hello","aslr_reference":<u64>}`.
-//! The device sends this on connect; the server stores the value
-//! and the patcher uses it to compute the ASLR slide.
+//! Native peers prove possession of the session secret using fresh client and
+//! server nonce challenges. Each binary envelope then authenticates its version,
+//! payload type, sequence number and bytes with a directional HMAC-SHA256 bound
+//! to that transcript. The inner patch is `[u64 BE header length][JSON][dylib]`.
+//! Browser sessions receive reload controls only, never native patches.
 //!
 //! ## Architecture
 //!
@@ -45,6 +34,7 @@ use tokio::sync::broadcast;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::Event;
+use whisker_dev_runtime::auth::{self, Session};
 
 /// Cheap-to-clone broadcast payload. The dylib bytes are held by
 /// `Arc` so cloning into each subscribed client's receive queue is
@@ -150,13 +140,7 @@ struct AppState {
     tx: broadcast::Sender<ServerUpdate>,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     aslr_reference: Arc<Mutex<Option<u64>>>,
-    /// Expected shared dev-session token. When `Some`, a client must
-    /// present a matching `token` in its `hello` before any patch is
-    /// forwarded to it; a missing/mismatched token closes the
-    /// connection. The patch channel `dlopen`s whatever it ships, so on
-    /// a LAN-exposed bind this gate is what stops an unauthenticated
-    /// peer from pushing arbitrary native code. `None` = unauthenticated
-    /// (token-less local setup / tests).
+    /// Shared secret required for native mutual authentication; None selects browser-only reload.
     expected_token: Option<Arc<str>>,
     trace: bool,
 }
@@ -226,159 +210,150 @@ pub async fn serve(
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    ws.max_frame_size(auth::MAX_CONTROL + 42)
+        .max_message_size(auth::MAX_CONTROL + 42)
+        .on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState) {
-    use futures_util::{SinkExt, StreamExt};
+async fn authenticate(socket: &mut WebSocket, token: &str) -> Result<Session> {
+    use futures_util::StreamExt;
+    let Some(Ok(Message::Text(text))) = socket.next().await else {
+        anyhow::bail!("missing challenge");
+    };
+    anyhow::ensure!(text.len() <= auth::MAX_HANDSHAKE, "challenge too large");
+    let challenge: auth::Challenge = serde_json::from_str(&text)?;
+    anyhow::ensure!(
+        challenge.version == 1 && !token.is_empty(),
+        "unsupported authentication"
+    );
+    let nonce = auth::nonce()?;
+    let proof = auth::ServerProof {
+        nonce,
+        mac: auth::proof(token, true, &challenge.nonce, &nonce),
+    };
+    socket
+        .send(Message::Text(serde_json::to_string(&proof)?.into()))
+        .await?;
+    let Some(Ok(Message::Text(text))) = socket.next().await else {
+        anyhow::bail!("missing client proof");
+    };
+    anyhow::ensure!(text.len() <= auth::MAX_HANDSHAKE, "proof too large");
+    let proof: auth::ClientProof = serde_json::from_str(&text)?;
+    anyhow::ensure!(
+        auth::verify_proof(token, false, &challenge.nonce, &nonce, &proof.mac),
+        "invalid client proof"
+    );
+    Ok(Session::new(token.to_owned(), challenge.nonce, nonce, true))
+}
 
-    let (mut tx_ws, mut rx_ws) = socket.split();
-    let mut bcast_rx = state.tx.subscribe();
-    whisker_build::ui::set_status(format!("{} client(s) connected", state.tx.receiver_count(),));
-    // A client starts unauthenticated when a token is required, and is
-    // promoted on a valid `hello`. While unauthenticated we never
-    // forward a patch (the security gate). A token-less server (`None`)
-    // is open by default — local loopback / tests.
-    let mut authed = state.expected_token.is_none();
+async fn send_frame(
+    socket: &mut WebSocket,
+    session: &mut Option<Session>,
+    message: Message,
+) -> Result<()> {
+    let message = if let Some(session) = session {
+        let (kind, payload) = match &message {
+            Message::Text(text) => (auth::TEXT, text.as_bytes()),
+            Message::Binary(bytes) => (auth::PATCH, bytes.as_ref()),
+            _ => {
+                socket.send(message).await?;
+                return Ok(());
+            }
+        };
+        Message::Binary(
+            session
+                .seal(kind, payload)
+                .map_err(anyhow::Error::msg)?
+                .into(),
+        )
+    } else {
+        message
+    };
+    socket.send(message).await?;
+    Ok(())
+}
 
-    // Announce only clients past the token gate: a stale app from a
-    // previous session retries every few seconds, which would flap the
-    // TUI's client count 0↔1 for the whole build.
-    let mut announced = false;
-    if authed {
-        if let Some(cb) = &state.on_event {
-            cb(Event::ClientConnected);
+async fn handle_socket(mut socket: WebSocket, state: AppState) {
+    use futures_util::StreamExt;
+    let mut session = if let Some(token) = &state.expected_token {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            authenticate(&mut socket, token),
+        )
+        .await
+        {
+            Ok(Ok(session)) => Some(session),
+            _ => return,
         }
-        announced = true;
-        if state.trace && tx_ws.send(Message::Text(TRACE_ON.into())).await.is_err() {
-            return;
-        }
+    } else {
+        None
+    };
+    let native = session.is_some();
+    let mut receiver = state.tx.subscribe();
+    if let Some(callback) = &state.on_event {
+        callback(Event::ClientConnected);
     }
-
+    if state.trace
+        && native
+        && send_frame(&mut socket, &mut session, Message::Text(TRACE_ON.into()))
+            .await
+            .is_err()
+    {
+        return;
+    }
     loop {
         tokio::select! {
-            // server → client: forward broadcast patches as binary frames.
-            recv = bcast_rx.recv() => {
-                let update = match recv {
-                    Ok(p) => p,
+            update = receiver.recv() => {
+                let update = match update {
+                    Ok(update) => update,
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
-                // Never ship native-code patches to an unauthenticated
-                // peer. Drop (not buffer) — the device re-receives the
-                // full JumpTable on the next save anyway.
-                if !authed {
-                    continue;
-                }
-                match update {
-                    ServerUpdate::Patch(patch) => {
-                        let frame = match encode_patch_frame(&patch) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                whisker_build::ui::warn(format!("encode patch frame: {e}"));
-                                continue;
-                            }
-                        };
-                        if tx_ws.send(Message::Binary(frame.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                    ServerUpdate::Reload => {
-                        if tx_ws.send(Message::Text(r#"{"kind":"reload"}"#.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                }
+                let message = match update {
+                    ServerUpdate::Patch(patch) if native => match encode_patch_frame(&patch) {
+                        Ok(frame) => Message::Binary(frame.into()),
+                        Err(_) => { whisker_build::ui::warn("development patch exceeds transport limits"); continue; }
+                    },
+                    ServerUpdate::Patch(_) => continue,
+                    ServerUpdate::Reload => Message::Text(r#"{"kind":"reload"}"#.into()),
+                };
+                if send_frame(&mut socket, &mut session, message).await.is_err() { break; }
             }
-            // client → server: drain so Pings/Pongs are honoured and
-            // `hello` envelopes (aslr_reference + session token) are
-            // parsed.
-            msg = rx_ws.next() => {
-                match msg {
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Err(_)) => break,
-                    Some(Ok(Message::Text(t))) => {
-                        if let Some(hello) = parse_client_hello(&t) {
-                            // Token gate. If a token is required, the
-                            // hello must carry the matching one or we
-                            // drop the connection without ever arming
-                            // the patch path for it.
-                            if let Some(expected) = &state.expected_token {
-                                if hello.token.as_deref() != Some(expected.as_ref()) {
-                                    // Debug-only: an app from a
-                                    // previous dev session retrying
-                                    // with its stale token is the
-                                    // usual cause, and it isn't
-                                    // actionable. A rejected *current*
-                                    // app instead shows up as
-                                    // `0 connected`.
-                                    whisker_build::ui::debug(
-                                        "rejected a hot-reload client (missing/invalid dev \
-                                         token) — usually an app left over from a previous \
-                                         dev session; it connects with the fresh token after \
-                                         the next launch / Full Reload (R)",
-                                    );
-                                    break;
-                                }
-                                authed = true;
-                                if !announced {
-                                    if let Some(cb) = &state.on_event {
-                                        cb(Event::ClientConnected);
-                                    }
-                                    announced = true;
-                                    if state.trace
-                                        && tx_ws.send(Message::Text(TRACE_ON.into())).await.is_err()
-                                    {
-                                        break;
-                                    }
-                                }
-                            }
-                            let aslr = hello.aslr_reference;
-                            whisker_build::ui::debug(format!(
-                                "client hello · aslr_reference={aslr:#x}"
-                            ));
-                            if let Ok(mut g) = state.aslr_reference.lock() {
-                                *g = Some(aslr);
-                            }
-                        } else if let Some(log) = parse_client_log(&t) {
-                            if let Some(cb) = &state.on_event {
-                                cb(Event::DeviceLog {
-                                    stream: log.stream,
-                                    line: log.line,
-                                    ts_micros: log.ts_micros,
-                                });
-                            }
-                        } else if let Some(frames) = parse_client_trace(&t) {
-                            if let Some(cb) = &state.on_event {
-                                cb(Event::DeviceTrace { frames });
-                            }
+            message = socket.next() => {
+                let text = match message {
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+                    Some(Ok(Message::Binary(frame))) if native => {
+                        let Some(session) = session.as_mut() else { break; };
+                        match session.open(&frame) {
+                            Ok((auth::TEXT, payload)) => match std::str::from_utf8(payload) { Ok(text) => text.to_owned(), Err(_) => break },
+                            _ => break,
                         }
+                    },
+                    Some(Ok(Message::Text(text))) if !native && text.len() <= auth::MAX_CONTROL => text.to_string(),
+                    _ => break,
+                };
+                if let Some(hello) = parse_client_hello(&text) {
+                    if native {
+                        if let Ok(mut reference) = state.aslr_reference.lock() { *reference = Some(hello.aslr_reference); }
                     }
-                    _ => {}
+                } else if let Some(log) = parse_client_log(&text) {
+                    if let Some(callback) = &state.on_event { callback(Event::DeviceLog { stream: log.stream, line: log.line, ts_micros: log.ts_micros }); }
+                } else if native {
+                    if let Some(frames) = parse_client_trace(&text) {
+                        if let Some(callback) = &state.on_event { callback(Event::DeviceTrace { frames }); }
+                    }
                 }
             }
         }
     }
-
-    // The stored slide belongs to the now-dead process; stamping jump
-    // stubs with it for the replacement would crash the device. Clear
-    // it and let the new process send its own `hello`.
-    //
-    // Authed sockets only: a rejected client never stored a slide, so
-    // clearing on its disconnect would wipe the *live* app's reference
-    // every time a stale-token app bounced off the gate.
-    if authed {
-        if let Ok(mut g) = state.aslr_reference.lock() {
-            *g = None;
+    if native {
+        if let Ok(mut reference) = state.aslr_reference.lock() {
+            *reference = None;
         }
     }
-
-    // Symmetric with the announce above: only sockets that were
-    // announced as connected report a disconnect.
-    if announced {
-        if let Some(cb) = &state.on_event {
-            cb(Event::ClientDisconnected);
-        }
+    if let Some(callback) = &state.on_event {
+        callback(Event::ClientDisconnected);
     }
 }
 
@@ -389,6 +364,11 @@ fn encode_patch_frame(patch: &Patch) -> Result<Vec<u8>> {
         table: &patch.table,
     };
     let json = serde_json::to_vec(&header)?;
+    anyhow::ensure!(
+        json.len() <= auth::MAX_CONTROL
+            && patch.dylib_bytes.len() <= auth::MAX_MESSAGE - 50 - json.len(),
+        "patch exceeds transport limits"
+    );
     let json_len = json.len() as u64;
     let dylib = patch.dylib_bytes.as_slice();
     let mut frame = Vec::with_capacity(8 + json.len() + dylib.len());
@@ -401,8 +381,6 @@ fn encode_patch_frame(patch: &Patch) -> Result<Vec<u8>> {
 /// A decoded `{"kind":"hello",…}` handshake from the device.
 struct ClientHello {
     aslr_reference: u64,
-    /// The shared dev-session token, if the device was provisioned one.
-    token: Option<String>,
 }
 
 /// Parse a client hello envelope. Returns `None` for non-hello text
@@ -413,14 +391,11 @@ fn parse_client_hello(text: &str) -> Option<ClientHello> {
     struct Hello {
         kind: String,
         aslr_reference: u64,
-        #[serde(default)]
-        token: Option<String>,
     }
     let h: Hello = serde_json::from_str(text).ok()?;
     if h.kind == "hello" {
         Some(ClientHello {
             aslr_reference: h.aslr_reference,
-            token: h.token,
         })
     } else {
         None
@@ -535,21 +510,108 @@ mod tests {
         on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     ) -> (PatchSender, SocketAddr) {
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (sender, addr, _handle) = serve(any, on_event, None, false, None)
+        let (sender, addr, _handle) = serve(any, on_event, Some("s3kret".into()), false, None)
             .await
             .expect("serve");
         (sender, addr)
     }
 
-    async fn connect(
-        addr: SocketAddr,
-    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
-    {
-        let url = format!("ws://{addr}/whisker-dev");
-        let (ws, _) = tokio_tungstenite::connect_async(&url)
+    type TestSocket = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+    struct TestClient {
+        socket: TestSocket,
+        session: Session,
+    }
+
+    impl TestClient {
+        async fn authenticate(mut socket: TestSocket) -> Self {
+            use tokio_tungstenite::tungstenite::Message as TMsg;
+            let client = auth::nonce().unwrap();
+            socket
+                .send(TMsg::Text(
+                    serde_json::to_string(&auth::Challenge {
+                        version: 1,
+                        nonce: client,
+                    })
+                    .unwrap(),
+                ))
+                .await
+                .unwrap();
+            let TMsg::Text(text) = socket.next().await.unwrap().unwrap() else {
+                panic!("missing proof");
+            };
+            let server: auth::ServerProof = serde_json::from_str(&text).unwrap();
+            assert!(auth::verify_proof(
+                "s3kret",
+                true,
+                &client,
+                &server.nonce,
+                &server.mac
+            ));
+            socket
+                .send(TMsg::Text(
+                    serde_json::to_string(&auth::ClientProof {
+                        mac: auth::proof("s3kret", false, &client, &server.nonce),
+                    })
+                    .unwrap(),
+                ))
+                .await
+                .unwrap();
+            Self {
+                socket,
+                session: Session::new("s3kret".into(), client, server.nonce, false),
+            }
+        }
+
+        async fn send(
+            &mut self,
+            message: tokio_tungstenite::tungstenite::Message,
+        ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
+            use tokio_tungstenite::tungstenite::Message as TMsg;
+            let message = match message {
+                TMsg::Text(text) => {
+                    TMsg::Binary(self.session.seal(auth::TEXT, text.as_bytes()).unwrap())
+                }
+                message => message,
+            };
+            self.socket.send(message).await
+        }
+
+        async fn next(
+            &mut self,
+        ) -> Option<
+            Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>,
+        > {
+            use tokio_tungstenite::tungstenite::{Error, Message as TMsg};
+            let message = match self.socket.next().await? {
+                Ok(message) => message,
+                Err(error) => return Some(Err(error)),
+            };
+            Some(match message {
+                TMsg::Binary(bytes) => match self.session.open(&bytes) {
+                    Ok((auth::PATCH, bytes)) => Ok(TMsg::Binary(bytes.to_vec())),
+                    Ok((auth::TEXT, bytes)) => {
+                        Ok(TMsg::Text(String::from_utf8(bytes.to_vec()).unwrap()))
+                    }
+                    _ => Err(Error::Io(std::io::Error::other(
+                        "invalid authenticated frame",
+                    ))),
+                },
+                message => Ok(message),
+            })
+        }
+    }
+
+    async fn raw_connect(addr: SocketAddr) -> TestSocket {
+        let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/whisker-dev"))
             .await
-            .expect("connect");
-        ws
+            .unwrap();
+        socket
+    }
+
+    async fn connect(addr: SocketAddr) -> TestClient {
+        TestClient::authenticate(raw_connect(addr).await).await
     }
 
     /// Decode a wire frame back into (header JSON value, dylib bytes)
@@ -709,22 +771,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_patch_larger_than_the_default_frame_limit_reaches_an_unlimited_client() {
+    async fn a_large_patch_reaches_a_client_with_explicit_finite_limits() {
         use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
         let (sender, addr) = spawn_test_server(None).await;
         // Mirror the device receiver's lifted read limits
         // (whisker-dev-runtime::hot_reload::client_loop).
         let config = WebSocketConfig {
-            max_frame_size: None,
-            max_message_size: None,
+            max_frame_size: Some(auth::MAX_MESSAGE),
+            max_message_size: Some(auth::MAX_MESSAGE),
             ..Default::default()
         };
         let url = format!("ws://{addr}/whisker-dev");
-        let (mut unlimited, _) =
+        let (unlimited_socket, _) =
             tokio_tungstenite::connect_async_with_config(&url, Some(config), false)
                 .await
                 .expect("connect");
+        let mut unlimited = TestClient::authenticate(unlimited_socket).await;
         let mut default_limits = connect(addr).await;
 
         for _ in 0..100 {
@@ -744,7 +807,7 @@ mod tests {
         });
         assert_eq!(n, 2);
 
-        let msg = tokio::time::timeout(std::time::Duration::from_secs(10), unlimited.next())
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(45), unlimited.next())
             .await
             .expect("recv timed out")
             .expect("stream ended")
@@ -759,7 +822,7 @@ mod tests {
 
         // A client with tungstenite's default read limits (the old
         // device behavior) rejects the same frame as too long.
-        let rejected = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let rejected = tokio::time::timeout(std::time::Duration::from_secs(45), async {
             loop {
                 match default_limits.next().await {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(_))) => return false,
@@ -784,7 +847,6 @@ mod tests {
 
     #[tokio::test]
     async fn client_with_valid_token_is_armed_and_receives_patches() {
-        use futures_util::SinkExt;
         use tokio_tungstenite::tungstenite::Message as TMsg;
 
         let (sender, addr) = spawn_test_server_with_token(Some("s3kret".into())).await;
@@ -793,7 +855,7 @@ mod tests {
         // Authenticate via the hello handshake.
         client
             .send(TMsg::Text(
-                r#"{"kind":"hello","aslr_reference":4294967296,"token":"s3kret"}"#.into(),
+                r#"{"kind":"hello","aslr_reference":4294967296}"#.into(),
             ))
             .await
             .expect("send hello");
@@ -827,11 +889,10 @@ mod tests {
 
     #[tokio::test]
     async fn client_with_invalid_token_is_disconnected_and_gets_no_patch() {
-        use futures_util::SinkExt;
         use tokio_tungstenite::tungstenite::Message as TMsg;
 
         let (sender, addr) = spawn_test_server_with_token(Some("s3kret".into())).await;
-        let mut client = connect(addr).await;
+        let mut client = raw_connect(addr).await;
 
         // Wrong token → the server closes the connection without ever
         // arming the patch path.
@@ -868,6 +929,32 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         assert_eq!(sender.client_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn browser_only_sessions_never_receive_native_patch_bytes() {
+        let (sender, addr) = spawn_test_server_with_token(None).await;
+        let mut client = raw_connect(addr).await;
+        for _ in 0..100 {
+            if sender.client_count() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        sender.send(Patch {
+            table: make_dummy_jump_table(),
+            dylib_bytes: Arc::new(b"secret library".to_vec()),
+        });
+        sender.reload_browser();
+        let message = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            message,
+            tokio_tungstenite::tungstenite::Message::Text(r#"{"kind":"reload"}"#.into())
+        );
     }
 
     #[tokio::test]
@@ -1009,7 +1096,6 @@ mod tests {
 
     #[tokio::test]
     async fn trace_server_enables_tracing_on_the_authenticated_client() {
-        use futures_util::{SinkExt, StreamExt};
         use tokio_tungstenite::tungstenite::Message as TMsg;
 
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
@@ -1018,9 +1104,7 @@ mod tests {
             .expect("serve");
         let mut client = connect(addr).await;
         client
-            .send(TMsg::Text(
-                r#"{"kind":"hello","aslr_reference":1,"token":"s3kret"}"#.into(),
-            ))
+            .send(TMsg::Text(r#"{"kind":"hello","aslr_reference":1}"#.into()))
             .await
             .expect("send hello");
         let reply = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())

@@ -102,7 +102,7 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     /// Shared dev-session token. When `Some`, the WebSocket server only
     /// arms the patch channel for a client whose `hello` carries the
-    /// matching token, and the cli delivers it to the device (iOS env /
+    /// mutual proof of the secret, and the cli delivers it to the device (iOS env /
     /// Android system property). `None` runs unauthenticated (the prior
     /// behaviour). `whisker run` generates a random one per session.
     pub dev_token: Option<String>,
@@ -788,3 +788,6 @@ fn prompt_full_reload(on_event: &Option<Arc<dyn Fn(Event) + Send + Sync>>, reaso
 #[cfg(test)]
 #[path = "lib/tests.rs"]
 mod tests;
+
+/// Shared authenticated development transport primitives
+pub use whisker_dev_runtime::auth;
