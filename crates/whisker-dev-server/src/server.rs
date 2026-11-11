@@ -159,6 +159,7 @@ struct AppState {
     /// (token-less local setup / tests).
     expected_token: Option<Arc<str>>,
     trace: bool,
+    bound_addr: SocketAddr,
 }
 
 #[derive(Debug, Clone)]
@@ -187,6 +188,8 @@ pub async fn serve(
     trace: bool,
     static_files: Option<StaticFiles>,
 ) -> Result<(PatchSender, SocketAddr, tokio::task::JoinHandle<()>)> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let bound = listener.local_addr()?;
     let (tx, _rx) = broadcast::channel::<ServerUpdate>(16);
     let aslr_reference: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
     let state = AppState {
@@ -195,11 +198,12 @@ pub async fn serve(
         aslr_reference: Arc::clone(&aslr_reference),
         expected_token: expected_token.map(Arc::from),
         trace,
+        bound_addr: bound,
     };
 
     let mut app = Router::new()
         .route("/whisker-dev", get(ws_handler))
-        .with_state(state);
+        .with_state(state.clone());
     if let Some(StaticFiles { root, base_path }) = static_files {
         let files = ServeDir::new(root.clone()).fallback(ServeFile::new(root.join("index.html")));
         let prefix = base_path.trim_end_matches('/');
@@ -213,8 +217,10 @@ pub async fn serve(
         }
     }
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    let bound = listener.local_addr()?;
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        state,
+        validate_request,
+    ));
 
     let handle = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
@@ -223,6 +229,63 @@ pub async fn serve(
     });
 
     Ok((PatchSender { tx, aslr_reference }, bound, handle))
+}
+
+fn valid_authority(value: &str, bound: SocketAddr) -> bool {
+    use std::str::FromStr;
+    let Ok(authority) = axum::http::uri::Authority::from_str(value) else {
+        return false;
+    };
+    if value.contains('@') || authority.port_u16().unwrap_or(80) != bound.port() {
+        return false;
+    }
+    let host = authority.host().trim_matches(['[', ']']);
+    if host.eq_ignore_ascii_case("localhost") {
+        return bound.ip().is_loopback() || bound.ip().is_unspecified();
+    }
+    host.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| bound.ip().is_unspecified() || ip == bound.ip())
+}
+
+async fn validate_request(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    use axum::http::header::{HOST, ORIGIN, UPGRADE};
+    use axum::response::IntoResponse;
+    let host = request
+        .headers()
+        .get(HOST)
+        .and_then(|value| value.to_str().ok());
+    let valid_host = host.is_some_and(|host| valid_authority(host, state.bound_addr));
+    let origin = request.headers().get(ORIGIN);
+    let valid_origin = match origin {
+        None => true,
+        Some(value) => value
+            .to_str()
+            .ok()
+            .and_then(|value| value.parse::<axum::http::Uri>().ok())
+            .is_some_and(|uri| {
+                uri.scheme_str() == Some("http")
+                    && uri.path() == "/"
+                    && uri.query().is_none()
+                    && uri
+                        .authority()
+                        .is_some_and(|authority| Some(authority.as_str()) == host)
+            }),
+    };
+    let websocket = request
+        .headers()
+        .get(UPGRADE)
+        .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
+    if !valid_host
+        || !valid_origin
+        || (websocket && state.expected_token.is_none() && origin.is_none())
+    {
+        return axum::http::StatusCode::FORBIDDEN.into_response();
+    }
+    next.run(request).await
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -340,6 +403,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             if let Ok(mut g) = state.aslr_reference.lock() {
                                 *g = Some(aslr);
                             }
+                        } else if !authed {
+                            break;
                         } else if let Some(log) = parse_client_log(&t) {
                             if let Some(cb) = &state.on_event {
                                 cb(Event::DeviceLog {
@@ -503,8 +568,16 @@ fn parse_client_log(text: &str) -> Option<ClientLog> {
         .and_then(|s| s.parse::<u128>().ok())
         .unwrap_or(0);
     Some(ClientLog {
-        stream: h.stream,
-        line: h.line,
+        stream: h
+            .stream
+            .chars()
+            .filter(|character| !character.is_control())
+            .collect(),
+        line: h
+            .line
+            .chars()
+            .filter(|character| !character.is_control() || *character == '\t')
+            .collect(),
         ts_micros,
     })
 }
@@ -541,12 +614,25 @@ mod tests {
         (sender, addr)
     }
 
+    fn browser_request(url: &str) -> tokio_tungstenite::tungstenite::http::Request<()> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut request = url.into_client_request().unwrap();
+        let origin = url
+            .replace("ws://", "http://")
+            .trim_end_matches("/whisker-dev")
+            .to_owned();
+        request
+            .headers_mut()
+            .insert("Origin", origin.parse().unwrap());
+        request
+    }
+
     async fn connect(
         addr: SocketAddr,
     ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
     {
         let url = format!("ws://{addr}/whisker-dev");
-        let (ws, _) = tokio_tungstenite::connect_async(&url)
+        let (ws, _) = tokio_tungstenite::connect_async(browser_request(&url))
             .await
             .expect("connect");
         ws
@@ -721,10 +807,13 @@ mod tests {
             ..Default::default()
         };
         let url = format!("ws://{addr}/whisker-dev");
-        let (mut unlimited, _) =
-            tokio_tungstenite::connect_async_with_config(&url, Some(config), false)
-                .await
-                .expect("connect");
+        let (mut unlimited, _) = tokio_tungstenite::connect_async_with_config(
+            browser_request(&url),
+            Some(config),
+            false,
+        )
+        .await
+        .expect("connect");
         let mut default_limits = connect(addr).await;
 
         for _ in 0..100 {
@@ -961,6 +1050,42 @@ mod tests {
 
         // sender stays usable across the whole flow.
         assert_eq!(sender.client_count(), 0);
+    }
+
+    #[test]
+    fn device_logs_cannot_execute_terminal_control_sequences() {
+        let text = serde_json::json!({"kind":"log", "stream":"stdout", "line":"\u{1b}]52;c;payload\u{7}\rline"}).to_string();
+        let log = parse_client_log(&text).unwrap();
+        assert!(!log.line.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn host_policy_rejects_rebinding_names_and_wrong_ports() {
+        let bound = "127.0.0.1:9876".parse().unwrap();
+        assert!(valid_authority("127.0.0.1:9876", bound));
+        assert!(valid_authority("localhost:9876", bound));
+        assert!(!valid_authority("evil.test:9876", bound));
+        assert!(!valid_authority("127.0.0.1:9877", bound));
+        assert!(!valid_authority("user@127.0.0.1:9876", bound));
+    }
+
+    #[tokio::test]
+    async fn websocket_upgrade_rejects_cross_origin_and_originless_browser_requests() {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let (_sender, addr) = spawn_test_server(None).await;
+        let url = format!("ws://{addr}/whisker-dev");
+        for origin in [None, Some("http://evil.test"), Some("null")] {
+            let mut request = url.clone().into_client_request().unwrap();
+            if let Some(origin) = origin {
+                request
+                    .headers_mut()
+                    .insert("Origin", origin.parse().unwrap());
+            }
+            let error = tokio_tungstenite::connect_async(request).await.unwrap_err();
+            assert!(
+                matches!(error, tokio_tungstenite::tungstenite::Error::Http(response) if response.status().as_u16() == 403)
+            );
+        }
     }
 
     #[test]
