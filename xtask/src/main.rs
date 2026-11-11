@@ -46,7 +46,7 @@ fn main() -> Result<()> {
             windows_host_pack(&workspace_root()?, version, arguments.collect())
         }
         _ => bail!(
-            "usage: cargo xtask host-conformance <desktop|web|android|ios|macos|linux|windows>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask windows-host-pack <version> [x64] [ARM64]\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
+            "usage: cargo xtask host-conformance <desktop|web|android|ios|macos|linux|windows>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios|macos>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask windows-host-pack <version> [x64] [ARM64]\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
         ),
     }
 }
