@@ -391,6 +391,7 @@ mod tests {
         inputs.element_modules.push(crate::RustElementModuleInput {
             package: "whisker-example".into(),
             crate_path: PathBuf::from("/modules/whisker-example"),
+            git: None,
             host_package: "whisker-example-web".into(),
             host_dependency: crate::RustHostDependency::Path(PathBuf::from(
                 "/modules/whisker-example/web",

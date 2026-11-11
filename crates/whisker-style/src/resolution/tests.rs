@@ -66,6 +66,38 @@ fn root_uses_documented_initial_text_context() {
 }
 
 #[test]
+fn visibility_inherits_until_a_descendant_declares_its_own() {
+    let environment = StyleEnvironment::default();
+    let hidden = |value| {
+        SpecifiedStyle::new().push(StyleProperty::Visibility, StyleValue::Visibility(value))
+    };
+    let parent = resolve_style(&hidden(VisibilityValue::Hidden), None, environment).unwrap();
+    assert_eq!(
+        parent.computed().paint().visibility,
+        VisibilityValue::Hidden
+    );
+
+    let child = resolve_style(
+        &SpecifiedStyle::new(),
+        Some(parent.inherited_for_children()),
+        environment,
+    )
+    .unwrap();
+    assert_eq!(child.computed().paint().visibility, VisibilityValue::Hidden);
+
+    let shown = resolve_style(
+        &hidden(VisibilityValue::Visible),
+        Some(parent.inherited_for_children()),
+        environment,
+    )
+    .unwrap();
+    assert_eq!(
+        shown.computed().paint().visibility,
+        VisibilityValue::Visible
+    );
+}
+
+#[test]
 fn cursor_and_pointer_events_resolve_and_inherit_as_typed_input_values() {
     let environment = StyleEnvironment::default();
     let parent = resolve_style(
@@ -1160,6 +1192,7 @@ fn inherited_change_classification_distinguishes_metrics_and_color() {
         )]),
         cursor: CursorValue::Grab,
         pointer_events: PointerEventsValue::None,
+        visibility: VisibilityValue::Hidden,
         direction: DirectionValue::Rtl,
         font_family: FontFamilyValue::Named("Inter".into()),
         font_size: number(20.0),
@@ -1201,6 +1234,7 @@ fn inherited_change_classification_distinguishes_metrics_and_color() {
         InheritedPropertySet::FONT_OPTICAL_SIZING,
         InheritedPropertySet::CURSOR,
         InheritedPropertySet::POINTER_EVENTS,
+        InheritedPropertySet::VISIBILITY,
         InheritedPropertySet::CUSTOM_PROPERTIES,
         InheritedPropertySet::DIRECTION,
         InheritedPropertySet::LINE_HEIGHT,

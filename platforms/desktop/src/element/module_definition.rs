@@ -109,6 +109,7 @@ type DesktopTextStyleUpdater<T> = Arc<dyn Fn(&mut T, &WhiskerTextStyle) + Send +
 pub(super) type DesktopMeasurementHandler =
     Arc<dyn Fn(&WhiskerMeasureRequest) -> Option<WhiskerMeasuredSize> + Send + Sync>;
 type DesktopRasterizer<T> = Arc<dyn Fn(&T, u32, u32, f32) -> Option<DesktopRaster> + Send + Sync>;
+type DesktopGpuRenderer<T> = Arc<dyn Fn(&T, &DesktopGpuFrame<'_>) + Send + Sync>;
 type DesktopScrollAxis<T> = Arc<dyn Fn(&T) -> bool + Send + Sync>;
 type DesktopItemSnap<T> = Arc<dyn Fn(&T) -> Option<(f64, f64)> + Send + Sync>;
 type DesktopSnapStop<T> = Arc<dyn Fn(&T) -> bool + Send + Sync>;
@@ -163,6 +164,7 @@ pub struct DesktopViewDefinition<T> {
     text_style: Option<DesktopTextStyleUpdater<T>>,
     pub(super) measurement: Option<DesktopMeasurementHandler>,
     rasterizer: Option<DesktopRasterizer<T>>,
+    gpu_renderer: Option<DesktopGpuRenderer<T>>,
     plain_text: bool,
     scroll_content: bool,
     scroll_horizontal: DesktopScrollAxis<T>,
@@ -190,6 +192,7 @@ where
             text_style: None,
             measurement: None,
             rasterizer: None,
+            gpu_renderer: None,
             plain_text: false,
             scroll_content: false,
             scroll_horizontal: Arc::new(|_| false),
@@ -385,6 +388,19 @@ where
         self
     }
 
+    /// Declares module-owned GPU content, redrawn on every frame while mounted.
+    pub fn gpu(
+        mut self,
+        render: impl Fn(&T, &DesktopGpuFrame<'_>) + Send + Sync + 'static,
+    ) -> Self {
+        assert!(
+            self.gpu_renderer.replace(Arc::new(render)).is_none(),
+            "duplicate Desktop GPU binding for {}",
+            self.name,
+        );
+        self
+    }
+
     pub(super) fn bind(
         &self,
         registration: &ElementRegistration,
@@ -462,6 +478,7 @@ where
             commands,
             text_style: self.text_style.clone(),
             rasterizer: self.rasterizer.clone(),
+            gpu_renderer: self.gpu_renderer.clone(),
             scroll_content: self.scroll_content,
             scroll_horizontal: Arc::clone(&self.scroll_horizontal),
             item_snap: Arc::clone(&self.item_snap),
@@ -495,6 +512,7 @@ struct BoundDesktopViewDefinition<T> {
     commands: HashMap<CommandId, DesktopCommandHandler<T>>,
     text_style: Option<DesktopTextStyleUpdater<T>>,
     rasterizer: Option<DesktopRasterizer<T>>,
+    gpu_renderer: Option<DesktopGpuRenderer<T>>,
     scroll_content: bool,
     scroll_horizontal: DesktopScrollAxis<T>,
     item_snap: DesktopItemSnap<T>,
@@ -564,6 +582,16 @@ where
 
     fn has_raster_content(&self) -> bool {
         self.definition.rasterizer.is_some()
+    }
+
+    fn has_gpu_content(&self) -> bool {
+        self.definition.gpu_renderer.is_some()
+    }
+
+    fn render_gpu(&self, frame: &DesktopGpuFrame<'_>) {
+        if let Some(render) = &self.definition.gpu_renderer {
+            render(&self.state, frame);
+        }
     }
 
     fn accepts_text_input(&self) -> bool {

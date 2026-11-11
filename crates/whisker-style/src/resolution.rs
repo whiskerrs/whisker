@@ -11,7 +11,7 @@ use crate::{
     LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PointerEventsValue,
     SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
     TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
-    TextShadowValue, WhiteSpaceValue, WordBreakValue,
+    TextShadowValue, VisibilityValue, WhiteSpaceValue, WordBreakValue,
 };
 
 mod custom_properties;
@@ -180,6 +180,7 @@ pub struct InheritedStyle {
     custom_properties: BTreeMap<CustomPropertyName, StyleValue>,
     cursor: CursorValue,
     pointer_events: PointerEventsValue,
+    visibility: VisibilityValue,
     direction: DirectionValue,
     font_family: FontFamilyValue,
     font_features: Vec<FontFeatureValue>,
@@ -202,6 +203,7 @@ impl InheritedStyle {
             custom_properties: BTreeMap::new(),
             cursor: CursorValue::Auto,
             pointer_events: PointerEventsValue::Auto,
+            visibility: VisibilityValue::Visible,
             direction: DirectionValue::Ltr,
             font_family: FontFamilyValue::System,
             font_features: Vec::new(),
@@ -241,6 +243,11 @@ impl InheritedStyle {
     /// Returns the inherited pointer hit-test participation.
     pub const fn pointer_events(&self) -> PointerEventsValue {
         self.pointer_events
+    }
+
+    /// Returns the inherited paint visibility.
+    pub const fn visibility(&self) -> VisibilityValue {
+        self.visibility
     }
 
     /// Returns the inherited inline writing direction.
@@ -334,6 +341,10 @@ impl InheritedStyle {
         if self.pointer_events != previous.pointer_events {
             properties |= InheritedPropertySet::POINTER_EVENTS;
             impacts |= PropertyImpactSet::INPUT;
+        }
+        if self.visibility != previous.visibility {
+            properties |= InheritedPropertySet::VISIBILITY;
+            impacts |= PropertyImpactSet::PAINT;
         }
         if self.direction != previous.direction {
             properties |= InheritedPropertySet::DIRECTION;
@@ -579,6 +590,8 @@ impl InheritedPropertySet {
     pub const CUSTOM_PROPERTIES: Self = Self(1 << 15);
     /// `direction`.
     pub const DIRECTION: Self = Self(1 << 16);
+    /// `visibility`.
+    pub const VISIBILITY: Self = Self(1 << 17);
 
     /// Returns whether this set contains every bit from `other`.
     pub const fn contains(self, other: Self) -> bool {
@@ -725,6 +738,11 @@ fn resolve_style_once(
         Some(StyleValue::PointerEvents(value)) => *value,
         Some(_) => return Err(wrong_type(StyleProperty::PointerEvents)),
         None => base.pointer_events,
+    };
+    let visibility = match declarations.visibility {
+        Some(StyleValue::Visibility(value)) => *value,
+        Some(_) => return Err(wrong_type(StyleProperty::Visibility)),
+        None => base.visibility,
     };
 
     let font_size = match declarations.font_size {
@@ -1001,6 +1019,7 @@ fn resolve_style_once(
         custom_properties,
         cursor,
         pointer_events,
+        visibility,
         direction: layout.direction,
         font_family,
         font_features,
@@ -1079,6 +1098,7 @@ pub fn resolve_text_style(
 struct InheritedDeclarations<'a> {
     cursor: Option<&'a StyleValue>,
     pointer_events: Option<&'a StyleValue>,
+    visibility: Option<&'a StyleValue>,
     font_family: Option<&'a StyleValue>,
     font_features: Option<&'a StyleValue>,
     font_variations: Option<&'a StyleValue>,
@@ -1101,6 +1121,7 @@ impl<'a> InheritedDeclarations<'a> {
             let slot = match declaration.property() {
                 StyleProperty::Cursor => &mut values.cursor,
                 StyleProperty::PointerEvents => &mut values.pointer_events,
+                StyleProperty::Visibility => &mut values.visibility,
                 StyleProperty::FontFamily => &mut values.font_family,
                 StyleProperty::FontFeatureSettings => &mut values.font_features,
                 StyleProperty::FontVariationSettings => &mut values.font_variations,

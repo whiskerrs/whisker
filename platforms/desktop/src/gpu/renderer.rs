@@ -76,6 +76,7 @@ impl GpuRenderer {
             text_renderers: HashMap::new(),
             image_resources: HashMap::new(),
             native_rasters: HashMap::new(),
+            has_gpu_content: false,
         })
     }
 
@@ -126,6 +127,7 @@ impl GpuRenderer {
 
         let mut vertices = Vec::new();
         let mut draws = Vec::new();
+        self.has_gpu_content = false;
         for (index, command) in commands.iter().enumerate() {
             match command {
                 PaintCommand::BeginOpacityGroup { node, opacity } => {
@@ -393,33 +395,69 @@ impl GpuRenderer {
                 } => {
                     let width = (rect.width * scale).ceil().max(1.0) as u32;
                     let height = (rect.height * scale).ceil().max(1.0) as u32;
-                    let Some(raster) = rasterizer.rasterize_scaled(width, height, scale) else {
-                        self.native_rasters.remove(node);
-                        continue;
-                    };
-                    let stale = self.native_rasters.get(node).is_none_or(|cached| {
-                        cached.generation != raster.generation()
-                            || cached.width != raster.width()
-                            || cached.height != raster.height()
-                    });
-                    if stale {
-                        let upload = RasterResource::new(
-                            raster.width(),
-                            raster.height(),
-                            raster.pixels().to_vec(),
-                        )?;
-                        let image = self
-                            .box_gpu
-                            .upload_image(&self.device, &self.queue, &upload);
-                        self.native_rasters.insert(
-                            *node,
-                            NativeRasterCache {
-                                generation: raster.generation(),
-                                width: raster.width(),
-                                height: raster.height(),
-                                image,
+                    if rasterizer.has_gpu_content() {
+                        self.has_gpu_content = true;
+                        let stale = self
+                            .native_rasters
+                            .get(node)
+                            .is_none_or(|cached| (cached.width, cached.height) != (width, height));
+                        if stale {
+                            let image =
+                                self.box_gpu
+                                    .create_render_target(&self.device, width, height);
+                            self.native_rasters.insert(
+                                *node,
+                                NativeRasterCache {
+                                    generation: 0,
+                                    width,
+                                    height,
+                                    image,
+                                },
+                            );
+                        }
+                        let target = self.native_rasters[node].image.texture.create_view(
+                            &TextureViewDescriptor {
+                                format: Some(GPU_CONTENT_FORMAT),
+                                ..TextureViewDescriptor::default()
                             },
                         );
+                        rasterizer.render_gpu(&crate::DesktopGpuFrame {
+                            device: &self.device,
+                            queue: &self.queue,
+                            target: &target,
+                            format: GPU_CONTENT_FORMAT,
+                            width,
+                            height,
+                        });
+                    } else {
+                        let Some(raster) = rasterizer.rasterize_scaled(width, height, scale) else {
+                            self.native_rasters.remove(node);
+                            continue;
+                        };
+                        let stale = self.native_rasters.get(node).is_none_or(|cached| {
+                            cached.generation != raster.generation()
+                                || cached.width != raster.width()
+                                || cached.height != raster.height()
+                        });
+                        if stale {
+                            let upload = RasterResource::new(
+                                raster.width(),
+                                raster.height(),
+                                raster.pixels().to_vec(),
+                            )?;
+                            let image =
+                                self.box_gpu
+                                    .upload_image(&self.device, &self.queue, &upload);
+                            self.native_rasters.insert(
+                                *node,
+                                NativeRasterCache {
+                                    generation: raster.generation(),
+                                    width: raster.width(),
+                                    height: raster.height(),
+                                    image,
+                                },
+                            );
+                        }
                     }
                     push_native_raster_draw(
                         &mut vertices,
