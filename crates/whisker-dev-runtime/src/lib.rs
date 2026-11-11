@@ -21,3 +21,6 @@ pub use hot_reload::{
 
 #[cfg(feature = "hot-reload")]
 pub use log_capture::start_log_capture;
+
+#[cfg(feature = "auth")]
+pub mod auth;

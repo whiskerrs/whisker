@@ -12,6 +12,7 @@ categories.workspace = true
 description = "Host-side dev server for `whisker run`. File watch + cargo build + WebSocket push of subsecond patches. Pulled in by whisker-cli; no presence in release builds."
 
 [dependencies]
+whisker-dev-runtime = { workspace = true, features = ["auth"] }
 ar = "0.9.0"
 anyhow = { workspace = true }
 axum = { workspace = true }

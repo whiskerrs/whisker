@@ -315,11 +315,9 @@ async fn client_loop(addr: String) {
     use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
     let url = format!("ws://{addr}/whisker-dev");
-    // Patch dylibs for large apps exceed tungstenite's 16 MiB read
-    // default; dev-only loopback channel, so lift the limits entirely.
     let ws_config = WebSocketConfig {
-        max_frame_size: None,
-        max_message_size: None,
+        max_frame_size: Some(crate::auth::MAX_MESSAGE),
+        max_message_size: Some(crate::auth::MAX_MESSAGE),
         ..Default::default()
     };
     loop {
@@ -341,15 +339,9 @@ fn device_aslr_reference() -> u64 {
 
 /// The shared dev-session token, if `whisker run` provisioned one.
 ///
-/// The server rejects clients whose `hello` doesn't carry the
-/// session's token (the patch channel `dlopen`s whatever it receives,
-/// so an unauthenticated connection on a LAN-exposed bind is a
-/// remote-code-execution surface). Delivery is per-platform:
-///   * iOS Simulator / host: the `WHISKER_DEV_TOKEN` env var.
-///   * Android: the `debug.whisker_dev_token` system property — the
-///     app process doesn't inherit adb-set env vars.
-///
-/// `None` = token-less setup; the server then runs unauthenticated.
+/// Used for mutual proofs, never sent to the WebSocket peer. iOS and desktop
+/// read WHISKER_DEV_TOKEN; Android reads debug.whisker_dev_token. Missing secrets
+/// disable native patch reception.
 fn dev_token() -> Option<String> {
     if let Ok(t) = std::env::var("WHISKER_DEV_TOKEN") {
         if !t.is_empty() {
@@ -387,6 +379,49 @@ fn android_system_property(name: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
+async fn authenticate_socket<S>(
+    ws: &mut tokio_tungstenite::WebSocketStream<S>,
+    token: &str,
+) -> Result<crate::auth::Session, Box<dyn std::error::Error + Send + Sync>>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let client_nonce = crate::auth::nonce()?;
+    let handshake = async {
+        ws.send(Message::Text(serde_json::to_string(
+            &crate::auth::Challenge {
+                version: 1,
+                nonce: client_nonce,
+            },
+        )?))
+        .await?;
+        let Some(Ok(Message::Text(text))) = ws.next().await else {
+            return Err("missing server proof".into());
+        };
+        if text.len() > crate::auth::MAX_HANDSHAKE {
+            return Err("server proof too large".into());
+        }
+        let server: crate::auth::ServerProof = serde_json::from_str(&text)?;
+        if !crate::auth::verify_proof(&token, true, &client_nonce, &server.nonce, &server.mac) {
+            return Err("invalid development server proof".into());
+        }
+        let proof = crate::auth::ClientProof {
+            mac: crate::auth::proof(&token, false, &client_nonce, &server.nonce),
+        };
+        ws.send(Message::Text(serde_json::to_string(&proof)?))
+            .await?;
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(crate::auth::Session::new(
+            token.to_owned(),
+            client_nonce,
+            server.nonce,
+            false,
+        ))
+    };
+    tokio::time::timeout(Duration::from_secs(5), handshake).await?
+}
+
 async fn handle_session<S>(
     mut ws: tokio_tungstenite::WebSocketStream<S>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
@@ -396,15 +431,16 @@ where
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
 
-    // The hello goes first — the server needs our `aslr_reference` to
-    // build patches at all.
-    let hello = serde_json::json!({
-        "kind": "hello",
-        "aslr_reference": device_aslr_reference(),
-        "token": dev_token(),
-    })
-    .to_string();
-    ws.send(Message::Text(hello)).await?;
+    let token = dev_token()
+        .filter(|token| !token.is_empty())
+        .ok_or("missing development authentication secret")?;
+    let mut session = authenticate_socket(&mut ws, &token).await?;
+    let hello = serde_json::json!({ "kind": "hello", "aslr_reference": device_aslr_reference() })
+        .to_string();
+    ws.send(Message::Binary(
+        session.seal(crate::auth::TEXT, hello.as_bytes())?,
+    ))
+    .await?;
 
     let mut trace_flush = tokio::time::interval(Duration::from_secs(1));
     loop {
@@ -412,7 +448,7 @@ where
             _ = trace_flush.tick() => {
                 let frames = crate::trace::take();
                 if !frames.is_empty() {
-                    ws.send(Message::Text(crate::trace::encode(&frames))).await?;
+                    ws.send(Message::Binary(session.seal(crate::auth::TEXT, crate::trace::encode(&frames).as_bytes())?)).await?;
                 }
             }
             // device → host: forward captured stdout/stderr lines,
@@ -426,15 +462,19 @@ where
                         "ts_micros": line.ts_micros.to_string(),
                     })
                     .to_string();
-                    ws.send(Message::Text(frame)).await?;
+                    ws.send(Message::Binary(session.seal(crate::auth::TEXT, frame.as_bytes())?)).await?;
                 }
             }
             // host → device: patches + close.
             msg = ws.next() => {
                 let Some(msg) = msg else { return Ok(()); };
                 match msg? {
-                    Message::Binary(bytes) => handle_patch_frame(&bytes),
-                    Message::Text(text) => handle_control_frame(&text),
+                    Message::Binary(bytes) => match session.open(&bytes)? {
+                        (crate::auth::PATCH, payload) => handle_patch_frame(payload),
+                        (crate::auth::TEXT, payload) => handle_control_frame(std::str::from_utf8(payload)?),
+                        _ => return Err("unsupported development frame type".into()),
+                    },
+                    Message::Text(_) => return Err("unauthenticated development frame".into()),
                     Message::Close(_) => return Ok(()),
                     _ => {}
                 }
@@ -480,24 +520,26 @@ fn handle_patch_frame(bytes: &[u8]) {
 /// with, so `subsecond::apply_patch`'s `dlopen` sees a real on-device
 /// file.
 ///
-/// File naming uses a monotonic counter + timestamp so multiple
-/// patches in one session don't collide; old files are left for the
-/// OS to reclaim with the cache dir.
+/// Each patch uses a fresh owner-only directory and an exclusively created file;
+/// old files remain for the OS to reclaim with the cache directory.
 fn materialise_patch_dylib(
     bytes: &[u8],
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error + Send + Sync>> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    let dir = patch_cache_dir().ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
-        "could not resolve a writable cache dir".into()
-    })?;
-    std::fs::create_dir_all(&dir)?;
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let n = SEQ.fetch_add(1, Ordering::Relaxed);
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+    use std::io::Write;
+    let base = patch_cache_dir().ok_or("could not resolve a writable patch cache")?;
+    std::fs::create_dir_all(&base)?;
+    let suffix: String = crate::auth::nonce()?
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let dir = base.join(format!("whisker-patch-{suffix}"));
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&dir)?;
     let extension = if cfg!(target_os = "windows") {
         "dll"
     } else if cfg!(any(target_os = "macos", target_os = "ios")) {
@@ -505,13 +547,20 @@ fn materialise_patch_dylib(
     } else {
         "so"
     };
-    let path = dir.join(format!("patch-{ts}-{n}.{extension}"));
-    std::fs::write(&path, bytes)?;
+    let path = dir.join(format!("patch.{extension}"));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(&path)?.write_all(bytes)?;
     Ok(path)
 }
 
 /// Resolve a writable, dlopen-able directory for patch dylibs: on
-/// Android `/data/data/<package>/cache/whisker-patches/` (package
+/// Android `/data/data/<package>/cache/` (package
 /// name from `/proc/self/cmdline`), elsewhere `$TMPDIR/whisker-patches/`.
 fn patch_cache_dir() -> Option<std::path::PathBuf> {
     #[cfg(target_os = "android")]
@@ -519,15 +568,13 @@ fn patch_cache_dir() -> Option<std::path::PathBuf> {
         let cmdline = std::fs::read_to_string("/proc/self/cmdline").ok()?;
         let pkg = cmdline.split('\0').next().unwrap_or("").trim().to_string();
         if !pkg.is_empty() {
-            return Some(std::path::PathBuf::from(format!(
-                "/data/data/{pkg}/cache/whisker-patches"
-            )));
+            return Some(std::path::PathBuf::from(format!("/data/data/{pkg}/cache")));
         }
         None
     }
     #[cfg(not(target_os = "android"))]
     {
-        Some(std::env::temp_dir().join("whisker-patches"))
+        Some(std::env::temp_dir())
     }
 }
 
@@ -585,7 +632,11 @@ fn parse_patch_frame(
     if bytes.len() < 8 {
         return Err(format!("frame too short ({} bytes, need ≥8)", bytes.len()).into());
     }
-    let json_len = u64::from_be_bytes(bytes[..8].try_into().unwrap()) as usize;
+    let json_len = usize::try_from(u64::from_be_bytes(bytes[..8].try_into().unwrap()))
+        .map_err(|_| "patch header length overflow")?;
+    if json_len > crate::auth::MAX_CONTROL {
+        return Err("patch metadata exceeds size limit".into());
+    }
     let header_end = 8usize.checked_add(json_len).ok_or("json_len overflow")?;
     if bytes.len() < header_end {
         return Err(format!(
@@ -728,6 +779,37 @@ mod tests {
         let mut frame = Vec::new();
         frame.extend_from_slice(&100u64.to_be_bytes());
         assert!(parse_patch_frame(&frame).is_err());
+    }
+
+    #[tokio::test]
+    async fn receiver_rejects_a_substituted_server_without_disclosing_the_secret() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::{Message, protocol::Role};
+        let (left, right) = tokio::io::duplex(8192);
+        let mut client =
+            tokio_tungstenite::WebSocketStream::from_raw_socket(left, Role::Client, None).await;
+        let mut server =
+            tokio_tungstenite::WebSocketStream::from_raw_socket(right, Role::Server, None).await;
+        let spoof = async {
+            let Message::Text(challenge) = server.next().await.unwrap().unwrap() else {
+                panic!("missing challenge");
+            };
+            assert!(!challenge.contains("test-secret"));
+            let challenge: crate::auth::Challenge = serde_json::from_str(&challenge).unwrap();
+            assert_eq!(challenge.version, 1);
+            server
+                .send(Message::Text(
+                    serde_json::to_string(&crate::auth::ServerProof {
+                        nonce: [0; 32],
+                        mac: [0; 32],
+                    })
+                    .unwrap(),
+                ))
+                .await
+                .unwrap();
+        };
+        let (result, ()) = tokio::join!(authenticate_socket(&mut client, "test-secret"), spoof);
+        assert!(result.is_err());
     }
 
     #[test]
