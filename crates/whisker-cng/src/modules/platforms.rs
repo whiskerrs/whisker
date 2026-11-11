@@ -52,12 +52,13 @@ pub(super) struct PlatformDeclarationsRaw {
     pub linux: Option<PlatformDeclarationRaw>,
 }
 
-/// One platform declaration. Exactly one of `kind` and `manifest` is required.
+/// One platform declaration. Exactly one of `kind`, `manifest` and `sources` is required.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PlatformDeclarationRaw {
     pub kind: Option<String>,
     pub manifest: Option<String>,
+    pub sources: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +103,8 @@ pub enum ResolvedPlatformImplementation {
     NativeManifest(ResolvedNativeManifest),
     /// A Rust Host adapter linked by Cargo.
     RustHost(ResolvedRustModuleContribution),
+    /// A directory of C++ sources compiled into the generated Windows application.
+    CppSources(PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -245,6 +248,14 @@ fn resolve_platform(
     let Some(raw) = raw else {
         return Ok(None);
     };
+    if let Some(sources) = raw.sources.as_deref() {
+        anyhow::ensure!(
+            raw.kind.is_none() && raw.manifest.is_none(),
+            "module `{package}` metadata.whisker.module.platforms.{} must declare exactly one of `kind`, `manifest` and `sources`",
+            platform.name(),
+        );
+        return resolve_cpp_sources(package, manifest_dir, platform, sources).map(Some);
+    }
     match (raw.kind.as_deref(), raw.manifest.as_deref()) {
         (Some("common"), None) => Ok(Some(ResolvedPlatformImplementation::Common)),
         (Some(kind), None) => Err(anyhow!(
@@ -269,6 +280,31 @@ fn resolve_platform(
             platform.name(),
         )),
     }
+}
+
+fn resolve_cpp_sources(
+    package: &str,
+    manifest_dir: &Path,
+    platform: ModulePlatform,
+    raw_path: &str,
+) -> Result<ResolvedPlatformImplementation> {
+    anyhow::ensure!(
+        platform == ModulePlatform::Windows,
+        "module `{package}` metadata.whisker.module.platforms.{}.sources is only supported for `windows`",
+        platform.name(),
+    );
+    let relative = Path::new(raw_path);
+    anyhow::ensure!(
+        !raw_path.trim().is_empty() && relative.is_relative(),
+        "module `{package}` metadata.whisker.module.platforms.windows.sources must be a directory relative to Cargo.toml",
+    );
+    let path = manifest_dir.join(relative);
+    anyhow::ensure!(
+        path.is_dir(),
+        "module `{package}` declares Windows sources at {}, which is not a directory",
+        path.display(),
+    );
+    Ok(ResolvedPlatformImplementation::CppSources(path))
 }
 
 fn resolve_platform_manifest(
@@ -594,10 +630,52 @@ mod tests {
     }
 
     #[test]
+    fn windows_sources_resolve_to_a_directory() {
+        let root = std::env::temp_dir().join(format!("whisker-cpp-sources-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("windows")).unwrap();
+        let raw = PlatformDeclarationRaw {
+            kind: None,
+            manifest: None,
+            sources: Some("windows".into()),
+        };
+        let resolved = resolve_platform(
+            "whisker-map",
+            "1.2.3",
+            false,
+            &root,
+            ModulePlatform::Windows,
+            Some(&raw),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved,
+            Some(ResolvedPlatformImplementation::CppSources(
+                root.join("windows")
+            ))
+        );
+        let linux = resolve_platform(
+            "whisker-map",
+            "1.2.3",
+            false,
+            &root,
+            ModulePlatform::Linux,
+            Some(&raw),
+        );
+        assert!(
+            linux
+                .unwrap_err()
+                .to_string()
+                .contains("only supported for `windows`")
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn rejects_ambiguous_platform_declarations() {
         let raw = PlatformDeclarationRaw {
             kind: Some("common".into()),
             manifest: Some("web/Cargo.toml".into()),
+            sources: None,
         };
         let error = resolve_platform(
             "whisker-map",

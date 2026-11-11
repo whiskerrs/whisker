@@ -594,6 +594,7 @@ impl Driver {
             crate::app::host_capabilities(),
             self.text.prepared(),
             self.text.context().clone(),
+            Vec::new(),
         ));
         self.surface = Some(surface);
         self.root = Some(root);

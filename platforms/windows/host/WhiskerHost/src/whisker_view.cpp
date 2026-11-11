@@ -2,10 +2,15 @@
 
 #include <array>
 #include <cmath>
+#include <mutex>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
+
+#include <winrt/Microsoft.UI.Dispatching.h>
 
 #include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Hosting.h>
@@ -77,6 +82,11 @@ struct WhiskerView::Impl {
   ResourceService resources;
   std::vector<WhiskerMobileResourceEvent> resource_events;
   std::optional<HostScene> scene;
+  std::mutex module_events_mutex;
+  std::vector<std::tuple<std::string, std::string, Value>> module_events;
+  winrt::Microsoft::UI::Dispatching::DispatcherQueue queue =
+      winrt::Microsoft::UI::Dispatching::DispatcherQueue::GetForCurrentThread();
+  std::optional<ModuleServices> services;
   void* handle = nullptr;
   bool frame_requested = true;
   float width = 0;
@@ -90,6 +100,15 @@ struct WhiskerView::Impl {
     auto root = compositor.CreateContainerVisual();
     xaml::Hosting::ElementCompositionPreview::SetElementChildVisual(host, root);
     scene.emplace(root, text, resources, CreateGraphicsDevice(compositor));
+    scene->SetFrameRequester([this] { frame_requested = true; });
+    // Module events may come from any thread and leave on the next tick.
+    services.emplace([this](std::string module, std::string event, Value payload) {
+      {
+        std::lock_guard lock(module_events_mutex);
+        module_events.emplace_back(std::move(module), std::move(event), std::move(payload));
+      }
+      queue.TryEnqueue([this] { frame_requested = true; });
+    });
     // Events go out from the next tick so they never re-enter the runtime mid-command.
     resources.SetEventSink([this](const WhiskerMobileResourceEvent& event) {
       resource_events.push_back(event);
@@ -151,12 +170,14 @@ struct WhiskerView::Impl {
       if (!handle) return;
     }
     DispatchScrollEvents();
+    DispatchModuleEvents();
     for (auto const& event : std::exchange(resource_events, {})) {
       whisker_view_dispatch_resource_event(handle, &event);
     }
     if (!frame_requested) return;
     frame_requested = false;
     whisker_view_tick(handle, Now(), width, height, scale);
+    scene->DrawViews();
   }
 
   void Pointer(xaml::Input::PointerRoutedEventArgs const& e, uint32_t event) {
@@ -227,6 +248,26 @@ struct WhiskerView::Impl {
     }
   }
 
+  void DispatchModuleEvents() {
+    for (auto& event : scene->TakeViewEvents()) {
+      RawEncoder encoder;
+      whisker_view_dispatch_event(handle, Now(), event.node,
+                                  reinterpret_cast<const uint8_t*>(event.name.data()),
+                                  event.name.size(), encoder.Encode(event.detail));
+    }
+    decltype(module_events) pending;
+    {
+      std::lock_guard lock(module_events_mutex);
+      pending.swap(module_events);
+    }
+    for (auto& [module, event, payload] : pending) {
+      RawEncoder encoder;
+      whisker_view_dispatch_module_event(
+          handle, reinterpret_cast<const uint8_t*>(module.data()), module.size(),
+          reinterpret_cast<const uint8_t*>(event.data()), event.size(), encoder.Encode(payload));
+    }
+  }
+
   static void OnRequestFrame(void* data) { static_cast<Impl*>(data)->frame_requested = true; }
 
   static bool OnBootstrap(void* data, const WhiskerMobileBootstrap* bootstrap) {
@@ -249,10 +290,16 @@ struct WhiskerView::Impl {
     return static_cast<Impl*>(data)->resources.Apply(*command);
   }
 
-  static bool OnInvokeModule(void*, const uint8_t*, size_t, const uint8_t*, size_t,
-                             const WhiskerValueRaw*, size_t, bool,
-                             WhiskerMobileModuleResultCallback, void*) {
-    return false;
+  static bool OnInvokeModule(void* data, const uint8_t* module, size_t module_len,
+                             const uint8_t* function, size_t function_len,
+                             const WhiskerValueRaw* args, size_t count, bool is_async,
+                             WhiskerMobileModuleResultCallback result, void* result_data) {
+    auto text = [](const uint8_t* bytes, size_t len) {
+      return std::string_view(reinterpret_cast<const char*>(bytes), len);
+    };
+    return static_cast<Impl*>(data)->services->Invoke(text(module, module_len),
+                                                      text(function, function_len), args, count,
+                                                      is_async, result, result_data);
   }
 
   static void OnObserveModule(void*, const uint8_t*, size_t, const uint8_t*, size_t, bool) {}

@@ -111,9 +111,15 @@ definitions; they do not generate their contract. The Rust schema and Host
 definition are independently compiled and matched by strings at bootstrap.
 Web uses an ordinary Rust Host crate with the same definition shape. macOS
 reuses the iOS Swift package (`macos = { manifest = "Package.swift" }`). Windows
-and Linux service modules share one `desktop/` crate whose
+and Linux service modules may share one `desktop/` crate whose
 `RustModuleDefinition` the Host answers in-process; a Rust Host crate is named
-`<package>-<directory>`.
+`<package>-<directory>`. Linux views use `LinuxModuleDefinition` with one GTK
+widget per node. Windows modules are C++ (`windows = { sources = "windows" }`):
+a `whisker::Module` returns the same `ModuleDefinition` vocabulary from
+`whisker/module.h`, `WHISKER_MODULE(Type)` registers it, and CNG whole-archives
+the sources into the generated application. A Windows view draws its content box
+with Direct2D, so Composition clipping, opacity and paint order apply to it like
+any other node.
 
 Android/iOS use `Function` and `AsyncFunction` only at module level. A
 `View` block exposes one-way `Command`s and cannot declare `Function` or

@@ -97,6 +97,10 @@ bool HostScene::Bootstrap(const WhiskerMobileBootstrap& bootstrap) {
     for (size_t p = 0; p < raw.property_count; ++p) {
       element.properties.emplace(raw.properties[p].id, std::string(View(raw.properties[p].name)));
     }
+    for (size_t c = 0; c < raw.command_count; ++c) {
+      element.commands.emplace(raw.commands[c].id, std::string(View(raw.commands[c].name)));
+    }
+    element.view = FindModuleView(View(raw.name));
     for (size_t e = 0; e < raw.event_count; ++e) {
       auto id = raw.events[e].id;
       if (View(raw.events[e].name) == "scroll" && id >= 1 && id <= 64) {
@@ -116,12 +120,17 @@ HostScene::HostScene(comp::ContainerVisual root, const TextEngine& text,
       text_(text),
       resources_(resources) {}
 
+void HostScene::SetFrameRequester(std::function<void()> request_frame) {
+  request_frame_ = std::move(request_frame);
+}
+
 void HostScene::SetScale(float scale) {
   if (scale == scale_) return;
   scale_ = scale;
   for (auto& [id, node] : nodes_) {
     node.box_dirty = true;
     if (node.has_text) node.text_dirty = true;
+    if (node.view) dirty_views_.insert(id);
   }
 }
 
@@ -155,6 +164,7 @@ bool HostScene::Apply(const WhiskerMobileFrame& frame, WhiskerMobileApplyRespons
     if (node.box_dirty) DrawBox(node);
     if (node.text_dirty) DrawText(node);
   }
+  DrawViews();
   for (auto& [id, node] : nodes_) {
     if (node.group) FitGroup(node);
   }
@@ -172,6 +182,8 @@ void HostScene::Clear() {
   dirty_children_.clear();
   scroll_events_.clear();
   scroll_offsets_.clear();
+  view_events_.clear();
+  dirty_views_.clear();
 }
 
 bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
@@ -185,6 +197,9 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       node.scroll_content = compositor_.CreateContainerVisual();
       node.children_visual.Children().InsertAtTop(node.scroll_content);
       UpdateClip(node);
+    }
+    if (auto element = ElementOf(node); element && element->view) {
+      CreateView(op.node, *element->view);
     }
     return true;
   }
@@ -207,6 +222,7 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
     case WHISKER_OP_LAYOUT:
       if (!op.payload) return false;
       Layout(node, *static_cast<const WhiskerMobileLayoutGeometry*>(op.payload));
+      if (node.view) dirty_views_.insert(op.node);
       break;
     case WHISKER_OP_PAINT: {
       if (!op.payload) return false;
@@ -275,6 +291,7 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       node.background.IsVisible(node.visible);
       if (node.shadow) node.shadow.IsVisible(node.visible);
       if (node.text_sprite) node.text_sprite.IsVisible(node.visible);
+      if (node.view_sprite) node.view_sprite.IsVisible(node.visible);
       break;
     case WHISKER_OP_Z_ORDER:
       node.z_order = op.integer;
@@ -282,10 +299,10 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       break;
     case WHISKER_OP_PROPERTY:
       if (!op.payload) return false;
-      SetProperty(node, op.member, static_cast<const WhiskerValueRaw*>(op.payload));
+      SetProperty(op.node, node, op.member, static_cast<const WhiskerValueRaw*>(op.payload));
       break;
     case WHISKER_OP_CLEAR_PROPERTY:
-      SetProperty(node, op.member, nullptr);
+      SetProperty(op.node, node, op.member, nullptr);
       break;
     case WHISKER_OP_EVENT_MASK:
       node.event_mask = op.wide;
@@ -339,6 +356,7 @@ void HostScene::Flatten(Node& node) {
   auto children = node.group.Children();
   if (node.shadow) children.InsertAtTop(node.shadow);
   children.InsertAtTop(node.background);
+  if (node.view_sprite) children.InsertAtTop(node.view_sprite);
   if (node.text_sprite) children.InsertAtTop(node.text_sprite);
   children.InsertAtTop(node.children_visual);
   node.group_surface = compositor_.CreateVisualSurface();
@@ -411,6 +429,7 @@ void HostScene::Delete(uint64_t id) {
   roots_.erase(std::remove(roots_.begin(), roots_.end(), id), roots_.end());
   dirty_children_.insert(kRoot);
   dirty_children_.erase(id);
+  dirty_views_.erase(id);
   nodes_.erase(id);
   scroll_offsets_.erase(id);
 }
@@ -626,11 +645,21 @@ const HostScene::Element* HostScene::ElementOf(const Node& node) const {
   return it == elements_.end() ? nullptr : &it->second;
 }
 
-void HostScene::SetProperty(Node& node, uint32_t property, const WhiskerValueRaw* value) {
+void HostScene::SetProperty(uint64_t id, Node& node, uint32_t property,
+                            const WhiskerValueRaw* value) {
   auto element = ElementOf(node);
-  if (!node.scroll || !element) return;
+  if (!element) return;
   auto name = element->properties.find(property);
   if (name == element->properties.end()) return;
+  if (node.view) {
+    auto handler = node.view_definition->properties.find(name->second);
+    if (handler != node.view_definition->properties.end()) {
+      handler->second(*node.view, FromRaw(value));
+      dirty_views_.insert(id);
+    }
+    return;
+  }
+  if (!node.scroll) return;
   if (name->second == "scroll-orientation") {
     node.scroll->horizontal = value && value->type == WHISKER_VALUE_STRING &&
                               View(value->v.s) == "horizontal";
@@ -640,7 +669,19 @@ void HostScene::SetProperty(Node& node, uint32_t property, const WhiskerValueRaw
 }
 
 void HostScene::Invoke(uint64_t id, uint32_t command, const WhiskerValueRaw* arguments) {
-  auto const& node = nodes_.at(id);
+  auto& node = nodes_.at(id);
+  if (node.view) {
+    auto element = ElementOf(node);
+    if (!element) return;
+    auto name = element->commands.find(command);
+    if (name == element->commands.end()) return;
+    auto handler = node.view_definition->commands.find(name->second);
+    if (handler != node.view_definition->commands.end()) {
+      handler->second(*node.view, FromRaw(arguments));
+      dirty_views_.insert(id);
+    }
+    return;
+  }
   if (!node.scroll || (command != kScrollToCommand && command != kScrollByCommand)) return;
   float distance = Number(MapEntry(arguments, "offset"));
   auto offset = node.scroll->offset;
@@ -752,6 +793,55 @@ bool HostScene::ScrollAt(float x, float y, float dx, float dy) {
   }
   return false;
 }
+
+void HostScene::CreateView(uint64_t id, const ViewDefinition& definition) {
+  auto& node = nodes_.at(id);
+  node.view_definition = &definition;
+  node.view_context = std::make_unique<NodeViewContext>(*this, id);
+  node.view = definition.create(*node.view_context);
+  node.view_sprite = compositor_.CreateSpriteVisual();
+  node.view_sprite.IsVisible(node.visible);
+  node.visual.Children().InsertAbove(node.view_sprite, node.background);
+}
+
+void HostScene::DrawViews() {
+  for (auto id : std::exchange(dirty_views_, {})) {
+    auto it = nodes_.find(id);
+    if (it != nodes_.end() && it->second.view) DrawView(it->second);
+  }
+}
+
+void HostScene::DrawView(Node& node) {
+  auto const& content = node.geometry.content;
+  if (content.width <= 0 || content.height <= 0) {
+    node.view_sprite.Brush(nullptr);
+    return;
+  }
+  winrt::Windows::Graphics::SizeInt32 pixels{static_cast<int32_t>(std::ceil(content.width * scale_)),
+                                             static_cast<int32_t>(std::ceil(content.height * scale_))};
+  auto surface = graphics_.CreateDrawingSurface2(pixels, dx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                                                 dx::DirectXAlphaMode::Premultiplied);
+  auto brush = compositor_.CreateSurfaceBrush(surface);
+  brush.Stretch(comp::CompositionStretch::Fill);
+  node.view_sprite.Brush(brush);
+  node.view_sprite.Offset({content.x, content.y, 0});
+  node.view_sprite.Size({content.width, content.height});
+  DrawSurface(surface, scale_, [&](ID2D1DeviceContext* context) {
+    node.view->Draw(context, content.width, content.height);
+  });
+}
+
+void HostScene::NodeViewContext::Emit(std::string_view event, Value detail) {
+  scene_.view_events_.push_back({id_, std::string(event), std::move(detail)});
+  if (scene_.request_frame_) scene_.request_frame_();
+}
+
+void HostScene::NodeViewContext::Invalidate() {
+  scene_.dirty_views_.insert(id_);
+  if (scene_.request_frame_) scene_.request_frame_();
+}
+
+std::vector<HostScene::ViewEvent> HostScene::TakeViewEvents() { return std::exchange(view_events_, {}); }
 
 std::vector<HostScene::ScrollEvent> HostScene::TakeScrollEvents() {
   return std::exchange(scroll_events_, {});

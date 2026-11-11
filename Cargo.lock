@@ -7836,7 +7836,9 @@ name = "whisker-svg"
 version = "0.14.5"
 dependencies = [
  "base64 0.22.1",
+ "csscolorparser",
  "roxmltree 0.20.0",
+ "tiny-skia",
  "whisker",
 ]
 
@@ -7857,6 +7859,15 @@ version = "0.1.0"
 dependencies = [
  "whisker",
  "whisker-cng",
+ "whisker-svg",
+]
+
+[[package]]
+name = "whisker-svg-linux"
+version = "0.14.5"
+dependencies = [
+ "whisker",
+ "whisker-linux",
  "whisker-svg",
 ]
 

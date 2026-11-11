@@ -35,6 +35,10 @@ fn main() {
         "Microsoft.WindowsAppSDK.Foundation.{WINDOWS_APP_SDK_VERSION}"
     ));
     println!(
+        "cargo::metadata=include={}",
+        host.join("build/native/include").display()
+    );
+    println!(
         "cargo::rustc-link-search=native={}",
         host.join("build/native/lib").join(platform).display()
     );

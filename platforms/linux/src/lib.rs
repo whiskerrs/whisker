@@ -9,12 +9,15 @@
 use std::error::Error;
 use std::fmt;
 
-use whisker::runtime::module::RustModuleDefinition;
 use whisker::{Element, ElementModuleDefinition};
+
+pub use gtk4;
+pub use module::{LinuxEventEmitter, LinuxModuleDefinition, LinuxView, LinuxViewDefinition};
 
 mod app;
 mod color;
 mod cursor;
+mod module;
 mod node;
 mod paint;
 mod scene;
@@ -32,18 +35,6 @@ pub struct LinuxAppConfig {
     height: i32,
     background_rgb: [u8; 3],
     modules: Vec<LinuxModuleDefinition>,
-}
-
-/// Linux implementation of one module, as returned by its Host crate.
-#[derive(Clone, Debug, Default)]
-pub struct LinuxModuleDefinition {
-    pub(crate) service: RustModuleDefinition,
-}
-
-impl From<RustModuleDefinition> for LinuxModuleDefinition {
-    fn from(service: RustModuleDefinition) -> Self {
-        Self { service }
-    }
 }
 
 impl LinuxAppConfig {

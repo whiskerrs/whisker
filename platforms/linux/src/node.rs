@@ -55,6 +55,8 @@ pub(crate) struct NodeState {
     pub(crate) background: Option<gdk::RGBA>,
     pub(crate) cursor: CursorKeyword,
     pub(crate) children: Vec<NodeWidget>,
+    /// Module widget filling the content box beneath the node children.
+    pub(crate) native: Option<gtk::Widget>,
     on_resize: Option<fn()>,
     allocated: (i32, i32),
 }
@@ -80,6 +82,7 @@ impl Default for NodeState {
             background: None,
             cursor: CursorKeyword::Auto,
             children: Vec::new(),
+            native: None,
             on_resize: None,
             allocated: (0, 0),
         }
@@ -130,6 +133,17 @@ mod imp {
                 on_resize();
             }
             let state = self.state.borrow();
+            if let Some(native) = &state.native {
+                let content = state.geometry.content_box;
+                let transform =
+                    gsk::Transform::new().translate(&graphene::Point::new(content.x, content.y));
+                native.allocate(
+                    content.width.ceil() as i32,
+                    content.height.ceil() as i32,
+                    -1,
+                    Some(transform),
+                );
+            }
             let offset = state.scroll.map_or([0.0, 0.0], |scroll| scroll.offset);
             for child in &state.children {
                 child.allocate_in_parent(offset);
@@ -229,6 +243,7 @@ impl NodeWidget {
             }
         }
         let clip = clip_rect(&state, &bounds);
+        let native = visible.then(|| state.native.clone()).flatten();
         let outline = visible
             .then(|| state.effects.outline.clone())
             .flatten()
@@ -236,6 +251,9 @@ impl NodeWidget {
         drop(state);
         if let Some(clip) = &clip {
             snapshot.push_rounded_clip(clip);
+        }
+        if let Some(native) = &native {
+            self.snapshot_child(native, snapshot);
         }
         for child in self.paint_order() {
             self.snapshot_child(&child, snapshot);
