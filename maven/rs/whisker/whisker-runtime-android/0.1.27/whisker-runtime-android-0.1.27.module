@@ -1,0 +1,117 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "rs.whisker",
+    "module": "whisker-runtime-android",
+    "version": "0.1.27",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.10.2"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "rs.whisker",
+          "module": "whisker-module-android",
+          "version": {
+            "requires": "0.1.27"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "whisker-runtime-android-0.1.27.aar",
+          "url": "whisker-runtime-android-0.1.27.aar",
+          "size": 278401,
+          "sha512": "b0ac004065dcdaca9582445a658942e2ec4a9c76434c4677b5ff6a0ff29b3229ae69c6a88a33ad11d2cd029a35c8efc9a3e24309e4a9ba97dc3e7ce945185125",
+          "sha256": "ca00e654b801e1bf06e77495f5e24641f5e891c1aa6592e887f466d51969473a",
+          "sha1": "c53c32ad03ba081725c0211feacafaabbda1fee7",
+          "md5": "9ed39a32387713df44da13494a5e1d7c"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.lifecycle",
+          "module": "lifecycle-runtime",
+          "version": {
+            "requires": "2.8.7"
+          }
+        },
+        {
+          "group": "rs.whisker",
+          "module": "whisker-module-android",
+          "version": {
+            "requires": "0.1.27"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "whisker-runtime-android-0.1.27.aar",
+          "url": "whisker-runtime-android-0.1.27.aar",
+          "size": 278401,
+          "sha512": "b0ac004065dcdaca9582445a658942e2ec4a9c76434c4677b5ff6a0ff29b3229ae69c6a88a33ad11d2cd029a35c8efc9a3e24309e4a9ba97dc3e7ce945185125",
+          "sha256": "ca00e654b801e1bf06e77495f5e24641f5e891c1aa6592e887f466d51969473a",
+          "sha1": "c53c32ad03ba081725c0211feacafaabbda1fee7",
+          "md5": "9ed39a32387713df44da13494a5e1d7c"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "whisker-runtime-android-0.1.27-sources.jar",
+          "url": "whisker-runtime-android-0.1.27-sources.jar",
+          "size": 63675,
+          "sha512": "fc1fc390cad1bb6752fa70dd173ce5c2651b1e6adf4cf199c3e73f92eeccc720ad81cf86203488fc16705ff8b38792ea7e0a2af1f33b32da9cbd53aacdb1f009",
+          "sha256": "879a51e4373d5d26ba707b8f9f222b051c704c7e696579e97b95fe04d1b6df3b",
+          "sha1": "278f874ef584970234886c88e836f804a96fe275",
+          "md5": "337260996f7f012ec22d4d32ba046252"
+        }
+      ]
+    }
+  ]
+}
