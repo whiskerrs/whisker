@@ -134,6 +134,7 @@ pub fn generate_with_selection(
             toml_path(&entry),
         ),
     )?;
+    seed_lockfile(metadata.workspace_root.as_std_path(), &generator_dir)?;
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let report = ReportFile(crate_dir.join(format!(
@@ -257,6 +258,7 @@ pub fn run_store(manifest_path: &Path) -> Result<Option<Vec<u8>>> {
             toml_path(&source),
         ),
     )?;
+    seed_lockfile(metadata.workspace_root.as_std_path(), &program_dir)?;
 
     let report = ReportFile(crate_dir.join(format!(
         "target/.whisker/reports/store-{}.json",
@@ -363,6 +365,14 @@ fn dependency_spec(package: Option<&Package>, fallback: &Path, default_features:
             format!("={}", package.version)
         );
     }
+    // A path to the git checkout would be a different source than registry
+    // requirements patched to the same repository, duplicating shared crates.
+    if let Some(git) = package
+        .and_then(|package| package.source.as_ref())
+        .and_then(|source| git_dependency(&source.repr))
+    {
+        return format!("{{ {git}{features} }}");
+    }
     let path = package
         .and_then(|package| package.manifest_path.parent())
         .map(|path| path.as_std_path())
@@ -377,8 +387,64 @@ fn dependency_spec(package: Option<&Package>, fallback: &Path, default_features:
     }
 }
 
+/// Convert a Cargo git source id such as
+/// `git+https://host/repo?branch=main#<commit>` into the inline-table fields
+/// that request the same source; the locked commit comes from the lockfile.
+fn git_dependency(repr: &str) -> Option<String> {
+    let source = repr.strip_prefix("git+")?;
+    let source = source.split_once('#').map_or(source, |(source, _)| source);
+    let (url, query) = source.split_once('?').unwrap_or((source, ""));
+    let mut fields = format!("git = {}", toml_string(url));
+    for (key, value) in query.split('&').filter_map(|pair| pair.split_once('=')) {
+        if matches!(key, "branch" | "tag" | "rev") {
+            fields.push_str(&format!(
+                ", {key} = {}",
+                toml_string(&percent_decode(value)?)
+            ));
+        }
+    }
+    Some(fields)
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(value.len());
+    let mut rest = value.as_bytes();
+    while let Some((&byte, tail)) = rest.split_first() {
+        if byte == b'%' {
+            let hex = std::str::from_utf8(tail.get(..2)?).ok()?;
+            bytes.push(u8::from_str_radix(hex, 16).ok()?);
+            rest = &tail[2..];
+        } else {
+            bytes.push(byte);
+            rest = tail;
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// Start a helper package from the application's lockfile so it builds the
+/// revisions the application resolved (a git `branch` would otherwise follow
+/// the remote), while keeping helper-only entries until that lockfile changes.
+fn seed_lockfile(workspace: &Path, program_dir: &Path) -> Result<()> {
+    let Ok(application) = std::fs::read(workspace.join("Cargo.lock")) else {
+        return Ok(());
+    };
+    let lock = program_dir.join("Cargo.lock");
+    let seed = program_dir.join("Cargo.lock.application");
+    if lock.is_file() && std::fs::read(&seed).is_ok_and(|seed| seed == application) {
+        return Ok(());
+    }
+    std::fs::write(&lock, &application)?;
+    std::fs::write(&seed, &application)?;
+    Ok(())
+}
+
+fn toml_string(value: &str) -> String {
+    toml::Value::String(value.to_owned()).to_string()
+}
+
 fn toml_path(path: &Path) -> String {
-    toml::Value::String(path.to_string_lossy().into_owned()).to_string()
+    toml_string(&path.to_string_lossy())
 }
 
 fn workspace_patches(workspace: &Path) -> Result<String> {
@@ -460,5 +526,84 @@ mod tests {
         assert_eq!(dependency["version"].as_str(), Some("=99.1.2"));
         assert_eq!(dependency["default-features"].as_bool(), Some(false));
         assert!(dependency.get("path").is_none());
+    }
+
+    #[test]
+    fn git_dependencies_keep_their_source_identity() {
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+            .no_deps()
+            .exec()
+            .unwrap();
+        let mut package = metadata
+            .packages
+            .into_iter()
+            .find(|package| package.name == "whisker-cng")
+            .unwrap();
+        let precise = "a49233deac7e3f4ceda3593e9131134784592412";
+        for (query, reference) in [
+            ("?branch=main", Some(("branch", "main"))),
+            ("?branch=fix%2Fnested", Some(("branch", "fix/nested"))),
+            ("?tag=v0.2.1", Some(("tag", "v0.2.1"))),
+            ("?rev=a49233d", Some(("rev", "a49233d"))),
+            ("", None),
+        ] {
+            package.source = Some(cargo_metadata::Source {
+                repr: format!("git+https://github.com/mathrunet/whisker{query}#{precise}"),
+            });
+            let spec = dependency_spec(Some(&package), Path::new("/unused"), false);
+            let manifest: toml::Value = format!("[dependencies]\nwhisker-cng = {spec}")
+                .parse()
+                .unwrap();
+            let dependency = manifest["dependencies"]["whisker-cng"].as_table().unwrap();
+            let mut expected = toml::value::Table::new();
+            expected.insert(
+                "git".into(),
+                "https://github.com/mathrunet/whisker".to_owned().into(),
+            );
+            if let Some((kind, value)) = reference {
+                expected.insert(kind.into(), value.to_owned().into());
+            }
+            expected.insert("default-features".into(), false.into());
+            assert_eq!(dependency, &expected, "{query}");
+        }
+    }
+
+    #[test]
+    fn helper_lockfile_follows_the_application_lockfile() {
+        let root =
+            std::env::temp_dir().join(format!("whisker-cng-seed-lockfile-{}", std::process::id()));
+        let program = root.join("target/.whisker/generator");
+        std::fs::create_dir_all(&program).unwrap();
+        std::fs::write(root.join("Cargo.lock"), "application v1").unwrap();
+        seed_lockfile(&root, &program).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(program.join("Cargo.lock")).unwrap(),
+            "application v1"
+        );
+
+        // Cargo extends the helper lockfile with helper-only packages; an
+        // unchanged application lockfile must not discard them.
+        std::fs::write(program.join("Cargo.lock"), "application v1 + helper").unwrap();
+        seed_lockfile(&root, &program).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(program.join("Cargo.lock")).unwrap(),
+            "application v1 + helper"
+        );
+
+        std::fs::write(root.join("Cargo.lock"), "application v2").unwrap();
+        seed_lockfile(&root, &program).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(program.join("Cargo.lock")).unwrap(),
+            "application v2"
+        );
+
+        std::fs::remove_file(program.join("Cargo.lock")).unwrap();
+        seed_lockfile(&root, &program).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(program.join("Cargo.lock")).unwrap(),
+            "application v2"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
