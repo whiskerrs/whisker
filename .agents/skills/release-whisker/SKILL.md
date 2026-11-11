@@ -130,6 +130,9 @@ gh run rerun <run-id> --failed
 ```
 
 The checkout must remain the same commit. Native tags reject another commit.
+A re-run keeps the failed run's job definitions; when the Rust publish job
+itself needs a workflow fix, merge the fix and dispatch `release-resume` with
+the release-plan merge commit.
 Changes to packaged Rust content or Cargo.lock after preparation are rejected
 before publishing. Re-prepare the release if main acquired those changes.
 Maven publication receipts prevent overwriting a successful upload when
