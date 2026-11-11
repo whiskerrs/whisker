@@ -791,12 +791,38 @@ mod tests {
         assert!(MAIN_ACTIVITY_KT.contains("setContentView(WhiskerView(this))"));
         assert!(MAIN_ACTIVITY_KT.contains("override fun onNewIntent(intent: Intent)"));
         assert!(
-            MAIN_ACTIVITY_KT
+            MAIN_ACTIVITY_KT.contains(
+                "WhiskerAppContext.dispatchDeepLink(intent, setOf({{deep_link_schemes}}))"
+            )
+        );
+        assert!(
+            !MAIN_ACTIVITY_KT
                 .contains("intent.dataString?.let(WhiskerAppContext::dispatchDeepLink)")
         );
         let project = application::declarations(&sample_inputs()).unwrap();
         assert!(project.modules[":app"].dependencies.iter().any(|d| matches!(&d.source,
             whisker_plugin::project::GradleDependencySource::Maven(v) if v == "androidx.activity:activity:1.8.2")));
+    }
+
+    #[test]
+    fn generated_activity_passes_only_registered_schemes_to_the_sdk_gate() {
+        let mut inputs = sample_inputs();
+        inputs.main_activity_url_schemes = vec!["EXAMPLE".into()];
+        let root = unique_tempdir();
+        let output = root.join("gen/android");
+        sync(&output, &inputs).unwrap();
+        let path =
+            output.join("app/src/main/kotlin/rs/whisker/examples/helloworld/MainActivity.kt");
+        let activity = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            activity.contains("WhiskerAppContext.dispatchDeepLink(intent, setOf(\"example\"))")
+        );
+        assert!(!activity.contains("intent.dataString"));
+        inputs.main_activity_url_schemes.clear();
+        sync(&output, &inputs).unwrap();
+        let activity = std::fs::read_to_string(path).unwrap();
+        assert!(activity.contains("WhiskerAppContext.dispatchDeepLink(intent, setOf())"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
