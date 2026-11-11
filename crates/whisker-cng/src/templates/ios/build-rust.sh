@@ -19,6 +19,9 @@ BUILD_COMMAND=(
   --archs="$ARCHS"
   --built-products-dir="$BUILT_PRODUCTS_DIR"
 )
+if [ "$CONFIGURATION" = "Release" ]; then
+  unset WHISKER_FEATURES
+fi
 if [ -n "${WHISKER_FEATURES:-}" ]; then
   for feat in $WHISKER_FEATURES; do
     BUILD_COMMAND+=(--features "$feat")

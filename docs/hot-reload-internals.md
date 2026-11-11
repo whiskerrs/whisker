@@ -379,3 +379,12 @@ the next save anyway.
   function, type, or constant leaves every component hash unchanged, and
   editing the application's root component has no parent to remount into;
   both fall back to a full remount, which resets all state.
+
+## Release environment boundary
+
+Release archive and Gradle launch commands remove `WHISKER_FEATURES` from their
+environment. The generated Xcode script and the Gradle Rust build task also ignore
+and remove that variable for Release builds, including IDE builds using a reused
+Gradle daemon. Explicit application Cargo features remain application configuration;
+this boundary prevents the development CLI's environment injection from carrying
+hot-reload into release builds.
