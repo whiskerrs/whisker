@@ -331,14 +331,18 @@ fn main() {{
     }}
     let include = std::env::var("DEP_WHISKER_WINDOWS_INCLUDE")
         .expect("whisker-windows exports the Whisker.WindowsHost headers");
+    let winrt = std::env::var("DEP_WHISKER_WINDOWS_WINRT_INCLUDE")
+        .expect("whisker-windows exports the C++/WinRT projection");
     cc::Build::new()
         .cpp(true)
         .std("c++20")
         .flag("/EHsc")
         .flag("/utf-8")
+        .flag("/bigobj")
         .define("NOMINMAX", None)
         .define("WIN32_LEAN_AND_MEAN", None)
         .include(include)
+        .include(winrt)
         .files(files)
         .link_lib_modifier("+whole-archive")
         .compile("whisker_windows_modules");

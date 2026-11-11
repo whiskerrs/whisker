@@ -101,6 +101,10 @@ struct WhiskerView::Impl {
     xaml::Hosting::ElementCompositionPreview::SetElementChildVisual(host, root);
     scene.emplace(root, text, resources, CreateGraphicsDevice(compositor));
     scene->SetFrameRequester([this] { frame_requested = true; });
+    scene->SetParentIsland([this]() -> winrt::Microsoft::UI::Content::ContentIsland {
+      auto root = host.XamlRoot();
+      return root ? root.ContentIsland() : nullptr;
+    });
     // Module events may come from any thread and leave on the next tick.
     services.emplace([this](std::string module, std::string event, Value payload) {
       {
@@ -117,6 +121,7 @@ struct WhiskerView::Impl {
     rendering = xaml::Media::CompositionTarget::Rendering(
         [this](auto&&, auto&&) { Tick(); });
     host.PointerPressed([this](auto&&, xaml::Input::PointerRoutedEventArgs const& e) {
+      scene->ReleaseViewFocus();
       host.CapturePointer(e.Pointer());
       Pointer(e, WHISKER_POINTER_DOWN);
     });
@@ -181,6 +186,8 @@ struct WhiskerView::Impl {
   }
 
   void Pointer(xaml::Input::PointerRoutedEventArgs const& e, uint32_t event) {
+    // Captured pointers also receive stale moves from hosted XAML islands, in island coordinates.
+    if (event == WHISKER_POINTER_MOVE && e.OriginalSource() != host) return;
     auto point = e.GetCurrentPoint(host);
     auto position = point.Position();
     float x = static_cast<float>(position.X);
@@ -276,8 +283,12 @@ struct WhiskerView::Impl {
 
   static bool OnMeasure(void* data, const WhiskerMobileMeasureRequest* requests, size_t count,
                         WhiskerMobileMeasureResponse* responses) {
-    auto& text = static_cast<Impl*>(data)->text;
-    for (size_t i = 0; i < count; ++i) text.Measure(requests[i], responses[i]);
+    auto& impl = *static_cast<Impl*>(data);
+    for (size_t i = 0; i < count; ++i) {
+      if (!impl.scene->MeasureView(requests[i], responses[i])) {
+        impl.text.Measure(requests[i], responses[i]);
+      }
+    }
     return true;
   }
 

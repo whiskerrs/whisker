@@ -7560,6 +7560,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-input-linux"
+version = "0.14.5"
+dependencies = [
+ "whisker",
+ "whisker-linux",
+ "whisker-protocol",
+]
+
+[[package]]
 name = "whisker-input-web"
 version = "0.14.5"
 dependencies = [

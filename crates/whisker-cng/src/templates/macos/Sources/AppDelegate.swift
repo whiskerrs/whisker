@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = WhiskerView(frame: window.contentLayoutRect)
         window.center()
         window.setFrameAutosaveName("WhiskerMainWindow")
+        window.initialFirstResponder = window.contentView
         window.makeKeyAndOrderFront(nil)
         self.window = window
         NSApp.activate(ignoringOtherApps: true)

@@ -278,8 +278,8 @@ std::wstring Widen(WhiskerStringRef value) {
   return out;
 }
 
-TextStyle TextStyle::From(const WhiskerMobileText& text) {
-  TextStyle style;
+TextContent TextContent::From(const WhiskerMobileText& text) {
+  TextContent style;
   style.text = Widen(text.text);
   style.word_break = text.word_break;
   style.letter_spacing = text.letter_spacing;
@@ -309,8 +309,8 @@ TextStyle TextStyle::From(const WhiskerMobileText& text) {
   return style;
 }
 
-TextStyle TextStyle::From(const WhiskerMobileMeasureRequest& request) {
-  TextStyle style;
+TextContent TextContent::From(const WhiskerMobileMeasureRequest& request) {
+  TextContent style;
   style.text = Widen(request.text);
   style.word_break = request.word_break;
   style.letter_spacing = request.letter_spacing;
@@ -331,7 +331,7 @@ TextStyle TextStyle::From(const WhiskerMobileMeasureRequest& request) {
   return style;
 }
 
-float TextStyle::PaintOverflow() const {
+float TextContent::PaintOverflow() const {
   if (!shadow) return 0;
   return std::ceil(std::max(std::abs(shadow->x), std::abs(shadow->y)) + shadow->blur * 1.5f);
 }
@@ -341,7 +341,7 @@ TextEngine::TextEngine() {
                                            reinterpret_cast<::IUnknown**>(factory_.put())));
 }
 
-winrt::com_ptr<IDWriteTextLayout> TextEngine::Layout(const TextStyle& style, float max_width,
+winrt::com_ptr<IDWriteTextLayout> TextEngine::Layout(const TextContent& style, float max_width,
                                                      float basis) const {
   winrt::com_ptr<IDWriteTextFormat> format;
   winrt::check_hresult(factory_->CreateTextFormat(
@@ -418,7 +418,7 @@ void TextEngine::Measure(const WhiskerMobileMeasureRequest& request,
     response.height = known_height ? request.known_height : request.intrinsic_height;
     return;
   }
-  auto style = TextStyle::From(request);
+  auto style = TextContent::From(request);
   float width = kUnbounded;
   if (style.wrap) {
     switch (request.available_width_kind) {
@@ -452,7 +452,7 @@ void TextEngine::Measure(const WhiskerMobileMeasureRequest& request,
   response.metrics_mask = 7;
 }
 
-void TextEngine::Draw(ID2D1DeviceContext* context, const TextStyle& style, float width) const {
+void TextEngine::Draw(ID2D1DeviceContext* context, const TextContent& style, float width) const {
   // Half a pixel of slack keeps DirectWrite from wrapping text measured at exactly this width.
   auto layout = Layout(style, style.wrap ? width + 0.5f : kUnbounded, width);
   if (!style.wrap) layout->SetMaxWidth(width);

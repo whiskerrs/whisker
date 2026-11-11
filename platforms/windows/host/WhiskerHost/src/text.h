@@ -45,7 +45,7 @@ struct TextRun {
   TextDecoration decoration;
 };
 
-struct TextStyle {
+struct TextContent {
   std::wstring text;
   std::wstring family = L"Segoe UI";
   float size = 14;
@@ -67,8 +67,8 @@ struct TextStyle {
   std::optional<TextShadow> shadow;
   std::vector<TextRun> runs;
 
-  static TextStyle From(const WhiskerMobileText& text);
-  static TextStyle From(const WhiskerMobileMeasureRequest& request);
+  static TextContent From(const WhiskerMobileText& text);
+  static TextContent From(const WhiskerMobileMeasureRequest& request);
 
   // How far the painted text may reach past its content box on every side.
   float PaintOverflow() const;
@@ -79,11 +79,11 @@ class TextEngine {
   TextEngine();
 
   // `basis` resolves a percentage indent.
-  winrt::com_ptr<IDWriteTextLayout> Layout(const TextStyle& style, float max_width,
+  winrt::com_ptr<IDWriteTextLayout> Layout(const TextContent& style, float max_width,
                                            float basis) const;
   void Measure(const WhiskerMobileMeasureRequest& request,
                WhiskerMobileMeasureResponse& response) const;
-  void Draw(ID2D1DeviceContext* context, const TextStyle& style, float width) const;
+  void Draw(ID2D1DeviceContext* context, const TextContent& style, float width) const;
 
  private:
   winrt::com_ptr<IDWriteFactory> factory_;
