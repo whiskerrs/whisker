@@ -63,6 +63,9 @@ pub struct ResolvedModule {
     pub android_jni_sources: Vec<PathBuf>,
     /// Explicit support and implementation selected for each Host.
     pub platforms: ResolvedModulePlatforms,
+    /// Git source of the package; its Rust Hosts come from the same repository.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<crate::GitSource>,
 }
 
 impl ResolvedModule {
@@ -280,6 +283,10 @@ pub(crate) fn discover_from_metadata(
             android_kotlin_sources: android_kotlin,
             android_jni_sources: android_jni,
             platforms,
+            git: pkg
+                .source
+                .as_ref()
+                .and_then(|source| crate::GitSource::parse(&source.repr)),
         });
     }
 
@@ -644,6 +651,7 @@ mod tests {
                 )),
                 ..Default::default()
             },
+            git: None,
         };
         assert_eq!(
             module.rust_host(ModulePlatform::Macos).unwrap().package,
