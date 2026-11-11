@@ -17,7 +17,10 @@
 #include "resources.h"
 #include "shadow.h"
 #include "text.h"
+#include "whisker/xaml_module.h"
 #include "whisker_mobile.h"
+
+#include <winrt/Microsoft.UI.Content.h>
 
 namespace whisker {
 
@@ -40,6 +43,8 @@ class HostScene {
   };
 
   void SetFrameRequester(std::function<void()> request_frame);
+  // XAML module views connect beneath this island once it exists.
+  void SetParentIsland(std::function<winrt::Microsoft::UI::Content::ContentIsland()> parent);
   bool Bootstrap(const WhiskerMobileBootstrap& bootstrap);
   void SetScale(float scale);
   bool Apply(const WhiskerMobileFrame& frame, WhiskerMobileApplyResponse& response);
@@ -52,6 +57,11 @@ class HostScene {
   std::vector<ViewEvent> TakeViewEvents();
   // Paints module views invalidated outside a frame.
   void DrawViews();
+  // Answers the request from the element's module view `Measurement`, if it declares one.
+  bool MeasureView(const WhiskerMobileMeasureRequest& request,
+                   WhiskerMobileMeasureResponse& response) const;
+  // Takes keyboard focus back from any XAML module view.
+  void ReleaseViewFocus();
   std::vector<std::pair<uint64_t, std::array<float, 2>>> TakeScrollOffsets();
 
  private:
@@ -82,6 +92,17 @@ class HostScene {
     uint64_t id_;
   };
 
+  // Hosts a `XamlModuleView` element in its own island linked under the node's visual.
+  struct XamlSite {
+    winrt::Microsoft::UI::Composition::ContainerVisual placement{nullptr};
+    winrt::Microsoft::UI::Content::ChildSiteLink link{nullptr};
+    winrt::Microsoft::UI::Xaml::XamlIsland island{nullptr};
+    XamlSite() = default;
+    XamlSite(XamlSite const&) = delete;
+    XamlSite& operator=(XamlSite const&) = delete;
+    ~XamlSite();
+  };
+
   struct Node {
     winrt::Microsoft::UI::Composition::ContainerVisual visual{nullptr};
     winrt::Microsoft::UI::Composition::ContainerVisual group{nullptr};
@@ -94,6 +115,8 @@ class HostScene {
     // Declared before `view` so the view is destroyed first.
     std::unique_ptr<NodeViewContext> view_context;
     std::unique_ptr<ModuleView> view;
+    // Declared after `view` so the island releases the element before the view is destroyed.
+    std::unique_ptr<XamlSite> xaml;
     const ViewDefinition* view_definition = nullptr;
     winrt::Microsoft::UI::Composition::ContainerVisual children_visual{nullptr};
     winrt::Microsoft::UI::Composition::ContainerVisual scroll_content{nullptr};
@@ -118,7 +141,7 @@ class HostScene {
     bool visible = true;
     bool has_text = false;
     bool text_dirty = false;
-    TextStyle text;
+    TextContent text;
   };
 
   void Clear();
@@ -139,7 +162,8 @@ class HostScene {
   void DrawShadow(Node& node);
   void DrawText(Node& node);
   void CreateView(uint64_t id, const ViewDefinition& definition);
-  void DrawView(Node& node);
+  void DrawView(uint64_t id, Node& node);
+  void PlaceXaml(uint64_t id, Node& node);
   void SetProperty(uint64_t id, Node& node, uint32_t property, const WhiskerValueRaw* value);
   void Invoke(uint64_t id, uint32_t command, const WhiskerValueRaw* arguments);
   bool ScrollTo(uint64_t id, std::array<float, 2> offset);
@@ -162,6 +186,7 @@ class HostScene {
   std::vector<ViewEvent> view_events_;
   std::unordered_set<uint64_t> dirty_views_;
   std::function<void()> request_frame_;
+  std::function<winrt::Microsoft::UI::Content::ContentIsland()> parent_island_;
   std::unordered_map<uint64_t, std::array<float, 2>> scroll_offsets_;
   uint64_t revision_ = 0;
   uint32_t scene_epoch_ = 0;

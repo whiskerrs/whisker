@@ -14,6 +14,7 @@
 #include <winrt/Windows.Graphics.h>
 #include <winrt/Windows.Foundation.Numerics.h>
 #include <winrt/Windows.UI.h>
+#include <winrt/Microsoft.UI.Input.h>
 
 namespace whisker {
 
@@ -34,6 +35,38 @@ winrt::Windows::UI::Color ToColor(const WhiskerMobileColor& color) {
   auto c = ToD2DColor(color);
   auto byte = [](float v) { return static_cast<uint8_t>(std::lround(v * 255.0f)); };
   return {byte(c.a), byte(c.r), byte(c.g), byte(c.b)};
+}
+
+TextStyle ViewTextStyle(const WhiskerMobileText& text) {
+  TextStyle style;
+  for (size_t i = 0; i < text.font_family_count; ++i) {
+    style.font_families.emplace_back(View(text.font_families[i]));
+  }
+  style.font_size = text.font_size;
+  style.font_weight = text.font_weight;
+  style.italic = text.font_style != 0;
+  if (text.line_height > 0) style.line_height = text.line_height;
+  style.letter_spacing = text.letter_spacing;
+  style.color = ToD2DColor(text.color);
+  bool rtl = text.direction == 2;
+  style.direction = rtl ? TextDirection::Rtl : TextDirection::Ltr;
+  switch (text.alignment) {
+    case 1:
+      style.alignment = TextAlignment::End;
+      break;
+    case 2:
+      style.alignment = rtl ? TextAlignment::End : TextAlignment::Start;
+      break;
+    case 3:
+      style.alignment = rtl ? TextAlignment::Start : TextAlignment::End;
+      break;
+    case 4:
+      style.alignment = TextAlignment::Center;
+      break;
+    default:
+      break;
+  }
+  return style;
 }
 
 // Composition may ask for the geometry in its own factory, so it is rebuilt on demand.
@@ -122,6 +155,11 @@ HostScene::HostScene(comp::ContainerVisual root, const TextEngine& text,
 
 void HostScene::SetFrameRequester(std::function<void()> request_frame) {
   request_frame_ = std::move(request_frame);
+}
+
+void HostScene::SetParentIsland(
+    std::function<winrt::Microsoft::UI::Content::ContentIsland()> parent) {
+  parent_island_ = std::move(parent);
 }
 
 void HostScene::SetScale(float scale) {
@@ -292,6 +330,7 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       if (node.shadow) node.shadow.IsVisible(node.visible);
       if (node.text_sprite) node.text_sprite.IsVisible(node.visible);
       if (node.view_sprite) node.view_sprite.IsVisible(node.visible);
+      if (node.xaml) node.xaml->placement.IsVisible(node.visible);
       break;
     case WHISKER_OP_Z_ORDER:
       node.z_order = op.integer;
@@ -321,8 +360,14 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
     case WHISKER_OP_TEXT_STYLE: {
       if (!op.payload) return false;
       auto const& text = *static_cast<const WhiskerMobileText*>(op.payload);
+      if (op.tag == WHISKER_OP_TEXT_STYLE && node.view) {
+        if (node.view_definition->text_style) {
+          node.view_definition->text_style(*node.view, ViewTextStyle(text));
+        }
+        break;
+      }
       auto content = node.text.text;
-      node.text = TextStyle::From(text);
+      node.text = TextContent::From(text);
       if (op.tag == WHISKER_OP_TEXT_STYLE) node.text.text = std::move(content);
       node.has_text = true;
       node.text_dirty = true;
@@ -799,19 +844,99 @@ void HostScene::CreateView(uint64_t id, const ViewDefinition& definition) {
   node.view_definition = &definition;
   node.view_context = std::make_unique<NodeViewContext>(*this, id);
   node.view = definition.create(*node.view_context);
+  if (dynamic_cast<XamlModuleView*>(node.view.get())) {
+    node.xaml = std::make_unique<XamlSite>();
+    node.xaml->placement = compositor_.CreateContainerVisual();
+    node.xaml->placement.IsVisible(node.visible);
+    node.visual.Children().InsertAbove(node.xaml->placement, node.background);
+    dirty_views_.insert(id);
+    return;
+  }
   node.view_sprite = compositor_.CreateSpriteVisual();
   node.view_sprite.IsVisible(node.visible);
   node.visual.Children().InsertAbove(node.view_sprite, node.background);
 }
 
-void HostScene::DrawViews() {
-  for (auto id : std::exchange(dirty_views_, {})) {
-    auto it = nodes_.find(id);
-    if (it != nodes_.end() && it->second.view) DrawView(it->second);
+HostScene::XamlSite::~XamlSite() {
+  if (link) link.Close();
+  if (island) island.Close();
+}
+
+void HostScene::PlaceXaml(uint64_t id, Node& node) {
+  auto& site = *node.xaml;
+  auto const& content = node.geometry.content;
+  site.placement.Offset({content.x, content.y, 0});
+  site.placement.Size({content.width, content.height});
+  if (!site.link) {
+    auto parent = parent_island_ ? parent_island_() : nullptr;
+    if (!parent) {
+      // The Host's own island appears once its XAML root is loaded; retry on the next frame.
+      dirty_views_.insert(id);
+      if (request_frame_) request_frame_();
+      return;
+    }
+    site.link = winrt::Microsoft::UI::Content::ChildSiteLink::Create(parent, site.placement);
+    site.island = winrt::Microsoft::UI::Xaml::XamlIsland();
+    site.island.Content(static_cast<XamlModuleView&>(*node.view).Element());
+    site.link.Connect(site.island.ContentIsland());
+  }
+  site.link.ActualSize({content.width, content.height});
+}
+
+bool HostScene::MeasureView(const WhiskerMobileMeasureRequest& request,
+                            WhiskerMobileMeasureResponse& response) const {
+  if (request.kind == WHISKER_MEASURE_TEXT) return false;
+  auto element = elements_.find(request.element_type);
+  if (element == elements_.end() || !element->second.view || !element->second.view->measure) {
+    return false;
+  }
+  response.key = request.key;
+  response.environment_epoch = request.environment_epoch;
+  MeasureRequest measure;
+  if (request.available_width_kind == 0) measure.available_width = request.available_width;
+  if (request.available_height_kind == 0) measure.available_height = request.available_height;
+  if (request.known_mask & 1) measure.known_width = request.known_width;
+  if (request.known_mask & 2) measure.known_height = request.known_height;
+  measure.payload_version = request.payload_version;
+  measure.payload = FromRaw(request.payload);
+  auto size = element->second.view->measure(measure);
+  if (!size) {
+    response.status = WHISKER_MEASURE_UNSUPPORTED;
+    response.reason = 1;
+    return true;
+  }
+  response.status = WHISKER_MEASURE_READY;
+  response.width = request.known_mask & 1 ? request.known_width : size->width;
+  response.height = request.known_mask & 2 ? request.known_height : size->height;
+  return true;
+}
+
+void HostScene::ReleaseViewFocus() {
+  auto parent = parent_island_ ? parent_island_() : nullptr;
+  if (!parent) return;
+  for (auto& [id, node] : nodes_) {
+    if (!node.xaml || !node.xaml->island) continue;
+    auto focus = winrt::Microsoft::UI::Input::InputFocusController::GetForIsland(
+        node.xaml->island.ContentIsland());
+    if (focus.HasFocus()) {
+      winrt::Microsoft::UI::Input::InputFocusController::GetForIsland(parent).TrySetFocus();
+      return;
+    }
   }
 }
 
-void HostScene::DrawView(Node& node) {
+void HostScene::DrawViews() {
+  for (auto id : std::exchange(dirty_views_, {})) {
+    auto it = nodes_.find(id);
+    if (it != nodes_.end() && it->second.view) DrawView(id, it->second);
+  }
+}
+
+void HostScene::DrawView(uint64_t id, Node& node) {
+  if (node.xaml) {
+    PlaceXaml(id, node);
+    return;
+  }
   auto const& content = node.geometry.content;
   if (content.width <= 0 || content.height <= 0) {
     node.view_sprite.Brush(nullptr);

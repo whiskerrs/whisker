@@ -57,6 +57,8 @@ pub(crate) struct NodeState {
     pub(crate) children: Vec<NodeWidget>,
     /// Module widget filling the content box beneath the node children.
     pub(crate) native: Option<gtk::Widget>,
+    /// Only the surface is a pointer target; other nodes stay pickable so module widgets inside them are reachable.
+    pub(crate) hit_target: bool,
     on_resize: Option<fn()>,
     allocated: (i32, i32),
 }
@@ -83,6 +85,7 @@ impl Default for NodeState {
             cursor: CursorKeyword::Auto,
             children: Vec::new(),
             native: None,
+            hit_target: false,
             on_resize: None,
             allocated: (0, 0),
         }
@@ -153,6 +156,10 @@ mod imp {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             self.obj().paint(snapshot);
         }
+
+        fn contains(&self, _x: f64, _y: f64) -> bool {
+            self.state.borrow().hit_target
+        }
     }
 }
 
@@ -170,9 +177,7 @@ impl Default for NodeWidget {
 
 impl NodeWidget {
     pub(crate) fn new() -> Self {
-        let widget = Self::default();
-        widget.set_can_target(false);
-        widget
+        Self::default()
     }
 
     /// Calls `callback` whenever GTK allocates this widget a new size.

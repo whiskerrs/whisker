@@ -80,6 +80,7 @@ members = [
     "packages/whisker-svg",
     "packages/whisker-svg/desktop",
     "packages/whisker-svg/linux",
+    "packages/whisker-input/linux",
     "packages/whisker-image/linux",
     "packages/whisker-svg/web",
     "packages/whisker-svg/example",

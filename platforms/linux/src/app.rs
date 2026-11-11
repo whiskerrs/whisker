@@ -96,7 +96,7 @@ fn activate(
     application: fn() -> Element,
 ) -> Result<(), LinuxError> {
     let surface = NodeWidget::new();
-    surface.set_can_target(true);
+    surface.state_mut().hit_target = true;
     surface.set_hexpand(true);
     surface.set_vexpand(true);
     let [red, green, blue] = config.background_rgb;
