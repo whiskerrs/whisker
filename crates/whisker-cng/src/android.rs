@@ -702,7 +702,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 40,
+        template_version: 41,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -763,7 +763,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 40,
+            template_version: 41,
             cargo_selection: crate::CargoSelection::default(),
         }
     }
@@ -900,6 +900,20 @@ mod tests {
             application_id_to_path("rs.whisker.examples.helloworld"),
             PathBuf::from("rs/whisker/examples/helloworld"),
         );
+    }
+
+    #[test]
+    fn cleartext_is_disabled_in_main_and_enabled_only_in_debug() {
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/android");
+        sync(&out, &sample_inputs()).unwrap();
+        let main = std::fs::read_to_string(out.join("app/src/main/AndroidManifest.xml")).unwrap();
+        assert!(main.contains("android:usesCleartextTraffic=\"false\""));
+        let debug = std::fs::read_to_string(out.join("app/src/debug/AndroidManifest.xml")).unwrap();
+        assert!(debug.contains("android:usesCleartextTraffic=\"true\""));
+        assert!(debug.contains("tools:replace=\"android:usesCleartextTraffic\""));
+        assert!(!out.join("app/src/release/AndroidManifest.xml").exists());
+        std::fs::remove_dir_all(tmp).unwrap();
     }
 
     #[test]
