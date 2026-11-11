@@ -91,7 +91,7 @@ class WebBrowserModule : Module() {
         launchingActivity = activity
 
         val listener = DeepLinkListener { receivedUrl ->
-            if (pendingRedirectPrefix != null && receivedUrl.startsWith(pendingRedirectPrefix!!)) {
+            if (pendingRedirectPrefix != null && AuthRedirectPolicy.matches(pendingRedirectPrefix!!, receivedUrl)) {
                 resolveAuthSession(
                     WhiskerValue.Map(
                         mapOf("type" to WhiskerValue.Str("success"), "url" to WhiskerValue.Str(receivedUrl))

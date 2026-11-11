@@ -478,3 +478,13 @@ and prone to drift. Pick one.
   [issue #128](https://github.com/whiskerrs/whisker/issues/128)
 - Why `Owner` (Shape 3 mechanics) and what backs lifetime →
   [`reactivity-design.md`](./reactivity-design.md)
+
+## Android deep links and authentication
+
+The generated Activity forwards only ACTION_VIEW intents whose URI scheme was
+registered by the application. Both initial launch and onNewIntent use the same
+Host check. OAuth redirect interception compares scheme, host, effective port and
+encoded path, and preserves any fixed callback query parameters. It does not infer
+authenticity from URL matching: the authentication caller must validate a fresh
+state value and complete PKCE verification before accepting an authorization code.
+Custom schemes may be invoked by any app, even when correctly registered.

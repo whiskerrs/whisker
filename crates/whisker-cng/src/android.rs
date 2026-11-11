@@ -205,6 +205,16 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
     v.insert("build_number", inputs.build_number.to_string());
     v.insert("android_application_id", inputs.application_id.clone());
     v.insert(
+        "deep_link_schemes",
+        inputs
+            .main_activity_url_schemes
+            .iter()
+            .map(|scheme| project_render::quote(&scheme.to_ascii_lowercase()))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+
+    v.insert(
         "android_application_class",
         application_class_name(&inputs.app_name),
     );
@@ -702,7 +712,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 40,
+        template_version: 42,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -763,7 +773,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 40,
+            template_version: 42,
             cargo_selection: crate::CargoSelection::default(),
         }
     }

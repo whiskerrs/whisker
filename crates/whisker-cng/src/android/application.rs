@@ -58,6 +58,17 @@ pub(super) fn declarations(inputs: &AndroidInputs) -> Result<AndroidProjectIr> {
         "Android application ID must contain valid package identifiers"
     );
 
+    anyhow::ensure!(
+        inputs.main_activity_url_schemes.iter().all(|scheme| {
+            !scheme.is_empty()
+                && scheme.bytes().enumerate().all(|(index, byte)| {
+                    byte.is_ascii_alphabetic()
+                        || index > 0
+                            && (byte.is_ascii_digit() || matches!(byte, b'+' | b'-' | b'.'))
+                })
+        }),
+        "registered Android URL schemes must follow URI scheme syntax"
+    );
     let mut vars = template_vars(inputs);
     // These substitutions occur inside Kotlin string literals in the Host
     // snippets; model-owned IDs/metadata are rendered separately below.
