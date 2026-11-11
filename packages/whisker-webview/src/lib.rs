@@ -527,7 +527,7 @@ pub fn web_view(
 
 /// Serialize an origin whitelist to a JSON array string the native side
 /// parses, e.g. `["https://*","http://*"]`. Hand-rolled (no `serde_json`
-/// dep): each entry is escaped for `"` and `\`.
+/// dep): each entry escapes JSON string delimiters and control characters.
 fn origin_whitelist_json(origins: &[String]) -> String {
     let mut s = String::from("[");
     for (i, o) in origins.iter().enumerate() {

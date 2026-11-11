@@ -23,8 +23,9 @@ enum OriginPolicy {
         guard !expanded.contains("*"), let rule = parse(expanded),
               ["", "/"].contains(rule.path), rule.query == nil, rule.fragment == nil,
               candidate.scheme?.lowercased() == rule.scheme?.lowercased(),
-              port(candidate) == port(rule),
               let host = candidate.host?.lowercased(), let allowed = rule.host?.lowercased() else { return false }
+        if wildcard && allowed == "whisker-any" && rule.port == nil { return true }
+        guard port(candidate) == port(rule) else { return false }
         if wildcard && allowed == "whisker-any" { return true }
         if wildcard && allowed.hasPrefix("whisker-wildcard.") {
             let suffix = String(allowed.dropFirst("whisker-wildcard".count))

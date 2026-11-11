@@ -105,7 +105,7 @@ open class WhiskerWebView(context: WhiskerContext) :
 
     private val cleanupHandler = Handler(Looper.getMainLooper())
 
-    /** Glob patterns; an empty list means "allow all". */
+    /** Navigation origin patterns; an empty list denies navigation. */
     private var originWhitelist: List<String> = listOf("https://*", "http://*")
 
     // -------------------------------------------------------------------------
@@ -349,12 +349,7 @@ open class WhiskerWebView(context: WhiskerContext) :
         }
     }
 
-    /**
-     * `origin-whitelist` prop setter, taking a JSON array string of glob
-     * patterns. A blank value restores the http/https default; malformed
-     * JSON keeps the list in force, so a typo can't silently open up or
-     * block all navigation.
-     */
+    /** Parse navigation origin rules; malformed input denies navigation. */
     fun setOriginWhitelist(json: String) {
         try {
             val arr = org.json.JSONArray(json)

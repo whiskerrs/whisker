@@ -18,3 +18,7 @@ true	http://localhost:8080	http://localhost:8080/page
 false	http://localhost:8080	http://localhost/page
 false	*	https://example.com
 false	https://*.example.com	https://a.example.com.evil.test/?a=.example.com
+true	http://*	http://localhost:8080/page
+false	https://*.example.com	https://a.example.com:444/page
+true	https://*:8443	https://example.com:8443/page
+false	https://*:8443	https://example.com/page

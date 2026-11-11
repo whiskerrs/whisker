@@ -24,7 +24,8 @@ internal object OriginPolicy {
         if ('*' in expanded) return false
         val rule = parse(expanded) ?: return false
         if (rule.rawPath !in listOf("", "/") || rule.rawQuery != null || rule.rawFragment != null) return false
-        if (!candidate.scheme.equals(rule.scheme, ignoreCase = true) || port(candidate) != port(rule)) return false
+        if (!candidate.scheme.equals(rule.scheme, ignoreCase = true)) return false
+        if ((!wildcard || rule.host != "whisker-any" || rule.port >= 0) && port(candidate) != port(rule)) return false
         val host = candidate.host.lowercase(Locale.ROOT)
         val allowed = rule.host.lowercase(Locale.ROOT)
         return when {
