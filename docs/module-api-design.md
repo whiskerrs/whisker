@@ -478,3 +478,9 @@ and prone to drift. Pick one.
   [issue #128](https://github.com/whiskerrs/whisker/issues/128)
 - Why `Owner` (Shape 3 mechanics) and what backs lifetime →
   [`reactivity-design.md`](./reactivity-design.md)
+
+## WebView mixed content
+
+Android WebView rejects HTTP subresources in HTTPS documents. Allowing an HTTP
+page in the navigation whitelist does not allow mixed content inside an HTTPS
+page. Serve embedded assets over HTTPS.
