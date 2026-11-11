@@ -31,6 +31,9 @@ android = { manifest = "build.gradle.kts" }
 ios = { kind = "common" }
 web = { kind = "common" }
 desktop = { kind = "common" }
+macos = { kind = "common" }
+windows = { kind = "common" }
+linux = { kind = "common" }
 
 # Plugin registration — no-op today (Android needs no config; iOS is a
 # TODO). Kept registered so `app.plugin::<WhiskerStatusBar>(|c| c)` stays

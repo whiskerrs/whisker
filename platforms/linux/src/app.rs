@@ -6,7 +6,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use gtk4 as gtk;
 use whisker::runtime::RuntimeWakeHandle;
-use whisker::runtime::module::RustModuleRuntime;
+use whisker::runtime::module::{RustModuleDefinition, RustModuleRuntime};
 use whisker::{Element, ElementRegistry, RuntimeInstance, SurfaceRuntime};
 use whisker_engine::LayoutOptions;
 use whisker_protocol::{
@@ -115,7 +115,14 @@ fn activate(
         .child(&surface)
         .build();
 
-    let host = LinuxApplication::new(surface.clone())?;
+    let host = LinuxApplication::new(
+        surface.clone(),
+        config
+            .modules
+            .iter()
+            .map(|module| module.service.clone())
+            .collect(),
+    )?;
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(host));
     SURFACE.with(|slot| *slot.borrow_mut() = Some(surface.clone()));
     with_application(|host| {
@@ -155,8 +162,8 @@ struct LinuxApplication {
 }
 
 impl LinuxApplication {
-    fn new(surface: NodeWidget) -> Result<Self, LinuxError> {
-        let modules = RustModuleRuntime::new([], request_frame)
+    fn new(surface: NodeWidget, modules: Vec<RustModuleDefinition>) -> Result<Self, LinuxError> {
+        let modules = RustModuleRuntime::new(modules, request_frame)
             .map_err(|error| LinuxError(format!("bind GTK modules: {error}")))?;
         let elements = ElementRegistry::standard_with_linked_providers()
             .map_err(|error| LinuxError(format!("build element registry: {error}")))?;

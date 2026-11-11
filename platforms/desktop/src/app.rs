@@ -156,10 +156,12 @@ impl DesktopAppConfig {
     pub fn with_module(
         mut self,
         elements: ElementModuleDefinition,
-        host: DesktopModuleDefinition,
+        host: impl Into<DesktopModuleDefinition>,
     ) -> Self {
-        self.modules
-            .push(DesktopModuleInstallation { elements, host });
+        self.modules.push(DesktopModuleInstallation {
+            elements,
+            host: host.into(),
+        });
         self
     }
 }

@@ -35,6 +35,9 @@ android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 web = { manifest = "web/Cargo.toml" }
 desktop = { kind = "common" }
+macos = { kind = "common" }
+windows = { kind = "common" }
+linux = { kind = "common" }
 
 # Plugin registration — Whisker builds the `whisker-haptics-plugin`
 # binary below and runs it during every gen-tree sync. It appends the

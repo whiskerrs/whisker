@@ -34,6 +34,9 @@ android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 web = { kind = "common" }
 desktop = { kind = "common" }
+macos = { kind = "common" }
+windows = { kind = "common" }
+linux = { kind = "common" }
 
 [dependencies]
 whisker = { path = "../../crates/whisker", version = "0.17.0" }

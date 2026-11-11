@@ -110,10 +110,15 @@ fn rust_host_module_names_are_package_qualified() {
             let constant_names =
                 string_values_after(&source, "const MODULE_NAME: &str = \"").collect::<Vec<_>>();
             let direct_names = string_values_after(&compact, "ModuleDefinition::new().name(\"")
+                .chain(string_values_after(
+                    &compact,
+                    "ModuleDefinition::default().name(\"",
+                ))
                 .collect::<Vec<_>>();
             let names_module = !direct_names.is_empty()
                 || !constant_names.is_empty()
-                    && compact.contains("ModuleDefinition::new().name(MODULE_NAME)");
+                    && (compact.contains("ModuleDefinition::new().name(MODULE_NAME)")
+                        || compact.contains("ModuleDefinition::default().name(MODULE_NAME)"));
             if source.contains("impl WhiskerModule") && !names_module {
                 failures.push(format!(
                     "{package_name}: {host} WhiskerModule has no ModuleDefinition name"

@@ -4,18 +4,20 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-use whisker_desktop::{ModuleDefinition, WhiskerModule, WhiskerValue};
+use whisker::WhiskerModule;
+use whisker::platform_module::WhiskerValue;
+use whisker::runtime::module::RustModuleDefinition as ModuleDefinition;
 
 const MODULE_NAME: &str = "whisker-local-store:WhiskerLocalStore";
 
 struct LocalStoreModule;
 
-#[whisker_desktop::WhiskerModule]
+#[whisker::WhiskerModule]
 impl WhiskerModule for LocalStoreModule {
     type Definition = ModuleDefinition;
 
     fn definition() -> Self::Definition {
-        ModuleDefinition::new()
+        ModuleDefinition::default()
             .name(MODULE_NAME)
             .function("save", |args, _| {
                 let [WhiskerValue::String(key), WhiskerValue::String(value)] = args else {
@@ -181,10 +183,5 @@ mod tests {
             Some("dark")
         );
         std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn host_definition_contains_no_views() {
-        assert!(__whisker_module_definition().factories().is_empty());
     }
 }

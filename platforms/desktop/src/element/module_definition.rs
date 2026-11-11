@@ -624,3 +624,12 @@ where
         (self.definition.scroll_enabled)(&self.state)
     }
 }
+
+impl From<RustModuleDefinition> for DesktopModuleDefinition {
+    fn from(service: RustModuleDefinition) -> Self {
+        Self {
+            service,
+            factories: Vec::new(),
+        }
+    }
+}
