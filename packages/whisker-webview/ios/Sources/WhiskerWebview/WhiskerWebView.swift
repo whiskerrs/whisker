@@ -34,11 +34,11 @@
 // shape. Double-wrapping produces `detail: { detail: { url } }` and every
 // handler receives the default-deserialized empty value.
 //
-// ## Origin-whitelist glob matching
+// ## Navigation origin matching
 //
-// `*` matches any substring and is the only wildcard, matching the Rust
-// contract. Matching is against the full URL string, so `https://*` admits
-// any URL whose string starts with `https://`.
+// Compare parsed HTTP(S) scheme, host and effective port. Host wildcards
+// match subdomains, never path/query text; an empty or malformed list denies
+// navigation. Broad `https://*` / `http://*` patterns allow all hosts and ports.
 
 import Foundation
 import UIKit

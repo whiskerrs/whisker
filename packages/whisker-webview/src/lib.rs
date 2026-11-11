@@ -86,7 +86,7 @@
 //! | `user_agent`        | `Signal<String>`           | `""`                          | Custom User-Agent string. |
 //! | `javascript_enabled`| `bool`                     | `true`                        | Allow JavaScript execution. |
 //! | `scroll_enabled`    | `bool`                     | `true`                        | Allow the web content to scroll. |
-//! | `origin_whitelist`  | `Vec<String>`              | `["https://*", "http://*"]`   | Navigation origins the native side permits (glob). |
+//! | `origin_whitelist`  | `Vec<String>`              | `["https://*", "http://*"]`   | Navigation origins the native side permits (parsed origin patterns). |
 //! | `on_message`        | `Fn(String)`               | —                             | JS → Rust message (`window.whisker.postMessage`). |
 //! | `on_load_start`     | `Fn(String)`               | —                             | A navigation started; carries the URL. |
 //! | `on_load`           | `Fn(String)`               | —                             | A navigation finished; carries the URL. |
@@ -285,7 +285,7 @@ pub struct WebViewError {
 /// The default navigation origin whitelist: `["https://*", "http://*"]`.
 ///
 /// Permits any HTTPS or HTTP origin. Tighten it per-app by passing an
-/// explicit `origin_whitelist:` of glob patterns.
+/// explicit `origin_whitelist:` of parsed origin patterns.
 pub fn default_origin_whitelist() -> Vec<String> {
     vec!["https://*".to_string(), "http://*".to_string()]
 }
@@ -424,7 +424,7 @@ pub fn web_view(
     /// Allow the web content to scroll.
     #[prop(default = true)]
     scroll_enabled: bool,
-    /// Navigation origins the native side permits (glob patterns).
+    /// Navigation origins the native side permits (parsed origin patterns).
     #[prop(default = default_origin_whitelist())]
     origin_whitelist: Vec<String>,
     /// JS → Rust message (`window.whisker.postMessage`).
