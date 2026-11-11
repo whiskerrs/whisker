@@ -1072,7 +1072,10 @@ mod tests {
     #[tokio::test]
     async fn websocket_upgrade_rejects_cross_origin_and_originless_browser_requests() {
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-        let (_sender, addr) = spawn_test_server(None).await;
+        let (_sender, addr, _handle) =
+            serve("127.0.0.1:0".parse().unwrap(), None, None, false, None)
+                .await
+                .unwrap();
         let url = format!("ws://{addr}/whisker-dev");
         for origin in [None, Some("http://evil.test"), Some("null")] {
             let mut request = url.clone().into_client_request().unwrap();
