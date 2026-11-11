@@ -539,6 +539,10 @@ fn origin_whitelist_json(origins: &[String]) -> String {
             match c {
                 '"' => s.push_str("\\\""),
                 '\\' => s.push_str("\\\\"),
+                c if c <= '\u{1f}' => {
+                    use std::fmt::Write;
+                    let _ = write!(s, "\\u{:04x}", c as u32);
+                }
                 _ => s.push(c),
             }
         }
@@ -626,6 +630,14 @@ mod tests {
     fn origin_whitelist_json_empty() {
         let empty: Vec<String> = Vec::new();
         assert_eq!(origin_whitelist_json(&empty), "[]");
+    }
+
+    #[test]
+    fn origin_whitelist_json_escapes_control_characters() {
+        assert_eq!(
+            origin_whitelist_json(&["a\n\t\0".into()]),
+            r#"["a\u000a\u0009\u0000"]"#
+        );
     }
 
     #[test]

@@ -191,7 +191,7 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
             }
             return
         }
-        guard urlString != lastLoadedUrl else { return }
+        guard urlString != lastLoadedUrl, isAllowed(urlString) else { return }
         lastLoadedUrl = urlString
         guard let url = URL(string: urlString) else { return }
         webView?.load(URLRequest(url: url))
@@ -226,13 +226,9 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     /// Parses a JSON-array string like `["https://*","http://*"]` into the
     /// local `originWhitelist` used by `decidePolicyFor`.
     public func setOriginWhitelist(_ json: String) {
-        guard !json.isEmpty else {
-            originWhitelist = ["https://*", "http://*"]
-            return
-        }
         guard let data = json.data(using: .utf8),
               let patterns = try? JSONSerialization.jsonObject(with: data) as? [String]
-        else { return }
+        else { originWhitelist = []; return }
         originWhitelist = patterns
     }
 
@@ -321,36 +317,8 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
 
     // MARK: - Origin-whitelist matching
 
-    /// Returns `true` if `urlString` is allowed by at least one pattern in
-    /// `originWhitelist`.
     private func isAllowed(_ urlString: String) -> Bool {
-        for pattern in originWhitelist {
-            if globMatch(pattern: pattern, string: urlString) { return true }
-        }
-        return false
-    }
-
-    /// Shell-style glob match: `*` matches any substring (including empty).
-    /// No `?` wildcard — the Rust contract documents `*` only.
-    private func globMatch(pattern: String, string: String) -> Bool {
-        let parts = pattern.components(separatedBy: "*")
-        guard !parts.isEmpty else { return true }
-
-        var remaining = string[...]
-
-        for (i, part) in parts.enumerated() {
-            if part.isEmpty { continue }
-            if i == 0 {
-                guard remaining.hasPrefix(part) else { return false }
-                remaining = remaining.dropFirst(part.count)
-            } else if i == parts.count - 1 {
-                guard remaining.hasSuffix(part) else { return false }
-            } else {
-                guard let range = remaining.range(of: part) else { return false }
-                remaining = remaining[range.upperBound...]
-            }
-        }
-        return true
+        originWhitelist.contains { OriginPolicy.matches($0, urlString) }
     }
 
     // MARK: - JS string helpers

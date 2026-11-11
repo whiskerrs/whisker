@@ -240,8 +240,7 @@ open class WhiskerWebView(context: WhiskerContext) :
                 view: android.webkit.WebView,
                 url: String,
             ): Boolean {
-                val allowed = originWhitelist.isEmpty() ||
-                    originWhitelist.any { pattern -> matchesGlob(pattern, url) }
+                val allowed = originWhitelist.any { pattern -> OriginPolicy.matches(pattern, url) }
                 WhiskerCustomEvent.dispatch(
                     ui = this@WhiskerWebView,
                     name = "navigation",
@@ -302,7 +301,7 @@ open class WhiskerWebView(context: WhiskerContext) :
             }
             return
         }
-        if (incoming == lastLoadedUrl) return
+        if (incoming == lastLoadedUrl || !originWhitelist.any { OriginPolicy.matches(it, incoming) }) return
         lastLoadedUrl = incoming
         wv.loadUrl(incoming)
     }
@@ -357,19 +356,17 @@ open class WhiskerWebView(context: WhiskerContext) :
      * block all navigation.
      */
     fun setOriginWhitelist(json: String) {
-        if (json.isBlank()) {
-            originWhitelist = listOf("https://*", "http://*")
-            return
-        }
         try {
             val arr = org.json.JSONArray(json)
             val list = mutableListOf<String>()
             for (i in 0 until arr.length()) {
-                list.add(arr.getString(i))
+                val pattern = arr.get(i)
+                require(pattern is String)
+                list.add(pattern)
             }
             originWhitelist = list
-        } catch (_: Throwable) {
-            // Keep the list in force.
+        } catch (_: Exception) {
+            originWhitelist = emptyList()
         }
     }
 
@@ -447,26 +444,4 @@ open class WhiskerWebView(context: WhiskerContext) :
         }
     }
 
-    /**
-     * Match a URL against a glob pattern. Only `*` is meaningful; every
-     * other character is a literal. An empty pattern list is "allow all",
-     * handled by the caller.
-     */
-    private fun matchesGlob(pattern: String, url: String): Boolean {
-        val parts = pattern.split("*")
-        if (parts.size == 1) return url == pattern // no wildcard: exact match
-        var pos = 0
-        for ((idx, part) in parts.withIndex()) {
-            if (part.isEmpty()) continue
-            val found = url.indexOf(part, pos)
-            if (found == -1) return false
-            // A pattern with no leading `*` must match from the start.
-            if (idx == 0 && found != 0) return false
-            pos = found + part.length
-        }
-        // Likewise, no trailing `*` means it must reach the end.
-        val lastPart = parts.last()
-        if (lastPart.isNotEmpty() && !url.endsWith(lastPart)) return false
-        return true
-    }
 }
