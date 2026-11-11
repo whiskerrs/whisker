@@ -337,9 +337,9 @@ code. Two defenses:
   `127.0.0.1:9876`. On Android the device reaches the host through
   `adb reverse tcp:9876 tcp:<dev_port>` (set up by the installer); the
   app reads `WHISKER_DEV_ADDR` or falls back to `127.0.0.1:9876`.
-- **Per-session token.** `whisker run` generates a random 32-hex-char
+- **Per-session token.** `whisker run` generates a random 64-hex-char
   token per session (`generate_dev_token` in `whisker-cli/src/run.rs`,
-  16 bytes from `/dev/urandom`). It's delivered to the device
+  32 bytes from the operating-system CSPRNG). It's delivered to the device
   out-of-band:
   - **iOS Simulator / host:** the `WHISKER_DEV_TOKEN` env var, set via
     `SIMCTL_CHILD_WHISKER_DEV_TOKEN` (the `SIMCTL_CHILD_<NAME>`
@@ -349,14 +349,13 @@ code. Two defenses:
     adb-set env vars). `whisker-dev-runtime` reads it via
     `__system_property_get`.
 
-The device echoes the token in its `hello`. The server validates it
-(`server.rs::handle_socket`): a client starts *unauthenticated* when a
-token is required and is promoted only on a matching `hello`; a missing
-or mismatched token closes the connection without ever arming the patch
-path. A token-less server (`dev_token == None`, e.g. tests) runs open by
-default. While unauthenticated, broadcast patches are dropped (not
-buffered) for that client — the device re-receives the full JumpTable on
-the next save anyway.
+The peers exchange nonce-based HMAC proofs before native subscription. The
+secret never appears in a hello. Every native frame authenticates its session,
+direction, type, sequence and complete payload; malformed or replayed frames
+close the connection before executable bytes are staged. Token-less servers
+accept browser reloads and explicitly validated WebAssembly side modules only;
+they never forward native library patches. Browser hello metadata supplies the
+Wasm relocation base without enabling the native channel.
 
 ## Known boundaries
 

@@ -100,11 +100,9 @@ pub struct Config {
     pub watch_paths: Vec<PathBuf>,
     /// Address the WebSocket server binds.
     pub bind_addr: SocketAddr,
-    /// Shared dev-session token. When `Some`, the WebSocket server only
-    /// arms the patch channel for a client whose `hello` carries the
-    /// mutual proof of the secret, and the cli delivers it to the device (iOS env /
-    /// Android system property). `None` runs unauthenticated (the prior
-    /// behaviour). `whisker run` generates a random one per session.
+    /// Shared secret for native mutual authentication, provisioned through the
+    /// device environment or Android system property. `None` permits browser
+    /// reloads and validated WebAssembly patches, never native libraries.
     pub dev_token: Option<String>,
     /// Asks every connected app to stream [`Event::DeviceTrace`] frame timings.
     pub trace: bool,

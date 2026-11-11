@@ -49,8 +49,7 @@ pub struct Installer {
     /// silently breaks hot reload (server on a custom port, device
     /// still on 9876).
     dev_port: u16,
-    /// Shared dev-session token to deliver to the device so its
-    /// `hello` is accepted by the server's auth gate. iOS gets it via
+    /// Shared dev-session secret delivered out of band for mutual authentication. iOS gets it via
     /// `SIMCTL_CHILD_WHISKER_DEV_TOKEN`; Android via
     /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
     dev_token: Option<String>,

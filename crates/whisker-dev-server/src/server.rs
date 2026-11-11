@@ -113,6 +113,19 @@ impl PatchSender {
         self.tx.send(ServerUpdate::Patch(patch)).unwrap_or(0)
     }
 
+    /// Broadcast a validated WebAssembly side module to browser clients only.
+    /// Invalid modules and native libraries are never queued on this channel.
+    pub fn send_web(&self, patch: Patch) -> usize {
+        if !patch.dylib_bytes.starts_with(b"\0asm\x01\0\0\0")
+            || wasmparser::Validator::new()
+                .validate_all(&patch.dylib_bytes)
+                .is_err()
+        {
+            return 0;
+        }
+        self.tx.send(ServerUpdate::WebPatch(patch)).unwrap_or(0)
+    }
+
     /// Ask connected browser clients to load the freshly-built WASM bundle.
     /// Native clients ignore this text-only control message.
     pub fn reload_browser(&self) -> usize {
@@ -148,6 +161,7 @@ struct AppState {
 #[derive(Debug, Clone)]
 enum ServerUpdate {
     Patch(Patch),
+    WebPatch(Patch),
     Reload,
 }
 
@@ -314,7 +328,11 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                         Ok(frame) => Message::Binary(frame.into()),
                         Err(_) => { whisker_build::ui::warn("development patch exceeds transport limits"); continue; }
                     },
-                    ServerUpdate::Patch(_) => continue,
+                    ServerUpdate::WebPatch(patch) if !native => match encode_patch_frame(&patch) {
+                        Ok(frame) => Message::Binary(frame.into()),
+                        Err(_) => { whisker_build::ui::warn("WebAssembly patch exceeds transport limits"); continue; }
+                    },
+                    ServerUpdate::Patch(_) | ServerUpdate::WebPatch(_) => continue,
                     ServerUpdate::Reload => Message::Text(r#"{"kind":"reload"}"#.into()),
                 };
                 if send_frame(&mut socket, &mut session, message).await.is_err() { break; }
@@ -334,9 +352,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                     _ => break,
                 };
                 if let Some(hello) = parse_client_hello(&text) {
-                    if native {
-                        if let Ok(mut reference) = state.aslr_reference.lock() { *reference = Some(hello.aslr_reference); }
-                    }
+                    if let Ok(mut reference) = state.aslr_reference.lock() { *reference = Some(hello.aslr_reference); }
                 } else if let Some(log) = parse_client_log(&text) {
                     if let Some(callback) = &state.on_event { callback(Event::DeviceLog { stream: log.stream, line: log.line, ts_micros: log.ts_micros }); }
                 } else if native {
@@ -1048,6 +1064,89 @@ mod tests {
 
         // sender stays usable across the whole flow.
         assert_eq!(sender.client_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn browser_hello_registers_wasm_relocation_base() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+        let (sender, addr, _handle) =
+            serve("127.0.0.1:0".parse().unwrap(), None, None, false, None)
+                .await
+                .unwrap();
+        let mut browser = raw_connect(addr).await;
+        browser
+            .send(TMsg::Text(r#"{"kind":"hello","aslr_reference":0}"#.into()))
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            if sender.latest_aslr_reference().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(sender.latest_aslr_reference(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn browser_receives_only_validated_wasm_patches() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+        let (sender, addr, _handle) =
+            serve("127.0.0.1:0".parse().unwrap(), None, None, false, None)
+                .await
+                .unwrap();
+        let mut browser = raw_connect(addr).await;
+        for _ in 0..100 {
+            if sender.client_count() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let patch = |bytes: Vec<u8>| Patch {
+            table: make_dummy_jump_table(),
+            dylib_bytes: Arc::new(bytes),
+        };
+        let wasm = b"\0asm\x01\0\0\0".to_vec();
+        sender.send(patch(b"native library".to_vec()));
+        assert_eq!(sender.send_web(patch(b"native library".to_vec())), 0);
+        assert_eq!(sender.send_web(patch(wasm.clone())), 1);
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), browser.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let TMsg::Binary(bytes) = frame else {
+            panic!("missing Wasm patch")
+        };
+        assert_eq!(decode_patch_frame(&bytes).1, wasm);
+    }
+
+    #[tokio::test]
+    async fn native_sessions_never_receive_browser_wasm_modules() {
+        let (sender, addr) = spawn_test_server(None).await;
+        let mut native = connect(addr).await;
+        for _ in 0..100 {
+            if sender.client_count() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        sender.send_web(Patch {
+            table: make_dummy_jump_table(),
+            dylib_bytes: Arc::new(b"\0asm\x01\0\0\0".to_vec()),
+        });
+        sender.send(Patch {
+            table: make_dummy_jump_table(),
+            dylib_bytes: Arc::new(b"native library".to_vec()),
+        });
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), native.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame else {
+            panic!("missing native patch")
+        };
+        assert_eq!(decode_patch_frame(&bytes).1, b"native library");
     }
 
     #[test]
