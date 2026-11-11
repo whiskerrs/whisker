@@ -7621,7 +7621,7 @@ name = "whisker-local-store-desktop"
 version = "0.14.5"
 dependencies = [
  "serde_json",
- "whisker-desktop",
+ "whisker",
 ]
 
 [[package]]
@@ -7929,7 +7929,7 @@ name = "whisker-web-browser-desktop"
 version = "0.14.5"
 dependencies = [
  "open",
- "whisker-desktop",
+ "whisker",
 ]
 
 [[package]]

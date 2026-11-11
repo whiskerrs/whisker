@@ -369,7 +369,13 @@ fn resolve_rust_manifest(
             cargo_toml.display(),
         ));
     }
-    let expected_package = format!("{package}-{}", platform.name());
+    // Desktop Hosts may share one crate, so the suffix comes from its directory.
+    let suffix = cargo_toml
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .unwrap_or(platform.name());
+    let expected_package = format!("{package}-{suffix}");
     if !cargo_toml.is_file() {
         if registry_source {
             return Ok(ResolvedPlatformImplementation::RustHost(
@@ -625,6 +631,25 @@ mod tests {
                 },
             })
         );
+    }
+
+    #[test]
+    fn desktop_hosts_share_the_crate_named_by_its_directory() {
+        for platform in [ModulePlatform::Windows, ModulePlatform::Linux] {
+            let resolved = resolve_platform_manifest(
+                "whisker-map",
+                "1.2.3",
+                true,
+                Path::new("/cargo/registry/whisker-map-1.2.3"),
+                platform,
+                "desktop/Cargo.toml",
+            )
+            .unwrap();
+            assert!(matches!(
+                resolved,
+                ResolvedPlatformImplementation::RustHost(host) if host.package == "whisker-map-desktop"
+            ));
+        }
     }
 
     #[test]

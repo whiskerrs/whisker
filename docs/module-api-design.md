@@ -109,7 +109,11 @@ a `ModuleDefinition { Name(...); View(...); Prop(...); Command(...) }` block.
 Android KSP and the iOS build plugin only discover and register these handwritten
 definitions; they do not generate their contract. The Rust schema and Host
 definition are independently compiled and matched by strings at bootstrap.
-Desktop and Web use ordinary Rust Host crates with the same definition shape.
+Web uses an ordinary Rust Host crate with the same definition shape. macOS
+reuses the iOS Swift package (`macos = { manifest = "Package.swift" }`). Windows
+and Linux service modules share one `desktop/` crate whose
+`RustModuleDefinition` the Host answers in-process; a Rust Host crate is named
+`<package>-<directory>`.
 
 Android/iOS use `Function` and `AsyncFunction` only at module level. A
 `View` block exposes one-way `Command`s and cannot declare `Function` or

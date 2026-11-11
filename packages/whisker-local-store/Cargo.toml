@@ -33,6 +33,9 @@ android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 web = { manifest = "web/Cargo.toml" }
 desktop = { manifest = "desktop/Cargo.toml" }
+macos = { manifest = "Package.swift" }
+windows = { manifest = "desktop/Cargo.toml" }
+linux = { manifest = "desktop/Cargo.toml" }
 
 [dependencies]
 # The umbrella `whisker` crate — same dep app crates use. The proc

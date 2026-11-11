@@ -35,6 +35,9 @@ android = { manifest = "build.gradle.kts" }
 ios = { kind = "common" }
 web = { manifest = "web/Cargo.toml" }
 desktop = { kind = "common" }
+macos = { kind = "common" }
+windows = { kind = "common" }
+linux = { kind = "common" }
 
 # Plugin registration — Whisker walks the consuming app's dep tree, picks
 # this up, builds the `whisker-router-plugin` binary below, and runs it on
