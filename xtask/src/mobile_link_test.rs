@@ -21,7 +21,8 @@ pub fn run(root: &Path, host: &str) -> Result<()> {
     let target = match host {
         "android" => Target::Android,
         "ios" => Target::IosSimulator,
-        _ => bail!("unknown mobile Host {host:?}; expected android or ios"),
+        "macos" => Target::Macos,
+        _ => bail!("unknown Host {host:?}; expected android, ios, or macos"),
     };
 
     let gen_dir = sync_project(&fixture, target)?;
@@ -29,6 +30,7 @@ pub fn run(root: &Path, host: &str) -> Result<()> {
     match host {
         "android" => android(root, &gen_dir),
         "ios" => ios(root, &gen_dir),
+        "macos" => macos(root, &gen_dir),
         _ => unreachable!("validated above"),
     }
 }
@@ -39,7 +41,8 @@ fn sync_project(fixture: &Path, target: Target) -> Result<PathBuf> {
     let platform_dir = match target {
         Target::Android => "android",
         Target::IosSimulator => "ios",
-        _ => unreachable!("mobile-only link test"),
+        Target::Macos => "macos",
+        _ => unreachable!("validated by run"),
     };
     let gen_dir = fixture.join("gen").join(platform_dir);
     if gen_dir.exists() {
@@ -184,6 +187,82 @@ fn ios(root: &Path, gen_dir: &Path) -> Result<()> {
 #[cfg(not(target_os = "macos"))]
 fn ios(_root: &Path, _gen_dir: &Path) -> Result<()> {
     bail!("iOS mobile link test requires macOS and Xcode")
+}
+
+#[cfg(target_os = "macos")]
+fn macos(root: &Path, gen_dir: &Path) -> Result<()> {
+    let derived_data = root.join("target/xtask/mobile-link-test/macos-derived");
+    if derived_data.exists() {
+        fs::remove_dir_all(&derived_data)
+            .with_context(|| format!("remove stale {}", derived_data.display()))?;
+    }
+
+    let project = fs::read_dir(gen_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| path.extension().is_some_and(|ext| ext == "xcodeproj"))
+        .context("generated macOS project has no .xcodeproj")?;
+    let scheme = project
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .context("Xcode project name")?
+        .to_owned();
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86_64"
+    };
+    let mut command = Command::new("xcodebuild");
+    command
+        .current_dir(gen_dir)
+        .arg("-quiet")
+        .arg("-project")
+        .arg(&project)
+        .args([
+            "-scheme",
+            &scheme,
+            "-configuration",
+            "Debug",
+            "-destination",
+            "platform=macOS",
+            "-skipPackagePluginValidation",
+            "-skipMacroValidation",
+            "-derivedDataPath",
+        ])
+        .arg(&derived_data)
+        .args([&format!("ARCHS={arch}"), "CODE_SIGNING_ALLOWED=NO", "build"]);
+    prepend_cli_to_path(root, &mut command)?;
+    super::run(&mut command).context("Xcode consumer build")?;
+
+    let products = derived_data.join("Build/Products/Debug");
+    let app = fs::read_dir(&products)
+        .with_context(|| format!("read {}", products.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| path.extension().is_some_and(|ext| ext == "app"))
+        .with_context(|| format!("Xcode did not produce an app in {}", products.display()))?;
+    let library = app.join("Contents/Frameworks/libWhiskerDriver.dylib");
+    ensure!(
+        library.is_file(),
+        "built app does not embed {}",
+        library.display()
+    );
+    let symbols = super::capture(Command::new("nm").args(["-gU"]).arg(&library))?;
+    assert_symbols(
+        &symbols,
+        &[
+            "_whisker_view_create",
+            "_whisker_view_tick",
+            "_whisker_view_pause",
+            "_whisker_view_resume",
+            "_whisker_view_destroy",
+            "_whisker_aslr_anchor",
+        ],
+        &library,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos(_root: &Path, _gen_dir: &Path) -> Result<()> {
+    bail!("macOS link test requires macOS and Xcode")
 }
 
 fn prepend_cli_to_path(root: &Path, command: &mut Command) -> Result<()> {
