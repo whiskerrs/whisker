@@ -55,7 +55,9 @@
 //! - Android: `packages/whisker-svg/android/src/main/kotlin/rs/whisker/modules/svg/SvgModule.kt`
 //!   (view: `WhiskerSvgView.kt`, decoder: `DisplayListReplayer.kt`)
 //! - Web: `packages/whisker-svg/web/src/lib.rs`
-//! - Desktop: `packages/whisker-svg/desktop/src/lib.rs`
+//! - macOS: the iOS sources
+//! - Linux: `packages/whisker-svg/linux/src/lib.rs` (rasterizes with `raster`)
+//! - Windows: `packages/whisker-svg/windows/SvgModule.cpp`
 
 // Modules below are `#[doc(hidden)]` — `pub` for the `tests/` crate
 // integration tests, but not part of the SemVer surface. The

@@ -37,7 +37,6 @@ members = [
     "crates/whisker-runtime",
     "crates/whisker-style",
     "crates/whisker-value",
-    "platforms/desktop",
     "crates/whisker-subsecond",
     "platforms/windows",
     "platforms/windows/host/conformance",
@@ -52,11 +51,9 @@ members = [
     "packages/whisker-icons",
     "packages/whisker-icons/example",
     "packages/whisker-image",
-    "packages/whisker-image/desktop",
     "packages/whisker-image/web",
     "packages/whisker-image/example",
     "packages/whisker-input",
-    "packages/whisker-input/desktop",
     "packages/whisker-input/web",
     "packages/whisker-input/example",
     "packages/whisker-keyboard",
@@ -78,7 +75,6 @@ members = [
     "packages/whisker-web-browser/desktop",
     "packages/whisker-web-browser/web",
     "packages/whisker-svg",
-    "packages/whisker-svg/desktop",
     "packages/whisker-svg/linux",
     "packages/whisker-input/linux",
     "packages/whisker-image/linux",
@@ -145,7 +141,6 @@ whisker-protocol = { path = "crates/whisker-protocol", version = "=0.17.0" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "=0.17.0" }
 whisker-style = { path = "crates/whisker-style", version = "=0.17.0" }
 whisker-value = { path = "crates/whisker-value", version = "=0.17.0" }
-whisker-desktop = { path = "platforms/desktop", version = "=0.17.0" }
 whisker-windows = { path = "platforms/windows", version = "=0.17.0" }
 whisker-linux = { path = "platforms/linux", version = "=0.17.0" }
 whisker-web = { path = "platforms/web", version = "=0.17.0" }
@@ -213,5 +208,4 @@ object = { version = "0.36", default-features = false, features = [
 ] }
 
 [patch.crates-io]
-whisker-desktop = { path = "platforms/desktop" }
 whisker-web = { path = "platforms/web" }

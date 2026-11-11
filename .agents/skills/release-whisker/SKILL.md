@@ -25,7 +25,7 @@ Run the `release` workflow on **main** with these inputs:
 Core means publishable crates in `crates/` and `platforms/`, except
 `whisker-subsecond`. Core releases update the group together and pin
 core-to-core dependencies to the exact version. Each `packages/<directory>`
-is a separate version group, including nested web/desktop crates. Override
+is a separate version group, including nested web/linux crates. Override
 keys use directory names. Every crate within a group must share its version.
 
 Preparation compares packaged files and resolved manifest metadata with the

@@ -66,7 +66,7 @@
       "unsupported_browser_subset": ["display-contents-inline-table", "static-fixed-sticky-position", "intrinsic-size-keywords"],
       "protocol": ["SetLayout"],
       "rust": "implemented",
-      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+      "hosts": {"web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
     },
     {
       "id": "layout.grid",
@@ -76,7 +76,7 @@
       "unsupported_browser_subset": ["subgrid", "masonry"],
       "protocol": ["SetLayout"],
       "rust": "implemented",
-      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+      "hosts": {"web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
     },
     {
       "id": "layout.float",
@@ -85,7 +85,7 @@
       "supported_subset": ["block-formatting-context-floats"],
       "protocol": ["SetLayout"],
       "rust": "implemented",
-      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+      "hosts": {"web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
     },
     {
       "id": "paint.box",
@@ -94,7 +94,7 @@
       "supported_subset": ["asymmetric-rounded-border-joins", "rounded-border-styles", "zero-radius-axis-squares-corner", "proportional-overlapping-radius-normalization"],
       "protocol": ["SetBoxPaint"],
       "rust": "implemented",
-      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+      "hosts": {"web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.background-layers",
@@ -104,7 +104,7 @@
       "pending_subset": [],
       "protocol": ["SetBackgroundLayers"],
       "rust": "implemented",
-      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+      "hosts": {"web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.visual-effects",
@@ -115,7 +115,7 @@
       "compatibility_notes": ["Web preserves the crisp-edges keyword; native Hosts implement its contrast-preserving scaling requirement with nearest-neighbor sampling while retaining the distinct protocol value."],
       "protocol": ["SetVisualEffects"],
       "rust": "implemented",
-      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+      "hosts": {"web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.backdrop-filter",
@@ -125,7 +125,7 @@
       "unsupported_browser_subset": ["filter-function-chains", "brightness", "contrast", "drop-shadow", "grayscale", "hue-rotate", "invert", "opacity", "saturate", "sepia", "url-filter"],
       "protocol": ["SetVisualEffects"],
       "rust": "implemented",
-      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+      "hosts": {"web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.transform",
@@ -137,7 +137,7 @@
       "unsupported_browser_subset": ["web-parent-perspective-semantics", "perspective-origin", "preserve-3d"],
       "protocol": ["SetTransform", "SetVisualEffects"],
       "rust": "implemented",
-      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+      "hosts": {"web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.compositing",
@@ -146,7 +146,7 @@
       "supported_subset": ["element-group-opacity", "visibility-descendant-override", "signed-32-bit-z-order", "sibling-document-order-tiebreak"],
       "protocol": ["SetOpacity", "SetVisibility", "SetZOrder"],
       "rust": "implemented",
-      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+      "hosts": {"web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.clip-scroll",
@@ -156,7 +156,7 @@
       "unsupported_browser_subset": ["clip", "scroll", "auto"],
       "protocol": ["SetClip"],
       "rust": "implemented",
-      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+      "hosts": {"web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.text",
@@ -168,7 +168,7 @@
       "compatibility_notes": ["Desktop supports the variable font weight axis but deliberately excludes arbitrary variation axes and automatic optical sizing from its declared text subset."],
       "protocol": ["SetText"],
       "rust": "implemented",
-      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+      "hosts": {"web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "interaction.pointer",
@@ -180,7 +180,7 @@
       "compatibility_notes": ["Lynx pointer-events accepts auto and none; Whisker resolves the documented inheritance effect before emitting SetHitTest", "UIKit provides hidden, text beams, and custom geometric pointer shapes, which iOS uses for none, text, vertical-text, crosshair, and resize keywords", "UIKit has no public platform glyphs for link, context-menu, help, progress, wait, cell, alias, copy, move, no-drop, not-allowed, grab, grabbing, or zoom cursors; iOS preserves those keywords and deliberately retains the system pointer instead of conflating distinct semantics", "The shared Desktop adapter preserves every protocol pointer kind, while winit currently classifies native mouse and touch events but does not expose a portable stylus kind"],
       "protocol": ["SetCursor", "SetHitTest"],
       "rust": "implemented",
-      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+      "hosts": {"web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "motion.rust",
@@ -192,7 +192,7 @@
       "compatibility_notes": ["Typed Keyframes values are embedded in the Rust style graph; legacy string animation names remain a compatibility-only path and do not resolve a Host registry", "Layout motion is sampled before Taffy and therefore emits ordinary SetLayout deltas", "Box and inherited text foreground color motion is sampled in premultiplied sRGB after canonicalizing rgb/rgba/hsl/hsla and all 148 CSS Color 4 named colors", "Compatible translate/rotate/scale/skew transform prefixes interpolate directly in Rust with CSS identity padding; matrix functions and incompatible suffixes use common 4x4 matrix decomposition, with only singular matrices falling back to discrete midpoint sampling", "Animation and transition lifecycle events are emitted by the Rust timeline through the ordinary capture/bubble event path and require no Host protocol operations", "Auto and intrinsic layout keywords use discrete keyframe sampling and do not start transitions"],
       "protocol": [],
       "rust": "implemented",
-      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+      "hosts": {"web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
     },
     {
       "id": "style.custom-properties",
@@ -205,7 +205,7 @@
       "compatibility_notes": ["Whisker resolves typed custom-property values entirely in Rust and sends only the resulting layout or paint value to Hosts", "Typed var() references compose inside length-percentage calc expressions and inside supported color, angle, number, and length slots in gradients, transforms, text paint, backgrounds, and backdrop blur", "Whisker intentionally does not retain or reparse arbitrary CSS token streams; application code constructs semantic values through the typed Rust API"],
       "protocol": [],
       "rust": "implemented",
-      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+      "hosts": {"web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
     }
   ]
 }

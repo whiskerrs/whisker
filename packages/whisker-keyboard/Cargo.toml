@@ -31,7 +31,6 @@ crate-type = ["rlib"]
 android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 web = { manifest = "web/Cargo.toml" }
-desktop = { kind = "common" }
 macos = { kind = "common" }
 windows = { kind = "common" }
 linux = { kind = "common" }

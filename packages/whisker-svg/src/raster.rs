@@ -1,4 +1,4 @@
-//! CPU rasterizer for compiled display lists, shared by the desktop Hosts.
+//! CPU rasterizer for compiled display lists, used by the Linux Host.
 
 use tiny_skia::{FillRule, Paint, Path, PathBuilder, Pixmap, Stroke};
 

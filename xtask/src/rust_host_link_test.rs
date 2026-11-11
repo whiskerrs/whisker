@@ -1,6 +1,6 @@
 //! Generated Rust Host consumer link tests.
 //!
-//! Every module with a Web/Desktop Rust Host contribution is linked through
+//! Every module with a Web/Linux Rust Host contribution is linked through
 //! the same CNG-generated bootstrap used by applications. This catches a
 //! missing common element-schema export or Host module definition before a
 //! package reaches users.
@@ -17,9 +17,9 @@ const PACKAGE: &str = "rust-host-link-test";
 pub fn run(root: &Path, host: &str) -> Result<()> {
     let fixture = root.join("tests/rust-host-link-test");
     let target = match host {
-        "desktop" => GenerationTarget::Linux,
+        "linux" => GenerationTarget::Linux,
         "web" => GenerationTarget::Web,
-        _ => bail!("unknown Rust Host {host:?}; expected desktop or web"),
+        _ => bail!("unknown Rust Host {host:?}; expected linux or web"),
     };
     let gen_dir = sync_project(&fixture, target)?;
 
@@ -45,7 +45,7 @@ fn sync_project(fixture: &Path, target: GenerationTarget) -> Result<PathBuf> {
     let platform_dir = match target {
         GenerationTarget::Linux => "linux",
         GenerationTarget::Web => "web",
-        _ => unreachable!("Rust Host link test only supports Desktop and Web"),
+        _ => unreachable!("Rust Host link test only supports Linux and Web"),
     };
     let gen_dir = fixture.join("gen").join(platform_dir);
     if gen_dir.exists() {

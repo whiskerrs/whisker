@@ -4,8 +4,8 @@ This standalone workspace supplies Cargo metadata and Host manifests to the
 CLI/CNG module-discovery and project-generation tests. It has no dependencies
 on the repository's examples, packages, or published crates.
 
-- `widget` declares Desktop and Web Rust hosts and an iOS SwiftPM host.
-- `service` declares a Web Rust host and common-only Desktop/iOS support.
+- `widget` declares Linux and Web Rust hosts and an iOS SwiftPM host.
+- `service` declares a Web Rust host and common-only Linux/iOS support.
 - The root package consumes both modules, with no CNG plugins.
 
 The empty Rust libraries and Swift registration stub are inputs for discovery

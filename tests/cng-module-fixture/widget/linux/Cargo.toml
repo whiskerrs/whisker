@@ -1,5 +1,5 @@
 [package]
-name = "cng-test-widget-desktop"
+name = "cng-test-widget-linux"
 version = "0.0.0"
 edition = "2024"
 publish = false

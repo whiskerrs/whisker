@@ -19,7 +19,7 @@
 //! android = { manifest = "build.gradle.kts" }
 //! ios = { manifest = "Package.swift" }
 //! web = { manifest = "web/Cargo.toml" }
-//! desktop = { kind = "common" }
+//! linux = { kind = "common" }
 //! ```
 //!
 //! All paths are resolved relative to the directory containing the
@@ -71,17 +71,12 @@ pub struct ResolvedModule {
 impl ResolvedModule {
     pub fn rust_host(&self, platform: ModulePlatform) -> Option<&ResolvedRustModuleContribution> {
         let implementation = match platform {
-            ModulePlatform::Macos => self
-                .platforms
-                .macos
-                .as_ref()
-                .or(self.platforms.desktop.as_ref()),
+            ModulePlatform::Macos => self.platforms.macos.as_ref(),
             ModulePlatform::Windows => self.platforms.windows.as_ref(),
             ModulePlatform::Linux => self.platforms.linux.as_ref(),
             ModulePlatform::Android => self.platforms.android.as_ref(),
             ModulePlatform::Ios => self.platforms.ios.as_ref(),
             ModulePlatform::Web => self.platforms.web.as_ref(),
-            ModulePlatform::Desktop => self.platforms.desktop.as_ref(),
         }?;
         match implementation {
             ResolvedPlatformImplementation::RustHost(host) => Some(host),
@@ -214,10 +209,8 @@ pub(crate) fn discover_from_metadata(
                 format!("parse [package.metadata.whisker] in {}", pkg.manifest_path,)
             })?;
         let package_version = pkg.version.to_string();
-        let has_legacy_fields = manifest.ios.is_some()
-            || manifest.android.is_some()
-            || manifest.desktop.is_some()
-            || manifest.web.is_some();
+        let has_legacy_fields =
+            manifest.ios.is_some() || manifest.android.is_some() || manifest.web.is_some();
         let has_conventional_native_manifest = manifest_dir.join("build.gradle.kts").is_file()
             || manifest_dir.join("Package.swift").is_file();
         if manifest.module.is_none() && !has_legacy_fields && !has_conventional_native_manifest {
@@ -643,33 +636,6 @@ mod tests {
     }
 
     #[test]
-    fn desktop_is_the_fallback_for_os_specific_hosts() {
-        let module = ResolvedModule {
-            package: "whisker-map".into(),
-            manifest_dir: PathBuf::from("/module"),
-            ios_swift_sources: Vec::new(),
-            android_kotlin_sources: Vec::new(),
-            android_jni_sources: Vec::new(),
-            platforms: ResolvedModulePlatforms {
-                desktop: Some(ResolvedPlatformImplementation::RustHost(
-                    ResolvedRustModuleContribution {
-                        package: "whisker-map-desktop".into(),
-                        source: ResolvedRustHostSource::Registry {
-                            version: "1.2.3".into(),
-                        },
-                    },
-                )),
-                ..Default::default()
-            },
-            git: None,
-        };
-        assert_eq!(
-            module.rust_host(ModulePlatform::Macos).unwrap().package,
-            "whisker-map-desktop"
-        );
-    }
-
-    #[test]
     fn discovers_declared_rust_host_manifests() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -681,11 +647,11 @@ mod tests {
             .iter()
             .find(|module| module.package == "cng-test-widget")
             .unwrap();
-        let desktop = widget.rust_host(ModulePlatform::Desktop).unwrap();
-        assert_eq!(desktop.package, "cng-test-widget-desktop");
+        let linux = widget.rust_host(ModulePlatform::Linux).unwrap();
+        assert_eq!(linux.package, "cng-test-widget-linux");
         assert!(matches!(
-            &desktop.source,
-            ResolvedRustHostSource::Path(path) if path.ends_with("widget/desktop")
+            &linux.source,
+            ResolvedRustHostSource::Path(path) if path.ends_with("widget/linux")
         ));
         let web = widget.rust_host(ModulePlatform::Web).unwrap();
         assert_eq!(web.package, "cng-test-widget-web");
@@ -696,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn discovers_service_with_a_web_host_and_common_desktop_support() {
+    fn discovers_service_with_a_web_host_and_common_linux_support() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
@@ -708,10 +674,10 @@ mod tests {
             .find(|module| module.package == "cng-test-service")
             .unwrap();
         assert!(matches!(
-            service.platforms.desktop,
+            service.platforms.linux,
             Some(platforms::ResolvedPlatformImplementation::Common)
         ));
-        assert!(service.rust_host(ModulePlatform::Desktop).is_none());
+        assert!(service.rust_host(ModulePlatform::Linux).is_none());
         let web = service.rust_host(ModulePlatform::Web).unwrap();
         assert_eq!(web.package, "cng-test-service-web");
         assert!(matches!(
