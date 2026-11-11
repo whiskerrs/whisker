@@ -197,8 +197,10 @@ pub(crate) fn set_layout_width(
 ) {
     let wraps = payload.wrap != MeasureTextWrap::NoWrap;
     let ellipsizes = payload.overflow == MeasureTextOverflow::Ellipsis;
+    // Pango's line breaker counts the trailing letter spacing that the logical extents trim.
+    let slack = payload.style.letter_spacing.max(0.0);
     match width {
-        Some(width) if wraps || ellipsizes => layout.set_width(px_to_pango(width)),
+        Some(width) if wraps || ellipsizes => layout.set_width(px_to_pango(width + slack)),
         _ => layout.set_width(-1),
     }
     layout.set_wrap(match payload.word_break {
@@ -424,6 +426,19 @@ mod tests {
         let mut tall = payload("line");
         tall.style.line_height = MeasureLineHeight::LogicalPixels(40.0);
         assert_eq!(measure(tall, AvailableSpace::MaxContent).size.height, 40.0);
+    }
+
+    #[test]
+    fn max_content_width_fits_on_one_line() {
+        let mut spaced = payload("Smoke App");
+        spaced.style.font_size = 22.0;
+        spaced.style.font_weight = 700;
+        spaced.style.letter_spacing = 0.5;
+        let width = measure(spaced.clone(), AvailableSpace::MaxContent)
+            .size
+            .width;
+        let layout = build_layout(&new_context(), &spaced, Some(width));
+        assert_eq!(layout.line_count(), 1, "wrapped at its own width {width}");
     }
 
     #[test]
