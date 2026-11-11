@@ -65,6 +65,9 @@
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
+#[cfg(feature = "loader")]
+pub mod loader;
+
 /// Content-fit mode for an [`Image`]. The variant names mirror the
 /// camelCase wire strings the iOS and Android image-view modules
 /// dispatch on (`packages/whisker-image/ios/Sources/WhiskerImage/`,

@@ -7497,7 +7497,12 @@ dependencies = [
 name = "whisker-image"
 version = "0.14.5"
 dependencies = [
+ "base64 0.22.1",
+ "image",
+ "lru 0.18.4",
  "serde",
+ "serde_json",
+ "ureq",
  "whisker",
 ]
 
@@ -7505,12 +7510,8 @@ dependencies = [
 name = "whisker-image-desktop"
 version = "0.14.5"
 dependencies = [
- "base64 0.22.1",
- "image",
- "lru 0.18.4",
- "serde_json",
- "ureq",
  "whisker-desktop",
+ "whisker-image",
 ]
 
 [[package]]
@@ -7520,6 +7521,15 @@ dependencies = [
  "whisker",
  "whisker-cng",
  "whisker-image",
+]
+
+[[package]]
+name = "whisker-image-linux"
+version = "0.14.5"
+dependencies = [
+ "whisker",
+ "whisker-image",
+ "whisker-linux",
 ]
 
 [[package]]
