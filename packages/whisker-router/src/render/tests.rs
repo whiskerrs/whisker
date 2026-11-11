@@ -384,6 +384,83 @@ fn navigate_mounts_new_leaf_exactly_once() {
     });
 }
 
+/// `Stack { Switch(tabs) Route(modal) }` with mount-counting leaves; `layout`
+/// wraps the Switch in a layout Route, as `routes!` does for a tab bar.
+fn counting_stacked_tabs_handle(counts: Counts, layout: bool) -> RouterHandle {
+    let tabs = RouteTree::Switch(
+        SwitchDef::new("tabs", 0),
+        vec![
+            RouteTree::Stack(vec![
+                RouteTree::route("", "home"),
+                RouteTree::route("detail/:id", "detail"),
+            ]),
+            RouteTree::Stack(vec![
+                RouteTree::route("list", "list"),
+                RouteTree::route("detail/:id", "detail"),
+            ]),
+        ],
+    );
+    let tabs = if layout {
+        RouteTree::route_with(RouteDef::new("", "layout"), vec![tabs])
+    } else {
+        tabs
+    };
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
+        tabs,
+        RouteTree::route("modal", "modal"),
+    ]));
+    let mk = |id: &'static str, counts: Counts| {
+        move |_: &RouteInstance| {
+            *counts.borrow_mut().entry(id).or_insert(0) += 1;
+            whisker::runtime::view::create_phantom_element()
+        }
+    };
+    let registry = RouteRegistry::new()
+        .route("home", mk("home", counts.clone()))
+        .route("list", mk("list", counts.clone()))
+        .route_with(
+            "detail",
+            RouteTransition::none(),
+            mk("detail", counts.clone()),
+        )
+        .route_with(
+            "modal",
+            RouteTransition::none(),
+            mk("modal", counts.clone()),
+        );
+    RouterHandle::new((tree, registry))
+}
+
+/// A tab switch changes only the nested Switch, so the outer Stack must keep
+/// the tabs (and their layout) mounted instead of replacing its top entry.
+#[test]
+fn tab_switch_inside_stack_keeps_tabs_mounted() {
+    for layout in [false, true] {
+        with_runtime(|| {
+            let counts: Counts = Rc::new(RefCell::new(HashMap::new()));
+            let h = counting_stacked_tabs_handle(counts.clone(), layout);
+            let _slot = mount_node(&h, NodePath::root());
+            flush();
+
+            h.navigate("/list").unwrap();
+            flush();
+            h.navigate("/").unwrap();
+            flush();
+            h.navigate("/list").unwrap();
+            flush();
+            h.navigate("/modal").unwrap();
+            flush();
+            h.back().unwrap();
+            flush();
+
+            let c = counts.borrow();
+            assert_eq!(c.get("home").copied(), Some(1), "layout={layout}");
+            assert_eq!(c.get("list").copied(), Some(1), "layout={layout}");
+            assert_eq!(c.get("modal").copied(), Some(1), "layout={layout}");
+        });
+    }
+}
+
 /// A single root Stack with mount-counting leaves (`home` at `""`, `detail`
 /// at `detail/:id`).
 fn counting_simple_handle(counts: Counts) -> RouterHandle {
@@ -1980,6 +2057,99 @@ mod replace_repro {
                     rec.reachable(slot, detail_3),
                     "navigation must remain live after an instant pop"
                 );
+            });
+        });
+    }
+
+    /// A transparent incoming screen must be able to fade the replaced
+    /// screen out, even when that screen used a different transition.
+    #[test]
+    fn replace_drives_outgoing_opacity_with_the_incoming_transition() {
+        use crate::render::transition::{Pose, PoseContext, Role, Transition};
+
+        struct SequentialFade;
+        impl Transition for SequentialFade {
+            fn config(&self) -> whisker::AnimConfig {
+                whisker::AnimConfig::ease_out(240)
+            }
+            fn pose(&self, ctx: PoseContext) -> Pose {
+                let p = ctx.progress.clamp(0.0, 1.0);
+                let opacity = match ctx.role {
+                    Role::Top => (2.0 * p - 1.0).max(0.0),
+                    Role::Under => (1.0 - 2.0 * p).max(0.0),
+                };
+                Pose::new(whisker::css::Transform::new(), opacity)
+            }
+        }
+
+        with_runtime(|| {
+            whisker_animation::__reset_for_tests();
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle_with_transition(RouteTransition::custom(SequentialFade));
+                let slot = mount_node(&h, NodePath::root());
+                flush();
+                let old_content = rec.by_cid("home").unwrap();
+                let old = rec.direct_child_ancestor(slot, old_content).unwrap();
+                h.replace("/detail/1").unwrap();
+                flush();
+                let new_content = rec.by_cid("1").unwrap();
+                let new = rec.direct_child_ancestor(slot, new_content).unwrap();
+                let ctrl = h
+                    .active_stack_bridge_for_test(&NodePath::root())
+                    .unwrap()
+                    .top_ctrl
+                    .unwrap();
+                let mut saw_exit = false;
+                let mut saw_enter = false;
+                for frame in 0..16 {
+                    whisker_animation::__step_for_tests(1000.0 + frame as f64 * 16.0);
+                    flush();
+                    let p = ctrl.value().get_untracked();
+                    let inner = rec.0.borrow();
+                    let top = inner.opacity.get(&new).copied().unwrap_or(1.0);
+                    assert_eq!(top, (2.0 * p - 1.0).max(0.0));
+                    if p < 1.0 {
+                        let under = inner.opacity.get(&old).copied().unwrap_or(1.0);
+                        assert_eq!(under, (1.0 - 2.0 * p).max(0.0));
+                        assert!(top == 0.0 || under == 0.0);
+                        saw_exit |= under > 0.0 && under < 1.0;
+                        saw_enter |= top > 0.0 && top < 1.0;
+                    }
+                }
+                assert!(saw_exit && saw_enter);
+                settle_animations();
+                assert!(!rec.reachable(slot, old_content));
+                assert!(rec.reachable(slot, new_content));
+            });
+        });
+    }
+
+    #[test]
+    fn back_during_replace_removes_both_replaced_and_popped_contents() {
+        with_runtime(|| {
+            whisker_animation::__reset_for_tests();
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle_with_transition(RouteTransition::fade());
+                let slot = mount_node(&h, NodePath::root());
+                h.push("/detail/1").unwrap();
+                flush();
+                settle_animations();
+                let old = rec.by_cid("1").unwrap();
+                h.replace("/detail/2").unwrap();
+                flush();
+                let new = rec.by_cid("2").unwrap();
+                whisker_animation::__step_for_tests(1000.0);
+                whisker_animation::__step_for_tests(1016.0);
+                flush();
+                assert!(rec.reachable(slot, old));
+                h.back().unwrap();
+                flush();
+                settle_animations();
+                assert!(!rec.reachable(slot, old));
+                assert!(!rec.reachable(slot, new));
+                assert!(rec.reachable(slot, rec.by_cid("home").unwrap()));
             });
         });
     }

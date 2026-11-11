@@ -269,9 +269,8 @@ struct StackWrapper {
     /// `replace` (same index, different child/params) so the top can be
     /// swapped in place.
     child: NodePath,
-    /// A fingerprint of the entry's nested state at mount time, so a
-    /// `replace` that keeps the same child path but changes params still
-    /// re-mounts.
+    /// The entry's state at mount time, compared with [`same_entry`] so a
+    /// `replace` that keeps the child path but changes params re-mounts.
     fingerprint: RouteState,
     /// The wrapper element (carries the transition transform).
     wrapper: Element,
@@ -389,7 +388,9 @@ fn reconcile_stack(
         entries
             .last()
             .zip(stack.history.last())
-            .is_some_and(|(old, new)| old.child != new.child || old.fingerprint != new.state)
+            .is_some_and(|(old, new)| {
+                old.child != new.child || !same_entry(&old.fingerprint, &new.state)
+            })
     };
     if navigation_changed {
         // A retained wrapper can outlive its pending push (Back, replace, or a
@@ -455,7 +456,7 @@ fn reconcile_stack(
             let l = live.borrow();
             let w = &l[new_len - 1];
             let entry = &stack.history[new_len - 1];
-            w.child == entry.child && w.fingerprint == entry.state
+            w.child == entry.child && same_entry(&w.fingerprint, &entry.state)
         };
         let popped: Vec<StackWrapper> = live.borrow_mut().split_off(new_len);
         if survivor_matches {
@@ -500,7 +501,7 @@ fn reconcile_stack(
         let needs_swap = {
             let l = live.borrow();
             let w = &l[top_idx];
-            w.child != entry.child || w.fingerprint != entry.state
+            w.child != entry.child || !same_entry(&w.fingerprint, &entry.state)
         };
         if needs_swap {
             // Detach the old top from `live` but keep it mounted — it is the
@@ -522,6 +523,10 @@ fn reconcile_stack(
             let instant = w.transition.is_instant();
             w.ctrl.set_value(0.0);
             set_pose(&w, &drive, Role::Top, Direction::Push);
+            old.pose_ctrl.set(drive.clone());
+            old.pose_role.set(Role::Under);
+            old.pose_mode
+                .set(PoseMode::Transition(w.transition.clone(), Direction::Push));
             live.borrow_mut().insert(top_idx, w);
 
             if instant {
@@ -630,6 +635,19 @@ fn reconcile_stack(
         can_back: l.len() > 1,
     };
     handle.set_stack_bridge(path.clone(), bridge);
+}
+
+/// Whether two states are the same stack entry, ignoring nested container
+/// state so a tab switch inside a stacked layout is not treated as a `replace`.
+fn same_entry(a: &RouteState, b: &RouteState) -> bool {
+    match (a, b) {
+        (RouteState::Route(a), RouteState::Route(b)) => {
+            a.path == b.path && a.params == b.params && a.location == b.location
+        }
+        (RouteState::Stack(a), RouteState::Stack(b)) => a.path == b.path,
+        (RouteState::Switch(a), RouteState::Switch(b)) => a.path == b.path,
+        _ => false,
+    }
 }
 
 /// Drive a pop: reverse the popped top's controller `1 → 0`, with the

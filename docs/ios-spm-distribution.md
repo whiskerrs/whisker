@@ -54,10 +54,21 @@ version, and the build tests reject mismatches. Use the release workflow rather
 than creating the tag manually; see the release skill linked from
 `docs/README.md`.
 
-## Developing the Swift Host locally
+## Host sources from git and path dependencies
 
-A generated external app normally resolves the published SwiftPM tag, so local
-edits under `platforms/ios` are not picked up automatically. For framework
-development, run the package tests in this repository or temporarily redirect
-the package URL to the working copy. Do not commit a local path override to a
-generated application.
+An app that depends on `whisker` from crates.io resolves the published SwiftPM
+tag. When Cargo resolves `whisker` from git or a local path, the repository at
+that revision already contains `platforms/`, and CNG builds the Hosts from it:
+
+- iOS and macOS depend on the repository as a local Swift package. SwiftPM
+  takes a path package's identity from its directory name, so a checkout that
+  is not named `whisker` (Cargo names git checkouts after the revision) is
+  linked from `gen/.whisker-host-sdk/whisker`. The local package then replaces
+  the remote `whisker` package pinned by module manifests.
+- Android includes `platforms/android` as the `:whisker-runtime` and
+  `:whisker-module` projects and includes its Gradle plugin and KSP builds.
+
+The Host therefore always matches the Rust revision in `Cargo.lock`, including
+for forks and working copies patched in through `[patch]`. The framework
+workspace itself takes the same path. Gradle writes its build outputs inside
+the checkout.

@@ -48,7 +48,44 @@ public final class WhiskerParagraphLayout {
     }
 }
 
-final class WhiskerParagraphLayoutManager: NSLayoutManager {
+final class WhiskerParagraphLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
+    override init() {
+        super.init()
+        delegate = self
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        delegate = self
+    }
+
+    /// TextKit keeps a fixed line height's slack above the text, while CSS and
+    /// the Android Host split it evenly around the content area (half-leading).
+    func layoutManager(
+        _ layoutManager: NSLayoutManager,
+        shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<CGRect>,
+        lineFragmentUsedRect: UnsafeMutablePointer<CGRect>,
+        baselineOffset: UnsafeMutablePointer<CGFloat>,
+        in textContainer: NSTextContainer,
+        forGlyphRange glyphRange: NSRange
+    ) -> Bool {
+        guard let textStorage, glyphRange.length > 0 else { return false }
+        let characters = characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+        guard let paragraph = textStorage.attribute(.paragraphStyle, at: characters.location, effectiveRange: nil) as? NSParagraphStyle,
+              paragraph.minimumLineHeight > 0,
+              paragraph.minimumLineHeight == paragraph.maximumLineHeight else { return false }
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        textStorage.enumerateAttribute(.font, in: characters) { value, _, _ in
+            guard let font = value as? WhiskerPlatformFont else { return }
+            ascent = max(ascent, font.ascender)
+            descent = max(descent, -font.descender)
+        }
+        guard ascent + descent > 0 else { return false }
+        baselineOffset.pointee = (lineFragmentRect.pointee.height - ascent - descent) / 2 + ascent
+        return true
+    }
+
     private var paragraph: WhiskerParagraphLayout? {
         guard let textStorage, let container = textContainers.first else { return nil }
         return WhiskerParagraphLayout(storage: textStorage, manager: self, container: container)
