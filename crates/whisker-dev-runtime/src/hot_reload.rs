@@ -404,11 +404,11 @@ where
             return Err("server proof too large".into());
         }
         let server: crate::auth::ServerProof = serde_json::from_str(&text)?;
-        if !crate::auth::verify_proof(&token, true, &client_nonce, &server.nonce, &server.mac) {
+        if !crate::auth::verify_proof(token, true, &client_nonce, &server.nonce, &server.mac) {
             return Err("invalid development server proof".into());
         }
         let proof = crate::auth::ClientProof {
-            mac: crate::auth::proof(&token, false, &client_nonce, &server.nonce),
+            mac: crate::auth::proof(token, false, &client_nonce, &server.nonce),
         };
         ws.send(Message::Text(serde_json::to_string(&proof)?))
             .await?;
