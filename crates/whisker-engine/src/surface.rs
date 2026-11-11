@@ -5,9 +5,9 @@ use std::{collections::HashMap, error::Error, fmt, rc::Rc};
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
     Accessibility, ApplyResult, BackgroundLayer, BoxPaint, CommandId, Cursor, CursorKeyword,
-    ElementTypeId, FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, MeasurementMetrics,
-    MeasurementReady, MeasurementResponse, MeasurementSpec, NodeId, PointerId, PropertyId,
-    SurfaceId, TextContent, WhiskerValue,
+    ElementTypeId, FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, LayoutRect,
+    MeasurementMetrics, MeasurementReady, MeasurementResponse, MeasurementSpec, NodeId, PointerId,
+    PropertyId, SurfaceId, TextContent, WhiskerValue,
 };
 use whisker_style::{
     ComputedLayoutStyle, ComputedStyle, ComputedTransformStyle, CursorValue, PointerEventsValue,
@@ -290,6 +290,13 @@ impl SurfaceEngine {
         self.scene
             .hit_test(root, point)
             .map_err(SurfaceError::Scene)
+    }
+
+    /// Maps a surface-space point into one retained node's border-box space.
+    ///
+    /// See [`Scene::local_point`].
+    pub fn local_point(&self, node: NodeId, point: InputPoint) -> Option<(InputPoint, LayoutRect)> {
+        self.scene.local_point(node, point)
     }
 
     /// Synchronizes one native scroll container's transient logical offset.
@@ -2001,6 +2008,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(surface.hit_test(root, point), Ok(Some(root)));
+        assert_eq!(
+            surface.local_point(root, point),
+            Some((
+                point,
+                LayoutRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height: 10.0,
+                },
+            ))
+        );
         assert_eq!(
             surface.hit_test(missing, point),
             Err(SurfaceError::Scene(SceneError::UnknownNode {

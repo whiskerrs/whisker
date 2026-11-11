@@ -197,6 +197,102 @@ fn common_metadata_reaches_frames_and_event_targets() {
 }
 
 #[test]
+fn pointer_events_report_geometry_relative_to_each_current_target() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(41).unwrap(),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let received = Rc::new(RefCell::new(Vec::new()));
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            let outer = Rc::clone(&received);
+            let inner = Rc::clone(&received);
+            render! {
+                View(
+                    id: "outer",
+                    on_touchstart: move |event| outer.borrow_mut().push(event),
+                    style: css!(width: px(100), height: px(100), padding: px(20)),
+                ) {
+                    View(
+                        id: "inner",
+                        on_touchstart: move |event| inner.borrow_mut().push(event),
+                        style: css!(width: px(40), height: px(30)),
+                    )
+                }
+            }
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let nodes = renderer.frames()[0]
+        .packet
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            Operation::CreateNode { node, .. } => Some(*node),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let inner = *nodes.last().expect("inner node");
+
+    with_installed_renderer(surface.renderer(), || {
+        surface
+            .dispatch_input(&InputEvent {
+                presentation_revision: None,
+                surface: surface.surface(),
+                timestamp_ms: 12.0,
+                kind: InputEventKind::PointerDown,
+                pointer: Some(PointerInput {
+                    id: PointerId::new(1).unwrap(),
+                    kind: PointerKind::Touch,
+                    position: whisker_engine::whisker_protocol::InputPoint { x: 30.0, y: 25.0 },
+                    buttons: 1,
+                    changed_button: 0,
+                }),
+                target: Some(inner),
+                detail: WhiskerValue::Null,
+            })
+            .unwrap();
+    });
+
+    let events = received.borrow_mut().drain(..).collect::<Vec<_>>();
+    assert_eq!(events.len(), 2);
+    let geometry = |event: &whisker::event::TouchEvent| {
+        let offset = event.offset.expect("offset");
+        let size = event.size.expect("size");
+        (
+            event.current_target.id.as_str().to_owned(),
+            [offset.x, offset.y, size.width, size.height],
+        )
+    };
+    assert_eq!(
+        geometry(&events[0]),
+        ("inner".to_owned(), [10.0, 5.0, 40.0, 30.0])
+    );
+    assert_eq!(
+        geometry(&events[1]),
+        ("outer".to_owned(), [30.0, 25.0, 100.0, 100.0])
+    );
+    assert_eq!(events[0].detail.x, 30.0);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
 fn list_virtualizes_through_scroll_view_and_reacts_to_host_scroll_geometry() {
     __reset_for_tests();
     let owner = Owner::new(None);
