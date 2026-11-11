@@ -731,22 +731,32 @@ internal class HostScene(
 
     private fun applyPaint(node: HostNode, paint: HostBoxPaint) {
         node.paint = paint
+        val density = root.resources.displayMetrics.density
+        val contentBox = RectF(
+            node.geometry.contentX,
+            node.geometry.contentY,
+            node.geometry.contentX + node.geometry.contentWidth,
+            node.geometry.contentY + node.geometry.contentHeight,
+        )
         val geometry = applyBoxPaint(
             node,
             paint,
             node.geometry.width,
             node.geometry.height,
-            root.resources.displayMetrics.density,
+            density,
             node.backgroundLayers,
             node.imageRendering,
+            contentBox,
+        )
+        node.setOverflowClipGeometry(
+            geometry,
             RectF(
-                node.geometry.contentX,
-                node.geometry.contentY,
-                node.geometry.contentX + node.geometry.contentWidth,
-                node.geometry.contentY + node.geometry.contentHeight,
+                contentBox.left * density,
+                contentBox.top * density,
+                contentBox.right * density,
+                contentBox.bottom * density,
             ),
         )
-        node.setOverflowClipGeometry(geometry)
         refreshClipPath(node)
     }
 

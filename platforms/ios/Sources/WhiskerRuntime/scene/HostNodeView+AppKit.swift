@@ -25,6 +25,7 @@ final class WhiskerNodeView: NSView {
     private var ancestorScrollObservers: [NSObjectProtocol] = []
     private var scrollOffsetObserver: NSObjectProtocol?
     private let clipPathMask = CAShapeLayer()
+    private let contentClipMask = OverflowMaskLayer()
     private var clipPath: HostClipPath?
     private var boxShadows: [HostBoxShadow] = []
     private var boxShadowLayers: [CAShapeLayer] = []
@@ -137,6 +138,7 @@ final class WhiskerNodeView: NSView {
         updateBoxShadowLayers()
         updateOverflowMask()
         updateClipPathMask()
+        updateContentClipMask()
         paintView.needsDisplay = true
     }
 
@@ -256,6 +258,7 @@ final class WhiskerNodeView: NSView {
         updateBoxShadowLayers()
         updateOverflowMask()
         updateClipPathMask()
+        updateContentClipMask()
     }
 
     func setClipPath(_ clipPath: HostClipPath?) {
@@ -570,6 +573,28 @@ final class WhiskerNodeView: NSView {
         clipPathMask.fillColor = NSColor.white.cgColor
         clipPathMask.fillRule = clipPath.fillRule
         backingLayer.mask = clipPathMask
+    }
+
+    /// Rounds a childless element's native content like a CSS replaced element.
+    private func updateContentClipMask() {
+        guard let mountedElement else { return }
+        let contentView = mountedElement.view
+        guard mountedElement.registration.childPolicy == .none,
+              let path = boxPainter.contentBoxClipPath(in: bounds, contentBox: contentFrame)
+        else {
+            if contentView.layer?.mask === contentClipMask { contentView.layer?.mask = nil }
+            return
+        }
+        contentView.wantsLayer = true
+        guard let contentLayer = contentView.layer else { return }
+        // An unflipped content view's layer has a bottom-left origin.
+        var translation = contentView.isFlipped
+            ? CGAffineTransform(translationX: -contentFrame.minX, y: -contentFrame.minY)
+            : CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: -contentFrame.minX, ty: contentFrame.maxY)
+        contentClipMask.frame = CGRect(origin: .zero, size: contentFrame.size)
+        contentClipMask.path = path.copy(using: &translation)
+        contentClipMask.fillColor = NSColor.white.cgColor
+        contentLayer.mask = contentClipMask
     }
 
     private func hostCompositionBounds() -> CGRect {
