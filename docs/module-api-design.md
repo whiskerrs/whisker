@@ -478,3 +478,10 @@ and prone to drift. Pick one.
   [issue #128](https://github.com/whiskerrs/whisker/issues/128)
 - Why `Owner` (Shape 3 mechanics) and what backs lifetime →
   [`reactivity-design.md`](./reactivity-design.md)
+
+## System-browser URL policy
+
+Web and desktop system-browser handoff and Android Custom Tabs accept only
+absolute HTTP(S) URLs. The Android ACTION_VIEW fallback applies the same policy.
+Authentication start URLs follow this policy; application callback schemes are
+validated separately and are not system-browser launch URLs.
