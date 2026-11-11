@@ -44,9 +44,9 @@ pub struct Patch {
     /// The address-map metadata. Serialized as JSON in the binary
     /// frame's prefix.
     pub table: subsecond_types::JumpTable,
-    /// Raw patch dylib bytes. Streamed verbatim after the JSON
-    /// prefix; the device writes them to disk and `dlopen`s the
-    /// resulting file.
+    /// Raw native library or WebAssembly module bytes following the JSON
+    /// prefix. Native clients stage and load a library; browser clients apply
+    /// a separately validated WebAssembly side module.
     pub dylib_bytes: Arc<Vec<u8>>,
 }
 
@@ -106,7 +106,7 @@ pub struct PatchSender {
 }
 
 impl PatchSender {
-    /// Broadcast `patch` to every currently-connected client.
+    /// Queue a native patch for delivery to authenticated native clients.
     /// Returns the number of clients the message was queued for —
     /// `0` is fine (no client connected yet) and not an error.
     pub fn send(&self, patch: Patch) -> usize {
