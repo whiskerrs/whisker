@@ -403,3 +403,13 @@ Thin rebuild capture persists only Cargo package metadata, crate and binary name
 manifest paths, the Cargo executable, and OUT_DIR. Registry configuration,
 authentication tokens, arbitrary CARGO_* variables, and jobserver descriptors
 are excluded. Do not use secret environment variables as compile-time app data.
+
+## Browser development request boundary
+
+The dev server accepts only its bound address and port (plus localhost for a
+loopback or wildcard bind) in Host. Explicit Origin headers must match the same
+HTTP authority. Browser WebSocket upgrades require that Origin; originless native
+clients require a configured session secret. Remote DNS names and cross-origin
+requests are rejected before static files or WebSocket handlers run. Native log
+and trace envelopes are ignored until authentication succeeds. Device log control
+characters are removed before either TUI or plain terminal output.
