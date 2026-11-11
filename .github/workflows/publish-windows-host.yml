@@ -67,7 +67,4 @@ jobs:
         if: inputs.publish && steps.check.outputs.published != 'true'
         env:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
-        run: nuget push "target/nuget/Whisker.WindowsHost.$VERSION.nupkg" -Source https://api.nuget.org/v3/index.json -ApiKey "$NUGET_API_KEY" -NonInteractive
-      - name: Verify the public package
-        if: inputs.publish
-        run: cargo xtask release native-verify windows "$VERSION"
+        run: nuget push "target/nuget/Whisker.WindowsHost.$VERSION.nupkg" -Source https://api.nuget.org/v3/index.json -ApiKey "$NUGET_API_KEY" -NonInteractive -SkipDuplicate

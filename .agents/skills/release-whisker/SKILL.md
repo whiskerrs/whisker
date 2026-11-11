@@ -87,7 +87,10 @@ The release-plan merge triggers the same workflow's publishing jobs:
    The Windows Host builds x64 and ARM64 libraries, tags `windows-host-v<version>`,
    and pushes `Whisker.WindowsHost` to nuget.org through Trusted Publishing
    (`NuGet/login` with the `NUGET_USER` secret; no long-lived API key).
-3. After all selected native jobs succeed, verify reused SDKs too, then use
+   The push is not awaited: nuget.org validation can take minutes to hours
+   (longer for a new package), and `-SkipDuplicate` makes re-runs safe. Check
+   that the version appears on nuget.org; the owner is emailed if it is rejected.
+3. After all selected native jobs succeed, verify reused Maven SDKs too, then use
    Cargo workspace publishing for the unpublished Rust versions. Publishing
    uses Cargo 1.98.1; the framework's consumer MSRV is unchanged.
 4. Verify every selected crate version in the registry, then create **one**
