@@ -72,6 +72,9 @@ pub mod path_parse;
 #[doc(hidden)]
 pub mod replay;
 
+#[cfg(feature = "raster")]
+pub mod raster;
+
 pub use compile::{CompileError, Compiled, compile};
 
 #[doc(hidden)]

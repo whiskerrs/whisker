@@ -96,7 +96,8 @@ fn rust_host_module_names_are_package_qualified() {
                 .map(|name| format!("{package_name}:{name}")),
         );
 
-        for host in ["web", "desktop"] {
+        let mut checked_roots = std::collections::HashSet::new();
+        for host in ["web", "desktop", "linux", "windows"] {
             let Some(host_manifest) = platform_manifest(&manifest, host) else {
                 continue;
             };
@@ -105,6 +106,9 @@ fn rust_host_module_names_are_package_qualified() {
                 .parent()
                 .unwrap()
                 .to_path_buf();
+            if !checked_roots.insert(host_root.clone()) {
+                continue;
+            }
             let source = source_tree(&host_root.join("src"), "rs");
             let compact = compact_source(&source);
             let constant_names =

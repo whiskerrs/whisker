@@ -86,7 +86,16 @@ impl ResolvedModule {
         match implementation {
             ResolvedPlatformImplementation::RustHost(host) => Some(host),
             ResolvedPlatformImplementation::Common
-            | ResolvedPlatformImplementation::NativeManifest(_) => None,
+            | ResolvedPlatformImplementation::NativeManifest(_)
+            | ResolvedPlatformImplementation::CppSources(_) => None,
+        }
+    }
+
+    /// Directory of C++ sources that implement the module on Windows.
+    pub fn windows_sources(&self) -> Option<&Path> {
+        match self.platforms.windows.as_ref()? {
+            ResolvedPlatformImplementation::CppSources(path) => Some(path),
+            _ => None,
         }
     }
 
@@ -100,7 +109,8 @@ impl ResolvedModule {
         match implementation {
             ResolvedPlatformImplementation::NativeManifest(manifest) => Some(manifest),
             ResolvedPlatformImplementation::Common
-            | ResolvedPlatformImplementation::RustHost(_) => None,
+            | ResolvedPlatformImplementation::RustHost(_)
+            | ResolvedPlatformImplementation::CppSources(_) => None,
         }
     }
 }

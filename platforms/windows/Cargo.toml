@@ -10,6 +10,8 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Native WinUI 3 Windows Host for Whisker."
+# Exposes the Whisker.WindowsHost headers to C++ module builds as DEP_WHISKER_WINDOWS_INCLUDE.
+links = "whisker-windows"
 exclude = ["host"]
 
 [target.'cfg(target_os = "windows")'.dependencies]

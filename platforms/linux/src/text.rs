@@ -6,12 +6,14 @@ use std::rc::Rc;
 use gtk4::pango;
 use gtk4::prelude::*;
 use whisker_engine::MeasurementProvider;
+
+use crate::module::{LinuxViewFactory, MeasureHandler};
 use whisker_protocol::{
-    AvailableSpace, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextAlignment,
-    MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasuredSize,
-    MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse,
-    PreparedContentId, SurfaceId, TextDecoration, TextDecorationStyle, TextMeasurePayload,
-    UnsupportedMeasurementReason,
+    AvailableSpace, ElementRegistration, ElementTypeId, MeasureFontFamily, MeasureFontStyle,
+    MeasureLineHeight, MeasureTextAlignment, MeasureTextDirection, MeasureTextOverflow,
+    MeasureTextWordBreak, MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementResponse, ModuleMeasureRequest, PreparedContentId, SurfaceId,
+    TextDecoration, TextDecorationStyle, TextMeasurePayload, UnsupportedMeasurementReason,
 };
 
 /// Creates a shaping context on GTK's default font map without a display.
@@ -26,6 +28,7 @@ pub(crate) struct PangoMeasurementProvider {
     context: pango::Context,
     prepared: PreparedLayouts,
     fresh: HashSet<PreparedContentId>,
+    views: HashMap<ElementTypeId, MeasureHandler>,
 }
 
 impl PangoMeasurementProvider {
@@ -34,7 +37,24 @@ impl PangoMeasurementProvider {
             context,
             prepared: Rc::default(),
             fresh: HashSet::new(),
+            views: HashMap::new(),
         }
+    }
+
+    /// Routes non-text measurement of module views to their declared hooks.
+    pub(crate) fn with_view_measurements(
+        mut self,
+        registrations: &[ElementRegistration],
+        views: &[LinuxViewFactory],
+    ) -> Self {
+        self.views = registrations
+            .iter()
+            .filter_map(|registration| {
+                let view = views.iter().find(|view| view.name == registration.name)?;
+                Some((registration.element_type, view.measurement.clone()?))
+            })
+            .collect();
+        self
     }
 
     pub(crate) fn prepared(&self) -> PreparedLayouts {
@@ -82,10 +102,21 @@ impl MeasurementProvider for PangoMeasurementProvider {
     ) -> Result<(), Self::Error> {
         for request in requests {
             let MeasurementPayload::Text(payload) = &request.payload else {
-                responses.push(MeasurementResponse::Unsupported {
-                    key: request.key,
-                    environment_epoch: request.environment_epoch,
-                    reason: UnsupportedMeasurementReason::Kind,
+                let size = self
+                    .views
+                    .get(&request.element_type)
+                    .and_then(|measure| measure(&ModuleMeasureRequest::from(request)));
+                responses.push(match size {
+                    Some(size) => MeasurementResponse::Ready {
+                        key: request.key,
+                        environment_epoch: request.environment_epoch,
+                        metrics: MeasurementMetrics::from_size(size),
+                    },
+                    None => MeasurementResponse::Unsupported {
+                        key: request.key,
+                        environment_epoch: request.environment_epoch,
+                        reason: UnsupportedMeasurementReason::Kind,
+                    },
                 });
                 continue;
             };

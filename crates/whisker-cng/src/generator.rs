@@ -606,6 +606,13 @@ fn sync_desktop(
         crate::modules::ModulePlatform::Linux
     };
     inputs.element_modules = rust_element_modules(graph, module_platform);
+    if target == Target::Windows {
+        inputs.windows_sources = graph
+            .modules
+            .iter()
+            .filter_map(|module| module.windows_sources().map(Path::to_path_buf))
+            .collect();
+    }
     let application_name = if target == Target::Windows {
         crate::desktop::application::WindowsApplicationPlugin::NAME
     } else {

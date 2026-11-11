@@ -35,6 +35,7 @@
     <ClCompile><Optimization>Disabled</Optimization><BasicRuntimeChecks>Default</BasicRuntimeChecks></ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="include\whisker\module.h" />
     <ClInclude Include="include\whisker\whisker_app.h" />
     <ClInclude Include="include\whisker\whisker_view.h" />
     <ClInclude Include="src\background.h" />
@@ -42,6 +43,7 @@
     <ClInclude Include="src\clip_path.h" />
     <ClInclude Include="src\graphics.h" />
     <ClInclude Include="src\host_scene.h" />
+    <ClInclude Include="src\module_runtime.h" />
     <ClInclude Include="src\paint.h" />
     <ClInclude Include="src\resources.h" />
     <ClInclude Include="src\shadow.h" />
@@ -53,6 +55,7 @@
     <ClCompile Include="src\clip_path.cpp" />
     <ClCompile Include="src\graphics.cpp" />
     <ClCompile Include="src\host_scene.cpp" />
+    <ClCompile Include="src\module_runtime.cpp" />
     <ClCompile Include="src\paint.cpp" />
     <ClCompile Include="src\resources.cpp" />
     <ClCompile Include="src\shadow.cpp" />

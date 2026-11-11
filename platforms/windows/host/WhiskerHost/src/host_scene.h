@@ -2,6 +2,8 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -11,6 +13,7 @@
 #include "background.h"
 #include "clip_path.h"
 #include "graphics.h"
+#include "module_runtime.h"
 #include "resources.h"
 #include "shadow.h"
 #include "text.h"
@@ -25,11 +28,18 @@ class HostScene {
             const ResourceService& resources,
             winrt::Microsoft::UI::Composition::CompositionGraphicsDevice graphics);
 
+  struct ViewEvent {
+    uint64_t node;
+    std::string name;
+    Value detail;
+  };
+
   struct ScrollEvent {
     uint64_t node;
     float left, top, width, height, viewport_width, viewport_height;
   };
 
+  void SetFrameRequester(std::function<void()> request_frame);
   bool Bootstrap(const WhiskerMobileBootstrap& bootstrap);
   void SetScale(float scale);
   bool Apply(const WhiskerMobileFrame& frame, WhiskerMobileApplyResponse& response);
@@ -39,6 +49,9 @@ class HostScene {
   // Scrolls the innermost enabled ScrollView under the point that can still move.
   bool ScrollAt(float x, float y, float dx, float dy);
   std::vector<ScrollEvent> TakeScrollEvents();
+  std::vector<ViewEvent> TakeViewEvents();
+  // Paints module views invalidated outside a frame.
+  void DrawViews();
   std::vector<std::pair<uint64_t, std::array<float, 2>>> TakeScrollOffsets();
 
  private:
@@ -47,6 +60,8 @@ class HostScene {
   struct Element {
     Kind kind = Kind::View;
     std::unordered_map<uint32_t, std::string> properties;
+    std::unordered_map<uint32_t, std::string> commands;
+    const ViewDefinition* view = nullptr;
     uint64_t scroll_event_mask = 0;
   };
 
@@ -54,6 +69,17 @@ class HostScene {
     bool horizontal = false;
     bool enabled = true;
     std::array<float, 2> offset{};
+  };
+
+  class NodeViewContext final : public ViewContext {
+   public:
+    NodeViewContext(HostScene& scene, uint64_t id) : scene_(scene), id_(id) {}
+    void Emit(std::string_view event, Value detail) override;
+    void Invalidate() override;
+
+   private:
+    HostScene& scene_;
+    uint64_t id_;
   };
 
   struct Node {
@@ -64,6 +90,11 @@ class HostScene {
     winrt::Microsoft::UI::Composition::SpriteVisual shadow{nullptr};
     winrt::Microsoft::UI::Composition::SpriteVisual background{nullptr};
     winrt::Microsoft::UI::Composition::SpriteVisual text_sprite{nullptr};
+    winrt::Microsoft::UI::Composition::SpriteVisual view_sprite{nullptr};
+    // Declared before `view` so the view is destroyed first.
+    std::unique_ptr<NodeViewContext> view_context;
+    std::unique_ptr<ModuleView> view;
+    const ViewDefinition* view_definition = nullptr;
     winrt::Microsoft::UI::Composition::ContainerVisual children_visual{nullptr};
     winrt::Microsoft::UI::Composition::ContainerVisual scroll_content{nullptr};
     std::vector<uint64_t> children;
@@ -107,7 +138,9 @@ class HostScene {
   void DrawBox(Node& node);
   void DrawShadow(Node& node);
   void DrawText(Node& node);
-  void SetProperty(Node& node, uint32_t property, const WhiskerValueRaw* value);
+  void CreateView(uint64_t id, const ViewDefinition& definition);
+  void DrawView(Node& node);
+  void SetProperty(uint64_t id, Node& node, uint32_t property, const WhiskerValueRaw* value);
   void Invoke(uint64_t id, uint32_t command, const WhiskerValueRaw* arguments);
   bool ScrollTo(uint64_t id, std::array<float, 2> offset);
   std::array<float, 2> ContentExtent(const Node& node) const;
@@ -126,6 +159,9 @@ class HostScene {
   std::unordered_set<uint64_t> dirty_children_;
   std::unordered_map<uint32_t, Element> elements_;
   std::vector<ScrollEvent> scroll_events_;
+  std::vector<ViewEvent> view_events_;
+  std::unordered_set<uint64_t> dirty_views_;
+  std::function<void()> request_frame_;
   std::unordered_map<uint64_t, std::array<float, 2>> scroll_offsets_;
   uint64_t revision_ = 0;
   uint32_t scene_epoch_ = 0;
