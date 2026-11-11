@@ -6,7 +6,7 @@ and layout. A **Host** connects that Runtime to a particular platform: it owns
 the window and event loop, measures platform content, and draws the UI.
 
 **Runtime and Host are separated by responsibility, not by language or thread.**
-The Web and Desktop Hosts are also written in Rust. On each platform, the Host
+The Web and Linux Hosts are also written in Rust. On each platform, the Host
 calls into the Runtime on its UI thread, and the Runtime calls back into Host
 services when it needs measurement or presentation.
 
@@ -85,7 +85,7 @@ threads. The Host owns the mounted Runtime's lifetime and initiates lifecycle
 transitions; the Runtime implements what those transitions do to UI state.
 
 Android, iOS, and macOS carry these interactions through the mobile FFI Driver.
-Web and Desktop use Rust calls directly. The Driver adapts the boundary; it
+Web and Linux use Rust calls directly. The Driver adapts the boundary; it
 does not take over layout, scheduling policy, or platform drawing.
 
 ### Shared UI terms
@@ -219,7 +219,6 @@ They differ in how they connect to the operating system or browser.
 | [Windows](../platforms/windows/host/) | C++/WinRT and the mobile FFI Driver | A WinUI 3 window with Composition visuals per node, Direct2D drawing, DirectWrite text measurement, and WIC image decoding; shipped as the `Whisker.WindowsHost` NuGet package that `whisker-windows` links |
 | [Linux](../platforms/linux/src/lib.rs) | Direct Rust calls | GTK4 widgets placed with Rust geometry, Pango text measurement, GSK snapshot drawing, and the GLib frame clock |
 | [Web](../platforms/web/src/lib.rs) | Direct Rust calls from WebAssembly | DOM presentation, browser measurement and input, `requestAnimationFrame` scheduling |
-| [Desktop](../platforms/desktop/src/lib.rs) | Direct Rust calls | A shared `winit` window/event loop, `cosmic-text` measurement, and `wgpu` drawing |
 
 Android, iOS, macOS, and Windows need a foreign-function interface because their
 launch shells are written in Kotlin, Swift, and C++:
@@ -230,7 +229,7 @@ launch shells are written in Kotlin, Swift, and C++:
 - [`whisker-driver`](../crates/whisker-driver/src/lib.rs) owns the opaque runtime
   handle, translates borrowed values, and adapts callbacks to the Rust runtime.
 
-Web and Desktop do not pass through this mobile ABI. They instantiate the
+Web and Linux do not pass through this mobile ABI. They instantiate the
 runtime directly and supply Rust implementations of the same Host boundaries.
 
 ### Scrolling, lists, and platform modules

@@ -185,7 +185,7 @@ crash the device.
    elsewhere), and rewrite `table.lib` to that local path.
 2. Publish the JumpTable as a monotonically numbered generation in the
    process-wide coordinator. A bounded history ensures multiple
-   `WhiskerView` / desktop runtime instances can each observe every patch.
+   `WhiskerView` instances can each observe every patch.
 3. Wake every registered runtime through its own `RuntimeWakeHandle`.
 
 At the beginning of the next Host-driven runtime transaction,
@@ -198,8 +198,7 @@ edits (new elements, new signals) therefore reflect in every mounted tree.
 State local to a remounted component is lost; state above the remount point
 and in unchanged components survives.
 
-Android and iOS call this safe point from `MobileRuntime::tick`; desktop calls
-it at the start of `DesktopApplication::drive_frame`. Both use the same
+Android and iOS call this safe point from `MobileRuntime::tick` through the
 `NativeHotReload` adapter. The receiver thread never enters a runtime and
 never applies code while a `subsecond::call` frame is active.
 

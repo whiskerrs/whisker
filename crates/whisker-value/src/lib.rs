@@ -12,7 +12,7 @@
 //!     recursive `WhiskerValue` tree.
 //!
 //! Lives in its own dependency-neutral crate so the protocol, runtime,
-//! Desktop Host, Web Host, and FFI driver all use the exact same Rust type.
+//! Linux Host, Web Host, and FFI driver all use the exact same Rust type.
 //! The FFI mirror (`WhiskerValueRaw`) and the
 //! `WhiskerValueRaw` ⇄ `WhiskerValue` marshalling stay in
 //! `whisker-driver-sys` / `whisker-driver` — this module is pure

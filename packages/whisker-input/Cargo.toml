@@ -22,8 +22,6 @@ include = [
     "src/**/*.rs",
     "android/**/*.kt",
     "ios/**/*.swift",
-    "desktop/**/*.rs",
-    "desktop/Cargo.toml",
     "web/**/*.rs",
     "web/Cargo.toml",
     "windows/**/*.cpp",
@@ -41,7 +39,6 @@ android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 macos = { manifest = "Package.swift" }
 web = { manifest = "web/Cargo.toml" }
-desktop = { manifest = "desktop/Cargo.toml" }
 linux = { manifest = "linux/Cargo.toml" }
 windows = { sources = "windows" }
 

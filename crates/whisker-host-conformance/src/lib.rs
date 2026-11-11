@@ -1,7 +1,7 @@
 //! Shared, test-only model for Host conformance scenarios.
 //!
 //! JSON under `tests/host-conformance` is the language-neutral source of
-//! truth. This crate is only the Rust decoder used by Desktop and Web; Kotlin
+//! truth. This crate is only the Rust decoder used by the Rust Hosts; Kotlin
 //! and Swift decode the same versioned schema in their native test targets.
 
 use std::path::PathBuf;
@@ -14,8 +14,6 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// One Host identifier used by the manifest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Host {
-    /// Shared native Desktop renderer.
-    Desktop,
     /// Browser DOM renderer.
     Web,
     /// Android View renderer.
@@ -34,7 +32,6 @@ impl Host {
     /// Stable spelling stored in `required_hosts`.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Desktop => "desktop",
             Self::Web => "web",
             Self::Android => "android",
             Self::Ios => "ios",
