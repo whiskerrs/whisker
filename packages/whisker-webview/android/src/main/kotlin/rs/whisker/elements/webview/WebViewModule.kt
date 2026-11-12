@@ -63,6 +63,10 @@ class WebViewModule : Module() {
                 clear = { view: WhiskerWebView -> view.setOriginWhitelist("") },
             ) { view: WhiskerWebView, value -> view.setOriginWhitelist(value.asString() ?: "") }
 
+            Prop("message-origins", clear = { view: WhiskerWebView -> view.setMessageOrigins("[]") }) {
+                view: WhiskerWebView, value -> view.setMessageOrigins(value.asString() ?: "[]")
+            }
+
             // `style` is handled by the WhiskerUI base.
 
             // Declaration-only, but the KSP-generated registrar needs it to

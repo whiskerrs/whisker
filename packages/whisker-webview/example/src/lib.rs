@@ -8,8 +8,8 @@
 //! * **JS bridge** — `on_message` surfaces the page's
 //!   `window.whisker.postMessage(...)` into a live `<text>`, and a button
 //!   pushes back via `post_message` + `evaluate_javascript`.
-//! * **Inline HTML** — a second [`WebView`] rendering `html:` with a
-//!   `<button>` that posts a message back to Rust.
+//! * **Inline HTML** — a second [`WebView`] rendering `html:` without an
+//!   incoming bridge, because its opaque origin cannot be trusted.
 
 use whisker::css::{FlexDirection, FontWeight};
 use whisker::prelude::*;
@@ -22,7 +22,7 @@ const FG: u32 = 0xf0f0f3;
 const MUTED: u32 = 0x9a9aa2;
 const ACCENT: u32 = 0xff5577;
 
-const INLINE_HTML: &str = "<!doctype html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'></head><body style='font-family: -apple-system, sans-serif; padding: 16px;'><h2>Inline HTML page</h2><button onclick=\"window.whisker.postMessage('hi from page')\">Post message to Rust</button></body></html>";
+const INLINE_HTML: &str = "<!doctype html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'></head><body style='font-family: -apple-system, sans-serif; padding: 16px;'><h2>Inline HTML page</h2><p>Incoming native bridge messages are disabled for inline content.</p></body></html>";
 
 #[whisker::main]
 pub fn app() -> Element {
@@ -70,6 +70,7 @@ fn url_demo() -> Element {
 
             WebView(
                 url: url,
+                message_origins: vec!["https://example.com".into()],
                 webview_ref: webview,
                 on_message: {
                     move |msg: String| last_message.set(msg)
@@ -110,26 +111,15 @@ fn url_demo() -> Element {
     }
 }
 
-/// A second web view rendering inline HTML that posts back to Rust.
+/// A second web view rendering opaque inline HTML without an incoming bridge.
 #[component]
 fn inline_html_demo() -> Element {
-    let last_message = RwSignal::new(String::from("(none)"));
-    let msg_style = Css::new()
-        .color(Color::hex(MUTED))
-        .font_size(px(14))
-        .margin_top(px(6));
-
     render! {
         View(style: section_style()) {
             Text(style: label_style(), value: "Inline HTML")
             WebView(
                 html: INLINE_HTML.to_string(),
-                on_message: move |msg: String| last_message.set(msg),
                 style: webview_style(),
-            )
-            Text(
-                style: msg_style,
-                value: computed(move || format!("From inline page: {}", last_message.get())),
             )
         }
     }

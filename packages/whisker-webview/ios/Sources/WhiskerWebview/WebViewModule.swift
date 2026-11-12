@@ -53,6 +53,10 @@ public final class WebViewModule: Module {
 
                 // Declaration-only metadata for the codegen / docs scanner;
                 // dispatch happens in `WhiskerWebView.swift`.
+                Prop("message-origins", clear: { (view: WhiskerWebViewView) in view.setMessageOrigins("[]") }) { (view: WhiskerWebViewView, value: WhiskerValue) in
+                    view.setMessageOrigins(value.asString ?? "[]")
+                }
+
                 Events(
                     "load_start",
                     "load",

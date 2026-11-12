@@ -91,6 +91,8 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     /// Cached `url` prop. When non-empty, takes precedence over `html`.
     private var cachedUrl: String = ""
 
+    private var bridgeOrigins: Set<String> = []
+
     private var originWhitelist: [String] = ["https://*", "http://*"]
 
     // MARK: - KVO
@@ -118,7 +120,7 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
             };
             """,
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
+            forMainFrameOnly: true
         )
         config.userContentController.addUserScript(bridgeScript)
 
@@ -236,6 +238,15 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
         originWhitelist = patterns
     }
 
+    public func setMessageOrigins(_ json: String) {
+        guard let data = json.data(using: .utf8),
+              let values = try? JSONSerialization.jsonObject(with: data) as? [String] else {
+            bridgeOrigins = []; return
+        }
+        let origins = values.compactMap(BridgeOrigins.canonical)
+        bridgeOrigins = origins.count == values.count ? Set(origins) : []
+    }
+
     // MARK: - Imperative method targets (called by WebViewModule's Function closures)
 
     private func loadInlineContent() {
@@ -277,7 +288,14 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     /// Called by `WeakScriptMessageProxy` when the page invokes
     /// `window.whisker.postMessage(...)`.
     func handleScriptMessage(_ message: WKScriptMessage) {
-        let data = message.body as? String ?? ""
+        let origin = message.frameInfo.securityOrigin
+        var components = URLComponents()
+        components.scheme = origin.protocol
+        components.host = origin.host
+        if origin.port > 0 { components.port = origin.port }
+        guard let value = components.string,
+              BridgeOrigins.permits(value, message.frameInfo.isMainFrame, bridgeOrigins),
+              let data = message.body as? String else { return }
         emitMessage(data)
     }
 
