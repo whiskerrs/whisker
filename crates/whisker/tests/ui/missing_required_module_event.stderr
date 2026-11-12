@@ -7,4 +7,5 @@ error[E0599]: no method named `build` found for struct `TestButtonPropsBuilder<f
 5 |     let _ = TestButton::builder().build();
   |                                   ^^^^^ method not found in `TestButtonPropsBuilder<false>`
   |
-  = note: the method was found for `TestButtonPropsBuilder<true>`
+  = note: the method was found for
+          - `TestButtonPropsBuilder<true>`
