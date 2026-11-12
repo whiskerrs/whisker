@@ -86,7 +86,7 @@
 //! | `user_agent`        | `Signal<String>`           | `""`                          | Custom User-Agent string. |
 //! | `javascript_enabled`| `bool`                     | `true`                        | Allow JavaScript execution. |
 //! | `scroll_enabled`    | `bool`                     | `true`                        | Allow the web content to scroll. |
-//! | `origin_whitelist`  | `Vec<String>`              | `["https://*", "http://*"]`   | Navigation origins the native side permits (glob). |
+//! | `origin_whitelist`  | `Vec<String>`              | `["https://*", "http://*"]`   | Navigation origins the native side permits (parsed origin patterns). |
 //! | `on_message`        | `Fn(String)`               | —                             | JS → Rust message (`window.whisker.postMessage`). |
 //! | `on_load_start`     | `Fn(String)`               | —                             | A navigation started; carries the URL. |
 //! | `on_load`           | `Fn(String)`               | —                             | A navigation finished; carries the URL. |
@@ -285,7 +285,7 @@ pub struct WebViewError {
 /// The default navigation origin whitelist: `["https://*", "http://*"]`.
 ///
 /// Permits any HTTPS or HTTP origin. Tighten it per-app by passing an
-/// explicit `origin_whitelist:` of glob patterns.
+/// explicit `origin_whitelist:` of parsed origin patterns.
 pub fn default_origin_whitelist() -> Vec<String> {
     vec!["https://*".to_string(), "http://*".to_string()]
 }
@@ -424,7 +424,7 @@ pub fn web_view(
     /// Allow the web content to scroll.
     #[prop(default = true)]
     scroll_enabled: bool,
-    /// Navigation origins the native side permits (glob patterns).
+    /// Navigation origins the native side permits (parsed origin patterns).
     #[prop(default = default_origin_whitelist())]
     origin_whitelist: Vec<String>,
     /// JS → Rust message (`window.whisker.postMessage`).
@@ -527,7 +527,7 @@ pub fn web_view(
 
 /// Serialize an origin whitelist to a JSON array string the native side
 /// parses, e.g. `["https://*","http://*"]`. Hand-rolled (no `serde_json`
-/// dep): each entry is escaped for `"` and `\`.
+/// dep): each entry escapes JSON string delimiters and control characters.
 fn origin_whitelist_json(origins: &[String]) -> String {
     let mut s = String::from("[");
     for (i, o) in origins.iter().enumerate() {
@@ -539,6 +539,10 @@ fn origin_whitelist_json(origins: &[String]) -> String {
             match c {
                 '"' => s.push_str("\\\""),
                 '\\' => s.push_str("\\\\"),
+                c if c <= '\u{1f}' => {
+                    use std::fmt::Write;
+                    let _ = write!(s, "\\u{:04x}", c as u32);
+                }
                 _ => s.push(c),
             }
         }
@@ -626,6 +630,14 @@ mod tests {
     fn origin_whitelist_json_empty() {
         let empty: Vec<String> = Vec::new();
         assert_eq!(origin_whitelist_json(&empty), "[]");
+    }
+
+    #[test]
+    fn origin_whitelist_json_escapes_control_characters() {
+        assert_eq!(
+            origin_whitelist_json(&["a\n\t\0".into()]),
+            r#"["a\u000a\u0009\u0000"]"#
+        );
     }
 
     #[test]

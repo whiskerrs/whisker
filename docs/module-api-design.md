@@ -488,3 +488,12 @@ and prone to drift. Pick one.
   [issue #128](https://github.com/whiskerrs/whisker/issues/128)
 - Why `Owner` (Shape 3 mechanics) and what backs lifetime →
   [`reactivity-design.md`](./reactivity-design.md)
+
+## WebView navigation origins
+
+Navigation patterns match parsed scheme, host and effective port, never URL
+query or path text. `https://*.example.com` permits subdomains on the default
+HTTPS port, excluding the apex; add a separate apex rule when needed. Explicit
+ports constrain the origin. The default broad `https://*` and `http://*` rules
+allow any valid host and port for their scheme. Empty or malformed lists reject
+navigation on both platforms, including initial and updated URL props.
