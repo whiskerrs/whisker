@@ -289,21 +289,36 @@ impl Patcher {
             LinkerOs::Macos => &["_whisker_aslr_anchor"],
             _ => &[],
         };
-        let mut link_plan = build_link_plan(
-            &captured_linker.args,
-            &objects,
-            &output_dylib,
-            self.target_os,
-            &extras,
-            extra_exports,
-        );
+        let mut link_plan = if self.target_os == LinkerOs::Windows {
+            super::msvc::build_link_plan(
+                &captured_linker.args,
+                &objects,
+                &extras,
+                &output_dylib,
+                captured_linker.envs.clone(),
+            )
+        } else {
+            build_link_plan(
+                &captured_linker.args,
+                &objects,
+                &output_dylib,
+                self.target_os,
+                &extras,
+                extra_exports,
+            )
+        };
         if self.original_cache.is_elf_executable {
             // The program's exported symbols sit ahead of the patch in
             // the loader's lookup order, so an unbound call between two
             // patched functions would land on the old code.
             link_plan.args.push("-Wl,-Bsymbolic".into());
         }
-        let new_dylib = run_link_plan(&link_plan, &self.linker_path, &self.cwd)
+        // An MSVC capture names the `link.exe` rustc itself resolved.
+        let linker = captured_linker
+            .linker
+            .as_deref()
+            .map_or(self.linker_path.as_path(), Path::new);
+        let new_dylib = run_link_plan(&link_plan, linker, &self.cwd)
             .await
             .context("link patch dylib (object + stub)")?;
 
@@ -393,6 +408,7 @@ impl Patcher {
         let exts: &[&str] = match self.target_os {
             LinkerOs::Macos => &[".dylib"],
             LinkerOs::Linux => &[".so"],
+            LinkerOs::Windows => &[".exe"],
             LinkerOs::Other => &[".dll"],
         };
         let mut best: Option<&CapturedLinkerInvocation> = None;
@@ -507,6 +523,8 @@ mod tests {
             output: Some(output.into()),
             args: vec!["-shared".into()],
             timestamp_micros: ts,
+            linker: None,
+            envs: Default::default(),
         }
     }
 

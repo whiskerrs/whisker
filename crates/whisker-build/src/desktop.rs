@@ -25,6 +25,14 @@ pub struct DesktopBuild<'a> {
     pub capture: Option<&'a CaptureShims>,
 }
 
+/// Where [`build_app`] puts a generated Windows executable.
+pub fn windows_executable(target_dir: &Path, profile: Profile, generated_package: &str) -> PathBuf {
+    target_dir
+        .join("dist")
+        .join(profile.dir_name())
+        .join(format!("{generated_package}.exe"))
+}
+
 /// Where [`build_app`] puts a generated Linux executable.
 pub fn linux_executable(target_dir: &Path, profile: Profile, generated_package: &str) -> PathBuf {
     target_dir

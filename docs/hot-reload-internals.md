@@ -77,9 +77,9 @@ wired in (`prepare_hot_reload_capture` in `lib.rs`):
   thin rebuild replays those vars so `env!("CARGO_PKG_*")` /
   `env!("OUT_DIR")` in user code still compiles under the raw
   (cargo-less) rustc spawn. Android, iOS, and macOS builds install it
-  through `RUSTC_WORKSPACE_WRAPPER`; Linux and Web, whose generated
-  Cargo Host takes the user crate as a path dependency, through
-  `RUSTC_WRAPPER`.
+  through `RUSTC_WORKSPACE_WRAPPER`; Linux, Windows and Web, whose
+  generated Cargo Host takes the user crate as a path dependency,
+  through `RUSTC_WRAPPER`.
 - `-C linker=whisker-linker-shim` — records each linker invocation's
   argv (keyed by output basename) to the linker-args cache, then
   forwards to the real linker.
@@ -132,7 +132,12 @@ runs:
    subsecond's `dlsym(patch, …)` resolves. A patch for a Linux program
    is linked `-Bsymbolic`: the program's own exports precede the patch
    in lookup order, so an unbound call between two patched functions
-   would reach the old code.
+   would reach the old code. On Windows the line is rebuilt for
+   `link.exe` (`msvc::build_link_plan`) as a DLL that keeps only the
+   system import libraries: a PE image resolves nothing against the
+   program that loads it, so every Host function comes from the stubs,
+   and so does the `__imp_` pointer through which MSVC code reads
+   another crate's `static`.
 4. **JumpTable construction** (`symbol_table` + `cache` +
    `build_jump_table`). Parse the patch dylib's symbols with the
    `object` crate, diff against the cached original, and emit a
@@ -370,7 +375,11 @@ the next save anyway.
 
 - **iOS hardware is unsupported** for Hot Reload: `mmap(PROT_WRITE |
   PROT_EXEC)` is blocked by Apple's W^X policy, so `apply_patch` can't
-  run. Targets are macOS, Linux, Android, and the iOS Simulator.
+  run. Targets are macOS, Linux, Windows, Android, and the iOS Simulator.
+- **Windows reads symbols from PDBs.** A PE image has no symbol table, so
+  the capture build links with `/EXPORT:whisker_aslr_anchor`, `/OPT:NOREF`
+  and `/INCREMENTAL:NO`, and both the program and each patch DLL are read
+  through their PDBs.
 - **Web patches WebAssembly side modules.** `whisker run web` owns the Cargo,
   wasm-bindgen, static-server, and WebSocket loop. Rust edits are compiled as
   PIC side modules and applied through subsecond's indirect function table;

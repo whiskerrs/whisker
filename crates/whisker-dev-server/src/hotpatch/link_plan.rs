@@ -84,6 +84,10 @@ pub struct LinkPlan {
     /// Surfaced separately so the runner can sanity-check existence
     /// after the spawn returns.
     pub output: PathBuf,
+    /// Environment to overlay on the linker spawn.
+    pub envs: std::collections::BTreeMap<String, String>,
+    /// When set, `args` are written here and the linker gets `@file`.
+    pub response_file: Option<PathBuf>,
 }
 
 /// Which OS-specific "unresolved-is-fine" directive to emit.
@@ -94,9 +98,10 @@ pub enum LinkerOs {
     Macos,
     /// Linux host or Android device.
     Linux,
-    /// Windows host. Unsupported: the captured args are still
-    /// stripped, but no useful directive comes out (PE/COFF
-    /// hot-patch is unimplemented).
+    /// Windows with the MSVC toolchain; its link line is built by
+    /// [`super::msvc::build_link_plan`], not [`build_link_plan`].
+    Windows,
+    /// No native patch link (Web).
     Other,
 }
 
@@ -170,7 +175,7 @@ pub fn build_link_plan(
             // flag handles the long tail.
             args.push("-Wl,--unresolved-symbols=ignore-all".into());
         }
-        LinkerOs::Other => {}
+        LinkerOs::Windows | LinkerOs::Other => {}
     }
 
     for obj in extra_objects {
@@ -185,6 +190,8 @@ pub fn build_link_plan(
     LinkPlan {
         args,
         output: output.to_path_buf(),
+        envs: Default::default(),
+        response_file: None,
     }
 }
 
@@ -239,6 +246,8 @@ pub fn linker_os_for_current_platform() -> LinkerOs {
         LinkerOs::Macos
     } else if cfg!(target_os = "linux") || cfg!(target_os = "android") {
         LinkerOs::Linux
+    } else if cfg!(target_os = "windows") {
+        LinkerOs::Windows
     } else {
         LinkerOs::Other
     }
@@ -825,6 +834,8 @@ mod tests {
             assert_eq!(os, LinkerOs::Macos);
         } else if cfg!(target_os = "linux") || cfg!(target_os = "android") {
             assert_eq!(os, LinkerOs::Linux);
+        } else if cfg!(target_os = "windows") {
+            assert_eq!(os, LinkerOs::Windows);
         } else {
             assert_eq!(os, LinkerOs::Other);
         }
