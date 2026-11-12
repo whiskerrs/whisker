@@ -2643,3 +2643,89 @@ fn stack_unmount_removes_registered_gesture_bridge() {
         );
     });
 }
+
+#[whisker::component]
+fn spread_layout_probe() -> whisker::runtime::view::Element {
+    if let Some(count) = whisker::use_context::<Rc<std::cell::Cell<usize>>>() {
+        count.set(count.get() + 1);
+    }
+    crate::render::Outlet::builder().build()
+}
+
+#[test]
+fn layout_paths_include_spread_roots_at_every_depth() {
+    use crate::render::registry::RouteFragment;
+    use crate::routes;
+
+    with_runtime(|| {
+        for count in 0..=3 {
+            let fragment = RouteFragment::new(
+                (0..count)
+                    .map(|i| RouteTree::route(format!("outer{i}"), format!("outer{i}")))
+                    .collect(),
+                RouteRegistry::new(),
+            );
+            let routes = routes! {
+                Stack {
+                    ..fragment
+                    Route(path: "before")
+                    ..fragment
+                    Route(component: SpreadLayoutProbe) {
+                        Stack {
+                            ..fragment
+                            Route(component: SpreadLayoutProbe) {
+                                Stack {
+                                    Route(path: "home")
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+            let handle = RouterHandle::new(routes);
+            let outer = NodePath(vec![2 * count + 1]);
+            let nested = outer.child(0).child(count);
+            assert!(
+                handle.layout_at(&outer).is_some(),
+                "outer layout, count={count}"
+            );
+            assert!(
+                handle.layout_at(&nested).is_some(),
+                "nested layout, count={count}"
+            );
+            assert!(
+                handle.layout_at(&NodePath(vec![count])).is_none(),
+                "ordinary route, count={count}"
+            );
+        }
+    });
+}
+
+#[test]
+fn layout_routes_after_spreads_are_mounted() {
+    use crate::routes;
+
+    with_runtime(|| {
+        let count = Rc::new(std::cell::Cell::new(0usize));
+        whisker::provide_context(count.clone());
+        let fragment = routes! {
+            Route(path: "landing")
+            Route(path: "help")
+        };
+        let handle = RouterHandle::new(routes! {
+            Stack {
+                ..fragment
+                Route(component: SpreadLayoutProbe) {
+                    Stack {
+                        Route(path: "home")
+                    }
+                }
+            }
+        });
+        whisker::provide_context(handle.clone());
+        handle.reset("/home").unwrap();
+        let _root = mount_node(&handle, NodePath::root());
+        flush();
+        assert_eq!(count.get(), 1);
+    });
+}
