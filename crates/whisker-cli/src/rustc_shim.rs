@@ -95,23 +95,42 @@ pub fn capture(rustc_args: &[String]) -> Result<CapturedRustcInvocation> {
     })
 }
 
-/// Filter a process environment down to the vars worth replaying on
-/// a thin rebuild: `CARGO` (path to cargo, read by `env!("CARGO")`),
-/// everything cargo namespaces under `CARGO_*` (`CARGO_PKG_*`,
-/// `CARGO_MANIFEST_DIR`, `CARGO_CRATE_NAME`, …), and `OUT_DIR` (the
-/// build-script output dir that `include!(concat!(env!("OUT_DIR"),
-/// …))` needs).
+/// Capture compiler metadata needed to replay a thin rebuild
 ///
-/// `CARGO_MAKEFLAGS` is excluded: it encodes jobserver file
-/// descriptors that are only open inside cargo's own process tree,
-/// and rustc warns about the dead jobserver on every spawn that
-/// replays it.
+/// Registry configuration and credentials are excluded. Jobserver descriptors
+/// are owned by Cargo's process tree and must not be replayed.
 pub fn capture_envs_from(
     vars: impl IntoIterator<Item = (String, String)>,
 ) -> std::collections::BTreeMap<String, String> {
     vars.into_iter()
-        .filter(|(k, _)| k == "CARGO" || k == "OUT_DIR" || k.starts_with("CARGO_"))
-        .filter(|(k, _)| k != "CARGO_MAKEFLAGS")
+        .filter(|(key, _)| {
+            matches!(
+                key.as_str(),
+                "CARGO"
+                    | "OUT_DIR"
+                    | "CARGO_MANIFEST_DIR"
+                    | "CARGO_MANIFEST_PATH"
+                    | "CARGO_CRATE_NAME"
+                    | "CARGO_PRIMARY_PACKAGE"
+                    | "CARGO_BIN_NAME"
+            ) || matches!(
+                key.as_str(),
+                "CARGO_PKG_NAME"
+                    | "CARGO_PKG_VERSION"
+                    | "CARGO_PKG_VERSION_MAJOR"
+                    | "CARGO_PKG_VERSION_MINOR"
+                    | "CARGO_PKG_VERSION_PATCH"
+                    | "CARGO_PKG_VERSION_PRE"
+                    | "CARGO_PKG_AUTHORS"
+                    | "CARGO_PKG_DESCRIPTION"
+                    | "CARGO_PKG_HOMEPAGE"
+                    | "CARGO_PKG_REPOSITORY"
+                    | "CARGO_PKG_LICENSE"
+                    | "CARGO_PKG_LICENSE_FILE"
+                    | "CARGO_PKG_RUST_VERSION"
+                    | "CARGO_PKG_README"
+            )
+        })
         .collect()
 }
 
@@ -255,6 +274,22 @@ mod tests {
         assert_eq!(envs["OUT_DIR"], "/ws/target/build/out");
         assert!(!envs.contains_key("PATH"));
         assert!(!envs.contains_key("RUSTC_WORKSPACE_WRAPPER"));
+    }
+
+    #[test]
+    fn capture_envs_does_not_persist_registry_secrets_or_unknown_cargo_vars() {
+        let vars = [
+            ("CARGO_REGISTRY_TOKEN", "secret"),
+            ("CARGO_REGISTRIES_PRIVATE_TOKEN", "secret"),
+            ("CARGO_REGISTRIES_PRIVATE_CREDENTIAL_PROVIDER", "secret"),
+            ("CARGO_SECRET", "secret"),
+            ("CARGO_PKG_VERSION", "1.0"),
+            ("CARGO_CRATE_NAME", "app"),
+        ];
+        let envs = capture_envs_from(vars.map(|(k, v)| (k.to_owned(), v.to_owned())));
+        assert_eq!(envs.len(), 2);
+        assert_eq!(envs["CARGO_PKG_VERSION"], "1.0");
+        assert_eq!(envs["CARGO_CRATE_NAME"], "app");
     }
 
     #[test]
