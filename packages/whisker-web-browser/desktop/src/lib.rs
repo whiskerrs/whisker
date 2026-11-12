@@ -37,6 +37,9 @@ impl WhiskerModule for WebBrowserModule {
                         "WebBrowser.openBrowser requires one URL string".into(),
                     );
                 };
+                if !is_browser_url(url) {
+                    return WhiskerValue::Error("browser URL must use HTTP or HTTPS".into());
+                }
                 if let Err(error) = open::that_detached(url) {
                     return WhiskerValue::Error(error.to_string());
                 }
@@ -64,5 +67,43 @@ mod tests {
             __whisker_module_definition().module_name(),
             Some(MODULE_NAME)
         );
+    }
+}
+
+fn is_browser_url(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once(':') else {
+        return false;
+    };
+    (scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http"))
+        && rest.starts_with("//")
+        && rest[2..]
+            .split(['/', '?', '#'])
+            .next()
+            .is_some_and(|host| !host.is_empty())
+        && !url.chars().any(|character| {
+            character.is_control() || character.is_whitespace() || character == '\\'
+        })
+}
+
+#[cfg(test)]
+mod url_policy_tests {
+    use super::is_browser_url;
+    #[test]
+    fn rejects_executable_and_local_schemes() {
+        for value in [
+            "javascript:alert(1)",
+            "file:///tmp/key",
+            "data:text/html,hello",
+            "intent://example",
+            "custom://example",
+            "https:",
+            "//example",
+            " https://example",
+            "https://example\n",
+        ] {
+            assert!(!is_browser_url(value), "{value}");
+        }
+        assert!(is_browser_url("https://example.com/path?q=1"));
+        assert!(is_browser_url("HTTP://localhost:8080/"));
     }
 }

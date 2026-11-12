@@ -87,6 +87,7 @@ class WebBrowserModule : Module() {
             val url = args.getOrNull(0)?.asString()
             val redirectUrl = args.getOrNull(1)?.asString()
             val activity = appContext.currentActivity
+            if (url != null && !BrowserUrlPolicy.accepts(url)) return@Function WhiskerValue.Err("browser URL must use HTTP or HTTPS")
             if (url != null && redirectUrl != null && activity != null) {
                 startAuthSession(activity, url, redirectUrl)
             }
@@ -101,6 +102,7 @@ class WebBrowserModule : Module() {
         Function("openBrowser") { args ->
             val url = args.getOrNull(0)?.asString()
             val activity = appContext.currentActivity
+            if (url != null && !BrowserUrlPolicy.accepts(url)) return@Function WhiskerValue.Err("browser URL must use HTTP or HTTPS")
             if (url != null && activity != null) {
                 launchCustomTab(activity, url)
             }
