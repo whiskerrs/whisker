@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Pinned `Whisker.WindowsHost` release, bumped by the release plan's `windows` stream; `0.0.0` means none is published yet.
-const WHISKER_WINDOWS_HOST_VERSION: &str = "0.1.0";
+const WHISKER_WINDOWS_HOST_VERSION: &str = "0.2.0";
 const WINDOWS_APP_SDK_VERSION: &str = "2.6.5";
 /// Must match the C++/WinRT that built `WhiskerHost.lib`, or its `detect_mismatch` check fails the link.
 const CPPWINRT_VERSION: &str = "3.0.260818.1";

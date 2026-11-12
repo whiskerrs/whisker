@@ -1,6 +1,6 @@
 [package]
 name = "whisker-image"
-version = "0.14.5"
+version = "0.14.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -38,7 +38,7 @@ linux = { manifest = "linux/Cargo.toml" }
 windows = { sources = "windows" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.17.0" }
+whisker = { path = "../../crates/whisker", version = "0.18.0" }
 # Event payloads cross as JSON bodies; `bind_typed` deserialises them.
 serde = { workspace = true, features = ["derive"] }
 base64 = { workspace = true, optional = true }

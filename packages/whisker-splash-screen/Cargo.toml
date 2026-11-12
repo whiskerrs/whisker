@@ -1,6 +1,6 @@
 [package]
 name = "whisker-splash-screen"
-version = "0.14.3"
+version = "0.14.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -38,6 +38,6 @@ bench = false
 doc = false
 
 [dependencies]
-whisker-plugin = { path = "../../crates/whisker-plugin", version = "0.17.0" }
+whisker-plugin = { path = "../../crates/whisker-plugin", version = "0.18.0" }
 serde = { workspace = true }
 anyhow = { workspace = true }

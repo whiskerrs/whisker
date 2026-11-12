@@ -1,6 +1,6 @@
 [package]
 name = "whisker-input-linux"
-version = "0.14.5"
+version = "0.14.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,6 +8,6 @@ repository.workspace = true
 description = "Linux Host implementation for whisker-input."
 
 [target.'cfg(target_os = "linux")'.dependencies]
-whisker = { path = "../../../crates/whisker", version = "0.17.0" }
-whisker-linux = { path = "../../../platforms/linux", version = "0.17.0" }
-whisker-protocol = { workspace = true }
+whisker = { path = "../../../crates/whisker", version = "0.18.0" }
+whisker-linux = { path = "../../../platforms/linux", version = "0.18.0" }
+whisker-protocol = { path = "../../../crates/whisker-protocol", version = "0.18.0" }
