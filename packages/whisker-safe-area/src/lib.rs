@@ -101,9 +101,10 @@ pub struct SafeAreaInsets {
 /// Reactive accessor for the current host view's safe-area insets.
 ///
 /// Calls within the currently entered runtime share one signal and native
-/// subscription. The initial value is [`SafeAreaInsets::default()`]; mobile
-/// Hosts push the current insets when observation starts and whenever they
-/// change. Web and desktop always expose the all-zero value.
+/// subscription. Android seeds the signal synchronously from the current
+/// window insets when available. Otherwise its initial value is
+/// [`SafeAreaInsets::default()`]; mobile Hosts push insets when observation
+/// starts and whenever they change. Web and desktop always expose the all-zero value.
 ///
 /// The `Copy` handle belongs to the Runtime cache owner, so disposing
 /// a component or route does not invalidate other readers. It must not be
@@ -147,6 +148,10 @@ fn subscribe_to_native(signal: RwSignal<SafeAreaInsets>) -> Option<ModuleSubscri
     });
     if let Some(err) = sub.error() {
         eprintln!("[whisker-safe-area] failed to subscribe: {err}");
+    }
+    #[cfg(any(target_os = "android", test))]
+    if let Some(insets) = decode_payload(module!("SafeArea").invoke("getInsets", vec![])) {
+        signal.set(insets);
     }
     Some(sub)
 }
@@ -327,6 +332,54 @@ mod tests {
         });
         drop(second_runtime);
         assert_eq!(*second_observations.borrow(), [true, false]);
+    }
+
+    #[test]
+    fn current_android_snapshot_is_visible_before_queued_events() {
+        let runtime = runtime();
+        let host = ModuleHost::new(
+            |module, method, args, is_async, result| {
+                assert_eq!(module, "whisker-safe-area:SafeArea");
+                assert_eq!(method, "getInsets");
+                assert!(args.is_empty());
+                assert!(!is_async);
+                result(payload(24.0));
+                true
+            },
+            |_, _, _| {},
+        );
+        runtime.enter(|| {
+            with_module_host(&host, || {
+                let insets = native_insets();
+                assert_eq!(insets.get().top, 24.0);
+                host.dispatch_event("whisker-safe-area:SafeArea", "insetsChanged", payload(48.0));
+                assert_eq!(insets.get().top, 48.0);
+            });
+        });
+        runtime.shutdown();
+    }
+
+    #[test]
+    fn unavailable_snapshot_waits_for_an_event_and_accepts_zero_insets() {
+        let runtime = runtime();
+        let host = ModuleHost::new(
+            |_, _, _, _, result| {
+                result(WhiskerValue::Null);
+                true
+            },
+            |_, _, _| {},
+        );
+        runtime.enter(|| {
+            with_module_host(&host, || {
+                let insets = native_insets();
+                assert_eq!(insets.get(), SafeAreaInsets::default());
+                host.dispatch_event("whisker-safe-area:SafeArea", "insetsChanged", payload(24.0));
+                assert_eq!(insets.get().top, 24.0);
+                host.dispatch_event("whisker-safe-area:SafeArea", "insetsChanged", payload(0.0));
+                assert_eq!(insets.get(), SafeAreaInsets::default());
+            });
+        });
+        runtime.shutdown();
     }
 
     #[test]
