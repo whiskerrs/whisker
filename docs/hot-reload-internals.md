@@ -105,8 +105,10 @@ On a `RustCode` change, `Patcher::build_patch(aslr_reference, crate_key)`
 runs:
 
 1. **`rustc --emit=obj`** for the changed crate, replaying its captured
-   rustc args (`thin_build::build_obj_plan` + `run_obj_plan`). This
-   yields an `.o` that still contains every `pub fn`'s mangled symbol —
+   rustc args (`thin_build::build_obj_plan` + `run_obj_plan`) with
+   `-C codegen-units=256`, so an edit re-runs LLVM only for the units
+   it touches. This yields one `.o` per codegen unit, which together
+   still contain every `pub fn`'s mangled symbol —
    object files are pre-link, so dead-code elimination and cdylib
    symbol stripping haven't run yet. (Going through cargo's `cdylib`
    path here would silently drop every mangled `pub fn`; that's why the
@@ -121,7 +123,7 @@ runs:
    also added to the link line as a `DT_NEEDED` fallback for the
    non-Text symbols the weak stubs don't cover (thread-locals, statics).
 3. **Explicit link** (`build_link_plan` + `run_link_plan`) of the thin
-   `.o` (+ stub + extras) into a patch dylib, replaying the captured
+   objects (+ stub + extras) into a patch dylib, replaying the captured
    linker args. On macOS, `_whisker_aslr_anchor` is force-exported so
    subsecond's `dlsym(patch, …)` resolves.
 4. **JumpTable construction** (`symbol_table` + `cache` +
@@ -130,7 +132,7 @@ runs:
    `subsecond_types::JumpTable` of `old_addr → new_addr` pairs.
 
 Sub-crate patches (`crate_key != user crate`) additionally rebuild the
-*user* crate's `.o` and link it in, because the user crate carries the
+*user* crate's objects and link them in, because the user crate carries the
 `whisker_aslr_anchor` symbol subsecond needs in the patch dylib's
 `.dynsym`.
 

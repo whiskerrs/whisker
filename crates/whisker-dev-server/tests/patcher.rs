@@ -132,14 +132,14 @@ fn captured_linker_for_fixture(output_dylib: &Path) -> CapturedLinkerInvocation 
 async fn build_original_via_pipeline(lib_rs: &Path, out_dir: &Path, cwd: &Path) -> PathBuf {
     let captured = captured_rustc_for_fixture(lib_rs);
     let obj_plan = build_obj_plan(&captured, out_dir);
-    let object = run_obj_plan(&obj_plan, &rustc_path(), cwd)
+    let objects = run_obj_plan(&obj_plan, &rustc_path(), cwd)
         .await
         .expect("v1 obj");
     let dylib = out_dir.join(library_filename(FIXTURE_CRATE_NAME));
     let captured_linker = captured_linker_for_fixture(&dylib);
     let link_plan = build_link_plan(
         &captured_linker.args,
-        &object,
+        &objects,
         &dylib,
         linker_os_for_current_platform(),
         &[],

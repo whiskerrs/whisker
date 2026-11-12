@@ -33,6 +33,15 @@ pub fn calculate(x: i32) -> i32 {
     x * 2
 }
 
+/// A module is its own codegen unit, so this call to `calculate`
+/// crosses a unit boundary inside the patch.
+pub mod scaling {
+    #[inline(never)]
+    pub fn calculate_twice(x: i32) -> i32 {
+        crate::calculate(crate::calculate(x))
+    }
+}
+
 // Dummy stubs for the symbols `Patcher::build_patch` exports on
 // Mach-O. The real Whisker `#[whisker::main]` macro generates these;
 // fixtures don't go through the macro, so we define them by hand to
