@@ -35,6 +35,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun dispatchDeepLink(intent: Intent) {
-        intent.dataString?.let(WhiskerAppContext::dispatchDeepLink)
+        WhiskerAppContext.dispatchDeepLink(intent, setOf({{deep_link_schemes}}))
     }
 }
