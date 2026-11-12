@@ -79,7 +79,7 @@ crossterm = { workspace = true }
 # Ctrl-C handler so the TUI can restore cursor visibility before the
 # process exits — without it, the shell ends up with a hidden cursor
 # after `^C`. Tiny crate, no async runtime.
-ctrlc = "3"
+ctrlc = { version = "3", features = ["termination"] }
 # POSIX `pipe(2)` / `dup` / `dup2` / `read` for the TUI's stderr
 # capture (`dup2` STDERR_FILENO over a pipe so every `eprintln!` from
 # `whisker_build::ui` and child subprocesses flows into the Logs

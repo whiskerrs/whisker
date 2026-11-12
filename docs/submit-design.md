@@ -120,3 +120,13 @@ specification fails there and a placement on it would never appear.
 - **Images in `store pull`.** It prints text only.
 
 Not yet covered: app preview videos and the age rating declaration.
+
+## Plaintext credential staging
+
+Signing tools receive temporary files owned by the CLI process. Files are created
+with owner-only permissions, and directories are removed on normal drop, Ctrl-C,
+SIGTERM, or a Rust panic. The CLI installs cleanup before credential workflows,
+including non-interactive builds. Cleanup stops tracked build children first and
+removes only staging directories registered by that process. SIGKILL, process
+aborts, power loss, and filesystem errors can leave protected temporary files;
+inspect the operating system temporary directory after such failures.

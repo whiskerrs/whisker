@@ -638,7 +638,7 @@ fn run_render_loop(mut tui: Tui) {
     let _ = tui.shutdown();
     if force_exit {
         whisker_build::child_guard::kill_all();
-        std::process::exit(130);
+        crate::shutdown::exit(130);
     }
 }
 
@@ -1002,27 +1002,17 @@ fn emergency_terminal_reset(original_stderr_fd: c_int) {
     let _ = disable_raw_mode();
 }
 
-fn install_terminal_cleanup_once(original_stderr_fd: c_int) {
-    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-    static INSTALLED: AtomicBool = AtomicBool::new(false);
-    static SAVED_FD: AtomicI32 = AtomicI32::new(-1);
-    SAVED_FD.store(original_stderr_fd, Ordering::Release);
-    if INSTALLED.swap(true, Ordering::AcqRel) {
-        return;
+static SAVED_TERMINAL_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+pub(crate) fn reset_terminal() {
+    let fd = SAVED_TERMINAL_FD.load(std::sync::atomic::Ordering::Acquire);
+    if fd >= 0 {
+        emergency_terminal_reset(fd);
     }
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        emergency_terminal_reset(SAVED_FD.load(Ordering::Acquire));
-        prev_hook(info);
-    }));
-    let _ = ctrlc::set_handler(|| {
-        emergency_terminal_reset(SAVED_FD.load(Ordering::Acquire));
-        // SIGTERM any in-flight build before the hard-exit skips Drop,
-        // so Ctrl-C during a build doesn't orphan cargo / gradle /
-        // xcodebuild.
-        whisker_build::child_guard::kill_all();
-        std::process::exit(130);
-    });
+}
+
+fn install_terminal_cleanup_once(original_stderr_fd: c_int) {
+    SAVED_TERMINAL_FD.store(original_stderr_fd, std::sync::atomic::Ordering::Release);
 }
 
 // ============================================================================
