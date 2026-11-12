@@ -120,3 +120,21 @@ specification fails there and a placement on it would never appear.
 - **Images in `store pull`.** It prints text only.
 
 Not yet covered: app preview videos and the age rating declaration.
+
+## Trusting credential recipients
+
+Age encryption does not authenticate the author of a credential file. Anyone who
+can change `credentials/recipients.txt` can add a decryption recipient for future
+writes, and someone who knows the public keys can replace an encrypted file.
+Review both recipient lists and encrypted credential changes. Protect
+`credentials/**` with CODEOWNERS and required code-owner review in the application's
+repository settings; a CODEOWNERS file alone does not enforce approval.
+
+Before credential wizards save data, the CLI displays added and removed public
+keys and asks for consent on first use or a changed set. Consent is scoped to the
+canonical project path in `~/.whisker/credential-recipients.json`, outside the
+repository. Deleting that local record requires confirmation again. Non-interactive
+writes require `WHISKER_CREDENTIALS_RECIPIENTS` containing the independently verified
+age public keys, separated by commas or whitespace; provide it through protected CI
+configuration rather than an unreviewed repository script. Loading a signing key
+does not prove who authored the encrypted credentials, so review remains necessary.
