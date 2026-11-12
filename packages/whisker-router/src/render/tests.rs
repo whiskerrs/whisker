@@ -2424,6 +2424,212 @@ mod replace_repro {
         });
     }
 
+    const BARRIER: whisker::css::Color = whisker::css::Color::rgba(0, 0, 0, 0.5);
+    const SHOWN: (bool, Option<&str>, Option<f32>) = (false, Some("visible"), Some(1.0));
+
+    /// Stack { home, sheet (translucent modal with a barrier), detail/:id
+    /// (opaque slide) } whose leaves are tagged like [`real_leaf_handle`].
+    fn translucent_handle() -> RouterHandle {
+        let tree = CompiledTree::new(RouteTree::Stack(vec![
+            RouteTree::route("", "home"),
+            RouteTree::route("sheet", "sheet"),
+            RouteTree::route("detail/:id", "detail"),
+        ]));
+        let mk = |id: &'static str| {
+            move |inst: &RouteInstance| {
+                let el = whisker::runtime::view::create_element(ElementTag::View);
+                let cid = inst
+                    .params
+                    .get("id")
+                    .cloned()
+                    .unwrap_or_else(|| id.to_string());
+                whisker::runtime::view::set_attribute(el, "cid", &cid);
+                el
+            }
+        };
+        let registry = RouteRegistry::new()
+            .route("home", mk("home"))
+            .route_with(
+                "sheet",
+                RouteTransition::modal().barrier(BARRIER),
+                mk("sheet"),
+            )
+            .route_with("detail", RouteTransition::slide(), mk("detail"));
+        RouterHandle::new((tree, registry))
+    }
+
+    /// The stack wrapper of the screen tagged `cid`.
+    fn wrapper_of(rec: &Rec, slot: Element, cid: &str) -> Element {
+        let content = rec.by_cid(cid).expect("screen content");
+        rec.direct_child_ancestor(slot, content)
+            .expect("stack wrapper")
+    }
+
+    /// The stack child painted directly below `wrapper`.
+    fn below(rec: &Rec, slot: Element, wrapper: Element) -> Element {
+        let children = rec.0.borrow().children[&slot].clone();
+        let index = children
+            .iter()
+            .position(|child| *child == wrapper)
+            .expect("wrapper in stack");
+        children[index - 1]
+    }
+
+    fn opacity_of(rec: &Rec, el: Element) -> f32 {
+        rec.concealment(el).2.expect("opacity applied")
+    }
+
+    #[test]
+    fn translucent_push_keeps_the_under_visible_and_fades_only_the_barrier() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = translucent_handle();
+                let slot = mount_node(&h, NodePath::root());
+                flush();
+                let home = wrapper_of(&rec, slot, "home");
+
+                h.navigate("/sheet").unwrap();
+                flush();
+                let sheet = wrapper_of(&rec, slot, "sheet");
+                let barrier = below(&rec, slot, sheet);
+                assert_ne!(barrier, home, "the barrier sits between the screens");
+                assert_eq!(opacity_of(&rec, barrier), 0.0);
+                assert_eq!(
+                    rec.0
+                        .borrow()
+                        .pointer_events
+                        .get(&barrier)
+                        .map(String::as_str),
+                    Some("none"),
+                    "taps pass through the barrier",
+                );
+
+                whisker_animation::__step_for_tests(0.0);
+                whisker_animation::__step_for_tests(100.0);
+                flush();
+                let mid = opacity_of(&rec, barrier);
+                assert!(0.0 < mid && mid < 1.0, "the barrier fades in, got {mid}");
+
+                settle_animations();
+                assert_eq!(concealment_of(&rec, home), SHOWN, "home stays visible");
+                assert_eq!(concealment_of(&rec, barrier), SHOWN);
+
+                assert!(h.back().is_ok());
+                flush();
+                whisker_animation::__step_for_tests(0.0);
+                whisker_animation::__step_for_tests(100.0);
+                flush();
+                let mid = opacity_of(&rec, barrier);
+                assert!(0.0 < mid && mid < 1.0, "the barrier fades out, got {mid}");
+
+                settle_animations();
+                let children = rec.0.borrow().children[&slot].clone();
+                assert!(
+                    !children.contains(&barrier),
+                    "the barrier leaves with its screen"
+                );
+                assert!(!children.contains(&sheet));
+                assert_eq!(concealment_of(&rec, home), SHOWN);
+            });
+        });
+    }
+
+    #[test]
+    fn opaque_push_over_a_translucent_entry_covers_everything_beneath() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = translucent_handle();
+                let slot = mount_node(&h, NodePath::root());
+                flush();
+                h.navigate("/sheet").unwrap();
+                flush();
+                settle_animations();
+                let home = wrapper_of(&rec, slot, "home");
+                let sheet = wrapper_of(&rec, slot, "sheet");
+                let barrier = below(&rec, slot, sheet);
+
+                h.navigate("/detail/1").unwrap();
+                flush();
+                whisker_animation::__step_for_tests(0.0);
+                flush();
+                assert!(!rec.concealment(home).0, "nothing is covered mid-slide");
+                assert!(!rec.concealment(sheet).0);
+
+                settle_animations();
+                assert_eq!(concealment_of(&rec, home), COVERED);
+                assert_eq!(concealment_of(&rec, sheet), COVERED);
+                assert_eq!(concealment_of(&rec, barrier).1, Some("hidden"));
+
+                assert!(h.back().is_ok());
+                flush();
+                assert!(!rec.concealment(sheet).0, "the pop reveals the sheet");
+                assert!(!rec.concealment(home).0, "and what the sheet shows");
+                settle_animations();
+                assert_eq!(concealment_of(&rec, home), SHOWN);
+                assert_eq!(concealment_of(&rec, barrier), SHOWN);
+            });
+        });
+    }
+
+    #[test]
+    fn back_gesture_over_a_translucent_top_neither_dims_nor_re_covers() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = translucent_handle();
+                let slot = mount_node(&h, NodePath::root());
+                flush();
+                h.navigate("/sheet").unwrap();
+                flush();
+                settle_animations();
+                let home = wrapper_of(&rec, slot, "home");
+                let sheet = wrapper_of(&rec, slot, "sheet");
+                let barrier = below(&rec, slot, sheet);
+                let dim = below(&rec, slot, barrier);
+
+                let bridge = crate::render::platform_navigation::begin_with_mode(
+                    &h,
+                    crate::render::transition::PoseMode::Predictive(SwipeEdge::Left),
+                )
+                .expect("sheet can reveal home");
+                scrub(&bridge, 0.4);
+                flush();
+                assert_eq!(opacity_of(&rec, dim), 0.0, "the barrier already dims");
+                assert_eq!(opacity_of(&rec, barrier), 1.0, "held during the preview");
+
+                settle(&h, &bridge, /* commit = */ false, None);
+                settle_animations();
+                assert_eq!(concealment_of(&rec, home), SHOWN);
+                assert_eq!(concealment_of(&rec, barrier), SHOWN);
+            });
+        });
+    }
+
+    #[test]
+    fn replacing_an_opaque_top_with_a_translucent_one_reveals_the_entry_beneath() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = translucent_handle();
+                let slot = mount_node(&h, NodePath::root());
+                flush();
+                h.navigate("/detail/1").unwrap();
+                flush();
+                settle_animations();
+                let home = wrapper_of(&rec, slot, "home");
+                assert_eq!(concealment_of(&rec, home), COVERED, "precondition");
+
+                h.replace("/sheet").unwrap();
+                flush();
+                assert!(!rec.concealment(home).0, "revealed as the sheet slides in");
+                settle_animations();
+                assert_eq!(concealment_of(&rec, home), SHOWN);
+            });
+        });
+    }
+
     /// Two-tab `Switch`; the NON-first branch's leaf renders a
     /// `create_element_by_name` element (standing in for a
     /// `module_element` / `whisker-svg` `SvgRenderer`, i.e. what

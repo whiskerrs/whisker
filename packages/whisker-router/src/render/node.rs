@@ -274,6 +274,9 @@ struct StackWrapper {
     fingerprint: RouteState,
     /// The wrapper element (carries the transition transform).
     wrapper: Element,
+    /// The [`RouteTransition::barrier_color`] scrim, kept directly below
+    /// `wrapper` in paint order and outside its transform.
+    barrier: Option<Element>,
     /// Presentation/lifetime owner for the wrapper, pose effect, and nested
     /// content owner. It remains active until the whole entry is disposed.
     owner: Owner,
@@ -429,9 +432,9 @@ fn reconcile_stack(
                         // child owner, and therefore still animates in lockstep.
                         under.content_owner.pause();
                         set_pose(under, &drive, Role::Under, Direction::Push);
-                        cover_on_push_finish(under, &drive);
                     }
                 }
+                cover_on_finish(&w, live, idx, &drive);
                 if w.transition.is_instant() {
                     drive.set_value(1.0);
                 } else {
@@ -529,6 +532,7 @@ fn reconcile_stack(
                 .set(PoseMode::Transition(w.transition.clone(), Direction::Push));
             live.borrow_mut().insert(top_idx, w);
 
+            cover_on_finish(&live.borrow()[top_idx], live, top_idx, &drive);
             if instant {
                 drive.set_value(1.0);
                 dispose_wrapper(slot, old);
@@ -540,6 +544,7 @@ fn reconcile_stack(
                 // logically gone the moment the replace starts, so it must
                 // never linger and cover the revealed screen.
                 let old_wrapper = old.wrapper;
+                let old_barrier = old.barrier;
                 let old_owner = old.owner;
                 let done = Rc::new(RefCell::new(false));
                 drive.on_finish(move |_finished| {
@@ -547,7 +552,7 @@ fn reconcile_stack(
                         return;
                     }
                     *done.borrow_mut() = true;
-                    remove_child(slot, old_wrapper);
+                    detach(slot, old_barrier, old_wrapper);
                     old_owner.dispose();
                 });
                 drive.forward();
@@ -556,14 +561,19 @@ fn reconcile_stack(
     }
 
     // ----- Settle the steady state: the top is active (its own ctrl,
-    // Role::Top), lower entries are frozen fully-covered. We skip any
-    // wrapper whose currently-assigned pose controller is still animating
-    // so an in-flight push/pop (whose wrappers were pointed at the driving
-    // ctrl) is not clobbered mid-flight.
+    // Role::Top), lower entries are frozen, and those beneath an opaque
+    // entry are covered. We skip any wrapper whose currently-assigned pose
+    // controller is still animating so an in-flight push/pop (whose wrappers
+    // were pointed at the driving ctrl) is not clobbered mid-flight.
     {
         let l = live.borrow();
         let top = l.len().saturating_sub(1);
         let preparing_push = l.iter().any(|w| w.pending_push.get());
+        // Entries become covered only once the top's transition finishes
+        // (`cover_on_finish`), never while it is still sliding over them.
+        let top_moving = preparing_push
+            || l.get(top)
+                .is_some_and(|w| w.pose_ctrl.get_untracked().is_animating());
         for (i, w) in l.iter().enumerate() {
             let pose_animating = preparing_push || w.pose_ctrl.get_untracked().is_animating();
             if i == top {
@@ -577,9 +587,12 @@ fn reconcile_stack(
             } else {
                 w.content_owner.pause();
                 if !pose_animating {
-                    // A buried entry not part of an in-flight transition:
-                    // freeze its presentation fully covered.
-                    w.covered.set(true);
+                    // A lower entry not part of an in-flight transition:
+                    // freeze its presentation at rest.
+                    let buried = buried(&l, i, top);
+                    if !buried || !top_moving {
+                        w.covered.set(buried);
+                    }
                     w.ctrl.set_value(1.0);
                     set_pose(w, &w.ctrl.clone(), Role::Under, Direction::Push);
                 }
@@ -603,7 +616,7 @@ fn reconcile_stack(
         let l = live.borrow();
         if let Some(top_w) = l.last() {
             insert_child_at(slot, dim, usize::MAX);
-            insert_child_at(slot, top_w.wrapper, usize::MAX);
+            raise(slot, top_w.barrier, top_w.wrapper);
         }
     }
 
@@ -616,8 +629,16 @@ fn reconcile_stack(
         ctrl: w.pose_ctrl,
         role: w.pose_role,
         mode: w.pose_mode,
-        covered: w.covered,
     };
+    // The entries a back from the top would show: the under one, then down
+    // through every translucent entry.
+    let mut back_reveals = Vec::new();
+    for w in l[..top].iter().rev() {
+        back_reveals.push(w.covered);
+        if w.transition.opaque() {
+            break;
+        }
+    }
     let bridge = crate::render::handle::StackBridge {
         owner: Owner::current().expect("stack reconcile owner"),
         registration: None,
@@ -632,6 +653,8 @@ fn reconcile_stack(
         #[cfg(test)]
         under_wrapper: under_w.map(|w| w.wrapper),
         dim_drive: Some(dim_drive),
+        top_opaque: top_w.is_none_or(|w| w.transition.opaque()),
+        back_reveals,
         can_back: l.len() > 1,
     };
     handle.set_stack_bridge(path.clone(), bridge);
@@ -672,6 +695,7 @@ fn run_pop(
     // is the scrubbed value, so the slide-out continues from the finger.
     set_pose(&popped, &drive, Role::Top, Direction::Pop);
 
+    let survivor_index = live.borrow().len().checked_sub(1);
     let survivor_handle = {
         let l = live.borrow();
         l.last().map(|w| {
@@ -682,6 +706,7 @@ fn run_pop(
             set_pose(w, &drive, Role::Under, Direction::Pop);
             SurvivorHandle {
                 wrapper: w.wrapper,
+                barrier: w.barrier,
                 ctrl: w.ctrl.clone(),
                 pose_ctrl: w.pose_ctrl,
                 pose_role: w.pose_role,
@@ -695,16 +720,21 @@ fn run_pop(
         // No animation: drop immediately and settle the survivor.
         dispose_wrapper(slot, popped);
         settle_survivor(slot, dim, survivor_handle.as_ref());
+        if let Some(idx) = survivor_index {
+            cover_buried(&live.borrow(), idx);
+        }
         return;
     }
 
     // The leaving card slides off ON TOP of the revealed survivor, so it
     // must paint above it. Move the popped wrapper to
     // the end (topmost) for the duration of the slide-out.
-    insert_child_at(slot, popped.wrapper, usize::MAX);
+    raise(slot, popped.barrier, popped.wrapper);
 
     let popped_wrapper = popped.wrapper;
+    let popped_barrier = popped.barrier;
     let popped_owner = popped.owner;
+    let live = live.clone();
     let done = Rc::new(RefCell::new(false));
     drive.on_finish(move |finished| {
         if !finished || *done.borrow() {
@@ -712,18 +742,22 @@ fn run_pop(
         }
         *done.borrow_mut() = true;
         // Unmount the popped entry (ONLY here — never mid-animation).
-        remove_child(slot, popped_wrapper);
+        detach(slot, popped_barrier, popped_wrapper);
         popped_owner.dispose();
         // Re-settle the revealed survivor onto its own controller at the
         // active (Role::Top / 1.0 = translateX 0%) pose so no parallax
         // residue remains.
         settle_survivor(slot, dim, survivor_handle.as_ref());
+        if let (Some(idx), Ok(l)) = (survivor_index, live.try_borrow()) {
+            cover_buried(&l, idx);
+        }
     });
     drive.reverse();
 }
 
 struct SurvivorHandle {
     wrapper: Element,
+    barrier: Option<Element>,
     ctrl: AnimationController,
     pose_ctrl: whisker::RwSignal<AnimationController>,
     pose_role: whisker::RwSignal<Role>,
@@ -747,7 +781,7 @@ fn settle_survivor(slot: Element, dim: Element, survivor: Option<&SurvivorHandle
     ));
 
     insert_child_at(slot, dim, usize::MAX);
-    insert_child_at(slot, survivor.wrapper, usize::MAX);
+    raise(slot, survivor.barrier, survivor.wrapper);
 }
 
 /// Build a wrapper for `entry` at history index `idx`: choose its
@@ -832,6 +866,22 @@ fn mount_wrapper(
             pose_mode,
         )
     });
+    let barrier = transition.barrier_color().map(|color| {
+        owner.with(|| {
+            let barrier = create_element(ElementTag::View);
+            let opacity = computed(move || {
+                let c = pose_ctrl.get();
+                transition::barrier_opacity(&pose_mode.get(), pose_role.get(), c.value().get())
+            });
+            effect(move || {
+                apply_style(barrier, barrier_style(color, opacity.get(), covered.get()))
+            });
+            barrier
+        })
+    });
+    if let Some(barrier) = barrier {
+        append_child(slot, barrier);
+    }
     append_child(slot, wrapper);
 
     StackWrapper {
@@ -839,6 +889,7 @@ fn mount_wrapper(
         child: entry.child.clone(),
         fingerprint: entry.state.clone(),
         wrapper,
+        barrier,
         owner,
         content_owner,
         pending_push: Rc::new(Cell::new(false)),
@@ -873,17 +924,59 @@ fn start_push_after_frame(w: &StackWrapper) {
     }
 }
 
-/// Cover `under` on `drive`'s first completion unless a pop interrupted the push.
-fn cover_on_push_finish(under: &StackWrapper, drive: &AnimationController) {
-    let covered = under.covered;
+/// Cover what the opaque `top` at `idx` buries on `drive`'s first completion,
+/// unless a pop interrupted the transition.
+fn cover_on_finish(
+    top: &StackWrapper,
+    live: &Rc<RefCell<Vec<StackWrapper>>>,
+    idx: usize,
+    drive: &AnimationController,
+) {
+    if !top.transition.opaque() {
+        return;
+    }
+    let live = live.clone();
     let done = Rc::new(Cell::new(false));
-    under.owner.with(|| {
+    top.owner.with(|| {
         drive.on_finish(move |finished| {
             if !done.replace(true) && finished {
-                covered.set(true);
+                if let Ok(l) = live.try_borrow() {
+                    cover_buried(&l, idx);
+                }
             }
         });
     });
+}
+
+/// Cover every entry below `idx` that an opaque entry up to `idx` hides.
+fn cover_buried(l: &[StackWrapper], idx: usize) {
+    for i in 0..idx.min(l.len()) {
+        if buried(l, i, idx) {
+            l[i].covered.set(true);
+        }
+    }
+}
+
+/// Whether an opaque entry in `i + 1..=top` hides entry `i`.
+fn buried(l: &[StackWrapper], i: usize, top: usize) -> bool {
+    l.get(i + 1..=top)
+        .is_some_and(|above| above.iter().any(|w| w.transition.opaque()))
+}
+
+/// Move an entry to the top of the stack's paint order, its barrier first.
+fn raise(slot: Element, barrier: Option<Element>, wrapper: Element) {
+    if let Some(barrier) = barrier {
+        insert_child_at(slot, barrier, usize::MAX);
+    }
+    insert_child_at(slot, wrapper, usize::MAX);
+}
+
+/// Remove an entry's barrier and wrapper from the stack.
+fn detach(slot: Element, barrier: Option<Element>, wrapper: Element) {
+    if let Some(barrier) = barrier {
+        remove_child(slot, barrier);
+    }
+    remove_child(slot, wrapper);
 }
 
 /// Point `w`'s pose at controller `c` playing `role` in `direction`, in the
@@ -897,7 +990,7 @@ fn set_pose(w: &StackWrapper, c: &AnimationController, role: Role, direction: Di
 
 /// Tear down a popped wrapper immediately (no animation).
 fn dispose_wrapper(slot: Element, w: StackWrapper) {
-    remove_child(slot, w.wrapper);
+    detach(slot, w.barrier, w.wrapper);
     w.owner.dispose();
 }
 
@@ -927,6 +1020,24 @@ fn wrapper_style(pose: &Pose, covered: bool) -> Css {
         style.visibility(Visibility::Hidden).opacity(0.0)
     } else {
         style.visibility(Visibility::Visible).opacity(pose.opacity)
+    }
+}
+
+/// Style for an entry's barrier: a fill of `color` at `opacity`, hidden
+/// with its covered entry. `pointer-events: none` leaves taps to the screens.
+fn barrier_style(color: Color, opacity: f32, covered: bool) -> Css {
+    let style = Css::new()
+        .position(PositionKind::Absolute)
+        .left(px(0))
+        .top(px(0))
+        .right(px(0))
+        .bottom(px(0))
+        .background_color(color)
+        .pointer_events(PointerEvents::None);
+    if covered {
+        style.visibility(Visibility::Hidden).opacity(0.0)
+    } else {
+        style.visibility(Visibility::Visible).opacity(opacity)
     }
 }
 

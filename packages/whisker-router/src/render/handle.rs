@@ -68,8 +68,6 @@ pub(crate) struct PoseBinding {
     /// back gesture flips this to `Predictive(edge)` for the drag, then
     /// the settle/cancel restores the route transition.
     pub mode: RwSignal<crate::render::transition::PoseMode>,
-    /// Whether the wrapper is hidden as fully covered.
-    pub covered: RwSignal<bool>,
 }
 
 /// A live bridge a rendered [`Stack`](crate::render::Stack) registers so
@@ -105,6 +103,11 @@ pub(crate) struct StackBridge {
     /// run. A back gesture sets this to the top controller on `begin` and
     /// clears it (`None` → dim 0) when the settle finishes.
     pub dim_drive: Option<RwSignal<Option<AnimationController>>>,
+    /// Whether the top's transition is opaque. A translucent top already
+    /// shows the screens beneath it, so a back neither dims nor re-covers them.
+    pub top_opaque: bool,
+    /// The covered flags of the entries a back from the top reveals.
+    pub back_reveals: Vec<RwSignal<bool>>,
     /// Whether this stack currently has something to pop.
     pub can_back: bool,
 }

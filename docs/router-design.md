@@ -444,6 +444,23 @@ swipe-to-dismiss), not the stack semantics. Placing modals as direct
 children of the **root stack** (above the tabs layout) matches iOS, where
 a modal covers the whole window including the tab bar.
 
+Once a transition settles, the stack hides the screens beneath an
+**opaque** route from paint and accessibility. A sheet or dialog whose
+screen leaves part of the window uncovered marks its transition
+translucent, so the screens beneath stay visible (cf. Flutter's
+`PageRoute.opaque`). `barrier(color)` additionally paints a scrim between
+the route and the screens beneath; it fades with the transition progress
+instead of moving with the screen (cf. `ModalRoute.barrierColor`):
+
+```rust
+Route(path: "plans", component: Plans,
+      transition: RouteTransition::modal().barrier(Color::rgba(0, 0, 0, 0.54)))
+```
+
+The barrier ignores pointer input, so the screen itself decides what a tap
+on its uncovered area does. A back gesture over a translucent route skips
+the Material backdrop dim, which the barrier already provides.
+
 `dismissTo(href)` from Expo/React Navigation (dismiss the modal stack
 until a target) is just **`pop_to`** in this model, because a modal is an
 ordinary stack route. No separate dismissal API is needed.
