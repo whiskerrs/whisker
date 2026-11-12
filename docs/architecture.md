@@ -346,3 +346,9 @@ For focused explanations, continue with [reactivity](reactivity-design.md),
 [lists](list-design.md), [routing](router-design.md), or
 [animation](animation-design.md). These documents describe the current design;
 issues, PRs, and Git history preserve the discussions behind it.
+
+## Gradle wrapper integrity
+
+The generated wrapper pins `distributionSha256Sum` to Gradle's official checksum
+for the selected binary ZIP. Update the URL and checksum together when deliberately
+changing Gradle versions. The wrapper verifies downloaded distributions before use.
