@@ -568,6 +568,15 @@ impl ScrollView {
         self
     }
 
+    /// Shows or hides the platform scroll indicator (shown by default).
+    pub fn show_scroll_indicator<V>(self, v: V) -> Self
+    where
+        V: ::std::convert::Into<Signal<bool>>,
+    {
+        apply_attr_bool(self.handle, "show-scroll-indicator", v);
+        self
+    }
+
     // ---- scroll events (CustomEvent → bind only) ----------------
 
     /// `scroll` — fired continuously while scrolling. The

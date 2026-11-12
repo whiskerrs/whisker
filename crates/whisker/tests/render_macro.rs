@@ -390,12 +390,14 @@ fn built_in_control_options_route_to_typed_setters() {
             ScrollView(
                 axis: ScrollAxis::Horizontal,
                 scroll_enabled: false,
+                show_scroll_indicator: false,
                 snap: ScrollSnap::center(),
             )
         };
         let ops = log.borrow();
         assert!(has(&ops, "scroll-orientation", "horizontal"), "got {ops:?}");
         assert!(has(&ops, "enable-scroll", "false"), "got {ops:?}");
+        assert!(has(&ops, "show-scroll-indicator", "false"), "got {ops:?}");
         assert!(ops.contains(&Op::SetObject {
             id: 0,
             key: "item-snap".into()

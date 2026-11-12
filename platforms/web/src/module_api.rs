@@ -371,6 +371,23 @@ impl WhiskerModule for BuiltInElementModule {
             set_scroll_orientation(element, &WhiskerValue::String(orientation))
         }
 
+        fn set_scroll_indicator_visible(
+            element: &web_sys::Element,
+            value: &WhiskerValue,
+        ) -> Result<(), wasm_bindgen::JsValue> {
+            let WhiskerValue::Bool(visible) = value else {
+                return Err(wasm_bindgen::JsValue::from_str(
+                    "show-scroll-indicator must be a boolean",
+                ));
+            };
+            crate::set_style(
+                element,
+                "scrollbar-width",
+                if *visible { "auto" } else { "none" },
+            )
+            .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))
+        }
+
         fn set_item_snap(
             element: &web_sys::Element,
             value: &WhiskerValue,
@@ -552,6 +569,11 @@ impl WhiskerModule for BuiltInElementModule {
                         "enable-scroll",
                         |element, value| set_scroll_enabled(element, value),
                         |element| set_scroll_enabled(element, &WhiskerValue::Bool(true)),
+                    )
+                    .prop(
+                        "show-scroll-indicator",
+                        |element, value| set_scroll_indicator_visible(element, value),
+                        |element| set_scroll_indicator_visible(element, &WhiskerValue::Bool(true)),
                     )
                     .command("scrollTo", |element, value| scroll(element, value, false))
                     .command("scrollBy", |element, value| scroll(element, value, true))
