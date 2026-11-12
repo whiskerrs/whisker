@@ -10,8 +10,10 @@
 //! - **Android**: `ImageView` + [Coil](https://coil-kt.github.io/coil/)
 //!   for URL fetching, `LruCache`, and disk cache.
 //! - **Web**: a native `<img>` element and the browser HTTP cache.
-//! - **Desktop**: background URL/file decoding into a GPU-uploaded raster,
-//!   backed by a shared bounded decoded-image cache.
+//! - **macOS**: `NSImageView` + Kingfisher, sharing the iOS sources.
+//! - **Linux**: background decoding through the `loader` module, backed by a shared
+//!   bounded decoded-image cache.
+//! - **Windows**: WinHTTP fetching, WIC decoding, and Direct2D drawing.
 //!
 //! URL loading and caching live in this module rather than the renderer
 //! kernel, keeping the built-in Host surface small and making image policy
@@ -43,8 +45,8 @@
 //!   defaults to [`ImageMode::AspectFill`].
 //! - `headers` — extra request headers for remote sources, as a JSON
 //!   object. Hot-link protection is what this is for: those hosts 403
-//!   without the `Referer` their own pages send. Android, iOS, and Desktop
-//!   apply these headers; the initial Web Host supports ordinary browser image
+//!   without the `Referer` their own pages send. Android, iOS, macOS, Linux, and
+//!   Windows apply these headers; the initial Web Host supports ordinary browser image
 //!   requests but reports an error for non-empty custom headers.
 //! - `style` — structured Whisker CSS declarations. Width / height must be
 //!   set on the element (or via flex sizing) — Kingfisher / Coil
@@ -64,6 +66,9 @@
 
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
+
+#[cfg(feature = "loader")]
+pub mod loader;
 
 /// Content-fit mode for an [`Image`]. The variant names mirror the
 /// camelCase wire strings the iOS and Android image-view modules

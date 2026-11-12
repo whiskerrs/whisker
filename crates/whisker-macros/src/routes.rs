@@ -379,7 +379,7 @@ pub fn expand(routes: Routes) -> TokenStream {
     };
 
     let mut switch_n = 0usize;
-    let mut layouts: Vec<(Vec<usize>, Path)> = Vec::new();
+    let mut layouts: Vec<(Vec<TokenStream>, Path)> = Vec::new();
 
     if is_rooted {
         let root_tree = node_to_tree(&routes.roots[0], &[], &mut switch_n, &mut layouts);
@@ -411,7 +411,7 @@ pub fn expand(routes: Routes) -> TokenStream {
 }
 
 /// Emit the `LayoutRegistry` `.with(path, layout)` inserts.
-fn layout_inserts(layouts: &[(Vec<usize>, Path)]) -> Vec<TokenStream> {
+fn layout_inserts(layouts: &[(Vec<TokenStream>, Path)]) -> Vec<TokenStream> {
     layouts
         .iter()
         .map(|(path, comp)| {
@@ -572,9 +572,9 @@ fn path_key(path: &Path) -> String {
 /// Emit the `RouteTree` for `node`.
 fn node_to_tree(
     node: &Node,
-    path: &[usize],
+    path: &[TokenStream],
     switch_n: &mut usize,
-    layouts: &mut Vec<(Vec<usize>, Path)>,
+    layouts: &mut Vec<(Vec<TokenStream>, Path)>,
 ) -> TokenStream {
     match node {
         Node::Route {
@@ -715,34 +715,39 @@ fn kw_anchor(kw: &Ident) -> TokenStream {
 /// Emit a `Vec<RouteTree>` expression for a container's `children`.
 fn children_vec_tokens(
     children: &[Node],
-    path: &[usize],
+    path: &[TokenStream],
     switch_n: &mut usize,
-    layouts: &mut Vec<(Vec<usize>, Path)>,
+    layouts: &mut Vec<(Vec<TokenStream>, Path)>,
 ) -> TokenStream {
     let has_spread = children.iter().any(|c| matches!(c, Node::Spread(_)));
     if !has_spread {
         let kids = children.iter().enumerate().map(|(i, c)| {
             let mut child = path.to_vec();
-            child.push(i);
+            child.push(quote! { #i });
             node_to_tree(c, &child, switch_n, layouts)
         });
         return quote! { ::std::vec![ #(#kids),* ] };
     }
     let mut stmts: Vec<TokenStream> = Vec::new();
-    let mut lit_index = 0usize;
+    let mut index = quote! { 0usize };
     for c in children {
         match c {
-            Node::Spread(expr) => stmts.push(quote! {
-                __kids.extend(
-                    ::whisker_router::render::RouteFragment::roots(&(#expr))
-                        .iter()
-                        .cloned(),
-                );
-            }),
+            Node::Spread(expr) => {
+                stmts.push(quote! {
+                    __kids.extend(
+                        ::whisker_router::render::RouteFragment::roots(&(#expr))
+                            .iter()
+                            .cloned(),
+                    );
+                });
+                index = quote! {
+                    (#index + ::whisker_router::render::RouteFragment::roots(&(#expr)).len())
+                };
+            }
             other => {
                 let mut child = path.to_vec();
-                child.push(lit_index);
-                lit_index += 1;
+                child.push(index.clone());
+                index = quote! { (#index + 1usize) };
                 let t = node_to_tree(other, &child, switch_n, layouts);
                 stmts.push(quote! { __kids.push(#t); });
             }

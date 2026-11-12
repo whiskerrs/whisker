@@ -3,12 +3,12 @@ import PackageDescription
 
 let package = Package(
     name: "whisker-web-browser",
-    platforms: [.iOS(.v13), .macOS(.v13)],
+    platforms: [.iOS(.v13), .macOS(.v14)],
     products: [
         .library(name: "WhiskerWebBrowser", targets: ["WhiskerWebBrowser"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.19"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.21"),
     ],
     targets: [
         .target(

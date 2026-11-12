@@ -38,6 +38,10 @@ pub mod discovery;
 #[cfg(feature = "generate")]
 mod fingerprint;
 #[cfg(feature = "generate")]
+mod git_source;
+#[cfg(feature = "generate")]
+pub use git_source::GitSource;
+#[cfg(feature = "generate")]
 mod host_sdk;
 #[cfg(feature = "generate")]
 pub mod ios;
@@ -90,6 +94,8 @@ pub struct RustElementModuleInput {
     pub package: String,
     /// Absolute platform-neutral module crate directory.
     pub crate_path: std::path::PathBuf,
+    /// Git source of the element crate, which is otherwise linked by path.
+    pub git: Option<GitSource>,
     /// Cargo package name of the target Host library.
     pub host_package: String,
     /// Cargo source of the target Host library.
@@ -104,6 +110,8 @@ pub enum RustHostDependency {
     Path(std::path::PathBuf),
     /// Separately published Host package at the common module's version.
     Registry { version: String },
+    /// Package in the same git repository as its module crate.
+    Git(GitSource),
 }
 
 #[cfg(feature = "generate")]
@@ -118,12 +126,17 @@ fn rust_element_module_dependencies(modules: &[RustElementModuleInput]) -> Strin
                 RustHostDependency::Registry { version } => {
                     format!("version = {:?}", format!("={version}"))
                 }
+                RustHostDependency::Git(git) => git.dependency_fields(),
+            };
+            let crate_dependency = match &module.git {
+                Some(git) => git.dependency_fields(),
+                None => format!("path = {:?}", module.crate_path.display().to_string()),
             };
             format!(
-                "{} = {{ package = {:?}, path = {:?}, default-features = false }}\n{} = {{ package = {:?}, {} }}",
+                "{} = {{ package = {:?}, {}, default-features = false }}\n{} = {{ package = {:?}, {} }}",
                 module.package,
                 module.package,
-                module.crate_path.display().to_string(),
+                crate_dependency,
                 module.host_package,
                 module.host_package,
                 host_dependency,
@@ -170,6 +183,7 @@ mod rust_host_dependency_tests {
         let dependencies = rust_element_module_dependencies(&[RustElementModuleInput {
             package: "whisker-example".into(),
             crate_path: "/cargo/registry/whisker-example-1.2.3".into(),
+            git: None,
             host_package: "whisker-example-web".into(),
             host_dependency: RustHostDependency::Registry {
                 version: "1.2.3".into(),

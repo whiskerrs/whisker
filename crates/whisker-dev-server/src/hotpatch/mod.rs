@@ -13,6 +13,7 @@ pub mod android_ndk;
 pub mod cache;
 pub mod jump_table;
 pub mod link_plan;
+pub mod msvc;
 pub mod patcher;
 pub mod runner;
 pub mod shim_paths;
@@ -35,7 +36,7 @@ pub use stub_object::{
     create_undefined_symbol_stub,
 };
 pub use symbol_table::{SymbolInfo, SymbolTable, parse_symbol_table};
-pub use thin_build::{ObjBuildPlan, build_obj_plan, library_filename, object_filename};
+pub use thin_build::{ObjBuildPlan, build_obj_plan, library_filename};
 pub use validate::{ensure_target_supported, extract_target_triple, validate_environment};
 pub use wasm_patch::{
     HotpatchModuleCache as WasmHotpatchModuleCache, create_wasm_jump_table,

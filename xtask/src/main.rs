@@ -46,7 +46,7 @@ fn main() -> Result<()> {
             windows_host_pack(&workspace_root()?, version, arguments.collect())
         }
         _ => bail!(
-            "usage: cargo xtask host-conformance <desktop|web|android|ios|macos|linux|windows>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <desktop|web>\n       cargo xtask windows-host-pack <version> [x64] [ARM64]\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
+            "usage: cargo xtask host-conformance <web|android|ios|macos|linux|windows>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios|macos>\n       cargo xtask packaged-check <android|ios>\n       cargo xtask rust-host-link-test <linux|web>\n       cargo xtask windows-host-pack <version> [x64] [ARM64]\n       cargo xtask release <prepare|plan|publish|native-check|native-stamp|native-tag>"
         ),
     }
 }
@@ -54,13 +54,6 @@ fn main() -> Result<()> {
 fn host_conformance(host: &str) -> Result<()> {
     let root = workspace_root()?;
     match host {
-        "desktop" => run(Command::new(cargo()).current_dir(&root).args([
-            "test",
-            "-p",
-            "whisker-desktop",
-            "--features",
-            "host-conformance",
-        ])),
         "web" => web(&root),
         "android" => android(&root),
         "ios" => ios(&root),
@@ -80,9 +73,7 @@ fn host_conformance(host: &str) -> Result<()> {
             ]))
         }
         "windows" => windows(&root),
-        _ => bail!(
-            "unknown Host {host:?}; expected desktop, web, android, ios, macos, linux, or windows"
-        ),
+        _ => bail!("unknown Host {host:?}; expected web, android, ios, macos, linux, or windows"),
     }
 }
 

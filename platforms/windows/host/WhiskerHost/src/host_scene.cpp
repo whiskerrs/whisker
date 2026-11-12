@@ -14,6 +14,7 @@
 #include <winrt/Windows.Graphics.h>
 #include <winrt/Windows.Foundation.Numerics.h>
 #include <winrt/Windows.UI.h>
+#include <winrt/Microsoft.UI.Input.h>
 
 namespace whisker {
 
@@ -34,6 +35,38 @@ winrt::Windows::UI::Color ToColor(const WhiskerMobileColor& color) {
   auto c = ToD2DColor(color);
   auto byte = [](float v) { return static_cast<uint8_t>(std::lround(v * 255.0f)); };
   return {byte(c.a), byte(c.r), byte(c.g), byte(c.b)};
+}
+
+TextStyle ViewTextStyle(const WhiskerMobileText& text) {
+  TextStyle style;
+  for (size_t i = 0; i < text.font_family_count; ++i) {
+    style.font_families.emplace_back(View(text.font_families[i]));
+  }
+  style.font_size = text.font_size;
+  style.font_weight = text.font_weight;
+  style.italic = text.font_style != 0;
+  if (text.line_height > 0) style.line_height = text.line_height;
+  style.letter_spacing = text.letter_spacing;
+  style.color = ToD2DColor(text.color);
+  bool rtl = text.direction == 2;
+  style.direction = rtl ? TextDirection::Rtl : TextDirection::Ltr;
+  switch (text.alignment) {
+    case 1:
+      style.alignment = TextAlignment::End;
+      break;
+    case 2:
+      style.alignment = rtl ? TextAlignment::End : TextAlignment::Start;
+      break;
+    case 3:
+      style.alignment = rtl ? TextAlignment::Start : TextAlignment::End;
+      break;
+    case 4:
+      style.alignment = TextAlignment::Center;
+      break;
+    default:
+      break;
+  }
+  return style;
 }
 
 // Composition may ask for the geometry in its own factory, so it is rebuilt on demand.
@@ -97,6 +130,10 @@ bool HostScene::Bootstrap(const WhiskerMobileBootstrap& bootstrap) {
     for (size_t p = 0; p < raw.property_count; ++p) {
       element.properties.emplace(raw.properties[p].id, std::string(View(raw.properties[p].name)));
     }
+    for (size_t c = 0; c < raw.command_count; ++c) {
+      element.commands.emplace(raw.commands[c].id, std::string(View(raw.commands[c].name)));
+    }
+    element.view = FindModuleView(View(raw.name));
     for (size_t e = 0; e < raw.event_count; ++e) {
       auto id = raw.events[e].id;
       if (View(raw.events[e].name) == "scroll" && id >= 1 && id <= 64) {
@@ -116,12 +153,22 @@ HostScene::HostScene(comp::ContainerVisual root, const TextEngine& text,
       text_(text),
       resources_(resources) {}
 
+void HostScene::SetFrameRequester(std::function<void()> request_frame) {
+  request_frame_ = std::move(request_frame);
+}
+
+void HostScene::SetParentIsland(
+    std::function<winrt::Microsoft::UI::Content::ContentIsland()> parent) {
+  parent_island_ = std::move(parent);
+}
+
 void HostScene::SetScale(float scale) {
   if (scale == scale_) return;
   scale_ = scale;
   for (auto& [id, node] : nodes_) {
     node.box_dirty = true;
     if (node.has_text) node.text_dirty = true;
+    if (node.view) dirty_views_.insert(id);
   }
 }
 
@@ -155,6 +202,7 @@ bool HostScene::Apply(const WhiskerMobileFrame& frame, WhiskerMobileApplyRespons
     if (node.box_dirty) DrawBox(node);
     if (node.text_dirty) DrawText(node);
   }
+  DrawViews();
   for (auto& [id, node] : nodes_) {
     if (node.group) FitGroup(node);
   }
@@ -172,6 +220,8 @@ void HostScene::Clear() {
   dirty_children_.clear();
   scroll_events_.clear();
   scroll_offsets_.clear();
+  view_events_.clear();
+  dirty_views_.clear();
 }
 
 bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
@@ -185,6 +235,9 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       node.scroll_content = compositor_.CreateContainerVisual();
       node.children_visual.Children().InsertAtTop(node.scroll_content);
       UpdateClip(node);
+    }
+    if (auto element = ElementOf(node); element && element->view) {
+      CreateView(op.node, *element->view);
     }
     return true;
   }
@@ -207,6 +260,7 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
     case WHISKER_OP_LAYOUT:
       if (!op.payload) return false;
       Layout(node, *static_cast<const WhiskerMobileLayoutGeometry*>(op.payload));
+      if (node.view) dirty_views_.insert(op.node);
       break;
     case WHISKER_OP_PAINT: {
       if (!op.payload) return false;
@@ -275,6 +329,8 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       node.background.IsVisible(node.visible);
       if (node.shadow) node.shadow.IsVisible(node.visible);
       if (node.text_sprite) node.text_sprite.IsVisible(node.visible);
+      if (node.view_sprite) node.view_sprite.IsVisible(node.visible);
+      if (node.xaml) node.xaml->placement.IsVisible(node.visible);
       break;
     case WHISKER_OP_Z_ORDER:
       node.z_order = op.integer;
@@ -282,10 +338,10 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
       break;
     case WHISKER_OP_PROPERTY:
       if (!op.payload) return false;
-      SetProperty(node, op.member, static_cast<const WhiskerValueRaw*>(op.payload));
+      SetProperty(op.node, node, op.member, static_cast<const WhiskerValueRaw*>(op.payload));
       break;
     case WHISKER_OP_CLEAR_PROPERTY:
-      SetProperty(node, op.member, nullptr);
+      SetProperty(op.node, node, op.member, nullptr);
       break;
     case WHISKER_OP_EVENT_MASK:
       node.event_mask = op.wide;
@@ -304,8 +360,14 @@ bool HostScene::ApplyOperation(const WhiskerMobileOperation& op) {
     case WHISKER_OP_TEXT_STYLE: {
       if (!op.payload) return false;
       auto const& text = *static_cast<const WhiskerMobileText*>(op.payload);
+      if (op.tag == WHISKER_OP_TEXT_STYLE && node.view) {
+        if (node.view_definition->text_style) {
+          node.view_definition->text_style(*node.view, ViewTextStyle(text));
+        }
+        break;
+      }
       auto content = node.text.text;
-      node.text = TextStyle::From(text);
+      node.text = TextContent::From(text);
       if (op.tag == WHISKER_OP_TEXT_STYLE) node.text.text = std::move(content);
       node.has_text = true;
       node.text_dirty = true;
@@ -339,6 +401,7 @@ void HostScene::Flatten(Node& node) {
   auto children = node.group.Children();
   if (node.shadow) children.InsertAtTop(node.shadow);
   children.InsertAtTop(node.background);
+  if (node.view_sprite) children.InsertAtTop(node.view_sprite);
   if (node.text_sprite) children.InsertAtTop(node.text_sprite);
   children.InsertAtTop(node.children_visual);
   node.group_surface = compositor_.CreateVisualSurface();
@@ -411,6 +474,7 @@ void HostScene::Delete(uint64_t id) {
   roots_.erase(std::remove(roots_.begin(), roots_.end(), id), roots_.end());
   dirty_children_.insert(kRoot);
   dirty_children_.erase(id);
+  dirty_views_.erase(id);
   nodes_.erase(id);
   scroll_offsets_.erase(id);
 }
@@ -626,11 +690,21 @@ const HostScene::Element* HostScene::ElementOf(const Node& node) const {
   return it == elements_.end() ? nullptr : &it->second;
 }
 
-void HostScene::SetProperty(Node& node, uint32_t property, const WhiskerValueRaw* value) {
+void HostScene::SetProperty(uint64_t id, Node& node, uint32_t property,
+                            const WhiskerValueRaw* value) {
   auto element = ElementOf(node);
-  if (!node.scroll || !element) return;
+  if (!element) return;
   auto name = element->properties.find(property);
   if (name == element->properties.end()) return;
+  if (node.view) {
+    auto handler = node.view_definition->properties.find(name->second);
+    if (handler != node.view_definition->properties.end()) {
+      handler->second(*node.view, FromRaw(value));
+      dirty_views_.insert(id);
+    }
+    return;
+  }
+  if (!node.scroll) return;
   if (name->second == "scroll-orientation") {
     node.scroll->horizontal = value && value->type == WHISKER_VALUE_STRING &&
                               View(value->v.s) == "horizontal";
@@ -640,7 +714,19 @@ void HostScene::SetProperty(Node& node, uint32_t property, const WhiskerValueRaw
 }
 
 void HostScene::Invoke(uint64_t id, uint32_t command, const WhiskerValueRaw* arguments) {
-  auto const& node = nodes_.at(id);
+  auto& node = nodes_.at(id);
+  if (node.view) {
+    auto element = ElementOf(node);
+    if (!element) return;
+    auto name = element->commands.find(command);
+    if (name == element->commands.end()) return;
+    auto handler = node.view_definition->commands.find(name->second);
+    if (handler != node.view_definition->commands.end()) {
+      handler->second(*node.view, FromRaw(arguments));
+      dirty_views_.insert(id);
+    }
+    return;
+  }
   if (!node.scroll || (command != kScrollToCommand && command != kScrollByCommand)) return;
   float distance = Number(MapEntry(arguments, "offset"));
   auto offset = node.scroll->offset;
@@ -752,6 +838,135 @@ bool HostScene::ScrollAt(float x, float y, float dx, float dy) {
   }
   return false;
 }
+
+void HostScene::CreateView(uint64_t id, const ViewDefinition& definition) {
+  auto& node = nodes_.at(id);
+  node.view_definition = &definition;
+  node.view_context = std::make_unique<NodeViewContext>(*this, id);
+  node.view = definition.create(*node.view_context);
+  if (dynamic_cast<XamlModuleView*>(node.view.get())) {
+    node.xaml = std::make_unique<XamlSite>();
+    node.xaml->placement = compositor_.CreateContainerVisual();
+    node.xaml->placement.IsVisible(node.visible);
+    node.visual.Children().InsertAbove(node.xaml->placement, node.background);
+    dirty_views_.insert(id);
+    return;
+  }
+  node.view_sprite = compositor_.CreateSpriteVisual();
+  node.view_sprite.IsVisible(node.visible);
+  node.visual.Children().InsertAbove(node.view_sprite, node.background);
+}
+
+HostScene::XamlSite::~XamlSite() {
+  if (link) link.Close();
+  if (island) island.Close();
+}
+
+void HostScene::PlaceXaml(uint64_t id, Node& node) {
+  auto& site = *node.xaml;
+  auto const& content = node.geometry.content;
+  site.placement.Offset({content.x, content.y, 0});
+  site.placement.Size({content.width, content.height});
+  if (!site.link) {
+    auto parent = parent_island_ ? parent_island_() : nullptr;
+    if (!parent) {
+      // The Host's own island appears once its XAML root is loaded; retry on the next frame.
+      dirty_views_.insert(id);
+      if (request_frame_) request_frame_();
+      return;
+    }
+    site.link = winrt::Microsoft::UI::Content::ChildSiteLink::Create(parent, site.placement);
+    site.island = winrt::Microsoft::UI::Xaml::XamlIsland();
+    site.island.Content(static_cast<XamlModuleView&>(*node.view).Element());
+    site.link.Connect(site.island.ContentIsland());
+  }
+  site.link.ActualSize({content.width, content.height});
+}
+
+bool HostScene::MeasureView(const WhiskerMobileMeasureRequest& request,
+                            WhiskerMobileMeasureResponse& response) const {
+  if (request.kind == WHISKER_MEASURE_TEXT) return false;
+  auto element = elements_.find(request.element_type);
+  if (element == elements_.end() || !element->second.view || !element->second.view->measure) {
+    return false;
+  }
+  response.key = request.key;
+  response.environment_epoch = request.environment_epoch;
+  MeasureRequest measure;
+  if (request.available_width_kind == 0) measure.available_width = request.available_width;
+  if (request.available_height_kind == 0) measure.available_height = request.available_height;
+  if (request.known_mask & 1) measure.known_width = request.known_width;
+  if (request.known_mask & 2) measure.known_height = request.known_height;
+  measure.payload_version = request.payload_version;
+  measure.payload = FromRaw(request.payload);
+  auto size = element->second.view->measure(measure);
+  if (!size) {
+    response.status = WHISKER_MEASURE_UNSUPPORTED;
+    response.reason = 1;
+    return true;
+  }
+  response.status = WHISKER_MEASURE_READY;
+  response.width = request.known_mask & 1 ? request.known_width : size->width;
+  response.height = request.known_mask & 2 ? request.known_height : size->height;
+  return true;
+}
+
+void HostScene::ReleaseViewFocus() {
+  auto parent = parent_island_ ? parent_island_() : nullptr;
+  if (!parent) return;
+  for (auto& [id, node] : nodes_) {
+    if (!node.xaml || !node.xaml->island) continue;
+    auto focus = winrt::Microsoft::UI::Input::InputFocusController::GetForIsland(
+        node.xaml->island.ContentIsland());
+    if (focus.HasFocus()) {
+      winrt::Microsoft::UI::Input::InputFocusController::GetForIsland(parent).TrySetFocus();
+      return;
+    }
+  }
+}
+
+void HostScene::DrawViews() {
+  for (auto id : std::exchange(dirty_views_, {})) {
+    auto it = nodes_.find(id);
+    if (it != nodes_.end() && it->second.view) DrawView(id, it->second);
+  }
+}
+
+void HostScene::DrawView(uint64_t id, Node& node) {
+  if (node.xaml) {
+    PlaceXaml(id, node);
+    return;
+  }
+  auto const& content = node.geometry.content;
+  if (content.width <= 0 || content.height <= 0) {
+    node.view_sprite.Brush(nullptr);
+    return;
+  }
+  winrt::Windows::Graphics::SizeInt32 pixels{static_cast<int32_t>(std::ceil(content.width * scale_)),
+                                             static_cast<int32_t>(std::ceil(content.height * scale_))};
+  auto surface = graphics_.CreateDrawingSurface2(pixels, dx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                                                 dx::DirectXAlphaMode::Premultiplied);
+  auto brush = compositor_.CreateSurfaceBrush(surface);
+  brush.Stretch(comp::CompositionStretch::Fill);
+  node.view_sprite.Brush(brush);
+  node.view_sprite.Offset({content.x, content.y, 0});
+  node.view_sprite.Size({content.width, content.height});
+  DrawSurface(surface, scale_, [&](ID2D1DeviceContext* context) {
+    node.view->Draw(context, content.width, content.height);
+  });
+}
+
+void HostScene::NodeViewContext::Emit(std::string_view event, Value detail) {
+  scene_.view_events_.push_back({id_, std::string(event), std::move(detail)});
+  if (scene_.request_frame_) scene_.request_frame_();
+}
+
+void HostScene::NodeViewContext::Invalidate() {
+  scene_.dirty_views_.insert(id_);
+  if (scene_.request_frame_) scene_.request_frame_();
+}
+
+std::vector<HostScene::ViewEvent> HostScene::TakeViewEvents() { return std::exchange(view_events_, {}); }
 
 std::vector<HostScene::ScrollEvent> HostScene::TakeScrollEvents() {
   return std::exchange(scroll_events_, {});

@@ -1,6 +1,6 @@
 [package]
 name = "whisker-svg"
-version = "0.14.4"
+version = "0.14.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -23,6 +23,7 @@ include = [
     "android/**/*.kt",
     "android/**/*.kts",
     "ios/**/*.swift",
+    "windows/**/*.cpp",
     "README.md",
 ]
 
@@ -32,11 +33,13 @@ crate-type = ["rlib"]
 [package.metadata.whisker.module.platforms]
 android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
+macos = { manifest = "Package.swift" }
 web = { manifest = "web/Cargo.toml" }
-desktop = { manifest = "desktop/Cargo.toml" }
+linux = { manifest = "linux/Cargo.toml" }
+windows = { sources = "windows" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.16.0" }
+whisker = { path = "../../crates/whisker", version = "0.18.0" }
 # Base64 for transporting display-list bytes through the existing
 # string-typed Prop pipeline. `base64` is the de-facto crate
 # (~10 KB compiled). The platform replayers decode with the OS
@@ -46,3 +49,9 @@ base64 = "0.22"
 # drops the `xmlparser` errata-recovery path, which we don't need —
 # we treat unknown tags as warnings and proceed.
 roxmltree = { version = "0.20", default-features = false, features = ["std"] }
+csscolorparser = { version = "0.7.2", optional = true }
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"], optional = true }
+
+[features]
+# CPU rasterizer used by the Linux and Windows Hosts.
+raster = ["dep:csscolorparser", "dep:tiny-skia"]

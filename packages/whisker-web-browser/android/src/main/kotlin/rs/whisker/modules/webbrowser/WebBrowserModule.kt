@@ -25,10 +25,12 @@ package rs.whisker.modules.webbrowser
 
 import android.app.Activity
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
 import rs.whisker.runtime.DeepLinkListener
 import rs.whisker.runtime.Module
@@ -41,6 +43,32 @@ import rs.whisker.runtime.WhiskerValue
  *  `onActivityResumed` as a genuine user cancel. See the header
  *  comment above for why this exists. */
 private const val CANCEL_CHECK_DELAY_MS = 300L
+
+/** Chrome channels tried, in order, when the default browser does not
+ *  provide Custom Tabs. */
+private val CHROME_PACKAGES = listOf(
+    "com.android.chrome",
+    "com.chrome.beta",
+    "com.chrome.dev",
+    "com.chrome.canary",
+)
+
+/** Opens [url] in a Custom Tab.
+ *
+ *  Without an explicit package, `CustomTabsIntent.launchUrl` is a plain
+ *  `ACTION_VIEW`, so the URL's default handler wins: a verified App Link
+ *  (github.com → the GitHub app) or a browser without Custom Tabs support
+ *  takes over and the page leaves the app. Pinning the intent to a
+ *  Custom Tabs provider keeps it in-app — the default browser when it
+ *  supports Custom Tabs, otherwise a Chrome channel. When no provider is
+ *  installed the intent stays unpinned and Android picks a handler. */
+private fun launchCustomTab(context: Context, url: String) {
+    val intent = CustomTabsIntent.Builder().build()
+    CustomTabsClient.getPackageName(context, CHROME_PACKAGES)?.let {
+        intent.intent.setPackage(it)
+    }
+    intent.launchUrl(context, Uri.parse(url))
+}
 
 
 @WhiskerModule
@@ -74,7 +102,7 @@ class WebBrowserModule : Module() {
             val url = args.getOrNull(0)?.asString()
             val activity = appContext.currentActivity
             if (url != null && activity != null) {
-                CustomTabsIntent.Builder().build().launchUrl(activity, Uri.parse(url))
+                launchCustomTab(activity, url)
             }
             WhiskerValue.Null
         }
@@ -123,7 +151,7 @@ class WebBrowserModule : Module() {
         lifecycleCallbacks = callbacks
         activity.application.registerActivityLifecycleCallbacks(callbacks)
 
-        CustomTabsIntent.Builder().build().launchUrl(activity, Uri.parse(url))
+        launchCustomTab(activity, url)
     }
 
     private fun resolveAuthSession(result: WhiskerValue) {

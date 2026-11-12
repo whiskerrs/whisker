@@ -26,7 +26,7 @@
       <AdditionalOptions>/bigobj /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <!-- Rust's MSVC targets link the release CRT, so every configuration must too. -->
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
-      <AdditionalIncludeDirectories>include;..\WhiskerHost\src;$(MSBuildThisFileDirectory)..\..\..\..\crates\whisker-driver-sys\bridge\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>include;..\WhiskerHost\include;..\WhiskerHost\src;$(MSBuildThisFileDirectory)..\..\..\..\crates\whisker-driver-sys\bridge\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WarningLevel>Level4</WarningLevel>
     </ClCompile>

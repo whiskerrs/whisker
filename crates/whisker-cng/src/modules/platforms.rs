@@ -26,8 +26,6 @@ pub(super) struct ManifestRaw {
     #[serde(default)]
     pub android: Option<AndroidSectionRaw>,
     #[serde(default)]
-    pub desktop: Option<RustHostSectionRaw>,
-    #[serde(default)]
     pub web: Option<RustHostSectionRaw>,
     /// Parsed separately by CNG plugin discovery.
     #[serde(default, rename = "plugins")]
@@ -46,18 +44,18 @@ pub(super) struct PlatformDeclarationsRaw {
     pub android: Option<PlatformDeclarationRaw>,
     pub ios: Option<PlatformDeclarationRaw>,
     pub web: Option<PlatformDeclarationRaw>,
-    pub desktop: Option<PlatformDeclarationRaw>,
     pub macos: Option<PlatformDeclarationRaw>,
     pub windows: Option<PlatformDeclarationRaw>,
     pub linux: Option<PlatformDeclarationRaw>,
 }
 
-/// One platform declaration. Exactly one of `kind` and `manifest` is required.
+/// One platform declaration. Exactly one of `kind`, `manifest` and `sources` is required.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PlatformDeclarationRaw {
     pub kind: Option<String>,
     pub manifest: Option<String>,
+    pub sources: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,7 +85,6 @@ pub struct ResolvedModulePlatforms {
     pub android: Option<ResolvedPlatformImplementation>,
     pub ios: Option<ResolvedPlatformImplementation>,
     pub web: Option<ResolvedPlatformImplementation>,
-    pub desktop: Option<ResolvedPlatformImplementation>,
     pub macos: Option<ResolvedPlatformImplementation>,
     pub windows: Option<ResolvedPlatformImplementation>,
     pub linux: Option<ResolvedPlatformImplementation>,
@@ -102,6 +99,8 @@ pub enum ResolvedPlatformImplementation {
     NativeManifest(ResolvedNativeManifest),
     /// A Rust Host adapter linked by Cargo.
     RustHost(ResolvedRustModuleContribution),
+    /// A directory of C++ sources compiled into the generated Windows application.
+    CppSources(PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -121,7 +120,6 @@ pub enum ModulePlatform {
     Android,
     Ios,
     Web,
-    Desktop,
     Macos,
     Windows,
     Linux,
@@ -133,7 +131,6 @@ impl ModulePlatform {
             Self::Android => "android",
             Self::Ios => "ios",
             Self::Web => "web",
-            Self::Desktop => "desktop",
             Self::Macos => "macos",
             Self::Windows => "windows",
             Self::Linux => "linux",
@@ -164,7 +161,6 @@ pub(super) fn resolve_platforms(
     if raw.android.is_none()
         && raw.ios.is_none()
         && raw.web.is_none()
-        && raw.desktop.is_none()
         && raw.macos.is_none()
         && raw.windows.is_none()
         && raw.linux.is_none()
@@ -198,14 +194,6 @@ pub(super) fn resolve_platforms(
             manifest_dir,
             ModulePlatform::Web,
             raw.web.as_ref(),
-        )?,
-        desktop: resolve_platform(
-            package,
-            package_version,
-            registry_source,
-            manifest_dir,
-            ModulePlatform::Desktop,
-            raw.desktop.as_ref(),
         )?,
         macos: resolve_platform(
             package,
@@ -245,6 +233,14 @@ fn resolve_platform(
     let Some(raw) = raw else {
         return Ok(None);
     };
+    if let Some(sources) = raw.sources.as_deref() {
+        anyhow::ensure!(
+            raw.kind.is_none() && raw.manifest.is_none(),
+            "module `{package}` metadata.whisker.module.platforms.{} must declare exactly one of `kind`, `manifest` and `sources`",
+            platform.name(),
+        );
+        return resolve_cpp_sources(package, manifest_dir, platform, sources).map(Some);
+    }
     match (raw.kind.as_deref(), raw.manifest.as_deref()) {
         (Some("common"), None) => Ok(Some(ResolvedPlatformImplementation::Common)),
         (Some(kind), None) => Err(anyhow!(
@@ -269,6 +265,31 @@ fn resolve_platform(
             platform.name(),
         )),
     }
+}
+
+fn resolve_cpp_sources(
+    package: &str,
+    manifest_dir: &Path,
+    platform: ModulePlatform,
+    raw_path: &str,
+) -> Result<ResolvedPlatformImplementation> {
+    anyhow::ensure!(
+        platform == ModulePlatform::Windows,
+        "module `{package}` metadata.whisker.module.platforms.{}.sources is only supported for `windows`",
+        platform.name(),
+    );
+    let relative = Path::new(raw_path);
+    anyhow::ensure!(
+        !raw_path.trim().is_empty() && relative.is_relative(),
+        "module `{package}` metadata.whisker.module.platforms.windows.sources must be a directory relative to Cargo.toml",
+    );
+    let path = manifest_dir.join(relative);
+    anyhow::ensure!(
+        path.is_dir(),
+        "module `{package}` declares Windows sources at {}, which is not a directory",
+        path.display(),
+    );
+    Ok(ResolvedPlatformImplementation::CppSources(path))
 }
 
 fn resolve_platform_manifest(
@@ -320,7 +341,6 @@ fn resolve_platform_manifest(
             )
         }
         ModulePlatform::Web
-        | ModulePlatform::Desktop
         | ModulePlatform::Macos
         | ModulePlatform::Windows
         | ModulePlatform::Linux => {
@@ -369,7 +389,13 @@ fn resolve_rust_manifest(
             cargo_toml.display(),
         ));
     }
-    let expected_package = format!("{package}-{}", platform.name());
+    // Desktop Hosts may share one crate, so the suffix comes from its directory.
+    let suffix = cargo_toml
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .unwrap_or(platform.name());
+    let expected_package = format!("{package}-{suffix}");
     if !cargo_toml.is_file() {
         if registry_source {
             return Ok(ResolvedPlatformImplementation::RustHost(
@@ -457,14 +483,6 @@ pub(super) fn resolve_legacy_platforms(
                     kind: NativeManifestKind::SwiftPm,
                 },
             )),
-        desktop: resolve_legacy_rust_host(
-            package,
-            package_version,
-            "desktop",
-            manifest_dir,
-            manifest.desktop.as_ref(),
-        )?
-        .map(ResolvedPlatformImplementation::RustHost),
         web: resolve_legacy_rust_host(
             package,
             package_version,
@@ -588,10 +606,52 @@ mod tests {
     }
 
     #[test]
+    fn windows_sources_resolve_to_a_directory() {
+        let root = std::env::temp_dir().join(format!("whisker-cpp-sources-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("windows")).unwrap();
+        let raw = PlatformDeclarationRaw {
+            kind: None,
+            manifest: None,
+            sources: Some("windows".into()),
+        };
+        let resolved = resolve_platform(
+            "whisker-map",
+            "1.2.3",
+            false,
+            &root,
+            ModulePlatform::Windows,
+            Some(&raw),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved,
+            Some(ResolvedPlatformImplementation::CppSources(
+                root.join("windows")
+            ))
+        );
+        let linux = resolve_platform(
+            "whisker-map",
+            "1.2.3",
+            false,
+            &root,
+            ModulePlatform::Linux,
+            Some(&raw),
+        );
+        assert!(
+            linux
+                .unwrap_err()
+                .to_string()
+                .contains("only supported for `windows`")
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn rejects_ambiguous_platform_declarations() {
         let raw = PlatformDeclarationRaw {
             kind: Some("common".into()),
             manifest: Some("web/Cargo.toml".into()),
+            sources: None,
         };
         let error = resolve_platform(
             "whisker-map",
@@ -628,19 +688,38 @@ mod tests {
     }
 
     #[test]
+    fn desktop_hosts_share_the_crate_named_by_its_directory() {
+        for platform in [ModulePlatform::Windows, ModulePlatform::Linux] {
+            let resolved = resolve_platform_manifest(
+                "whisker-map",
+                "1.2.3",
+                true,
+                Path::new("/cargo/registry/whisker-map-1.2.3"),
+                platform,
+                "desktop/Cargo.toml",
+            )
+            .unwrap();
+            assert!(matches!(
+                resolved,
+                ResolvedPlatformImplementation::RustHost(host) if host.package == "whisker-map-desktop"
+            ));
+        }
+    }
+
+    #[test]
     fn published_legacy_host_falls_back_to_the_outer_package_version() {
         let contribution = resolve_legacy_rust_host(
             "whisker-example",
             "1.2.3",
-            "desktop",
+            "web",
             Path::new("/definitely/not/a/module/package"),
             Some(&RustHostSectionRaw {
-                package: "whisker-example-desktop-host".into(),
+                package: "whisker-example-web-host".into(),
             }),
         )
         .unwrap()
         .unwrap();
-        assert_eq!(contribution.package, "whisker-example-desktop-host");
+        assert_eq!(contribution.package, "whisker-example-web-host");
         assert_eq!(
             contribution.source,
             ResolvedRustHostSource::Registry {

@@ -1,6 +1,6 @@
 [package]
 name = "whisker-local-store"
-version = "0.14.4"
+version = "0.14.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -32,10 +32,12 @@ crate-type = ["rlib"]
 android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 web = { manifest = "web/Cargo.toml" }
-desktop = { manifest = "desktop/Cargo.toml" }
+macos = { manifest = "Package.swift" }
+windows = { manifest = "desktop/Cargo.toml" }
+linux = { manifest = "desktop/Cargo.toml" }
 
 [dependencies]
 # The umbrella `whisker` crate — same dep app crates use. The proc
 # macros' emit paths (`::whisker::*`) resolve under the `whisker`
 # name. A published module would write `whisker = "0.1"`.
-whisker = { path = "../../crates/whisker", version = "0.16.0" }
+whisker = { path = "../../crates/whisker", version = "0.18.0" }

@@ -17,30 +17,41 @@
 //! What we capture in JSON:
 //!
 //! ```text
-//! { output, args, timestamp_micros }
+//! { output, args, timestamp_micros, linker, envs }
 //! ```
 //!
-//! `output` is the value following `-o` in argv (or `None` for an
-//! invocation that doesn't have one — rustc never omits it in
-//! practice, but defensive). The dev-server keys captured invocations
-//! by output filename so the right one can be replayed for the right
-//! crate during thin rebuild.
+//! `output` is the value following `-o` (or MSVC's `/OUT:`) in argv.
+//! The dev-server keys captured invocations by output filename so the
+//! right one can be replayed for the right crate during thin rebuild.
+//! `args` has `@response-file` arguments expanded, because rustc
+//! deletes those files after the link.
 
 use anyhow::{Context, Result};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One captured linker invocation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct CapturedLinkerInvocation {
-    /// Value passed to `-o`, if any. Used as the index key.
+    /// Value passed to `-o` or `/OUT:`, if any. Used as the index key.
     pub output: Option<String>,
-    /// Full argv passed to the linker driver — what we re-invoke
-    /// during thin rebuild.
+    /// Full argv passed to the linker driver, response files expanded —
+    /// what we re-invoke during thin rebuild.
     pub args: Vec<String>,
     /// Microseconds since UNIX epoch.
     pub timestamp_micros: u128,
+    /// MSVC only: the real linker as found on the `PATH` rustc gave us.
+    #[serde(default)]
+    pub linker: Option<String>,
+    /// MSVC only: the toolchain environment rustc set up for the linker,
+    /// which a later direct `link.exe` spawn has no other way to get.
+    #[serde(default)]
+    pub envs: BTreeMap<String, String>,
 }
+
+/// Environment variables `link.exe` needs to find its libraries and tools.
+const MSVC_LINK_ENV: &[&str] = &["LIB", "LIBPATH", "PATH"];
 
 /// Entry point called from `src/bin/whisker_linker_shim.rs`.
 pub fn run() -> Result<()> {
@@ -53,7 +64,17 @@ pub fn run() -> Result<()> {
 
     if let Some(cache_dir) = std::env::var_os("WHISKER_LINKER_CACHE_DIR") {
         let cache_dir = PathBuf::from(cache_dir);
-        let invocation = capture(&linker_args)?;
+        let mut invocation = capture(&linker_args)?;
+        if cfg!(windows) {
+            invocation.linker = std::env::var("WHISKER_REAL_LINKER")
+                .ok()
+                .and_then(|linker| find_on_path(&linker, std::env::var_os("PATH")))
+                .map(|path| path.to_string_lossy().into_owned());
+            invocation.envs = MSVC_LINK_ENV
+                .iter()
+                .filter_map(|key| Some((key.to_string(), std::env::var(key).ok()?)))
+                .collect();
+        }
         save_invocation(&cache_dir, &invocation)
             .with_context(|| format!("save to {}", cache_dir.display()))?;
     }
@@ -72,26 +93,106 @@ pub fn run() -> Result<()> {
 // ----- Pure helpers ---------------------------------------------------------
 
 pub fn capture(linker_args: &[String]) -> Result<CapturedLinkerInvocation> {
+    let args = expand_response_files(linker_args);
     Ok(CapturedLinkerInvocation {
-        output: extract_output(linker_args),
-        args: linker_args.to_vec(),
+        output: extract_output(&args),
+        args,
         timestamp_micros: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_micros())
             .unwrap_or(0),
+        linker: None,
+        envs: BTreeMap::new(),
     })
 }
 
-/// Find the value passed to `-o`. Linker drivers (clang/gcc) always
-/// use the **separated** form (`-o /path/lib.so`); the attached form
-/// (`-o/path/lib.so`) is technically valid for `ld` but isn't what
-/// rustc emits. We deliberately only handle the separated form so we
-/// don't false-positive on lookalike flags such as `-output-format=…`.
+/// Replace each readable `@file` argument with the arguments it holds.
+pub fn expand_response_files(args: &[String]) -> Vec<String> {
+    let mut expanded = Vec::with_capacity(args.len());
+    for arg in args {
+        match arg.strip_prefix('@').map(std::fs::read) {
+            Some(Ok(bytes)) => expanded.extend(parse_response_file(&bytes)),
+            _ => expanded.push(arg.clone()),
+        }
+    }
+    expanded
+}
+
+/// Decode a response file as rustc writes it: one argument per line,
+/// UTF-16 with a byte-order mark for MSVC, UTF-8 otherwise.
+pub fn parse_response_file(bytes: &[u8]) -> Vec<String> {
+    let text = match bytes {
+        [0xFF, 0xFE, rest @ ..] => {
+            let units: Vec<u16> = rest
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            String::from_utf16_lossy(&units)
+        }
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(unescape_response_argument)
+        .collect()
+}
+
+/// MSVC lines are wrapped in quotes with `\"` for a quote; GNU lines
+/// escape single characters with a backslash.
+fn unescape_response_argument(line: &str) -> String {
+    match line
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+    {
+        Some(quoted) => quoted.replace("\\\"", "\""),
+        None => {
+            let mut out = String::with_capacity(line.len());
+            let mut chars = line.chars();
+            while let Some(c) = chars.next() {
+                out.push(if c == '\\' {
+                    chars.next().unwrap_or(c)
+                } else {
+                    c
+                });
+            }
+            out
+        }
+    }
+}
+
+/// Resolve `program` against `path` the way the OS would for a spawn.
+fn find_on_path(program: &str, path: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let candidate = Path::new(program);
+    if candidate.components().count() > 1 {
+        return Some(candidate.to_path_buf());
+    }
+    let with_extension = if candidate.extension().is_none() && cfg!(windows) {
+        format!("{program}.exe")
+    } else {
+        program.to_string()
+    };
+    std::env::split_paths(&path?)
+        .map(|dir| dir.join(&with_extension))
+        .find(|full| full.is_file())
+}
+
+/// Find the value passed to `-o`, or to MSVC's `/OUT:`. Linker drivers
+/// (clang/gcc) always use the **separated** form (`-o /path/lib.so`);
+/// the attached form (`-o/path/lib.so`) is technically valid for `ld`
+/// but isn't what rustc emits. We deliberately only handle the
+/// separated form so we don't false-positive on lookalike flags such
+/// as `-output-format=…`.
 pub fn extract_output(args: &[String]) -> Option<String> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "-o" {
             return iter.next().cloned();
+        }
+        if let Some(prefix) = arg.get(..5)
+            && prefix.eq_ignore_ascii_case("/OUT:")
+        {
+            return Some(arg[5..].to_string());
         }
     }
     None
@@ -214,6 +315,8 @@ mod tests {
             output: Some("/tmp/build/libfoo.dylib".into()),
             args: vec![],
             timestamp_micros: 42,
+            linker: None,
+            envs: Default::default(),
         };
         assert_eq!(invocation_filename(&inv), "libfoo.dylib-42.json");
     }
@@ -224,6 +327,8 @@ mod tests {
             output: None,
             args: vec![],
             timestamp_micros: 7,
+            linker: None,
+            envs: Default::default(),
         };
         assert_eq!(invocation_filename(&inv), "_unknown-7.json");
     }
@@ -236,6 +341,8 @@ mod tests {
             output: Some("/tmp/foo bar/lib weird?name.so".into()),
             args: vec![],
             timestamp_micros: 1,
+            linker: None,
+            envs: Default::default(),
         };
         assert_eq!(invocation_filename(&inv), "lib_weird_name.so-1.json");
     }
@@ -249,6 +356,8 @@ mod tests {
             output: Some("/tmp/libfoo.dylib".into()),
             args: s(&["-shared", "-o", "/tmp/libfoo.dylib", "foo.o"]),
             timestamp_micros: 12345,
+            linker: None,
+            envs: Default::default(),
         };
         save_invocation(&dir, &inv).expect("save");
 
@@ -269,6 +378,8 @@ mod tests {
             output: Some("/tmp/lib.dylib".into()),
             args: vec![],
             timestamp_micros: 1,
+            linker: None,
+            envs: Default::default(),
         };
         save_invocation(&dir, &inv).expect("save");
         assert!(dir.is_dir());
@@ -279,5 +390,51 @@ mod tests {
             to_remove.pop();
         }
         let _ = std::fs::remove_dir_all(&to_remove);
+    }
+
+    // ----- MSVC ----------------------------------------------------------
+
+    #[test]
+    fn extract_output_reads_the_msvc_out_option() {
+        let args = s(&["/NOLOGO", r"/OUT:C:\t\deps\app.exe", "/DEBUG"]);
+        assert_eq!(extract_output(&args).as_deref(), Some(r"C:\t\deps\app.exe"));
+        let lower = s(&[r"/out:C:\t\app.exe"]);
+        assert_eq!(extract_output(&lower).as_deref(), Some(r"C:\t\app.exe"));
+    }
+
+    #[test]
+    fn response_file_in_utf16_with_quoted_lines_is_decoded() {
+        let text = "\"/NOLOGO\"\r\n\"C:\\a b\\x.o\"\r\n\"/OUT:C:\\t\\app.exe\"\r\n";
+        let mut bytes = vec![0xFF, 0xFE];
+        bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        assert_eq!(
+            parse_response_file(&bytes),
+            s(&["/NOLOGO", r"C:\a b\x.o", r"/OUT:C:\t\app.exe"]),
+        );
+    }
+
+    #[test]
+    fn response_file_in_utf8_with_backslash_escapes_is_decoded() {
+        assert_eq!(
+            parse_response_file(b"-o\n/tmp/out\\ dir/lib.so\n"),
+            s(&["-o", "/tmp/out dir/lib.so"]),
+        );
+    }
+
+    #[test]
+    fn capture_expands_response_files_and_keys_on_their_output() {
+        let dir = unique_tempdir();
+        let rsp = dir.join("linker-arguments");
+        std::fs::write(&rsp, "\"/OUT:C:\\t\\app.exe\"\n\"kernel32.lib\"\n").unwrap();
+        let invocation = capture(&[format!("@{}", rsp.display())]).unwrap();
+        assert_eq!(invocation.output.as_deref(), Some(r"C:\t\app.exe"));
+        assert_eq!(invocation.args, s(&[r"/OUT:C:\t\app.exe", "kernel32.lib"]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn capture_keeps_an_unreadable_response_argument_as_is() {
+        let invocation = capture(&s(&["@/nope/missing.rsp", "-o", "out"])).unwrap();
+        assert_eq!(invocation.args, s(&["@/nope/missing.rsp", "-o", "out"]));
     }
 }

@@ -134,8 +134,7 @@ presentation, DOM attributes, and parentage are reset. Custom element
 presentations are destroyed normally; module authors do not need a List-aware
 reuse contract and custom native state cannot leak between keys.
 
-Desktop uses the same general pool for its lightweight element-content
-objects. Android and iOS reuse their built-in native View/Text content, and
+Android and iOS reuse their built-in native View/Text content, and
 Web reuses the corresponding DOM/native wrapper. Every pool is bounded.
 
 ## Complexity targets

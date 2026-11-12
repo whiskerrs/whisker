@@ -84,6 +84,10 @@ pub struct LinkPlan {
     /// Surfaced separately so the runner can sanity-check existence
     /// after the spawn returns.
     pub output: PathBuf,
+    /// Environment to overlay on the linker spawn.
+    pub envs: std::collections::BTreeMap<String, String>,
+    /// When set, `args` are written here and the linker gets `@file`.
+    pub response_file: Option<PathBuf>,
 }
 
 /// Which OS-specific "unresolved-is-fine" directive to emit.
@@ -94,9 +98,10 @@ pub enum LinkerOs {
     Macos,
     /// Linux host or Android device.
     Linux,
-    /// Windows host. Unsupported: the captured args are still
-    /// stripped, but no useful directive comes out (PE/COFF
-    /// hot-patch is unimplemented).
+    /// Windows with the MSVC toolchain; its link line is built by
+    /// [`super::msvc::build_link_plan`], not [`build_link_plan`].
+    Windows,
+    /// No native patch link (Web).
     Other,
 }
 
@@ -104,7 +109,7 @@ pub enum LinkerOs {
 /// hot-patch build. See module docs for the rationale.
 ///
 /// `extra_objects` are additional `.o` paths to link alongside
-/// `new_object`. The typical caller is `thin_rebuild_obj`, which
+/// `new_objects`. The typical caller is `thin_rebuild_obj`, which
 /// passes the `stub.o` produced by
 /// [`crate::hotpatch::create_undefined_symbol_stub`] here — that stub
 /// defines every host symbol the patch references as a tiny ARM64
@@ -114,7 +119,7 @@ pub enum LinkerOs {
 /// perform. See `docs/hot-reload-internals.md` for the design.
 pub fn build_link_plan(
     captured_linker_args: &[String],
-    new_object: &Path,
+    new_objects: &[PathBuf],
     output: &Path,
     target_os: LinkerOs,
     extra_objects: &[std::path::PathBuf],
@@ -170,19 +175,23 @@ pub fn build_link_plan(
             // flag handles the long tail.
             args.push("-Wl,--unresolved-symbols=ignore-all".into());
         }
-        LinkerOs::Other => {}
+        LinkerOs::Windows | LinkerOs::Other => {}
     }
 
     for obj in extra_objects {
         args.push(obj.to_string_lossy().into());
     }
-    args.push(new_object.to_string_lossy().into());
+    for obj in new_objects {
+        args.push(obj.to_string_lossy().into());
+    }
     args.push("-o".into());
     args.push(output.to_string_lossy().into());
 
     LinkPlan {
         args,
         output: output.to_path_buf(),
+        envs: Default::default(),
+        response_file: None,
     }
 }
 
@@ -237,6 +246,8 @@ pub fn linker_os_for_current_platform() -> LinkerOs {
         LinkerOs::Macos
     } else if cfg!(target_os = "linux") || cfg!(target_os = "android") {
         LinkerOs::Linux
+    } else if cfg!(target_os = "windows") {
+        LinkerOs::Windows
     } else {
         LinkerOs::Other
     }
@@ -259,6 +270,11 @@ fn filter_captured_linker_args(args: &[String]) -> Vec<String> {
         }
         // -shared: re-added later.
         if arg == "-shared" {
+            i += 1;
+            continue;
+        }
+        // A captured program link asks for an executable image.
+        if matches!(arg.as_str(), "-pie" | "-no-pie" | "-static-pie") {
             i += 1;
             continue;
         }
@@ -482,8 +498,14 @@ mod tests {
         // Some clang drivers split `-Wl,--version-script=/p` into
         // `--version-script /p` when forwarding to ld. Defensive.
         let kept =
-            filter_captured_linker_args(&s(&["--version-script", "/tmp/rustcXX/list", "-pie"]));
-        assert_eq!(kept, s(&["-pie"]));
+            filter_captured_linker_args(&s(&["--version-script", "/tmp/rustcXX/list", "-lc"]));
+        assert_eq!(kept, s(&["-lc"]));
+    }
+
+    #[test]
+    fn filter_drops_executable_image_flags() {
+        let kept = filter_captured_linker_args(&s(&["-pie", "-no-pie", "-static-pie", "-lc"]));
+        assert_eq!(kept, s(&["-lc"]));
     }
 
     #[test]
@@ -580,7 +602,7 @@ mod tests {
     fn macos_plan_appends_shared_dynamic_lookup_object_and_output() {
         let plan = build_link_plan(
             &s(&["-isysroot", "/sdk", "-arch", "arm64"]),
-            Path::new("/o/demo.o"),
+            &[PathBuf::from("/o/demo.o")],
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
             &[],
@@ -607,7 +629,7 @@ mod tests {
     fn macos_plan_does_not_double_shared_when_captured_already_had_it() {
         let plan = build_link_plan(
             &s(&["-shared", "-isysroot", "/sdk"]),
-            Path::new("/o/demo.o"),
+            &[PathBuf::from("/o/demo.o")],
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
             &[],
@@ -621,7 +643,7 @@ mod tests {
     fn macos_plan_replaces_old_object_inputs_with_just_the_new_one() {
         let plan = build_link_plan(
             &s(&["/old/a.o", "/old/b.o", "/old/libstd.rlib"]),
-            Path::new("/new/demo.o"),
+            &[PathBuf::from("/new/demo.o")],
             Path::new("/new/libdemo.dylib"),
             LinkerOs::Macos,
             &[],
@@ -648,7 +670,7 @@ mod tests {
     fn macos_plan_replaces_old_output_with_new_one() {
         let plan = build_link_plan(
             &s(&["-o", "/old/libold.dylib"]),
-            Path::new("/new/demo.o"),
+            &[PathBuf::from("/new/demo.o")],
             Path::new("/new/libnew.dylib"),
             LinkerOs::Macos,
             &[],
@@ -669,7 +691,7 @@ mod tests {
     fn linux_plan_uses_unresolved_symbols_ignore_all_directive() {
         let plan = build_link_plan(
             &s(&["-pie", "-L", "/ndk/lib"]),
-            Path::new("/o/demo.o"),
+            &[PathBuf::from("/o/demo.o")],
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
             &[],
@@ -678,7 +700,6 @@ mod tests {
         assert_eq!(
             plan.args,
             s(&[
-                "-pie",
                 "-L",
                 "/ndk/lib",
                 "-shared",
@@ -696,7 +717,7 @@ mod tests {
         // from -C link-arg). Make sure we end up with one.
         let plan = build_link_plan(
             &s(&["-Wl,--unresolved-symbols=ignore-all", "-L", "/ndk/lib"]),
-            Path::new("/o/demo.o"),
+            &[PathBuf::from("/o/demo.o")],
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
             &[],
@@ -719,7 +740,7 @@ mod tests {
         let stub: std::path::PathBuf = "/o/stub.o".into();
         let plan = build_link_plan(
             &s(&["-L", "/ndk/lib"]),
-            Path::new("/o/demo.o"),
+            &[PathBuf::from("/o/demo.o")],
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
             std::slice::from_ref(&stub),
@@ -744,7 +765,7 @@ mod tests {
     fn linux_plan_with_empty_extras_links_only_the_new_object() {
         let plan = build_link_plan(
             &s(&["-L", "/ndk/lib"]),
-            Path::new("/o/demo.o"),
+            &[PathBuf::from("/o/demo.o")],
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
             &[],
@@ -768,7 +789,7 @@ mod tests {
         let stub: std::path::PathBuf = "/o/stub.o".into();
         let plan = build_link_plan(
             &s(&["-isysroot", "/sdk"]),
-            Path::new("/o/demo.o"),
+            &[PathBuf::from("/o/demo.o")],
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
             std::slice::from_ref(&stub),
@@ -787,7 +808,7 @@ mod tests {
     fn other_os_plan_omits_unresolved_directive() {
         let plan = build_link_plan(
             &s(&["-machine:x64"]),
-            Path::new("/o/demo.obj"),
+            &[PathBuf::from("/o/demo.obj")],
             Path::new("/o/demo.dll"),
             LinkerOs::Other,
             &[],
@@ -813,6 +834,8 @@ mod tests {
             assert_eq!(os, LinkerOs::Macos);
         } else if cfg!(target_os = "linux") || cfg!(target_os = "android") {
             assert_eq!(os, LinkerOs::Linux);
+        } else if cfg!(target_os = "windows") {
+            assert_eq!(os, LinkerOs::Windows);
         } else {
             assert_eq!(os, LinkerOs::Other);
         }

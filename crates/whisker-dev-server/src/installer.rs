@@ -13,10 +13,10 @@
 //! knowledge of which example or external user crate is in play.
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
-use crate::{AndroidParams, IosParams, MacosParams, Target};
+use crate::{AndroidParams, IosParams, LinuxParams, MacosParams, Target, WindowsParams};
 use whisker_build::CaptureShims;
 
 pub struct Installer {
@@ -54,7 +54,17 @@ pub struct Installer {
     /// `SIMCTL_CHILD_WHISKER_DEV_TOKEN`; Android via
     /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
     dev_token: Option<String>,
-    macos_child: tokio::sync::Mutex<Option<tokio::process::Child>>,
+    linux: Option<LinuxParams>,
+    windows: Option<WindowsParams>,
+    /// The locally launched Host process (macOS, Linux and Windows).
+    host_child: tokio::sync::Mutex<Option<HostChild>>,
+}
+
+struct HostChild {
+    process: tokio::process::Child,
+    // `whisker run` quits through `process::exit`, which skips
+    // `kill_on_drop`; the guard puts the app on the quit path's kill list.
+    _exit_guard: Option<whisker_build::child_guard::TrackGuard>,
 }
 
 impl Installer {
@@ -64,6 +74,8 @@ impl Installer {
         android: Option<AndroidParams>,
         ios: Option<IosParams>,
         macos: Option<MacosParams>,
+        linux: Option<LinuxParams>,
+        windows: Option<WindowsParams>,
         workspace_root: PathBuf,
         package: String,
         capture: Option<CaptureShims>,
@@ -76,13 +88,15 @@ impl Installer {
             android,
             ios,
             macos,
+            linux,
+            windows,
             workspace_root,
             package,
             capture,
             features,
             dev_port,
             dev_token,
-            macos_child: tokio::sync::Mutex::new(None),
+            host_child: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -120,34 +134,69 @@ impl Installer {
                         .join(format!("{}.app", params.project_name)),
                     &params.project_name,
                 );
-                if !executable.is_file() {
-                    anyhow::bail!(
-                        "macOS app executable is missing at {}",
-                        executable.display()
-                    );
-                }
-                let mut slot = self.macos_child.lock().await;
-                if let Some(mut previous) = slot.take() {
-                    let _ = previous.kill().await;
-                    let _ = previous.wait().await;
-                }
-                let mut command = Command::new(&executable);
-                command
-                    .current_dir(executable.parent().expect("bundle executable has a parent"))
-                    .env("WHISKER_DEV_ADDR", format!("127.0.0.1:{}", self.dev_port))
-                    .kill_on_drop(true);
-                if let Some(token) = &self.dev_token {
-                    command.env("WHISKER_DEV_TOKEN", token);
-                }
-                *slot = Some(
-                    command
-                        .spawn()
-                        .with_context(|| format!("launch macOS app {}", executable.display()))?,
+                self.launch_host(&executable).await
+            }
+            Target::Linux => {
+                let params = self.linux.as_ref().context(
+                    "target=Linux but no LinuxParams — cli must provide the generated Host",
+                )?;
+                let executable = whisker_build::desktop::linux_executable(
+                    &params.target_dir,
+                    whisker_build::Profile::Debug,
+                    &params.generated_package,
                 );
-                Ok(())
+                self.launch_host(&executable).await
+            }
+            Target::Windows => {
+                let params = self.windows.as_ref().context(
+                    "target=Windows but no WindowsParams — cli must provide the generated Host",
+                )?;
+                let executable = whisker_build::desktop::windows_executable(
+                    &params.target_dir,
+                    whisker_build::Profile::Debug,
+                    &params.generated_package,
+                );
+                self.launch_host(&executable).await
             }
             Target::Web => Ok(()),
         }
+    }
+
+    /// End the running local Host, if any. Windows can't replace the
+    /// files of a running program, so a rebuild there starts with this.
+    pub async fn stop_host(&self) {
+        if let Some(mut previous) = self.host_child.lock().await.take() {
+            let _ = previous.process.kill().await;
+            let _ = previous.process.wait().await;
+        }
+    }
+
+    /// Replace the running local Host process with a fresh one.
+    async fn launch_host(&self, executable: &Path) -> Result<()> {
+        if !executable.is_file() {
+            anyhow::bail!("app executable is missing at {}", executable.display());
+        }
+        let mut slot = self.host_child.lock().await;
+        if let Some(mut previous) = slot.take() {
+            let _ = previous.process.kill().await;
+            let _ = previous.process.wait().await;
+        }
+        let mut command = Command::new(executable);
+        command
+            .current_dir(executable.parent().expect("executable has a parent"))
+            .env("WHISKER_DEV_ADDR", format!("127.0.0.1:{}", self.dev_port))
+            .kill_on_drop(true);
+        if let Some(token) = &self.dev_token {
+            command.env("WHISKER_DEV_TOKEN", token);
+        }
+        let process = command
+            .spawn()
+            .with_context(|| format!("launch app {}", executable.display()))?;
+        *slot = Some(HostChild {
+            _exit_guard: process.id().map(whisker_build::child_guard::track),
+            process,
+        });
+        Ok(())
     }
 
     /// Start the artifact already present on the target. Unlike a Full Reload,
@@ -166,7 +215,7 @@ impl Installer {
                 )?;
                 ios_launch(params, self.dev_port, self.dev_token.as_deref()).await
             }
-            Target::Macos => self.install_and_launch().await,
+            Target::Macos | Target::Linux | Target::Windows => self.install_and_launch().await,
             Target::Web => Ok(()),
         }
     }
@@ -734,6 +783,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
             PathBuf::new(),
             "x".into(),
             None,
@@ -754,6 +805,8 @@ mod tests {
     fn installer_for_ios_without_params_errors() {
         let inst = Installer::new(
             Target::IosSimulator,
+            None,
+            None,
             None,
             None,
             None,

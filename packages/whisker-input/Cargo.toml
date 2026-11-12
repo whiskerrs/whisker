@@ -1,6 +1,6 @@
 [package]
 name = "whisker-input"
-version = "0.14.4"
+version = "0.14.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -22,10 +22,9 @@ include = [
     "src/**/*.rs",
     "android/**/*.kt",
     "ios/**/*.swift",
-    "desktop/**/*.rs",
-    "desktop/Cargo.toml",
     "web/**/*.rs",
     "web/Cargo.toml",
+    "windows/**/*.cpp",
 ]
 
 [lib]
@@ -38,9 +37,11 @@ crate-type = ["rlib"]
 [package.metadata.whisker.module.platforms]
 android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
+macos = { manifest = "Package.swift" }
 web = { manifest = "web/Cargo.toml" }
-desktop = { manifest = "desktop/Cargo.toml" }
+linux = { manifest = "linux/Cargo.toml" }
+windows = { sources = "windows" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.16.0" }
+whisker = { path = "../../crates/whisker", version = "0.18.0" }
 serde = { workspace = true }

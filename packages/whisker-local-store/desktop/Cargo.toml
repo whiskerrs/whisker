@@ -1,12 +1,12 @@
 [package]
 name = "whisker-local-store-desktop"
-version = "0.14.4"
+version = "0.14.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Desktop Host implementation for whisker-local-store."
+description = "Rust desktop Host implementation for whisker-local-store."
 
 [dependencies]
 serde_json = { workspace = true }
-whisker-desktop = { path = "../../../platforms/desktop", version = "0.16.0" }
+whisker = { path = "../../../crates/whisker", version = "0.18.0" }

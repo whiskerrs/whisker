@@ -4,7 +4,7 @@
 //! Two stages, one helper that wires them together:
 //!
 //!   - [`run_obj_plan`] — invoke rustc with an [`ObjBuildPlan`] and
-//!     return the path of the emitted object file.
+//!     return the paths of the emitted object files.
 //!   - [`run_link_plan`] — invoke the linker driver with a
 //!     [`LinkPlan`] and return the path of the produced
 //!     `.so` / `.dylib`.
@@ -44,14 +44,24 @@ impl std::fmt::Display for RustcRejectedCode {
 
 impl std::error::Error for RustcRejectedCode {}
 
-/// Spawn rustc with `plan.args` from `cwd`. On success, returns
-/// the path of the emitted object (= `plan.expected_object`).
-///
-/// rustc with `--emit=obj <path>` writes exactly one `.o`; we don't
-/// need to scan the directory after the fact.
-pub async fn run_obj_plan(plan: &ObjBuildPlan, rustc_path: &Path, cwd: &Path) -> Result<PathBuf> {
-    std::fs::create_dir_all(&plan.output_dir)
-        .with_context(|| format!("create out dir {}", plan.output_dir.display()))?;
+/// Spawn rustc with `plan.args` from `cwd`. On success, returns the
+/// codegen-unit objects it wrote into `plan.object_dir`, sorted.
+pub async fn run_obj_plan(
+    plan: &ObjBuildPlan,
+    rustc_path: &Path,
+    cwd: &Path,
+) -> Result<Vec<PathBuf>> {
+    // rustc names every unit object with a per-invocation suffix, so
+    // the previous build's objects would be linked beside the new ones.
+    match std::fs::remove_dir_all(&plan.object_dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(e).with_context(|| format!("clear {}", plan.object_dir.display()));
+        }
+    }
+    std::fs::create_dir_all(&plan.object_dir)
+        .with_context(|| format!("create out dir {}", plan.object_dir.display()))?;
     // `plan.envs` replays the `CARGO_*` / `OUT_DIR` vars captured
     // during the fat build — without them any `env!("CARGO_PKG_*")`
     // in the user's code fails to compile under this raw (cargo-less)
@@ -70,16 +80,37 @@ pub async fn run_obj_plan(plan: &ObjBuildPlan, rustc_path: &Path, cwd: &Path) ->
         anyhow::bail!(
             "rustc exited {} during obj rebuild (out_dir={})",
             status,
-            plan.output_dir.display(),
+            plan.object_dir.display(),
         );
     }
-    if !plan.expected_object.is_file() {
+    let objects = codegen_unit_objects(&plan.object_dir)?;
+    if objects.is_empty() {
         anyhow::bail!(
-            "rustc succeeded but `{}` was not produced",
-            plan.expected_object.display(),
+            "rustc succeeded but wrote no objects into `{}`",
+            plan.object_dir.display(),
         );
     }
-    Ok(plan.expected_object.clone())
+    Ok(objects)
+}
+
+fn codegen_unit_objects(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut objects = Vec::new();
+    for entry in std::fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
+        let path = entry
+            .with_context(|| format!("read {}", dir.display()))?
+            .path();
+        // A crate that fits in one unit also gets a merged `<crate>.o`
+        // holding the same symbols as its `.rcgu.o`.
+        let is_unit = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".rcgu.o"));
+        if is_unit {
+            objects.push(path);
+        }
+    }
+    objects.sort();
+    Ok(objects)
 }
 
 /// Spawn the linker driver with `plan.args` from `cwd`. On success,
@@ -94,26 +125,40 @@ pub async fn run_link_plan(plan: &LinkPlan, linker_path: &Path, cwd: &Path) -> R
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create out dir {}", parent.display()))?;
     }
-    // Capture stderr so a failed link surfaces *why* (e.g. unresolved
-    // symbols, missing libraries) instead of just "exit 1". stdout is
-    // inherited so progress / warnings remain visible.
-    let out = tokio::process::Command::new(linker_path)
-        .args(&plan.args)
+    let mut command = tokio::process::Command::new(linker_path);
+    match &plan.response_file {
+        Some(file) => {
+            super::msvc::write_response_file(file, &plan.args)
+                .with_context(|| format!("write {}", file.display()))?;
+            command.arg(format!("@{}", file.display()));
+        }
+        None => {
+            command.args(&plan.args);
+        }
+    }
+    // Capture both streams so a failed link surfaces *why* (e.g.
+    // unresolved symbols, missing libraries) instead of just "exit 1";
+    // `link.exe` reports on stdout, the Unix drivers on stderr.
+    let out = command
+        .envs(&plan.envs)
         .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output()
         .await
         .with_context(|| format!("spawn {}", linker_path.display()))?;
     if !out.status.success() {
+        let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!(
             "linker `{}` exited {} during patch link (output={})\n\
              argv: {:?}\n\
-             stderr:\n{}",
+             output:\n{}{}",
             linker_path.display(),
             out.status,
             plan.output.display(),
             plan.args,
+            stdout.trim_end(),
             stderr.trim_end(),
         );
     }
@@ -140,7 +185,7 @@ pub async fn run_link_plan(plan: &LinkPlan, linker_path: &Path, cwd: &Path) -> R
 /// `aslr_stub` is an optional pre-built jump-stub object
 /// ([`crate::hotpatch::create_undefined_symbol_stub`]). When `Some`,
 /// it gets linked into the patch dylib alongside the freshly rebuilt
-/// `.o`, supplying every host symbol the patch references as a
+/// objects, supplying every host symbol the patch references as a
 /// hardcoded runtime-address trampoline. When `None`, the patch is
 /// linked with `--unresolved-symbols=ignore-all` only — fine for
 /// host-only fixtures where the test process satisfies the patch via
@@ -158,11 +203,11 @@ pub async fn thin_rebuild_obj(
     aslr_stub: Option<&Path>,
 ) -> Result<PathBuf> {
     let obj_plan = build_obj_plan(captured_rustc, output_dir);
-    let object = run_obj_plan(&obj_plan, rustc_path, cwd).await?;
+    let objects = run_obj_plan(&obj_plan, rustc_path, cwd).await?;
     let extras: Vec<PathBuf> = aslr_stub.map(|p| vec![p.to_path_buf()]).unwrap_or_default();
     let link_plan = build_link_plan(
         captured_linker_args,
-        &object,
+        &objects,
         output_dylib,
         target_os,
         &extras,
@@ -209,13 +254,12 @@ mod tests {
                 "--crate-type",
                 "rlib",
                 "--out-dir",
-                dir.to_string_lossy().as_ref(),
+                dir.join("objects").to_string_lossy().as_ref(),
                 "/nope/this/source/does/not/exist.rs",
                 "--emit",
-                &format!("obj={}/demo.o", dir.display()),
+                "obj",
             ]),
-            output_dir: dir.clone(),
-            expected_object: dir.join("demo.o"),
+            object_dir: dir.join("objects"),
         };
         let res = run_obj_plan(&plan, Path::new("rustc"), &dir).await;
         let err = res.unwrap_err();
@@ -244,13 +288,12 @@ mod tests {
                 "--crate-type",
                 "rlib",
                 "--out-dir",
-                dir.to_string_lossy().as_ref(),
+                dir.join("objects").to_string_lossy().as_ref(),
                 src.to_string_lossy().as_ref(),
                 "--emit",
-                &format!("obj={}/bad.o", dir.display()),
+                "obj",
             ]),
-            output_dir: dir.clone(),
-            expected_object: dir.join("bad.o"),
+            object_dir: dir.join("objects"),
         };
         let res = run_obj_plan(&plan, Path::new("rustc"), &dir)
             .await
@@ -269,11 +312,71 @@ mod tests {
         let plan = ObjBuildPlan {
             envs: Default::default(),
             args: vec![],
-            output_dir: dir.clone(),
-            expected_object: dir.join("demo.o"),
+            object_dir: dir.join("objects"),
         };
         let res = run_obj_plan(&plan, Path::new("/nope/no-such-rustc"), &dir).await;
         assert!(res.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn run_obj_plan_returns_only_this_builds_unit_objects() {
+        let dir = unique_tempdir();
+        let src = dir.join("lib.rs");
+        std::fs::write(
+            &src,
+            "pub mod a { pub fn one() -> u32 { 1 } }\npub mod b { pub fn two() -> u32 { 2 } }\n",
+        )
+        .unwrap();
+        let captured = CapturedRustcInvocation {
+            crate_name: "units".into(),
+            args: s(&[
+                "--edition=2021",
+                "--crate-name",
+                "units",
+                src.to_string_lossy().as_ref(),
+            ]),
+            envs: Default::default(),
+            timestamp_micros: 0,
+        };
+        let plan = build_obj_plan(&captured, &dir);
+
+        let first = run_obj_plan(&plan, Path::new("rustc"), &dir).await.unwrap();
+        assert!(first.len() > 1, "one object per module: {first:?}");
+        assert!(
+            first
+                .iter()
+                .all(|p| p.to_string_lossy().ends_with(".rcgu.o")),
+            "{first:?}",
+        );
+
+        // rustc renames every unit object on each run; a second build
+        // must not hand the first build's objects to the linker too.
+        let second = run_obj_plan(&plan, Path::new("rustc"), &dir).await.unwrap();
+        assert_eq!(second.len(), first.len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn run_obj_plan_skips_the_merged_object_of_a_single_unit_crate() {
+        let dir = unique_tempdir();
+        let src = dir.join("lib.rs");
+        std::fs::write(&src, "pub fn one() -> u32 { 1 }\n").unwrap();
+        let captured = CapturedRustcInvocation {
+            crate_name: "single".into(),
+            args: s(&[
+                "--edition=2021",
+                "--crate-name",
+                "single",
+                src.to_string_lossy().as_ref(),
+            ]),
+            envs: Default::default(),
+            timestamp_micros: 0,
+        };
+        let plan = build_obj_plan(&captured, &dir);
+        let objects = run_obj_plan(&plan, Path::new("rustc"), &dir).await.unwrap();
+        assert_eq!(objects.len(), 1, "{objects:?}");
+        assert!(plan.object_dir.join("single.o").is_file());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -291,6 +394,8 @@ mod tests {
         let plan = LinkPlan {
             args: vec![],
             output: nested_out.clone(),
+            envs: Default::default(),
+            response_file: None,
         };
         let res = run_link_plan(&plan, Path::new("/usr/bin/true"), &dir).await;
         assert!(res.is_err(), "true returns success but writes no file");
@@ -307,6 +412,8 @@ mod tests {
         let plan = LinkPlan {
             args: vec![],
             output: dir.join("libfoo.dylib"),
+            envs: Default::default(),
+            response_file: None,
         };
         let res = run_link_plan(&plan, Path::new("/usr/bin/false"), &dir).await;
         let err = res.unwrap_err();

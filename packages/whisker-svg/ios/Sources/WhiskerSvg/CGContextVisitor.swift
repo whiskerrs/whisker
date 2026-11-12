@@ -15,17 +15,16 @@
 //   (alpha, line width, transform, current path) round-trips too.
 
 import CoreGraphics
-import UIKit
 
 struct CGContextVisitor: DLVisitor {
     private let cg: CGContext
-    private let tintColor: UIColor
+    private let tintColor: CGColor
     private let viewSize: CGSize
 
     // Our own paint state — CGContext doesn't model "use tint
     // at fill time" semantics.
-    private var currentFill: UIColor? = .black
-    private var currentStroke: UIColor? = nil
+    private var currentFill: CGColor? = CGColor(red: 0, green: 0, blue: 0, alpha: 1)
+    private var currentStroke: CGColor? = nil
     private var fillIsTint = false
     private var strokeIsTint = false
     /// Stack pushed on `SAVE`, popped on `RESTORE` so paint state
@@ -35,13 +34,13 @@ struct CGContextVisitor: DLVisitor {
     private var currentPath: CGMutablePath?
 
     private struct PaintSnapshot {
-        let fill: UIColor?
-        let stroke: UIColor?
+        let fill: CGColor?
+        let stroke: CGColor?
         let fillIsTint: Bool
         let strokeIsTint: Bool
     }
 
-    init(context: CGContext, tintColor: UIColor, viewSize: CGSize) {
+    init(context: CGContext, tintColor: CGColor, viewSize: CGSize) {
         self.cg = context
         self.tintColor = tintColor
         self.viewSize = viewSize
@@ -96,12 +95,12 @@ struct CGContextVisitor: DLVisitor {
     // ---- paint state ------------------------------------------------------
 
     mutating func fillColor(_ c: DLColor) {
-        currentFill = uiColor(c)
+        currentFill = cgColor(c)
         fillIsTint = false
     }
 
     mutating func strokeColor(_ c: DLColor) {
-        currentStroke = uiColor(c)
+        currentStroke = cgColor(c)
         strokeIsTint = false
     }
 
@@ -159,7 +158,7 @@ struct CGContextVisitor: DLVisitor {
         let resolved = fillIsTint ? tintColor : currentFill
         guard let color = resolved else { return }
         cg.addPath(path)
-        cg.setFillColor(color.cgColor)
+        cg.setFillColor(color)
         cg.fillPath()
     }
 
@@ -168,7 +167,7 @@ struct CGContextVisitor: DLVisitor {
         let resolved = strokeIsTint ? tintColor : currentStroke
         guard let color = resolved else { return }
         cg.addPath(path)
-        cg.setStrokeColor(color.cgColor)
+        cg.setStrokeColor(color)
         cg.strokePath()
     }
 
@@ -181,16 +180,16 @@ struct CGContextVisitor: DLVisitor {
         // present.
         if let fc = fillResolved, let sc = strokeResolved {
             cg.addPath(path)
-            cg.setFillColor(fc.cgColor)
-            cg.setStrokeColor(sc.cgColor)
+            cg.setFillColor(fc)
+            cg.setStrokeColor(sc)
             cg.drawPath(using: .fillStroke)
         } else if let fc = fillResolved {
             cg.addPath(path)
-            cg.setFillColor(fc.cgColor)
+            cg.setFillColor(fc)
             cg.fillPath()
         } else if let sc = strokeResolved {
             cg.addPath(path)
-            cg.setStrokeColor(sc.cgColor)
+            cg.setStrokeColor(sc)
             cg.strokePath()
         }
     }
@@ -204,8 +203,8 @@ struct CGContextVisitor: DLVisitor {
         return p
     }
 
-    private func uiColor(_ c: DLColor) -> UIColor {
-        return UIColor(
+    private func cgColor(_ c: DLColor) -> CGColor {
+        CGColor(
             red: CGFloat(c.r) / 255.0,
             green: CGFloat(c.g) / 255.0,
             blue: CGFloat(c.b) / 255.0,

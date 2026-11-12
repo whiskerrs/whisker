@@ -1,0 +1,13 @@
+[package]
+name = "whisker-svg-linux"
+version = "0.14.6"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Linux Host implementation for whisker-svg."
+
+[target.'cfg(target_os = "linux")'.dependencies]
+whisker = { path = "../../../crates/whisker", version = "0.18.0" }
+whisker-linux = { path = "../../../platforms/linux", version = "0.18.0" }
+whisker-svg = { path = "..", version = "0.14.6", features = ["raster"] }

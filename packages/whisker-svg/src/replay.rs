@@ -5,7 +5,7 @@
 //! The same `replay` function powers Rust-side unit tests
 //! (`TraceVisitor` records every call and assertions compare the
 //! trace to a golden file), the Web SVG-DOM renderer, and the
-//! Desktop rasterizer. The Swift and Kotlin replayers are independent
+//! Linux rasterizer. The Swift and Kotlin replayers are independent
 //! implementations of this logic against the same SPEC. All hosts
 //! consume the same fixture-generated display-list bytes.
 

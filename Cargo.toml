@@ -37,7 +37,6 @@ members = [
     "crates/whisker-runtime",
     "crates/whisker-style",
     "crates/whisker-value",
-    "platforms/desktop",
     "crates/whisker-subsecond",
     "platforms/windows",
     "platforms/windows/host/conformance",
@@ -52,11 +51,9 @@ members = [
     "packages/whisker-icons",
     "packages/whisker-icons/example",
     "packages/whisker-image",
-    "packages/whisker-image/desktop",
     "packages/whisker-image/web",
     "packages/whisker-image/example",
     "packages/whisker-input",
-    "packages/whisker-input/desktop",
     "packages/whisker-input/web",
     "packages/whisker-input/example",
     "packages/whisker-keyboard",
@@ -78,7 +75,9 @@ members = [
     "packages/whisker-web-browser/desktop",
     "packages/whisker-web-browser/web",
     "packages/whisker-svg",
-    "packages/whisker-svg/desktop",
+    "packages/whisker-svg/linux",
+    "packages/whisker-input/linux",
+    "packages/whisker-image/linux",
     "packages/whisker-svg/web",
     "packages/whisker-svg/example",
     "packages/whisker-video",
@@ -100,7 +99,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.16.0"
+version = "0.18.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -116,36 +115,35 @@ keywords = ["mobile", "ui", "ios", "android", "reactive"]
 categories = ["gui"]
 
 [workspace.dependencies]
-whisker = { path = "crates/whisker", version = "=0.16.0" }
-whisker-animation = { path = "crates/whisker-animation", version = "=0.16.0" }
-whisker-config = { path = "crates/whisker-config", version = "=0.16.0" }
-whisker-build = { path = "crates/whisker-build", version = "=0.16.0" }
-whisker-cli = { path = "crates/whisker-cli", version = "=0.16.0" }
-whisker-cng = { path = "crates/whisker-cng", version = "=0.16.0" }
-whisker-credentials = { path = "crates/whisker-credentials", version = "=0.16.0" }
-whisker-submit = { path = "crates/whisker-submit", version = "=0.16.0" }
-whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "=0.16.0" }
-whisker-dev-server = { path = "crates/whisker-dev-server", version = "=0.16.0" }
-whisker-driver = { path = "crates/whisker-driver", version = "=0.16.0" }
-whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "=0.16.0" }
-whisker-engine = { path = "crates/whisker-engine", version = "=0.16.0" }
-whisker-layout = { path = "crates/whisker-layout", version = "=0.16.0" }
-whisker-macros = { path = "crates/whisker-macros", version = "=0.16.0" }
-whisker-macro-syntax = { path = "crates/whisker-macro-syntax", version = "=0.16.0" }
-whisker-fmt = { path = "crates/whisker-fmt", version = "=0.16.0" }
+whisker = { path = "crates/whisker", version = "=0.18.0" }
+whisker-animation = { path = "crates/whisker-animation", version = "=0.18.0" }
+whisker-config = { path = "crates/whisker-config", version = "=0.18.0" }
+whisker-build = { path = "crates/whisker-build", version = "=0.18.0" }
+whisker-cli = { path = "crates/whisker-cli", version = "=0.18.0" }
+whisker-cng = { path = "crates/whisker-cng", version = "=0.18.0" }
+whisker-credentials = { path = "crates/whisker-credentials", version = "=0.18.0" }
+whisker-submit = { path = "crates/whisker-submit", version = "=0.18.0" }
+whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "=0.18.0" }
+whisker-dev-server = { path = "crates/whisker-dev-server", version = "=0.18.0" }
+whisker-driver = { path = "crates/whisker-driver", version = "=0.18.0" }
+whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "=0.18.0" }
+whisker-engine = { path = "crates/whisker-engine", version = "=0.18.0" }
+whisker-layout = { path = "crates/whisker-layout", version = "=0.18.0" }
+whisker-macros = { path = "crates/whisker-macros", version = "=0.18.0" }
+whisker-macro-syntax = { path = "crates/whisker-macro-syntax", version = "=0.18.0" }
+whisker-fmt = { path = "crates/whisker-fmt", version = "=0.18.0" }
 whisker-host-conformance = { path = "crates/whisker-host-conformance" }
 whisker-asset = { path = "packages/whisker-asset", version = "0.14.0" }
 whisker-asset-macros = { path = "packages/whisker-asset-macros", version = "0.13.8" }
-whisker-css = { path = "crates/whisker-css", version = "=0.16.0" }
-whisker-plugin = { path = "crates/whisker-plugin", version = "=0.16.0" }
-whisker-protocol = { path = "crates/whisker-protocol", version = "=0.16.0" }
-whisker-runtime = { path = "crates/whisker-runtime", version = "=0.16.0" }
-whisker-style = { path = "crates/whisker-style", version = "=0.16.0" }
-whisker-value = { path = "crates/whisker-value", version = "=0.16.0" }
-whisker-desktop = { path = "platforms/desktop", version = "=0.16.0" }
-whisker-windows = { path = "platforms/windows", version = "=0.16.0" }
-whisker-linux = { path = "platforms/linux", version = "=0.16.0" }
-whisker-web = { path = "platforms/web", version = "=0.16.0" }
+whisker-css = { path = "crates/whisker-css", version = "=0.18.0" }
+whisker-plugin = { path = "crates/whisker-plugin", version = "=0.18.0" }
+whisker-protocol = { path = "crates/whisker-protocol", version = "=0.18.0" }
+whisker-runtime = { path = "crates/whisker-runtime", version = "=0.18.0" }
+whisker-style = { path = "crates/whisker-style", version = "=0.18.0" }
+whisker-value = { path = "crates/whisker-value", version = "=0.18.0" }
+whisker-windows = { path = "platforms/windows", version = "=0.18.0" }
+whisker-linux = { path = "platforms/linux", version = "=0.18.0" }
+whisker-web = { path = "platforms/web", version = "=0.18.0" }
 whisker-router = { path = "packages/whisker-router", version = "0.14.0" }
 whisker-svg = { path = "packages/whisker-svg", version = "0.14.0" }
 
@@ -210,5 +208,4 @@ object = { version = "0.36", default-features = false, features = [
 ] }
 
 [patch.crates-io]
-whisker-desktop = { path = "platforms/desktop" }
 whisker-web = { path = "platforms/web" }

@@ -6,18 +6,18 @@ use std::path::Path;
 fn repository_suite_is_well_formed() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/host-conformance");
     let (manifest, all) = load_all(&root).unwrap();
-    let (_, desktop) = load_required(&root, Host::Desktop).unwrap();
+    let (_, web) = load_required(&root, Host::Web).unwrap();
     assert_eq!(all.len(), manifest.cases.len());
     assert_eq!(
-        desktop.len(),
+        web.len(),
         manifest
             .cases
             .iter()
-            .filter(|case| case.requires(Host::Desktop))
+            .filter(|case| case.requires(Host::Web))
             .count()
     );
-    assert!(desktop.iter().any(|case| case.scenario.reference.is_some()));
-    assert!(desktop.iter().any(|case| case.scenario.upstream.is_none()));
+    assert!(web.iter().any(|case| case.scenario.reference.is_some()));
+    assert!(web.iter().any(|case| case.scenario.upstream.is_none()));
 }
 
 #[test]

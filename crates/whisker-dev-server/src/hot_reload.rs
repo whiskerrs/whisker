@@ -190,6 +190,16 @@ pub(super) fn target_triple_for(config: &Config) -> Option<String> {
             "x86_64" => Some("x86_64-apple-darwin".to_string()),
             _ => None,
         },
+        Target::Linux => match std::env::consts::ARCH {
+            "aarch64" => Some("aarch64-unknown-linux-gnu".to_string()),
+            "x86_64" => Some("x86_64-unknown-linux-gnu".to_string()),
+            _ => None,
+        },
+        Target::Windows => match std::env::consts::ARCH {
+            "aarch64" => Some("aarch64-pc-windows-msvc".to_string()),
+            "x86_64" => Some("x86_64-pc-windows-msvc".to_string()),
+            _ => None,
+        },
         Target::Web => Some("wasm32-unknown-unknown".to_string()),
     }
 }
@@ -215,7 +225,10 @@ pub(super) fn resolve_linker_for(config: &Config) -> Result<PathBuf> {
                 .with_context(|| format!("resolve NDK clang for ABI {abi} API {api}"))
         }
         Target::IosSimulator => Ok(hotpatch::wrapper::resolve_linker()),
-        Target::Macos => Ok(hotpatch::wrapper::resolve_linker()),
+        Target::Macos | Target::Linux => Ok(hotpatch::wrapper::resolve_linker()),
+        // Resolved by the linker shim on the `PATH` rustc hands it, which
+        // puts the MSVC toolchain first.
+        Target::Windows => Ok(PathBuf::from("link.exe")),
         Target::Web => {
             let output = std::process::Command::new("rustc")
                 .args(["--print", "sysroot"])
@@ -410,6 +423,44 @@ pub(super) fn original_binary_path(config: &Config) -> Result<PathBuf> {
             }
             Ok(dylib)
         }
+        Target::Linux => {
+            let params = config
+                .linux
+                .as_ref()
+                .context("target=Linux but Config.linux is missing")?;
+            let executable = whisker_build::desktop::linux_executable(
+                &params.target_dir,
+                whisker_build::Profile::Debug,
+                &params.generated_package,
+            );
+            if !executable.is_file() {
+                anyhow::bail!(
+                    "no Linux executable at {} — the initial cargo build did not produce it",
+                    executable.display(),
+                );
+            }
+            Ok(executable)
+        }
+        Target::Windows => {
+            let params = config
+                .windows
+                .as_ref()
+                .context("target=Windows but Config.windows is missing")?;
+            let triple = target_triple_for(config).context("unsupported Windows architecture")?;
+            // Cargo's own output, not the `dist` copy: the PDB sits beside it.
+            let executable = params
+                .target_dir
+                .join(triple)
+                .join("debug")
+                .join(format!("{}.exe", params.generated_package));
+            if !executable.is_file() {
+                anyhow::bail!(
+                    "no Windows executable at {} — the initial cargo build did not produce it",
+                    executable.display(),
+                );
+            }
+            Ok(executable)
+        }
         Target::Web => anyhow::bail!(
             "Web hot patches use the generated post-bindgen WASM module, not a native executable"
         ),
@@ -437,7 +488,8 @@ pub(super) fn android_abi_to_camel(abi: &str) -> String {
 
 pub(super) fn target_os_for(target: Target) -> hotpatch::LinkerOs {
     match target {
-        Target::Android => hotpatch::LinkerOs::Linux,
+        Target::Android | Target::Linux => hotpatch::LinkerOs::Linux,
+        Target::Windows => hotpatch::LinkerOs::Windows,
         Target::IosSimulator => hotpatch::LinkerOs::Macos,
         Target::Macos => hotpatch::LinkerOs::Macos,
         Target::Web => hotpatch::LinkerOs::Other,
@@ -461,6 +513,9 @@ pub(super) async fn run_build_cycle(
     label: &str,
 ) {
     emit(on_event, Event::BuildingFull);
+    if cfg!(windows) {
+        installer.stop_host().await;
+    }
     match builder.build().await {
         Ok(()) => {
             emit(on_event, Event::BuildSucceeded);

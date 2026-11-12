@@ -9,7 +9,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const HOSTS: [&str; 4] = ["android", "ios", "web", "desktop"];
+const HOSTS: [&str; 4] = ["android", "ios", "web", "linux"];
 
 #[test]
 fn first_party_element_names_match_every_declared_host() {
@@ -43,13 +43,13 @@ fn first_party_element_names_match_every_declared_host() {
             let source_root = match host {
                 "android" => host_root.join("android/src/main"),
                 "ios" => host_root.join("ios/Sources"),
-                "web" | "desktop" => host_root.join("src"),
+                "web" | "linux" => host_root.join("src"),
                 _ => unreachable!(),
             };
             let extension = match host {
                 "android" => "kt",
                 "ios" => "swift",
-                "web" | "desktop" => "rs",
+                "web" | "linux" => "rs",
                 _ => unreachable!(),
             };
             let host_source = source_tree(&source_root, extension);
@@ -57,7 +57,7 @@ fn first_party_element_names_match_every_declared_host() {
                 let declared = match host {
                     "android" | "ios" => string_values_after(&host_source, "View(\"")
                         .any(|name| name == *element_name),
-                    "web" | "desktop" => rust_host_declares_element(&host_source, element_name),
+                    "web" | "linux" => rust_host_declares_element(&host_source, element_name),
                     _ => unreachable!(),
                 };
                 if !declared {
@@ -96,7 +96,8 @@ fn rust_host_module_names_are_package_qualified() {
                 .map(|name| format!("{package_name}:{name}")),
         );
 
-        for host in ["web", "desktop"] {
+        let mut checked_roots = std::collections::HashSet::new();
+        for host in ["web", "linux", "windows"] {
             let Some(host_manifest) = platform_manifest(&manifest, host) else {
                 continue;
             };
@@ -105,15 +106,23 @@ fn rust_host_module_names_are_package_qualified() {
                 .parent()
                 .unwrap()
                 .to_path_buf();
+            if !checked_roots.insert(host_root.clone()) {
+                continue;
+            }
             let source = source_tree(&host_root.join("src"), "rs");
             let compact = compact_source(&source);
             let constant_names =
                 string_values_after(&source, "const MODULE_NAME: &str = \"").collect::<Vec<_>>();
             let direct_names = string_values_after(&compact, "ModuleDefinition::new().name(\"")
+                .chain(string_values_after(
+                    &compact,
+                    "ModuleDefinition::default().name(\"",
+                ))
                 .collect::<Vec<_>>();
             let names_module = !direct_names.is_empty()
                 || !constant_names.is_empty()
-                    && compact.contains("ModuleDefinition::new().name(MODULE_NAME)");
+                    && (compact.contains("ModuleDefinition::new().name(MODULE_NAME)")
+                        || compact.contains("ModuleDefinition::default().name(MODULE_NAME)"));
             if source.contains("impl WhiskerModule") && !names_module {
                 failures.push(format!(
                     "{package_name}: {host} WhiskerModule has no ModuleDefinition name"
@@ -196,15 +205,15 @@ fn module_element_names(source: &str) -> Vec<&str> {
 
 fn rust_host_declares_element(source: &str, element_name: &str) -> bool {
     let compact = compact_source(source);
-    let direct_web = format!("WebViewDefinition::new(\"{element_name}\"");
-    let direct_desktop = format!("DesktopViewDefinition::new(\"{element_name}\"");
-    let constant = format!("constMODULE_NAME:&str=\"{element_name}\";");
-    let constant_view = compact.contains("WebViewDefinition::new(MODULE_NAME,")
-        || compact.contains("DesktopViewDefinition::new(MODULE_NAME,");
-
-    compact.contains(&direct_web)
-        || compact.contains(&direct_desktop)
-        || compact.contains(&constant) && constant_view
+    ["WebViewDefinition", "LinuxViewDefinition"]
+        .iter()
+        .any(|definition| {
+            compact.contains(&format!("{definition}::new(\"{element_name}\""))
+                || ["MODULE_NAME", "NAME"].iter().any(|constant| {
+                    compact.contains(&format!("const{constant}:&str=\"{element_name}\";"))
+                        && compact.contains(&format!("{definition}::new({constant},"))
+                })
+        })
 }
 
 fn compact_source(source: &str) -> String {

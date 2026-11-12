@@ -1,6 +1,6 @@
 [package]
 name = "whisker-image"
-version = "0.14.4"
+version = "0.14.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,7 +19,8 @@ include = [
     "Cargo.toml",
     "Package.swift",
     "build.gradle.kts",
-    "src/lib.rs",
+    "src/**/*.rs",
+    "windows/**/*.cpp",
     "android/**/*.kt",
     "ios/**/*.swift",
     "README.md",
@@ -33,9 +34,19 @@ android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 macos = { manifest = "Package.swift" }
 web = { manifest = "web/Cargo.toml" }
-desktop = { manifest = "desktop/Cargo.toml" }
+linux = { manifest = "linux/Cargo.toml" }
+windows = { sources = "windows" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.16.0" }
+whisker = { path = "../../crates/whisker", version = "0.18.0" }
 # Event payloads cross as JSON bodies; `bind_typed` deserialises them.
 serde = { workspace = true, features = ["derive"] }
+base64 = { workspace = true, optional = true }
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"], optional = true }
+lru = { version = "0.18.2", optional = true }
+serde_json = { workspace = true, optional = true }
+ureq = { version = "2.12", optional = true }
+
+[features]
+# Fetch/decode/fit pipeline used by the Hosts that draw images themselves.
+loader = ["dep:base64", "dep:image", "dep:lru", "dep:serde_json", "dep:ureq"]

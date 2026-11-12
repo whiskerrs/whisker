@@ -82,7 +82,6 @@ shape glyphs or decide line breaks.
 | Android | Spans and StaticLayout | Layout retained through a JNI global reference; TextView supplies native selection |
 | iOS | Attributed strings and TextKit | Text storage, layout manager, and text container; UITextView supplies native selection |
 | Web | DOM spans and inline blocks | Measured paragraph DOM moved into its presentation container |
-| Desktop | Parley and Swash | Shaped lines, positioned glyphs, and inline boxes |
 
 Preparation IDs belong to a surface's measurement cache. The measurement provider
 retains the IDs the coordinator can reuse. Mobile responses transfer an opaque
