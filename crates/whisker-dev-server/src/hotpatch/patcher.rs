@@ -271,7 +271,7 @@ impl Patcher {
             // weak Text stubs lose to strong host defs, which is
             // what we want for `_Unwind_Resume`, `whisker_bridge_*`,
             // etc.).
-            if matches!(self.target_os, LinkerOs::Linux) {
+            if matches!(self.target_os, LinkerOs::Linux) && !self.original_cache.is_elf_executable {
                 e.push(self.original_cache.lib.clone());
             }
             e
@@ -289,7 +289,7 @@ impl Patcher {
             LinkerOs::Macos => &["_whisker_aslr_anchor"],
             _ => &[],
         };
-        let link_plan = build_link_plan(
+        let mut link_plan = build_link_plan(
             &captured_linker.args,
             &objects,
             &output_dylib,
@@ -297,6 +297,12 @@ impl Patcher {
             &extras,
             extra_exports,
         );
+        if self.original_cache.is_elf_executable {
+            // The program's exported symbols sit ahead of the patch in
+            // the loader's lookup order, so an unbound call between two
+            // patched functions would land on the old code.
+            link_plan.args.push("-Wl,-Bsymbolic".into());
+        }
         let new_dylib = run_link_plan(&link_plan, &self.linker_path, &self.cwd)
             .await
             .context("link patch dylib (object + stub)")?;
@@ -397,8 +403,13 @@ impl Patcher {
             let Some(name) = Path::new(out).file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
-            let matches_ext = exts.iter().any(|ext| name.ends_with(ext))
-                || (self.target_os == LinkerOs::Macos && Path::new(name).extension().is_none());
+            let extensionless = Path::new(name).extension().is_none();
+            let matches_ext = if self.original_cache.is_elf_executable {
+                extensionless
+            } else {
+                exts.iter().any(|ext| name.ends_with(ext))
+                    || (self.target_os == LinkerOs::Macos && extensionless)
+            };
             if !matches_ext {
                 continue;
             }
@@ -486,6 +497,8 @@ mod tests {
             lib: PathBuf::from("/orig.dylib"),
             symbols: SymbolTable::default(),
             aslr_reference: 0x1_0000_0000,
+            architecture: object::Architecture::Aarch64,
+            is_elf_executable: false,
         }
     }
 

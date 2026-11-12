@@ -77,7 +77,9 @@ wired in (`prepare_hot_reload_capture` in `lib.rs`):
   thin rebuild replays those vars so `env!("CARGO_PKG_*")` /
   `env!("OUT_DIR")` in user code still compiles under the raw
   (cargo-less) rustc spawn. Android, iOS, and macOS builds install it
-  through `RUSTC_WORKSPACE_WRAPPER`.
+  through `RUSTC_WORKSPACE_WRAPPER`; Linux and Web, whose generated
+  Cargo Host takes the user crate as a path dependency, through
+  `RUSTC_WRAPPER`.
 - `-C linker=whisker-linker-shim` — records each linker invocation's
   argv (keyed by output basename) to the linker-args cache, then
   forwards to the real linker.
@@ -114,18 +116,23 @@ runs:
    path here would silently drop every mangled `pub fn`; that's why the
    pipeline drives `rustc`/the linker directly.)
 2. **Stub object synthesis** (`stub_object`, Option B / Dioxus-style).
-   For each undefined symbol the patch references, a tiny ARM64/Mach-O
-   stub defines a trampoline to that symbol's *live runtime address* in
+   For each undefined symbol the patch references, a tiny stub (ARM64
+   or x86-64, chosen from the original binary) defines a trampoline to that symbol's *live runtime address* in
    the host, computed from the host's static address plus the ASLR
    slide (`aslr_reference - cache.aslr_reference`). The stub bytes are
    cached per-session keyed by the FNV-1a hash of the needed-symbol set,
-   so body-only edits reuse them. On Linux/Android the host `.so` is
+   so body-only edits reuse them. On Android the host `.so` is
    also added to the link line as a `DT_NEEDED` fallback for the
    non-Text symbols the weak stubs don't cover (thread-locals, statics).
+   A Linux Host is a program, which can't be a link input: its exported
+   symbols resolve from the loader's global scope instead.
 3. **Explicit link** (`build_link_plan` + `run_link_plan`) of the thin
    objects (+ stub + extras) into a patch dylib, replaying the captured
    linker args. On macOS, `_whisker_aslr_anchor` is force-exported so
-   subsecond's `dlsym(patch, …)` resolves.
+   subsecond's `dlsym(patch, …)` resolves. A patch for a Linux program
+   is linked `-Bsymbolic`: the program's own exports precede the patch
+   in lookup order, so an unbound call between two patched functions
+   would reach the old code.
 4. **JumpTable construction** (`symbol_table` + `cache` +
    `build_jump_table`). Parse the patch dylib's symbols with the
    `object` crate, diff against the cached original, and emit a
@@ -363,7 +370,7 @@ the next save anyway.
 
 - **iOS hardware is unsupported** for Hot Reload: `mmap(PROT_WRITE |
   PROT_EXEC)` is blocked by Apple's W^X policy, so `apply_patch` can't
-  run. Targets are macOS host, Android, and the iOS Simulator.
+  run. Targets are macOS, Linux, Android, and the iOS Simulator.
 - **Web patches WebAssembly side modules.** `whisker run web` owns the Cargo,
   wasm-bindgen, static-server, and WebSocket loop. Rust edits are compiled as
   PIC side modules and applied through subsecond's indirect function table;

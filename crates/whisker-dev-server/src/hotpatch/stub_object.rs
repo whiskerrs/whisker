@@ -149,7 +149,12 @@ pub fn build_stub_for_needed(
             target_os
         ),
     };
-    let mut obj = Object::new(bin_fmt, Architecture::Aarch64, endian);
+    let (jump_stub, align): (fn(u64) -> Vec<u8>, u64) = match cache.architecture {
+        Architecture::Aarch64 => (arm64_jump_stub, 4),
+        Architecture::X86_64 => (x86_64_jump_stub, 16),
+        other => bail!("stub object generation: unsupported architecture {other:?}"),
+    };
+    let mut obj = Object::new(bin_fmt, cache.architecture, endian);
 
     let text = obj.section_id(StandardSection::Text);
 
@@ -176,8 +181,8 @@ pub fn build_stub_for_needed(
             continue;
         }
 
-        let code = arm64_jump_stub(abs_addr);
-        let off = obj.append_section_data(text, &code, 4);
+        let code = jump_stub(abs_addr);
+        let off = obj.append_section_data(text, &code, align);
         // **Weak**, not strong: the captured linker args bring in
         // archives like `libunwind.a` and `libwhisker_bridge_static.a`
         // that already define some of these symbols. If we emit
@@ -227,6 +232,14 @@ fn arm64_jump_stub(addr: u64) -> Vec<u8> {
     code.extend_from_slice(&(0xF2E0_0010_u32 | (imm3 << 5)).to_le_bytes());
     // BR X16 = 0xD61F_0200, little-endian → `00 02 1F D6`
     code.extend_from_slice(&[0x00, 0x02, 0x1F, 0xD6]);
+    code
+}
+
+/// x86-64 `jmp *0(%rip)` followed by the 64-bit absolute target it
+/// loads: 6 + 8 = 14 bytes, no relocation and no scratch register.
+fn x86_64_jump_stub(addr: u64) -> Vec<u8> {
+    let mut code = vec![0xFF, 0x25, 0x00, 0x00, 0x00, 0x00];
+    code.extend_from_slice(&addr.to_le_bytes());
     code
 }
 
