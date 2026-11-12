@@ -294,6 +294,16 @@ pub struct TouchEvent {
     /// Position of the current pointer in surface coordinates.
     #[serde(default)]
     pub detail: Point,
+    /// Position of the current pointer relative to the `currentTarget`
+    /// element's border box, after inverting ancestor transforms and scroll
+    /// offsets. `None` when the element has no laid-out box (for example an
+    /// inline text span) or the event carries no pointer.
+    #[serde(default)]
+    pub offset: Option<Point>,
+    /// Border-box size of the `currentTarget` element, reported alongside
+    /// [`Self::offset`].
+    #[serde(default)]
+    pub size: Option<Size>,
     /// Stable id for one pointer stream.
     #[serde(default)]
     pub pointer_id: i64,
@@ -654,6 +664,35 @@ mod tests {
         assert_eq!(e.target.uid, 7);
         assert_eq!(e.touches.len(), 1);
         assert_eq!(e.touches[0].page_x, 10.5);
+        assert!(e.offset.is_none());
+        assert!(e.size.is_none());
+    }
+
+    #[test]
+    fn touch_event_reads_current_target_local_geometry() {
+        let e: TouchEvent = WhiskerValue::map([
+            ("type", WhiskerValue::String("touchstart".into())),
+            (
+                "offset",
+                WhiskerValue::map([
+                    ("x", WhiskerValue::Float(4.0)),
+                    ("y", WhiskerValue::Float(6.5)),
+                ]),
+            ),
+            (
+                "size",
+                WhiskerValue::map([
+                    ("width", WhiskerValue::Float(80.0)),
+                    ("height", WhiskerValue::Float(40.0)),
+                ]),
+            ),
+        ])
+        .deserialize_into()
+        .expect("deserialize local geometry");
+        let offset = e.offset.expect("offset");
+        let size = e.size.expect("size");
+        assert_eq!((offset.x, offset.y), (4.0, 6.5));
+        assert_eq!((size.width, size.height), (80.0, 40.0));
     }
 
     #[test]
