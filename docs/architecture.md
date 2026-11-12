@@ -346,3 +346,11 @@ For focused explanations, continue with [reactivity](reactivity-design.md),
 [lists](list-design.md), [routing](router-design.md), or
 [animation](animation-design.md). These documents describe the current design;
 issues, PRs, and Git history preserve the discussions behind it.
+
+## Android cleartext policy
+
+The generated main manifest denies cleartext traffic by default. A debug-only
+manifest overlay enables development connections; release variants do not include
+that overlay. Applications that require production HTTP must explicitly configure
+their Android network policy. Verify the final merged manifest when using plugins
+that supply network security configuration or application-attribute overrides.

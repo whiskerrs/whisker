@@ -135,6 +135,30 @@ pub(super) fn declarations(inputs: &AndroidInputs) -> Result<AndroidProjectIr> {
     }
     build.statements.push("buildTypes {\n    getByName(\"release\") {\n        if (whiskerKeystore != null) { signingConfig = signingConfigs.getByName(\"whiskerRelease\") }\n    }\n}".into());
     build.source_sets.insert(
+        "debug".into(),
+        AndroidSourceSet {
+            manifest: Some(element(
+                "manifest",
+                &[
+                    (
+                        "xmlns:android",
+                        "http://schemas.android.com/apk/res/android",
+                    ),
+                    ("xmlns:tools", "http://schemas.android.com/tools"),
+                ],
+                vec![element(
+                    "application",
+                    &[
+                        ("android:usesCleartextTraffic", "true"),
+                        ("tools:replace", "android:usesCleartextTraffic"),
+                    ],
+                    vec![],
+                )],
+            )),
+            ..Default::default()
+        },
+    );
+    build.source_sets.insert(
         "main".into(),
         AndroidSourceSet {
             manifest: Some(manifest(inputs)),
@@ -352,7 +376,7 @@ fn manifest(i: &AndroidInputs) -> XmlElement {
         "application",
         &[
             ("android:label", &i.app_name),
-            ("android:usesCleartextTraffic", "true"),
+            ("android:usesCleartextTraffic", "false"),
             (
                 "android:theme",
                 i.android_theme.as_deref().unwrap_or("@style/Theme.Whisker"),
