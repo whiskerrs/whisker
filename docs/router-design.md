@@ -167,6 +167,9 @@ spreading the same group into N stacks creates N instances of
 `/post/:id` that **share a route id** (`"post"`). Relative resolution
 (see below) picks the right instance at navigate time.
 
+Fragments may precede layout routes or appear inside them; layout chrome wraps
+the same container regardless of the number of roots each fragment contributes.
+
 ### Per-screen animation
 
 Transitions are **parameters of the `Route` in `routes!`**, not
