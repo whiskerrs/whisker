@@ -488,3 +488,10 @@ and prone to drift. Pick one.
   [issue #128](https://github.com/whiskerrs/whisker/issues/128)
 - Why `Owner` (Shape 3 mechanics) and what backs lifetime →
   [`reactivity-design.md`](./reactivity-design.md)
+
+## Secure-store key namespace
+
+Android reserves `__whisker_secure_keyset__` for its encrypted Tink keyset.
+Loading, saving or removing that key as application data fails before accessing
+the cryptographic state. Existing application keys and encrypted values are kept
+in place; no key migration or keyset rotation is performed.
