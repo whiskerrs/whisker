@@ -70,10 +70,12 @@ pub struct LogLine {
 struct LogBuffer {
     inner: Mutex<VecDeque<LogLine>>,
     notify: Notify,
+    #[cfg(unix)]
     capacity: usize,
 }
 
 impl LogBuffer {
+    #[cfg(unix)]
     fn push(&self, line: LogLine) {
         let Ok(mut g) = self.inner.lock() else {
             // Poisoned mutex — drop the line rather than propagating a
@@ -107,6 +109,7 @@ static LOG_BUFFER: OnceLock<Arc<LogBuffer>> = OnceLock::new();
 
 /// Bounded to backstop runaway log spam (panic loop, `loop {
 /// println!() }`) before the WS session connects.
+#[cfg(unix)]
 const BUFFER_CAPACITY: usize = 1024;
 
 /// Install the stdout/stderr capture pipes. Idempotent — returns
