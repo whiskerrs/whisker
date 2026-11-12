@@ -396,3 +396,13 @@ the next save anyway.
   function, type, or constant leaves every component hash unchanged, and
   editing the application's root component has no parent to remount into;
   both fall back to a full remount, which resets all state.
+
+## Browser development request boundary
+
+The dev server accepts only its bound address and port (plus localhost for a
+loopback or wildcard bind) in Host. Explicit Origin headers must match the same
+HTTP authority. Browser WebSocket upgrades require that Origin; originless native
+clients require a configured session secret. Remote DNS names and cross-origin
+requests are rejected before static files or WebSocket handlers run. Native log
+and trace envelopes are ignored until authentication succeeds. Device log control
+characters are removed before either TUI or plain terminal output.
