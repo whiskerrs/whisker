@@ -122,6 +122,8 @@ pub struct Config {
     /// Generated browser composition project. Required iff
     /// `target == Target::Web`.
     pub web: Option<WebParams>,
+    /// Generated Linux Cargo Host. Required iff `target == Target::Linux`.
+    pub linux: Option<LinuxParams>,
 }
 
 impl Config {
@@ -141,6 +143,7 @@ impl Config {
             ios: None,
             macos: None,
             web: None,
+            linux: None,
         }
     }
 }
@@ -203,6 +206,17 @@ pub struct MacosParams {
     pub derived_data: PathBuf,
 }
 
+/// Flat parameters for the generated Linux Cargo Host.
+#[derive(Debug, Clone)]
+pub struct LinuxParams {
+    /// Generated `gen/linux` Cargo project.
+    pub project_dir: PathBuf,
+    /// Dedicated Cargo output directory, shared with `whisker build linux`.
+    pub target_dir: PathBuf,
+    /// Generated package and executable name.
+    pub generated_package: String,
+}
+
 /// Flat parameters for Whisker's generated browser Host.
 #[derive(Debug, Clone)]
 pub struct WebParams {
@@ -226,8 +240,10 @@ pub enum Target {
     /// iOS Simulator app + xcrun simctl install + launch.
     IosSimulator,
     /// Native macOS app. The dev server builds and launches the generated
-    /// Cargo Host, and applies subsecond patches without restarting it.
+    /// Xcode project, and applies subsecond patches without restarting it.
     Macos,
+    /// Native Linux app: the generated Cargo Host executable, run locally.
+    Linux,
     /// Browser WASM application built and served by Whisker.
     Web,
 }
@@ -417,12 +433,14 @@ impl DevServer {
             self.config.target,
         )
         .with_macos(self.config.macos.clone())
-        .with_web(self.config.web.clone());
+        .with_web(self.config.web.clone())
+        .with_linux(self.config.linux.clone());
 
         let hot_reload_init = if self.config.hot_patch_mode == HotPatchMode::HotReload {
             let feature = match self.config.target {
                 Target::Web => "hot-reload",
                 Target::Android | Target::IosSimulator | Target::Macos => "whisker/hot-reload",
+                Target::Linux => "whisker-linux/hot-reload",
             };
             builder = builder.with_features(vec![feature.into()]);
             match prepare_hot_reload_capture(&self.config) {
@@ -447,6 +465,7 @@ impl DevServer {
             self.config.android.clone(),
             self.config.ios.clone(),
             self.config.macos.clone(),
+            self.config.linux.clone(),
             self.config.workspace_root.clone(),
             self.config.package.clone(),
             hot_reload_init.as_ref().map(|p| p.capture.clone()),
@@ -703,6 +722,10 @@ impl DevServer {
                     whisker_build::ui::section("Full Reload");
                     run_build_cycle(&builder, &installer, &self.on_event, &sender, "full reload")
                         .await;
+                    // The rebuilt binary has new symbol addresses; a patcher
+                    // kept from before would aim patches at the old ones.
+                    patcher = None;
+                    ensure_patcher(&self.config, &hot_reload_init, &mut patcher);
                 }
                 Input::Command(DevCommand::Relaunch) => {
                     emit(&self.on_event, Event::HostLaunching);

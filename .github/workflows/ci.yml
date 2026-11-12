@@ -204,6 +204,8 @@ jobs:
       - name: Install GTK, fonts, and a virtual display
         run: bash .github/scripts/install-ubuntu-packages.sh libgtk-4-dev libgl1-mesa-dri xvfb fonts-dejavu-core fonts-noto-core
       - run: xvfb-run -a cargo xtask host-conformance linux
+      - name: Build the Host with Hot Reload
+        run: cargo check -p whisker-linux --features hot-reload
 
   host-conformance-windows:
     name: Host conformance (Windows / WinUI 3)

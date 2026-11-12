@@ -190,6 +190,11 @@ pub(super) fn target_triple_for(config: &Config) -> Option<String> {
             "x86_64" => Some("x86_64-apple-darwin".to_string()),
             _ => None,
         },
+        Target::Linux => match std::env::consts::ARCH {
+            "aarch64" => Some("aarch64-unknown-linux-gnu".to_string()),
+            "x86_64" => Some("x86_64-unknown-linux-gnu".to_string()),
+            _ => None,
+        },
         Target::Web => Some("wasm32-unknown-unknown".to_string()),
     }
 }
@@ -215,7 +220,7 @@ pub(super) fn resolve_linker_for(config: &Config) -> Result<PathBuf> {
                 .with_context(|| format!("resolve NDK clang for ABI {abi} API {api}"))
         }
         Target::IosSimulator => Ok(hotpatch::wrapper::resolve_linker()),
-        Target::Macos => Ok(hotpatch::wrapper::resolve_linker()),
+        Target::Macos | Target::Linux => Ok(hotpatch::wrapper::resolve_linker()),
         Target::Web => {
             let output = std::process::Command::new("rustc")
                 .args(["--print", "sysroot"])
@@ -410,6 +415,24 @@ pub(super) fn original_binary_path(config: &Config) -> Result<PathBuf> {
             }
             Ok(dylib)
         }
+        Target::Linux => {
+            let params = config
+                .linux
+                .as_ref()
+                .context("target=Linux but Config.linux is missing")?;
+            let executable = whisker_build::desktop::linux_executable(
+                &params.target_dir,
+                whisker_build::Profile::Debug,
+                &params.generated_package,
+            );
+            if !executable.is_file() {
+                anyhow::bail!(
+                    "no Linux executable at {} — the initial cargo build did not produce it",
+                    executable.display(),
+                );
+            }
+            Ok(executable)
+        }
         Target::Web => anyhow::bail!(
             "Web hot patches use the generated post-bindgen WASM module, not a native executable"
         ),
@@ -437,7 +460,7 @@ pub(super) fn android_abi_to_camel(abi: &str) -> String {
 
 pub(super) fn target_os_for(target: Target) -> hotpatch::LinkerOs {
     match target {
-        Target::Android => hotpatch::LinkerOs::Linux,
+        Target::Android | Target::Linux => hotpatch::LinkerOs::Linux,
         Target::IosSimulator => hotpatch::LinkerOs::Macos,
         Target::Macos => hotpatch::LinkerOs::Macos,
         Target::Web => hotpatch::LinkerOs::Other,

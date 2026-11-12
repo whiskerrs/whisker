@@ -1,5 +1,5 @@
 //! Build the CNG Windows/Linux Cargo executables and assemble their distribution.
-use crate::Profile;
+use crate::{CaptureShims, Profile};
 use anyhow::{Context, Result, ensure};
 use std::{
     collections::BTreeMap,
@@ -19,6 +19,19 @@ pub struct DesktopBuild<'a> {
     pub project_dir: &'a Path,
     pub target_dir: &'a Path,
     pub profile: Profile,
+    /// Cargo features added to the generated package's own.
+    pub features: &'a [String],
+    /// `Some` turns the Cargo step into a Hot Reload capture build.
+    pub capture: Option<&'a CaptureShims>,
+}
+
+/// Where [`build_app`] puts a generated Linux executable.
+pub fn linux_executable(target_dir: &Path, profile: Profile, generated_package: &str) -> PathBuf {
+    target_dir
+        .join("dist")
+        .join(profile.dir_name())
+        .join("bin")
+        .join(generated_package)
 }
 /// Compile selected Cargo binaries, copy prebuilt helpers, and return the
 /// distribution root. Cross compilation requires the target toolchain/sysroot.
@@ -64,8 +77,15 @@ pub fn build_app(inputs: &DesktopBuild<'_>) -> Result<PathBuf> {
                 if !rust.default_features {
                     command.arg("--no-default-features");
                 }
-                for feature in &rust.features {
+                for feature in rust.features.iter().chain(inputs.features) {
                     command.arg("--features").arg(feature);
+                }
+                if let Some(capture) = inputs.capture {
+                    for dir in [&capture.rustc_cache_dir, &capture.linker_cache_dir] {
+                        std::fs::create_dir_all(dir)
+                            .with_context(|| format!("create capture dir {}", dir.display()))?;
+                    }
+                    command.envs(crate::capture_env_vars_all_crates(capture));
                 }
                 let step = crate::ui::step(
                     crate::ui::OperationKind::Compile,
@@ -285,6 +305,8 @@ mod tests {
                 project_dir: &project_dir,
                 target_dir: &target,
                 profile: Profile::Release,
+                features: &[],
+                capture: None,
             };
             let out = build_app(&input).unwrap();
             assert_eq!(std::fs::read(out.join("share/data")).unwrap(), b"assets");
@@ -379,6 +401,8 @@ mod tests {
             project_dir: &root.0,
             target_dir: &root.0.join("target"),
             profile: Profile::Debug,
+            features: &[],
+            capture: None,
         })
         .unwrap();
         let output = Command::new(out.join(if windows { "app.exe" } else { "bin/app" }))
@@ -453,6 +477,8 @@ mod cross_tests {
             project_dir: &root,
             target_dir: &root.join("target"),
             profile: Profile::Debug,
+            features: &[],
+            capture: None,
         })
         .unwrap();
         let bytes = std::fs::read(out.join("fixture-whisker-windows.exe")).unwrap();

@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-use crate::{MacosParams, Target, WebParams};
+use crate::{LinuxParams, MacosParams, Target, WebParams};
 use whisker_build::CaptureShims;
 
 /// Builder for cold (full reload) rebuilds. hot-reload patches live in
@@ -25,14 +25,14 @@ pub struct Builder {
     package: String,
     target: Target,
     /// Cargo features forwarded to whichever step compiles the user
-    /// crate. The dev loop turns on `whisker/hot-reload` for mobile and
-    /// the generated Host's `hot-reload` feature for macOS.
+    /// crate. The dev loop turns on the target's hot-reload feature.
     features: Vec<String>,
     /// `Some` → fat build (hot reload capture caches get populated).
     /// `None` → plain full reload.
     capture: Option<CaptureShims>,
     macos: Option<MacosParams>,
     web: Option<WebParams>,
+    linux: Option<LinuxParams>,
 }
 
 impl Builder {
@@ -51,6 +51,7 @@ impl Builder {
             capture: None,
             macos: None,
             web: None,
+            linux: None,
         }
     }
 
@@ -88,6 +89,11 @@ impl Builder {
         self
     }
 
+    pub fn with_linux(mut self, linux: Option<LinuxParams>) -> Self {
+        self.linux = linux;
+        self
+    }
+
     /// Run the build for the current target. Inherits stdout/stderr.
     pub async fn build(&self) -> Result<()> {
         match self.target {
@@ -95,6 +101,7 @@ impl Builder {
             Target::IosSimulator => self.build_ios_simulator().await,
             Target::Macos => self.build_macos().await,
             Target::Web => self.build_web().await,
+            Target::Linux => self.build_linux().await,
         }
     }
 
@@ -203,6 +210,27 @@ impl Builder {
         .context("spawn_blocking iOS Rust framework build")?
     }
 
+    async fn build_linux(&self) -> Result<()> {
+        let params = self
+            .linux
+            .clone()
+            .context("target=Linux but no LinuxParams were provided")?;
+        let features = self.features.clone();
+        let capture = self.capture.clone();
+        tokio::task::spawn_blocking(move || {
+            whisker_build::desktop::build_app(&whisker_build::desktop::DesktopBuild {
+                project_dir: &params.project_dir,
+                target_dir: &params.target_dir,
+                profile: whisker_build::Profile::Debug,
+                features: &features,
+                capture: capture.as_ref(),
+            })
+            .map(|_| ())
+        })
+        .await
+        .context("spawn_blocking Linux app build")?
+    }
+
     async fn build_macos(&self) -> Result<()> {
         let params = self
             .macos
@@ -237,6 +265,7 @@ mod tests {
             Target::IosSimulator,
             Target::Macos,
             Target::Web,
+            Target::Linux,
         ] {
             let b = Builder::new(
                 PathBuf::from("/tmp/ws"),

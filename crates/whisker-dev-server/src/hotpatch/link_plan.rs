@@ -264,6 +264,11 @@ fn filter_captured_linker_args(args: &[String]) -> Vec<String> {
             i += 1;
             continue;
         }
+        // A captured program link asks for an executable image.
+        if matches!(arg.as_str(), "-pie" | "-no-pie" | "-static-pie") {
+            i += 1;
+            continue;
+        }
         // -undefined <action>: re-added later in the macOS branch.
         if arg == "-undefined" && i + 1 < args.len() {
             i += 2;
@@ -484,8 +489,14 @@ mod tests {
         // Some clang drivers split `-Wl,--version-script=/p` into
         // `--version-script /p` when forwarding to ld. Defensive.
         let kept =
-            filter_captured_linker_args(&s(&["--version-script", "/tmp/rustcXX/list", "-pie"]));
-        assert_eq!(kept, s(&["-pie"]));
+            filter_captured_linker_args(&s(&["--version-script", "/tmp/rustcXX/list", "-lc"]));
+        assert_eq!(kept, s(&["-lc"]));
+    }
+
+    #[test]
+    fn filter_drops_executable_image_flags() {
+        let kept = filter_captured_linker_args(&s(&["-pie", "-no-pie", "-static-pie", "-lc"]));
+        assert_eq!(kept, s(&["-lc"]));
     }
 
     #[test]
@@ -680,7 +691,6 @@ mod tests {
         assert_eq!(
             plan.args,
             s(&[
-                "-pie",
                 "-L",
                 "/ndk/lib",
                 "-shared",

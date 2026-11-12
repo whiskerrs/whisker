@@ -83,11 +83,11 @@ pub fn run(config: LinuxAppConfig, application: fn() -> Element) -> Result<(), L
     run_with_application_hash(config, application, || 0)
 }
 
-/// Runs a Whisker application; the hash is reserved for Hot Reload.
+/// Runs a Whisker application; Hot Reload remounts the root when the hash changes.
 pub fn run_with_application_hash(
     config: LinuxAppConfig,
     application: fn() -> Element,
-    _application_hash: fn() -> u64,
+    application_hash: fn() -> u64,
 ) -> Result<(), LinuxError> {
-    app::run_application(config, application)
+    app::run_application(config, application, application_hash)
 }

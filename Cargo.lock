@@ -5414,6 +5414,7 @@ dependencies = [
  "gtk4",
  "pangocairo",
  "whisker",
+ "whisker-dev-runtime",
  "whisker-engine",
  "whisker-host-conformance",
  "whisker-protocol",

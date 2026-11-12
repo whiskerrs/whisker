@@ -28,6 +28,29 @@ thread_local! {
     static SURFACE: RefCell<Option<NodeWidget>> = const { RefCell::new(None) };
 }
 
+#[cfg(feature = "hot-reload")]
+type HotReload = whisker_dev_runtime::NativeHotReload;
+
+#[cfg(not(feature = "hot-reload"))]
+struct HotReload;
+
+#[cfg(not(feature = "hot-reload"))]
+impl HotReload {
+    fn new(
+        _wake: RuntimeWakeHandle,
+        _application: fn() -> Element,
+        _application_hash: fn() -> u64,
+    ) -> Self {
+        Self
+    }
+
+    fn apply(&mut self, _runtime: &mut RuntimeInstance) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    fn record_frame(&self, _timing: Option<whisker::runtime::FrameTiming>) {}
+}
+
 const ROOT_FONT_SIZE: f32 = 14.0;
 const MOUSE_POINTER: u64 = 1;
 
@@ -66,6 +89,7 @@ pub(crate) fn host_capabilities() -> RenderCapabilities {
 pub(crate) fn run_application(
     config: LinuxAppConfig,
     application: fn() -> Element,
+    application_hash: fn() -> u64,
 ) -> Result<(), LinuxError> {
     gtk::init().map_err(|error| LinuxError(format!("initialize GTK: {error}")))?;
     let app = gtk::Application::builder()
@@ -75,7 +99,7 @@ pub(crate) fn run_application(
     {
         let failure = Rc::clone(&failure);
         app.connect_activate(move |app| {
-            if let Err(error) = activate(app, &config, application) {
+            if let Err(error) = activate(app, &config, application, application_hash) {
                 *failure.borrow_mut() = Some(error);
                 app.quit();
             }
@@ -94,6 +118,7 @@ fn activate(
     app: &gtk::Application,
     config: &LinuxAppConfig,
     application: fn() -> Element,
+    application_hash: fn() -> u64,
 ) -> Result<(), LinuxError> {
     let surface = NodeWidget::new();
     surface.state_mut().hit_target = true;
@@ -115,7 +140,12 @@ fn activate(
         .child(&surface)
         .build();
 
-    let host = LinuxApplication::new(surface.clone(), &config.modules)?;
+    let host = LinuxApplication::new(
+        surface.clone(),
+        &config.modules,
+        application,
+        application_hash,
+    )?;
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(host));
     SURFACE.with(|slot| *slot.borrow_mut() = Some(surface.clone()));
     with_application(|host| {
@@ -145,6 +175,7 @@ fn with_application<T>(
 struct LinuxApplication {
     surface: NodeWidget,
     runtime: RuntimeInstance,
+    hot_reload: HotReload,
     measurements: PangoMeasurementProvider,
     frames: GtkFrameSink,
     feedback: SharedScrollFeedback,
@@ -155,7 +186,12 @@ struct LinuxApplication {
 }
 
 impl LinuxApplication {
-    fn new(surface: NodeWidget, definitions: &[LinuxModuleDefinition]) -> Result<Self, LinuxError> {
+    fn new(
+        surface: NodeWidget,
+        definitions: &[LinuxModuleDefinition],
+        application: fn() -> Element,
+        application_hash: fn() -> u64,
+    ) -> Result<Self, LinuxError> {
         let modules = RustModuleRuntime::new(
             definitions.iter().map(|module| module.service.clone()),
             request_frame,
@@ -193,7 +229,8 @@ impl LinuxApplication {
         Ok(Self {
             feedback: frames.feedback(),
             surface,
-            runtime: RuntimeInstance::new(runtime_surface, wake),
+            runtime: RuntimeInstance::new(runtime_surface, wake.clone()),
+            hot_reload: HotReload::new(wake, application, application_hash),
             measurements,
             frames,
             modules,
@@ -217,6 +254,12 @@ impl LinuxApplication {
             self.viewport_epoch = self.viewport_epoch.wrapping_add(1).max(1);
             self.environment_epoch = self.environment_epoch.wrapping_add(1).max(1);
         }
+        if let Err(error) = self
+            .modules
+            .with_host(|| self.hot_reload.apply(&mut self.runtime))
+        {
+            eprintln!("whisker: hot reload failed: {error}");
+        }
         self.dispatch_provider_events(timestamp_ms)?;
         let drive = self
             .modules
@@ -237,6 +280,7 @@ impl LinuxApplication {
                 )
             })
             .map_err(|error| LinuxError(format!("drive GTK frame: {error}")))?;
+        self.hot_reload.record_frame(drive.timing);
         self.modules
             .dispatch_pending_events(&self.runtime)
             .map_err(|error| LinuxError(format!("dispatch GTK module event: {error}")))?;

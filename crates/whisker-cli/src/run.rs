@@ -31,7 +31,8 @@ pub struct Args {
 
     /// Where to deploy the rebuilt artifact. Positional so the
     /// common case (`whisker run android` / `whisker run ios` /
-    /// `whisker run macos`) reads naturally without a `--target=` prefix.
+    /// `whisker run macos` / `whisker run linux`) reads naturally without
+    /// a `--target=` prefix.
     #[arg(value_enum)]
     pub target: CliTarget,
 
@@ -62,6 +63,7 @@ pub enum CliTarget {
     Android,
     Ios,
     Macos,
+    Linux,
     Web,
 }
 
@@ -71,6 +73,7 @@ impl From<CliTarget> for Target {
             CliTarget::Android => Target::Android,
             CliTarget::Ios => Target::IosSimulator,
             CliTarget::Macos => Target::Macos,
+            CliTarget::Linux => Target::Linux,
             CliTarget::Web => Target::Web,
         }
     }
@@ -85,6 +88,9 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
     let target: Target = args.target.into();
     if target == Target::Macos && !cfg!(target_os = "macos") {
         return Err(anyhow!("`whisker run macos` runs only on macOS"));
+    }
+    if target == Target::Linux && !cfg!(target_os = "linux") {
+        return Err(anyhow!("`whisker run linux` runs only on Linux"));
     }
     let mut selection = args.cargo.selection();
     if target == Target::IosSimulator {
@@ -224,6 +230,17 @@ fn run_inner(
         _ => None,
     };
 
+    let linux = match target {
+        Target::Linux => Some(whisker_dev_server::LinuxParams {
+            project_dir: sync.gen_dir.clone(),
+            target_dir: workspace_root
+                .join("target/.whisker/linux")
+                .join(&m.package),
+            generated_package: format!("{}-whisker-linux", m.package),
+        }),
+        _ => None,
+    };
+
     let watch_paths = watch_paths_for(&m);
 
     let config = Config {
@@ -251,6 +268,7 @@ fn run_inner(
         ios,
         macos: None,
         web,
+        linux,
     };
 
     let watching_paths: Vec<String> = watch_paths
@@ -353,6 +371,7 @@ fn run_macos(
                 .join(&manifest.package),
         }),
         web: None,
+        linux: None,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -398,6 +417,11 @@ fn target_destination(config: &Config) -> String {
             .as_ref()
             .map(|params| format!("{} · local application", params.project_name))
             .unwrap_or_else(|| "macOS application".into()),
+        Target::Linux => config
+            .linux
+            .as_ref()
+            .map(|params| format!("{} · local application", params.generated_package))
+            .unwrap_or_else(|| "Linux application".into()),
         Target::Web => format!("http://127.0.0.1:{}/", config.bind_addr.port()),
     }
 }
@@ -441,6 +465,7 @@ fn target_label(target: Target) -> &'static str {
         Target::Android => "Android",
         Target::IosSimulator => "iOS Simulator",
         Target::Macos => "macOS",
+        Target::Linux => "Linux",
         Target::Web => "Web",
     }
 }
@@ -548,6 +573,7 @@ mod tests {
         assert_eq!(Target::from(CliTarget::Android), Target::Android);
         assert_eq!(Target::from(CliTarget::Ios), Target::IosSimulator);
         assert_eq!(Target::from(CliTarget::Macos), Target::Macos);
+        assert_eq!(Target::from(CliTarget::Linux), Target::Linux);
         assert_eq!(Target::from(CliTarget::Web), Target::Web);
     }
 }
