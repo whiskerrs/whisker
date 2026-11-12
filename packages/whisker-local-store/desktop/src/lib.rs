@@ -58,6 +58,17 @@ struct FileStore {
 
 impl FileStore {
     fn open(path: PathBuf) -> Result<Self, String> {
+        if let Ok(metadata) = std::fs::symlink_metadata(&path) {
+            if metadata.file_type().is_symlink() {
+                return Err("local store cannot be a symbolic link".into());
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
         let values = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .map_err(|error| format!("decode {}: {error}", path.display()))?,
@@ -72,12 +83,40 @@ impl FileStore {
             .path
             .parent()
             .ok_or_else(|| format!("store path has no parent: {}", self.path.display()))?;
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(parent).map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+                .map_err(|error| error.to_string())?;
+        }
         let bytes = serde_json::to_vec(&self.values)
             .map_err(|error| format!("encode local store: {error}"))?;
-        std::fs::write(&self.path, bytes)
-            .map_err(|error| format!("write {}: {error}", self.path.display()))
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&self.path)
+            .map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|error| error.to_string())?;
+        }
+        file.write_all(&bytes).map_err(|error| error.to_string())
     }
 }
 
@@ -85,7 +124,11 @@ static STORE: OnceLock<Result<Mutex<FileStore>, String>> = OnceLock::new();
 
 fn store() -> Result<&'static Mutex<FileStore>, String> {
     STORE
-        .get_or_init(|| FileStore::open(default_store_path()).map(Mutex::new))
+        .get_or_init(|| {
+            default_store_path()
+                .and_then(FileStore::open)
+                .map(Mutex::new)
+        })
         .as_ref()
         .map_err(Clone::clone)
 }
@@ -123,17 +166,23 @@ fn mutate_store(
     value
 }
 
-fn default_store_path() -> PathBuf {
+fn default_store_path() -> Result<PathBuf, String> {
     let application = std::env::current_exe()
         .ok()
         .and_then(|path| path.file_stem().map(|name| name.to_owned()))
         .and_then(|name| name.to_str().map(ToOwned::to_owned))
         .unwrap_or_else(|| "application".to_owned());
-    user_data_dir()
-        .unwrap_or_else(std::env::temp_dir)
+    store_path(user_data_dir(), &application)
+}
+
+fn store_path(base: Option<PathBuf>, application: &str) -> Result<PathBuf, String> {
+    let base = base
+        .filter(|path| path.is_absolute())
+        .ok_or("an absolute user data directory is required for local-store")?;
+    Ok(base
         .join("whisker")
         .join(application)
-        .join("local-store.json")
+        .join("local-store.json"))
 }
 
 #[cfg(target_os = "macos")]
@@ -166,6 +215,31 @@ fn argument_error(operation: &str, expected: &str) -> WhiskerValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn store_does_not_fall_back_to_shared_temporary_storage() {
+        assert!(store_path(None, "app").is_err());
+        assert!(store_path(Some(PathBuf::from("relative")), "app").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persisted_store_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("whisker-store-mode-{}", std::process::id()));
+        let mut store = FileStore::open(root.join("local-store.json")).unwrap();
+        store.values.insert("key".into(), "value".into());
+        store.persist().unwrap();
+        assert_eq!(
+            std::fs::metadata(&store.path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn file_store_persists_string_values() {

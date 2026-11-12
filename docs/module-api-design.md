@@ -488,3 +488,11 @@ and prone to drift. Pick one.
   [issue #128](https://github.com/whiskerrs/whisker/issues/128)
 - Why `Owner` (Shape 3 mechanics) and what backs lifetime →
   [`reactivity-design.md`](./reactivity-design.md)
+
+## Desktop local-store location
+
+Local-store requires an absolute per-user data directory. If it cannot resolve
+one, operations fail instead of falling back to shared temporary storage. Unix
+application data directories and files use owner-only 0700 and 0600 permissions,
+respectively. Existing values are retained at their existing per-user location.
+Local-store is plaintext storage; use secure-store for secrets.
