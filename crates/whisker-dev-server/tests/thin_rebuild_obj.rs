@@ -139,13 +139,12 @@ async fn thin_rebuild_obj_plus_dynamic_lookup_link_preserves_mangled_symbols() {
     let obj_dir = work.join("obj");
     std::fs::create_dir_all(&obj_dir).unwrap();
     let obj_plan = build_obj_plan(&captured, &obj_dir);
-    let object = run_obj_plan(&obj_plan, &rustc_path(), &work)
+    let objects = run_obj_plan(&obj_plan, &rustc_path(), &work)
         .await
         .expect("rustc --emit=obj should succeed");
     assert!(
-        object.is_file(),
-        "expected `{}` to exist after run_obj_plan",
-        object.display(),
+        objects.len() > 1,
+        "the fixture's modules should land in separate objects: {objects:?}",
     );
 
     // ---- 2. own linker invocation -----------------------------------
@@ -160,7 +159,7 @@ async fn thin_rebuild_obj_plus_dynamic_lookup_link_preserves_mangled_symbols() {
     let dylib = obj_dir.join(library_filename(FIXTURE_CRATE_NAME));
     let link_plan = build_link_plan(
         &host_sdk_args(),
-        &object,
+        &objects,
         &dylib,
         linker_os_for_current_platform(),
         &[], // host fixture has no separate stub object — the test
