@@ -350,9 +350,9 @@ code. Two defenses:
   `127.0.0.1:9876`. On Android the device reaches the host through
   `adb reverse tcp:9876 tcp:<dev_port>` (set up by the installer); the
   app reads `WHISKER_DEV_ADDR` or falls back to `127.0.0.1:9876`.
-- **Per-session token.** `whisker run` generates a random 32-hex-char
+- **Per-session token.** `whisker run` generates a random 64-hex-char
   token per session (`generate_dev_token` in `whisker-cli/src/run.rs`,
-  16 bytes from `/dev/urandom`). It's delivered to the device
+  32 bytes from the operating-system CSPRNG). It's delivered to the device
   out-of-band:
   - **iOS Simulator / host:** the `WHISKER_DEV_TOKEN` env var, set via
     `SIMCTL_CHILD_WHISKER_DEV_TOKEN` (the `SIMCTL_CHILD_<NAME>`
@@ -362,14 +362,13 @@ code. Two defenses:
     adb-set env vars). `whisker-dev-runtime` reads it via
     `__system_property_get`.
 
-The device echoes the token in its `hello`. The server validates it
-(`server.rs::handle_socket`): a client starts *unauthenticated* when a
-token is required and is promoted only on a matching `hello`; a missing
-or mismatched token closes the connection without ever arming the patch
-path. A token-less server (`dev_token == None`, e.g. tests) runs open by
-default. While unauthenticated, broadcast patches are dropped (not
-buffered) for that client — the device re-receives the full JumpTable on
-the next save anyway.
+The peers exchange nonce-based HMAC proofs before native subscription. The
+secret never appears in a hello. Every native frame authenticates its session,
+direction, type, sequence and complete payload; malformed or replayed frames
+close the connection before executable bytes are staged. Token-less servers
+accept browser reloads and explicitly validated WebAssembly side modules only;
+they never forward native library patches. Browser hello metadata supplies the
+Wasm relocation base without enabling the native channel.
 
 ## Known boundaries
 
@@ -396,3 +395,32 @@ the next save anyway.
   function, type, or constant leaves every component hash unchanged, and
   editing the application's root component has no parent to remount into;
   both fall back to a full remount, which resets all state.
+
+## Authenticated native transport (protocol v1)
+
+The CLI provisions a fresh 128-bit OS-random secret for each native development
+session. Client and server exchange fresh 256-bit nonce challenges and HMAC-SHA256
+proofs over both nonces, with separate server/client domains. The secret is never
+sent in a WebSocket hello. The runtime verifies the server proof before sending
+its own proof, ASLR information, logs, or trace data. Handshakes expire after five
+seconds. Missing secrets and legacy native protocols are rejected.
+
+After the handshake, native messages are binary envelopes:
+`[version:1][type:1][sequence:u64 BE][payload][HMAC:32]`. Type 1 carries the inner
+patch frame and type 2 carries UTF-8 control/metadata JSON. The MAC includes the
+versioned directional domain, both nonce challenges, and every envelope byte
+before the tag. Each direction requires the next sequence number without wrapping;
+modified, replayed, reordered, reflected, and cross-session messages are rejected
+before patch metadata is parsed or a library is written. The inner patch remains
+`[header length:u64 BE][JSON jump table][library bytes]`.
+
+The complete WebSocket message and frame limits are 256 MiB; control payloads and
+patch metadata are limited to 1 MiB and handshake JSON to 4 KiB. The 17 MiB large
+patch regression remains supported. Oversized patches require a full rebuild.
+Android forwarding and secret delivery must succeed before launch. Browser-only
+reload connections cannot receive native library patches.
+
+CLI and runtime must be rebuilt together after protocol updates. HMAC authenticates
+but does not encrypt the connection. The OS debug transport and provisioned secret
+are trusted; reading the Android debug property compromises that session. OS
+randomness failure disables authenticated development transport.

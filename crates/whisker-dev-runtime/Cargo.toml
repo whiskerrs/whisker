@@ -13,10 +13,12 @@ description = "Development-only runtime: WebSocket client + hot-reload patch rec
 
 [features]
 default = []
+auth = ["dep:hmac", "dep:sha2", "dep:serde", "dep:serde_json"]
 # Pulls in the WebSocket client + subsecond bindings. Mobile enables it
 # through `whisker-driver`; Desktop enables it directly. Release builds get
 # an empty crate.
 hot-reload = [
+    "auth",
     "dep:tokio",
     "dep:tokio-tungstenite",
     "dep:futures-util",
@@ -41,3 +43,6 @@ subsecond-types = { workspace = true, optional = true }
 # `pipe(2)` / `dup2` / `read` / `STDOUT_FILENO` for POSIX log capture.
 # Windows keeps hot reload enabled but currently leaves log forwarding off.
 libc = { workspace = true, optional = true }
+
+hmac = { version = "=0.12.1", optional = true }
+sha2 = { version = "=0.10.9", optional = true }

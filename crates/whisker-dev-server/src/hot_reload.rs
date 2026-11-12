@@ -70,10 +70,14 @@ pub(super) async fn hot_reload_cycle(
             };
             let patch_mib = dylib_bytes.len() as f64 / (1024.0 * 1024.0);
             let send_started = std::time::Instant::now();
-            let n = sender.send(Patch {
+            let patch = Patch {
                 table: plan.table,
                 dylib_bytes,
-            });
+            };
+            let n = match patcher {
+                RuntimePatcher::Native(_) => sender.send(patch),
+                RuntimePatcher::Web(_) => sender.send_web(patch),
+            };
             whisker_build::ui::debug(format!(
                 "built {built_in:?} · queued {:?}",
                 send_started.elapsed()

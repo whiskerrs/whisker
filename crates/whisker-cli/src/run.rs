@@ -449,35 +449,14 @@ fn target_destination(config: &Config) -> String {
     }
 }
 
-/// Generate a random hex token for the hot-reload session.
-///
-/// Reads 16 bytes from `/dev/urandom` (every host we run on is POSIX)
-/// and hex-encodes them into a 32-char token. If `/dev/urandom` is
-/// somehow unreadable we fall back to a time+pid-seeded value — weaker,
-/// but the token only needs to be unguessable within a dev session on
-/// the local machine, and the dev loop shouldn't hard-fail over it.
+/// Generate a session secret from OS randomness, failing closed if unavailable
 fn generate_dev_token() -> String {
-    let mut buf = [0u8; 16];
-    let strong = std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf))
-        .is_ok();
-    if !strong {
-        // Fallback seed: nanos since epoch XOR pid, splatted across the
-        // buffer. Not cryptographic, but non-constant per session.
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let seed = nanos ^ (std::process::id() as u128);
-        for (i, b) in buf.iter_mut().enumerate() {
-            *b = (seed >> ((i % 16) * 8)) as u8;
-        }
-    }
-    let mut s = String::with_capacity(32);
-    for b in buf {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
+    let bytes = whisker_dev_server::auth::nonce()
+        .expect("OS randomness is required for development authentication");
+    bytes[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// Friendly label for the TUI header. `whisker_dev_server::Target`'s

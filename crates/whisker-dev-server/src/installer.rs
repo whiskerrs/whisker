@@ -49,8 +49,7 @@ pub struct Installer {
     /// silently breaks hot reload (server on a custom port, device
     /// still on 9876).
     dev_port: u16,
-    /// Shared dev-session token to deliver to the device so its
-    /// `hello` is accepted by the server's auth gate. iOS gets it via
+    /// Shared dev-session secret delivered out of band for mutual authentication. iOS gets it via
     /// `SIMCTL_CHILD_WHISKER_DEV_TOKEN`; Android via
     /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
     dev_token: Option<String>,
@@ -478,17 +477,14 @@ async fn android_install_and_launch(
         anyhow::bail!("APK missing at {}", apk.display());
     }
 
-    // Bridge device `127.0.0.1:9876` → host `dev_port` so the
-    // dev-runtime reaches the WebSocket without knowing the
-    // emulator-gateway IP. The device always dials its default 9876;
-    // only the host side follows `--bind`, so a custom port still hot
-    // reloads. Best-effort — a previous run may have set it, and a
-    // physical device doesn't need it at all. Every adb call goes
-    // through `run_filtered` so its stdio can't bypass the TUI's
-    // capture pipe and overlay the live region.
+    // Forwarding is mandatory before provisioning or launching the development receiver.
     let mut reverse_cmd = adb();
     reverse_cmd.args(["reverse", "tcp:9876", &format!("tcp:{dev_port}")]);
-    let _ = run_filtered(reverse_cmd, SimctlNoise::Other).await;
+    let reverse = run_filtered(reverse_cmd, SimctlNoise::Other).await?;
+    anyhow::ensure!(
+        reverse.success(),
+        "adb reverse failed; refusing an unverified development connection"
+    );
 
     // Deliver the dev-session token. The app process doesn't inherit
     // adb-set env vars, so we stash it in a `debug.*` system property
@@ -497,11 +493,7 @@ async fn android_install_and_launch(
     // dev-server refuses to ship patches to the app.
     if let Some(token) = dev_token {
         if !deliver_android_dev_token(token).await {
-            whisker_build::ui::warn(format!(
-                "dev token did not land on the device — the app will keep being \
-                 rejected by the hot-reload server (0 clients). Fix manually: \
-                 adb shell setprop debug.whisker_dev_token {token}"
-            ));
+            anyhow::bail!("could not provision the Android development authentication secret");
         }
     }
 
