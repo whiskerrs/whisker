@@ -676,6 +676,7 @@ pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
         format!("archive {scheme}"),
     );
     let mut cmd = Command::new("xcodebuild");
+    cmd.env_remove("WHISKER_FEATURES");
     cmd.arg("-project")
         .arg(&xcode_project)
         .args(["-scheme", scheme])
