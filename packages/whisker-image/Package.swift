@@ -50,5 +50,6 @@ let package = Package(
                 .plugin(name: "WhiskerModuleCodegenPlugin", package: "whisker"),
             ]
         ),
+        .testTarget(name: "WhiskerImageTests", dependencies: ["WhiskerImage"], path: "ios/Tests"),
     ]
 )

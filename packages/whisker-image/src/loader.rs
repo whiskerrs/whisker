@@ -11,6 +11,12 @@ use image::imageops::{self, FilterType};
 
 use crate::ImageMode;
 
+mod managed;
+
+pub use managed::{configure_managed_cache, load_managed, remove_managed_image};
+
+const MAX_DOWNLOAD: u64 = 64 * 1024 * 1024;
+
 /// Parses a `mode` wire string; unknown modes yield `None`.
 pub fn parse_mode(value: &str) -> Option<ImageMode> {
     match value {
@@ -34,24 +40,7 @@ pub fn load_image(src: &str, headers: &str) -> Result<Arc<RgbaImage>, String> {
         return Ok(image);
     }
     let bytes = if src.starts_with("http://") || src.starts_with("https://") {
-        let parsed: BTreeMap<String, String> = if headers.trim().is_empty() {
-            BTreeMap::new()
-        } else {
-            serde_json::from_str(headers)
-                .map_err(|error| format!("invalid image request headers: {error}"))?
-        };
-        let mut request = ureq::get(src);
-        for (name, value) in parsed {
-            request = request.set(&name, &value);
-        }
-        let response = request.call().map_err(|error| error.to_string())?;
-        let mut bytes = Vec::new();
-        response
-            .into_reader()
-            .take(64 * 1024 * 1024)
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        bytes
+        fetch(&ureq::agent(), src, headers, MAX_DOWNLOAD)?
     } else if let Some(path) = src.strip_prefix("file://") {
         std::fs::read(path).map_err(|error| error.to_string())?
     } else if src.starts_with("data:image/") {
@@ -68,6 +57,28 @@ pub fn load_image(src: &str, headers: &str) -> Result<Arc<RgbaImage>, String> {
         .expect("Image cache lock poisoned")
         .put(cache_key, Arc::clone(&image));
     Ok(image)
+}
+
+/// Downloads at most `limit` bytes of `src`, sending the JSON-object `headers`.
+fn fetch(agent: &ureq::Agent, src: &str, headers: &str, limit: u64) -> Result<Vec<u8>, String> {
+    let parsed: BTreeMap<String, String> = if headers.trim().is_empty() {
+        BTreeMap::new()
+    } else {
+        serde_json::from_str(headers)
+            .map_err(|error| format!("invalid image request headers: {error}"))?
+    };
+    let mut request = agent.get(src);
+    for (name, value) in parsed {
+        request = request.set(&name, &value);
+    }
+    let response = request.call().map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(limit)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    Ok(bytes)
 }
 
 fn image_cache() -> &'static Mutex<lru::LruCache<String, Arc<RgbaImage>>> {

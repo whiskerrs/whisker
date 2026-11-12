@@ -67,6 +67,8 @@ public final class WhiskerImageView: WhiskerUI<WhiskerImageContentView> {
     private var currentSrc: String?
     private var currentHeaders: [String: String] = [:]
     private var loadScheduled = false
+    private var cacheOptions = ""
+    private var requestVersion: UInt64 = 0
 
     @objc public override func createView() -> WhiskerImageContentView {
         let v = WhiskerImageContentView()
@@ -100,10 +102,17 @@ public final class WhiskerImageView: WhiskerUI<WhiskerImageContentView> {
         scheduleLoad()
     }
 
+    public func setCache(_ value: String) {
+        if cacheOptions == value { return }
+        cacheOptions = value
+        scheduleLoad()
+    }
+
     /// Props of one update arrive as consecutive setter calls in one
     /// main-thread turn; loading from each setter would start a headerless
     /// download when `src` lands first, which the headered retry then joins.
     private func scheduleLoad() {
+        requestVersion &+= 1
         if loadScheduled { return }
         loadScheduled = true
         DispatchQueue.main.async { [weak self] in
@@ -124,9 +133,36 @@ public final class WhiskerImageView: WhiskerUI<WhiskerImageContentView> {
     }
 
     private func load() {
-        guard let value = currentSrc else { return }
+        let managed = (try? JSONSerialization.jsonObject(with: Data(cacheOptions.utf8))) as? [String: Any]
+        guard let value = cacheOptions.isEmpty ? currentSrc : managed?["_src"] as? String else { return }
 
         let imageView: WhiskerImageContentView = self.view()
+        if !cacheOptions.isEmpty {
+            imageView.kf.cancelDownloadTask()
+            imageView.image = nil
+            guard !value.isEmpty else { return }
+            let version = requestVersion
+            let options = cacheOptions
+            let headers = Self.parseHeaders(managed?["_headers"] as? String ?? "")
+            ManagedImageCache.shared.queue.async { [weak self] in
+                let result = Result { try ManagedImageCache.shared.load(value, headers: headers, json: options) }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.requestVersion == version else { return }
+                    switch result {
+                    case .success(let image):
+                        #if canImport(UIKit)
+                        imageView.image = UIImage(cgImage: image, scale: 1, orientation: .up)
+                        #else
+                        imageView.image = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+                        #endif
+                        WhiskerCustomEvent.dispatch(from: self, name: "load", params: ["width": image.width, "height": image.height])
+                    case .failure(let error):
+                        WhiskerCustomEvent.dispatch(from: self, name: "error", params: ["error": error.localizedDescription])
+                    }
+                }
+            }
+            return
+        }
         // macOS bundles resolve `whisker-asset` paths to absolute file paths rather than URLs.
         guard let url = value.hasPrefix("/") ? URL(fileURLWithPath: value) : URL(string: value) else {
             // Clear the previous image so a bad URL doesn't leave a stale

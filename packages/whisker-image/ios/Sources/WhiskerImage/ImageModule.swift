@@ -32,6 +32,20 @@ public final class ImageModule: Module {
                     promise.resolve(.null)
                 }
             }
+            AsyncFunction("configureCache") { (args: [WhiskerValue], promise: WhiskerPromise) in
+                let value = args.first?.asString ?? ""
+                ManagedImageCache.shared.queue.async {
+                    do { try ManagedImageCache.shared.configure(value); promise.resolve(.null) }
+                    catch { promise.reject(error.localizedDescription) }
+                }
+            }
+            AsyncFunction("removeCached") { (args: [WhiskerValue], promise: WhiskerPromise) in
+                let value = args.first?.asString ?? ""
+                ManagedImageCache.shared.queue.async {
+                    do { try ManagedImageCache.shared.remove(value); promise.resolve(.null) }
+                    catch { promise.reject(error.localizedDescription) }
+                }
+            }
             View("whisker-image:Image", WhiskerImageView.self) {
                 Prop("src") { (view: WhiskerImageView, value: WhiskerValue) in
                     view.setSrc(value.asString ?? "")
@@ -41,6 +55,9 @@ public final class ImageModule: Module {
                 }
                 Prop("headers") { (view: WhiskerImageView, value: WhiskerValue) in
                     view.setHeaders(value.asString ?? "")
+                }
+                Prop("cache") { (view: WhiskerImageView, value: WhiskerValue) in
+                    view.setCache(value.asString ?? "")
                 }
                 Events("load", "error")
             }

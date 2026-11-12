@@ -56,6 +56,26 @@ class ImageModule : Module() {
             }
             promise.resolve(WhiskerValue.Null)
         }
+        AsyncFunction("configureCache") { args: List<WhiskerValue>, promise ->
+            val value = args.firstOrNull()?.asString().orEmpty()
+            ManagedImageCache.executor.execute {
+                runCatching { ManagedImageCache.configure(value) }.fold(
+                    onSuccess = { promise.resolve(WhiskerValue.Null) },
+                    onFailure = { promise.reject(it.message ?: "invalid image cache budget") },
+                )
+            }
+        }
+        AsyncFunction("removeCached") { args: List<WhiskerValue>, promise ->
+            val url = args.firstOrNull()?.asString().orEmpty()
+            val context = appContext.currentActivity?.applicationContext
+            if (context == null) promise.reject("image cache requires an application context")
+            else ManagedImageCache.executor.execute {
+                runCatching { ManagedImageCache.remove(context, url) }.fold(
+                    onSuccess = { promise.resolve(WhiskerValue.Null) },
+                    onFailure = { promise.reject(it.message ?: "image cache deletion failed") },
+                )
+            }
+        }
         View("whisker-image:Image", WhiskerImageView::class.java) {
             Prop("src") { view: WhiskerImageView, value ->
                 view.setSrc(value.asString() ?: "")
@@ -65,6 +85,9 @@ class ImageModule : Module() {
             }
             Prop("headers") { view: WhiskerImageView, value ->
                 view.setHeaders(value.asString() ?: "")
+            }
+            Prop("cache") { view: WhiskerImageView, value ->
+                view.setCache(value.asString() ?: "")
             }
             Events("load", "error")
         }
