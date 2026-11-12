@@ -31,8 +31,8 @@ pub struct Args {
 
     /// Where to deploy the rebuilt artifact. Positional so the
     /// common case (`whisker run android` / `whisker run ios` /
-    /// `whisker run macos` / `whisker run linux`) reads naturally without
-    /// a `--target=` prefix.
+    /// `whisker run macos` / `whisker run linux` / `whisker run windows`)
+    /// reads naturally without a `--target=` prefix.
     #[arg(value_enum)]
     pub target: CliTarget,
 
@@ -64,6 +64,7 @@ pub enum CliTarget {
     Ios,
     Macos,
     Linux,
+    Windows,
     Web,
 }
 
@@ -74,6 +75,7 @@ impl From<CliTarget> for Target {
             CliTarget::Ios => Target::IosSimulator,
             CliTarget::Macos => Target::Macos,
             CliTarget::Linux => Target::Linux,
+            CliTarget::Windows => Target::Windows,
             CliTarget::Web => Target::Web,
         }
     }
@@ -91,6 +93,9 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
     }
     if target == Target::Linux && !cfg!(target_os = "linux") {
         return Err(anyhow!("`whisker run linux` runs only on Linux"));
+    }
+    if target == Target::Windows && !cfg!(target_os = "windows") {
+        return Err(anyhow!("`whisker run windows` runs only on Windows"));
     }
     let mut selection = args.cargo.selection();
     if target == Target::IosSimulator {
@@ -241,6 +246,17 @@ fn run_inner(
         _ => None,
     };
 
+    let windows = match target {
+        Target::Windows => Some(whisker_dev_server::WindowsParams {
+            project_dir: sync.gen_dir.clone(),
+            target_dir: workspace_root
+                .join("target/.whisker/windows")
+                .join(&m.package),
+            generated_package: format!("{}-whisker-windows", m.package),
+        }),
+        _ => None,
+    };
+
     let watch_paths = watch_paths_for(&m);
 
     let config = Config {
@@ -269,6 +285,7 @@ fn run_inner(
         macos: None,
         web,
         linux,
+        windows,
     };
 
     let watching_paths: Vec<String> = watch_paths
@@ -372,6 +389,7 @@ fn run_macos(
         }),
         web: None,
         linux: None,
+        windows: None,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -422,6 +440,11 @@ fn target_destination(config: &Config) -> String {
             .as_ref()
             .map(|params| format!("{} · local application", params.generated_package))
             .unwrap_or_else(|| "Linux application".into()),
+        Target::Windows => config
+            .windows
+            .as_ref()
+            .map(|params| format!("{} · local application", params.generated_package))
+            .unwrap_or_else(|| "Windows application".into()),
         Target::Web => format!("http://127.0.0.1:{}/", config.bind_addr.port()),
     }
 }
@@ -466,6 +489,7 @@ fn target_label(target: Target) -> &'static str {
         Target::IosSimulator => "iOS Simulator",
         Target::Macos => "macOS",
         Target::Linux => "Linux",
+        Target::Windows => "Windows",
         Target::Web => "Web",
     }
 }
@@ -574,6 +598,7 @@ mod tests {
         assert_eq!(Target::from(CliTarget::Ios), Target::IosSimulator);
         assert_eq!(Target::from(CliTarget::Macos), Target::Macos);
         assert_eq!(Target::from(CliTarget::Linux), Target::Linux);
+        assert_eq!(Target::from(CliTarget::Windows), Target::Windows);
         assert_eq!(Target::from(CliTarget::Web), Target::Web);
     }
 }

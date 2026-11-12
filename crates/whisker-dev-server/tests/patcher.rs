@@ -35,7 +35,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use whisker_dev_server::hotpatch::{
-    CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, LinkerOs, Patcher,
+    CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, Patcher,
     build_link_plan, build_obj_plan, library_filename, linker_os_for_current_platform,
     parse_symbol_table, run_link_plan, run_obj_plan,
 };
@@ -123,6 +123,8 @@ fn captured_linker_for_fixture(output_dylib: &Path) -> CapturedLinkerInvocation 
         output: Some(output_dylib.to_string_lossy().to_string()),
         args,
         timestamp_micros: 0,
+        linker: None,
+        envs: Default::default(),
     }
 }
 
@@ -202,11 +204,7 @@ async fn build_patch_emits_a_jump_table_entry_for_a_mangled_function() {
         linker_path(),
         work.clone(),
         patch_out.clone(),
-        match linker_os_for_current_platform() {
-            LinkerOs::Macos => LinkerOs::Macos,
-            LinkerOs::Linux => LinkerOs::Linux,
-            LinkerOs::Other => LinkerOs::Other,
-        },
+        linker_os_for_current_platform(),
         original_cache,
         captured_rustc_args,
         captured_linker_args,

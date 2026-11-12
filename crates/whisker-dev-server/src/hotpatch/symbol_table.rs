@@ -58,7 +58,74 @@ impl SymbolTable {
 /// Open `path` and project its symbol table.
 pub fn parse_symbol_table(path: &Path) -> Result<SymbolTable> {
     let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    parse_symbol_table_from_bytes(&bytes).with_context(|| format!("parse {}", path.display()))
+    parse_symbol_table_of(path, &bytes)
+}
+
+/// [`parse_symbol_table`] for bytes already read from `path`. A PE
+/// image carries no symbol table, so its symbols come from its PDB.
+pub fn parse_symbol_table_of(path: &Path, bytes: &[u8]) -> Result<SymbolTable> {
+    let file =
+        object::File::parse(bytes).with_context(|| format!("parse {} header", path.display()))?;
+    if file.format() == object::BinaryFormat::Pe {
+        let pdb = pdb_path(path, &file);
+        return parse_pdb_symbols(&pdb).with_context(|| format!("read {}", pdb.display()));
+    }
+    parse_symbol_table_from_bytes(bytes).with_context(|| format!("parse {}", path.display()))
+}
+
+/// Where the PDB of the image at `image` is: the path its debug
+/// directory records, resolved beside the image when that is relative
+/// (rustc links with `/PDBALTPATH:%_PDB%`, which records the bare name).
+fn pdb_path(image: &Path, file: &object::File<'_>) -> std::path::PathBuf {
+    let recorded = file
+        .pdb_info()
+        .ok()
+        .flatten()
+        .and_then(|info| String::from_utf8(info.path().to_vec()).ok());
+    match recorded {
+        Some(recorded) => {
+            let recorded = Path::new(&recorded);
+            if recorded.is_absolute() && recorded.is_file() {
+                return recorded.to_path_buf();
+            }
+            let name = recorded.file_name().unwrap_or(recorded.as_os_str());
+            image.with_file_name(name)
+        }
+        None => image.with_extension("pdb"),
+    }
+}
+
+/// Project a PDB's public symbols; addresses are image-relative (RVAs).
+pub fn parse_pdb_symbols(pdb: &Path) -> Result<SymbolTable> {
+    use pdb::FallibleIterator;
+    let mut pdb = pdb::PDB::open(std::fs::File::open(pdb).context("open")?).context("parse")?;
+    let address_map = pdb.address_map().context("address map")?;
+    let globals = pdb.global_symbols().context("global symbols")?;
+    let mut by_name = HashMap::new();
+    let mut symbols = globals.iter();
+    while let Some(symbol) = symbols.next().context("next symbol")? {
+        let Ok(pdb::SymbolData::Public(public)) = symbol.parse() else {
+            continue;
+        };
+        let Some(rva) = public.offset.to_rva(&address_map) else {
+            continue;
+        };
+        by_name.insert(
+            normalize_symbol_name(&public.name.to_string()),
+            SymbolInfo {
+                address: u64::from(rva.0),
+                kind: if public.function {
+                    SymbolKind::Text
+                } else {
+                    SymbolKind::Data
+                },
+                size: 0,
+                is_undefined: false,
+                is_weak: false,
+            },
+        );
+    }
+    Ok(SymbolTable { by_name })
 }
 
 /// Same as [`parse_symbol_table`] but takes the bytes directly. Used

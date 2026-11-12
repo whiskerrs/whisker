@@ -128,6 +128,16 @@ pub fn capture_env_vars_for_triple(
     // `-export_dynamic`, GNU / lld `--export-dynamic`.
     let export_dynamic = match triple_override {
         Some(t) if t.contains("apple") => "-Clink-arg=-Wl,-export_dynamic",
+        // `link.exe` exports nothing from a program and drops every
+        // function the program itself never calls. A patch finds the
+        // anchor through the export table and may call any of them.
+        // Overriding rustc's `/OPT:REF` would switch incremental linking
+        // on, whose padding breaks `linkme` and whose thunks move the
+        // addresses the symbol table reports.
+        Some(t) if t.ends_with("-windows-msvc") => {
+            "-Clink-arg=/EXPORT:whisker_aslr_anchor -Clink-arg=/OPT:NOREF \
+             -Clink-arg=/INCREMENTAL:NO"
+        }
         _ => "-Clink-arg=-Wl,--export-dynamic",
     };
     // `-Copt-level=0` must match the thin patch's opt-level (forced to 0
@@ -288,6 +298,20 @@ mod tests {
             .map(|(_, v)| v.as_str())
             .unwrap();
         assert!(rustflags.contains("-Wl,--export-dynamic"));
+    }
+
+    #[test]
+    fn capture_env_vars_exports_the_anchor_and_keeps_functions_for_msvc() {
+        let vars = capture_env_vars(&shim_for_triple(Some("x86_64-pc-windows-msvc")));
+        let rustflags = vars
+            .iter()
+            .find(|(k, _)| k == "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS")
+            .map(|(_, v)| v.as_str())
+            .unwrap();
+        assert!(rustflags.contains("-Clink-arg=/EXPORT:whisker_aslr_anchor"));
+        assert!(rustflags.contains("-Clink-arg=/OPT:NOREF"));
+        assert!(rustflags.contains("-Clink-arg=/INCREMENTAL:NO"));
+        assert!(!rustflags.contains("-Wl,"));
     }
 
     #[test]

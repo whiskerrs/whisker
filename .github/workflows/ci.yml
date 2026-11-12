@@ -224,6 +224,8 @@ jobs:
             Add-AppxPackage -Path (Join-Path $msix $name)
           }
       - run: cargo xtask host-conformance windows
+      - name: Build the Host with Hot Reload
+        run: cargo check -p whisker-windows --features hot-reload
 
   host-conformance-web:
     name: Host conformance (Web / Chrome)

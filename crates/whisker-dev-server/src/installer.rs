@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
-use crate::{AndroidParams, IosParams, LinuxParams, MacosParams, Target};
+use crate::{AndroidParams, IosParams, LinuxParams, MacosParams, Target, WindowsParams};
 use whisker_build::CaptureShims;
 
 pub struct Installer {
@@ -55,7 +55,8 @@ pub struct Installer {
     /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
     dev_token: Option<String>,
     linux: Option<LinuxParams>,
-    /// The locally launched Host process (macOS and Linux).
+    windows: Option<WindowsParams>,
+    /// The locally launched Host process (macOS, Linux and Windows).
     host_child: tokio::sync::Mutex<Option<HostChild>>,
 }
 
@@ -74,6 +75,7 @@ impl Installer {
         ios: Option<IosParams>,
         macos: Option<MacosParams>,
         linux: Option<LinuxParams>,
+        windows: Option<WindowsParams>,
         workspace_root: PathBuf,
         package: String,
         capture: Option<CaptureShims>,
@@ -87,6 +89,7 @@ impl Installer {
             ios,
             macos,
             linux,
+            windows,
             workspace_root,
             package,
             capture,
@@ -144,7 +147,27 @@ impl Installer {
                 );
                 self.launch_host(&executable).await
             }
+            Target::Windows => {
+                let params = self.windows.as_ref().context(
+                    "target=Windows but no WindowsParams — cli must provide the generated Host",
+                )?;
+                let executable = whisker_build::desktop::windows_executable(
+                    &params.target_dir,
+                    whisker_build::Profile::Debug,
+                    &params.generated_package,
+                );
+                self.launch_host(&executable).await
+            }
             Target::Web => Ok(()),
+        }
+    }
+
+    /// End the running local Host, if any. Windows can't replace the
+    /// files of a running program, so a rebuild there starts with this.
+    pub async fn stop_host(&self) {
+        if let Some(mut previous) = self.host_child.lock().await.take() {
+            let _ = previous.process.kill().await;
+            let _ = previous.process.wait().await;
         }
     }
 
@@ -192,7 +215,7 @@ impl Installer {
                 )?;
                 ios_launch(params, self.dev_port, self.dev_token.as_deref()).await
             }
-            Target::Macos | Target::Linux => self.install_and_launch().await,
+            Target::Macos | Target::Linux | Target::Windows => self.install_and_launch().await,
             Target::Web => Ok(()),
         }
     }
@@ -761,6 +784,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             PathBuf::new(),
             "x".into(),
             None,
@@ -781,6 +805,7 @@ mod tests {
     fn installer_for_ios_without_params_errors() {
         let inst = Installer::new(
             Target::IosSimulator,
+            None,
             None,
             None,
             None,

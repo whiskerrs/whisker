@@ -61,7 +61,7 @@ fn mk_config(workspace_root: PathBuf, target: Target) -> Config {
                 device_override: None,
             });
         }
-        Target::Macos | Target::Web | Target::Linux => {}
+        Target::Macos | Target::Web | Target::Linux | Target::Windows => {}
     }
     cfg
 }

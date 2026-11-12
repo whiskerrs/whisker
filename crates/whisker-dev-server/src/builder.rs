@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-use crate::{LinuxParams, MacosParams, Target, WebParams};
+use crate::{LinuxParams, MacosParams, Target, WebParams, WindowsParams};
 use whisker_build::CaptureShims;
 
 /// Builder for cold (full reload) rebuilds. hot-reload patches live in
@@ -33,6 +33,7 @@ pub struct Builder {
     macos: Option<MacosParams>,
     web: Option<WebParams>,
     linux: Option<LinuxParams>,
+    windows: Option<WindowsParams>,
 }
 
 impl Builder {
@@ -52,6 +53,7 @@ impl Builder {
             macos: None,
             web: None,
             linux: None,
+            windows: None,
         }
     }
 
@@ -94,6 +96,11 @@ impl Builder {
         self
     }
 
+    pub fn with_windows(mut self, windows: Option<WindowsParams>) -> Self {
+        self.windows = windows;
+        self
+    }
+
     /// Run the build for the current target. Inherits stdout/stderr.
     pub async fn build(&self) -> Result<()> {
         match self.target {
@@ -102,6 +109,7 @@ impl Builder {
             Target::Macos => self.build_macos().await,
             Target::Web => self.build_web().await,
             Target::Linux => self.build_linux().await,
+            Target::Windows => self.build_windows().await,
         }
     }
 
@@ -215,12 +223,26 @@ impl Builder {
             .linux
             .clone()
             .context("target=Linux but no LinuxParams were provided")?;
+        self.build_desktop(params.project_dir, params.target_dir)
+            .await
+    }
+
+    async fn build_windows(&self) -> Result<()> {
+        let params = self
+            .windows
+            .clone()
+            .context("target=Windows but no WindowsParams were provided")?;
+        self.build_desktop(params.project_dir, params.target_dir)
+            .await
+    }
+
+    async fn build_desktop(&self, project_dir: PathBuf, target_dir: PathBuf) -> Result<()> {
         let features = self.features.clone();
         let capture = self.capture.clone();
         tokio::task::spawn_blocking(move || {
             whisker_build::desktop::build_app(&whisker_build::desktop::DesktopBuild {
-                project_dir: &params.project_dir,
-                target_dir: &params.target_dir,
+                project_dir: &project_dir,
+                target_dir: &target_dir,
                 profile: whisker_build::Profile::Debug,
                 features: &features,
                 capture: capture.as_ref(),
@@ -228,7 +250,7 @@ impl Builder {
             .map(|_| ())
         })
         .await
-        .context("spawn_blocking Linux app build")?
+        .context("spawn_blocking desktop app build")?
     }
 
     async fn build_macos(&self) -> Result<()> {
@@ -266,6 +288,7 @@ mod tests {
             Target::Macos,
             Target::Web,
             Target::Linux,
+            Target::Windows,
         ] {
             let b = Builder::new(
                 PathBuf::from("/tmp/ws"),

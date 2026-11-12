@@ -31,7 +31,7 @@ use anyhow::{Context, Result};
 use object::{Architecture, Object};
 use std::path::{Path, PathBuf};
 
-use super::symbol_table::{SymbolTable, parse_symbol_table_from_bytes};
+use super::symbol_table::{SymbolTable, parse_symbol_table_of};
 
 /// Pre-parsed snapshot of the original (== "fat") binary. Built once
 /// per dev-server run; subsequent JumpTable construction reads from
@@ -66,7 +66,7 @@ impl HotpatchModuleCache {
     pub fn from_path(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
         let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-        let symbols = parse_symbol_table_from_bytes(&bytes)
+        let symbols = parse_symbol_table_of(&path, &bytes)
             .with_context(|| format!("parse {} symbols", path.display()))?;
         // Mach-O symbol tables keep the legacy underscore prefix
         // (`_whisker_aslr_anchor`); ELF strips it. Try both so the
