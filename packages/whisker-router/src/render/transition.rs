@@ -25,7 +25,7 @@ use std::rc::Rc;
 
 use whisker::AnimConfig;
 use whisker::css::ext::percent;
-use whisker::css::{Number, Transform, TransformFn};
+use whisker::css::{Color, Number, Transform, TransformFn};
 
 /// A user-extensible screen transition: how a route enters and leaves when
 /// it becomes / stops being the top of its stack.
@@ -75,6 +75,21 @@ pub trait Transition {
     fn name(&self) -> &'static str {
         "custom"
     }
+
+    /// Whether the settled screen fully hides the screens beneath it, so the
+    /// stack can drop them from paint (cf. Flutter's `PageRoute.opaque`).
+    /// Default `true`.
+    fn opaque(&self) -> bool {
+        true
+    }
+
+    /// The scrim painted between this screen and the one beneath it while it
+    /// is presented (cf. Flutter's `ModalRoute.barrierColor`). It fades with
+    /// the transition progress instead of moving with the screen. Default
+    /// `None`.
+    fn barrier(&self) -> Option<Color> {
+        None
+    }
 }
 
 impl RouteTransition {
@@ -109,6 +124,26 @@ impl RouteTransition {
         RouteTransition::custom(SlideFade)
     }
 
+    /// This transition, leaving the screens beneath visible once it settles
+    /// (see [`Transition::opaque`]).
+    pub fn translucent(self) -> Self {
+        RouteTransition::custom(Configured {
+            opaque: false,
+            barrier: self.barrier_color(),
+            inner: self,
+        })
+    }
+
+    /// This transition, translucent and with a `color` scrim that fades in
+    /// over the screen beneath (see [`Transition::barrier`]).
+    pub fn barrier(self, color: Color) -> Self {
+        RouteTransition::custom(Configured {
+            opaque: false,
+            barrier: Some(color),
+            inner: self,
+        })
+    }
+
     /// The animation config (duration + easing) for this transition.
     pub fn config(&self) -> AnimConfig {
         self.0.config()
@@ -127,6 +162,44 @@ impl RouteTransition {
     /// The transition's short identifier (debugging / tests).
     pub fn name(&self) -> &'static str {
         self.0.name()
+    }
+
+    /// Whether the settled screen hides the screens beneath it.
+    pub fn opaque(&self) -> bool {
+        self.0.opaque()
+    }
+
+    /// The scrim color between this screen and the one beneath it, if any.
+    pub fn barrier_color(&self) -> Option<Color> {
+        self.0.barrier()
+    }
+}
+
+/// A transition with overridden [`Transition::opaque`] / [`Transition::barrier`].
+struct Configured {
+    inner: RouteTransition,
+    opaque: bool,
+    barrier: Option<Color>,
+}
+
+impl Transition for Configured {
+    fn config(&self) -> AnimConfig {
+        self.inner.config()
+    }
+    fn pose(&self, ctx: PoseContext) -> Pose {
+        self.inner.pose(ctx)
+    }
+    fn is_instant(&self) -> bool {
+        self.inner.is_instant()
+    }
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+    fn opaque(&self) -> bool {
+        self.opaque
+    }
+    fn barrier(&self) -> Option<Color> {
+        self.barrier
     }
 }
 
@@ -345,6 +418,20 @@ pub fn pose_for(mode: &PoseMode, role: Role, progress: f32) -> Pose {
     match mode {
         PoseMode::Transition(t, dir) => t.pose(PoseContext::new(role, progress, *dir)),
         PoseMode::Predictive(edge) => predictive_pose(role, progress, *edge),
+    }
+}
+
+/// Opacity of a wrapper's [`Transition::barrier`] for `role` at `progress`
+/// under `mode`.
+///
+/// The barrier follows the presence of its own screen and stays fully shown
+/// while that screen is beneath another one. A predictive-back preview keeps
+/// it until the commit half, matching [`predictive_dim`].
+pub(crate) fn barrier_opacity(mode: &PoseMode, role: Role, progress: f32) -> f32 {
+    match (role, mode) {
+        (Role::Under, _) => 1.0,
+        (Role::Top, PoseMode::Transition(..)) => progress.clamp(0.0, 1.0),
+        (Role::Top, PoseMode::Predictive(_)) => (progress / PB_PREVIEW_SPLIT).clamp(0.0, 1.0),
     }
 }
 
@@ -681,5 +768,63 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn built_in_transitions_are_opaque_without_a_barrier() {
+        for transition in [
+            RouteTransition::slide(),
+            RouteTransition::slide_fade(),
+            RouteTransition::fade(),
+            RouteTransition::modal(),
+            RouteTransition::none(),
+        ] {
+            assert!(transition.opaque(), "{}", transition.name());
+            assert_eq!(transition.barrier_color(), None, "{}", transition.name());
+        }
+    }
+
+    #[test]
+    fn translucent_and_barrier_keep_the_wrapped_motion() {
+        let color = Color::rgba(0, 0, 0, 0.5);
+        let translucent = RouteTransition::modal().translucent();
+        assert!(!translucent.opaque());
+        assert_eq!(translucent.barrier_color(), None);
+
+        let barrier = RouteTransition::modal().barrier(color);
+        assert!(!barrier.opaque());
+        assert_eq!(barrier.barrier_color(), Some(color));
+        assert_eq!(barrier.clone().translucent().barrier_color(), Some(color));
+
+        let modal = RouteTransition::modal();
+        assert_eq!(barrier.name(), modal.name());
+        assert_eq!(barrier.is_instant(), modal.is_instant());
+        for role in [Role::Top, Role::Under] {
+            for progress in [0.0, 0.5, 1.0] {
+                let ctx = PoseContext::new(role, progress, Direction::Push);
+                assert_eq!(barrier.pose(ctx), modal.pose(ctx));
+            }
+        }
+    }
+
+    #[test]
+    fn barrier_fades_with_its_screen_and_holds_through_a_predictive_preview() {
+        let mode = PoseMode::Transition(RouteTransition::modal(), Direction::Push);
+        assert_eq!(barrier_opacity(&mode, Role::Top, 0.0), 0.0);
+        assert_eq!(barrier_opacity(&mode, Role::Top, 0.25), 0.25);
+        assert_eq!(barrier_opacity(&mode, Role::Top, 1.0), 1.0);
+        assert_eq!(barrier_opacity(&mode, Role::Under, 0.0), 1.0);
+
+        let predictive = PoseMode::Predictive(SwipeEdge::Left);
+        assert_eq!(barrier_opacity(&predictive, Role::Top, 1.0), 1.0);
+        assert_eq!(
+            barrier_opacity(&predictive, Role::Top, PB_PREVIEW_SPLIT),
+            1.0
+        );
+        assert_eq!(
+            barrier_opacity(&predictive, Role::Top, PB_PREVIEW_SPLIT / 2.0),
+            0.5
+        );
+        assert_eq!(barrier_opacity(&predictive, Role::Top, 0.0), 0.0);
     }
 }

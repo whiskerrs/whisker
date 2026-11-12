@@ -219,10 +219,12 @@ pub(super) fn begin_with_mode(nav: &RouterHandle, mode: PoseMode) -> Option<Stac
         // `detail/:id` keeps the revealed entry's own params during preview.
         point(top, ctrl, Role::Top, mode.clone());
         point(under, ctrl, Role::Under, mode);
-        under.covered.set(false);
+        for covered in &bridge.back_reveals {
+            covered.set(false);
+        }
         // The Material backdrop dim is Android-only; the iOS slide carries
         // its own subtle under-screen dim in `slide_pose`.
-        if predictive {
+        if predictive && bridge.top_opaque {
             if let Some(dim_drive) = &bridge.dim_drive {
                 dim_drive.set(Some(ctrl.clone()));
             }
@@ -321,7 +323,11 @@ pub(crate) fn settle(
         // `onPageChangeCancel`), with the flash guard for a fast release.
         crate::render::keyboard::on_page_change_cancel();
         let done = Rc::new(RefCell::new(false));
-        let under_covered = bridge.under_pose.as_ref().map(|under| under.covered);
+        let recover = if bridge.top_opaque {
+            bridge.back_reveals.clone()
+        } else {
+            Vec::new()
+        };
         bridge.owner.with(|| {
             ctrl.on_finish(move |finished| {
                 if finished && registration.is_active() && !*done.borrow() {
@@ -329,7 +335,7 @@ pub(crate) fn settle(
                     if let Some(d) = dim_drive {
                         d.set(None);
                     }
-                    if let Some(covered) = under_covered {
+                    for covered in &recover {
                         covered.set(true);
                     }
                 }
