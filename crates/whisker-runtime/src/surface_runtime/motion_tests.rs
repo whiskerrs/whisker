@@ -36,7 +36,7 @@ fn opacity_animation(
         }],
         current_time_ms: 0.0,
         last_timestamp_ms: None,
-        current: HashMap::new(),
+        current: FxHashMap::default(),
         finished: false,
         sampled_progress: None,
         start_emitted: false,
