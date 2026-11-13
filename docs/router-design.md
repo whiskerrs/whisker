@@ -61,7 +61,7 @@ kinds:
 | --- | --- | --- |
 | `Route` | A screen (leaf) or a layout (with children) | optional |
 | `Stack` | **Ordered** container: push/pop, has history | `Route` (+ `..spread`) |
-| `Switch` | **Parallel** container: keeps all children alive, selects one, no history | containers (one per branch) |
+| `Switch` | **Parallel** container: mounts a child when it is first selected and keeps it alive, selects one, no history | containers (one per branch) |
 
 A `Route` with both a `component` and children is a **layout route**
 (the Expo `_layout.tsx` equivalent): its component renders with an
