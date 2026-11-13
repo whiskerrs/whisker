@@ -20,9 +20,10 @@ use crate::value::WhiskerValue;
 use crate::view::{BindType, DynRenderer, Element, LayoutObservation, with_installed_renderer};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
-    Accessibility, BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior,
-    HostPresentationUpdate, InputEvent, InputEventError, MeasurementReady, NodeId, PaintColor,
-    PointerInput, ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
+    Accessibility, BoxPaint, ElementRegistration, ElementSchema, ElementTypeId, ElementValueKind,
+    HitTestBehavior, HostPresentationUpdate, InputEvent, InputEventError, MeasurementReady, NodeId,
+    PaintColor, PointerInput, ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError,
+    SurfaceId,
 };
 #[cfg(test)]
 use whisker_engine::whisker_style::ComputedTransformFunction;
@@ -432,6 +433,8 @@ impl SurfaceRuntime {
                 mutation_batch: None,
                 list_layout_requested: false,
                 active_pointers: Vec::new(),
+                base_resolutions: HashMap::new(),
+                initial_inherited: RefCell::new(None),
                 #[cfg(test)]
                 surface_snapshot_count: 0,
                 #[cfg(test)]
@@ -1364,6 +1367,8 @@ struct BindingState {
     // Down order is what `touches` exposes, so a hash map would reshuffle
     // fingers between the events of one gesture.
     active_pointers: Vec<PointerInput>,
+    base_resolutions: HashMap<ElementTypeId, (StyleEnvironment, ResolvedNodeStyle)>,
+    initial_inherited: RefCell<Option<(StyleEnvironment, InheritedStyle)>>,
     #[cfg(test)]
     surface_snapshot_count: usize,
     #[cfg(test)]
@@ -1743,6 +1748,24 @@ impl BindingState {
         self.allocate_registration(Some(registration))
     }
 
+    fn base_resolution(
+        &mut self,
+        registration: &ElementRegistration,
+        base_specified: &SpecifiedStyle,
+    ) -> Result<ResolvedNodeStyle, RuntimeBindingError> {
+        if let Some((environment, resolved)) = self.base_resolutions.get(&registration.element_type)
+            && *environment == self.environment
+        {
+            return Ok(resolved.clone());
+        }
+        let resolved = resolve_style(base_specified, None, self.environment)?;
+        self.base_resolutions.insert(
+            registration.element_type,
+            (self.environment, resolved.clone()),
+        );
+        Ok(resolved)
+    }
+
     fn allocate_registration(
         &mut self,
         registration: Option<ElementRegistration>,
@@ -1755,7 +1778,7 @@ impl BindingState {
         let (kind, node, base_specified, resolved, text) = if let Some(registration) = registration
         {
             let base_specified = self.registry.base_style(&registration).clone();
-            let resolved = resolve_style(&base_specified, None, self.environment)?;
+            let resolved = self.base_resolution(&registration, &base_specified)?;
             let node = if registration.child_policy
                 == whisker_engine::whisker_protocol::ChildPolicy::RichText
             {
@@ -2104,6 +2127,11 @@ impl BindingState {
         environment: StyleEnvironment,
     ) -> Result<ResolvedNodeStyle, RuntimeBindingError> {
         let entry = self.element(element)?;
+        // `resolve_style` reads a missing parent as the initial inherited style, so both share one cache entry.
+        let parent = match parent {
+            Some(parent) if self.is_initial_inherited(parent, environment)? => None,
+            parent => parent,
+        };
         if let Some(cached) = entry.resolution.borrow().as_ref()
             && cached.specified == *specified
             && cached.parent.as_ref() == parent
@@ -2126,6 +2154,21 @@ impl BindingState {
             resolved: resolved.clone(),
         });
         Ok(resolved)
+    }
+
+    fn is_initial_inherited(
+        &self,
+        inherited: &InheritedStyle,
+        environment: StyleEnvironment,
+    ) -> Result<bool, RuntimeBindingError> {
+        let mut initial = self.initial_inherited.borrow_mut();
+        if !matches!(&*initial, Some((cached, _)) if *cached == environment) {
+            let resolved = resolve_style(&SpecifiedStyle::new(), None, environment)?;
+            *initial = Some((environment, resolved.inherited_for_children().clone()));
+        }
+        Ok(initial
+            .as_ref()
+            .is_some_and(|(_, initial)| initial == inherited))
     }
 
     fn style_changes_inheritance(
@@ -2172,6 +2215,24 @@ impl BindingState {
                     .as_ref()
                     .ok_or(RuntimeBindingError::UnknownElement { element })?;
                 let computed = resolved.computed();
+                if !entry.style_initialized {
+                    // Nothing transitions from an element that was never styled, so only `resolved` is read.
+                    return Ok(MotionSnapshot {
+                        element,
+                        resolved: resolved.clone(),
+                        initialized: false,
+                        layout_targets: HashMap::new(),
+                        layout_current: HashMap::new(),
+                        opacity_target: 0.0,
+                        opacity_current: 0.0,
+                        box_paint: BoxPaint::default(),
+                        current_colors: HashMap::new(),
+                        transform_target: computed.paint().transform.clone(),
+                        transform_current: computed.paint().transform.clone(),
+                        text_color_target: None,
+                        text_color_current: None,
+                    });
+                }
                 let opacity_target = computed.paint().opacity.get();
                 let opacity_current = entry
                     .opacity_transition
@@ -2899,6 +2960,122 @@ mod layout_observer_tests {
             set_specified_style(parent, &color("blue"));
         });
         verify();
+    }
+
+    #[test]
+    fn a_missing_parent_resolves_like_the_initial_inherited_style() {
+        let environment = StyleEnvironment::new(320.0, 480.0, 1.0, 14.0);
+        let initial = resolve_style(&SpecifiedStyle::new(), None, environment)
+            .unwrap()
+            .inherited_for_children()
+            .clone();
+        let em = |value| {
+            StyleValue::Size(SizeValue::LengthPercentage(LengthPercentageValue::Length(
+                LengthValue::Dimension {
+                    value: StyleNumber::new(value),
+                    unit: LengthUnit::Em,
+                },
+            )))
+        };
+        for style in [
+            SpecifiedStyle::new(),
+            absolute_box(40.0, 60.0),
+            SpecifiedStyle::new().push(StyleProperty::Width, em(2.0)),
+            SpecifiedStyle::new().push(
+                StyleProperty::Color,
+                StyleValue::Color(whisker_style::ColorValue::Named("red".into())),
+            ),
+        ] {
+            assert_eq!(
+                resolve_style(&style, None, environment).unwrap(),
+                resolve_style(&style, Some(&initial), environment).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn a_fresh_subtree_resolves_each_style_once() {
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(96).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        let handles = Rc::new(RefCell::new(Vec::new()));
+        runtime
+            .mount({
+                let handles = Rc::clone(&handles);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    for _ in 0..8 {
+                        let plain = create_element(ElementTag::View);
+                        let styled = create_element(ElementTag::View);
+                        set_specified_style(styled, &absolute_box(40.0, 60.0));
+                        append_child(plain, styled);
+                        append_child(root, plain);
+                        handles.borrow_mut().push(styled);
+                    }
+                    root
+                }
+            })
+            .unwrap();
+        let state = surface.state.borrow();
+        assert_eq!(state.style_resolution_count.get(), 8);
+        assert_eq!(state.motion_snapshot_count.get(), 8);
+        for styled in handles.borrow().iter() {
+            let entry = state.element(*styled).unwrap();
+            assert!(entry.style_initialized);
+            let expected =
+                resolve_style(&entry.effective_specified(), None, state.environment).unwrap();
+            assert_eq!(entry.resolved.as_ref(), Some(&expected));
+        }
+    }
+
+    #[test]
+    fn a_fresh_child_of_a_styled_text_context_resolves_against_it() {
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(97).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        let handles = Rc::new(RefCell::new(Vec::new()));
+        runtime
+            .mount({
+                let handles = Rc::clone(&handles);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    set_specified_style(
+                        root,
+                        &SpecifiedStyle::new().push(
+                            StyleProperty::Color,
+                            StyleValue::Color(whisker_style::ColorValue::Named("red".into())),
+                        ),
+                    );
+                    let child = create_element(ElementTag::View);
+                    set_specified_style(child, &absolute_box(40.0, 60.0));
+                    append_child(root, child);
+                    handles.borrow_mut().extend([root, child]);
+                    root
+                }
+            })
+            .unwrap();
+        let state = surface.state.borrow();
+        let root = state.element(handles.borrow()[0]).unwrap();
+        let child = state.element(handles.borrow()[1]).unwrap();
+        let expected = resolve_style(
+            &child.effective_specified(),
+            Some(root.resolved.as_ref().unwrap().inherited_for_children()),
+            state.environment,
+        )
+        .unwrap();
+        assert_eq!(child.resolved.as_ref(), Some(&expected));
+        assert_ne!(
+            Some(&expected),
+            resolve_style(&child.effective_specified(), None, state.environment)
+                .ok()
+                .as_ref()
+        );
     }
 
     #[test]
