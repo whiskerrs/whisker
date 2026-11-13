@@ -7,6 +7,11 @@ private final class OverflowMaskLayer: CAShapeLayer {
     override func action(forKey event: String) -> CAAction? { nil }
 }
 
+private final class HostPaintLayer: CALayer {
+    // A layer outside a view animates every property change unless told otherwise.
+    override func action(forKey event: String) -> CAAction? { nil }
+}
+
 /// Common macOS wrapper for every built-in or custom Whisker element.
 ///
 /// The scene owner controls hierarchy and geometry. Element modules only own
@@ -17,8 +22,16 @@ final class WhiskerNodeView: NSView {
     var paint: HostBoxPaint?
     let boxPainter = HostBoxPainter()
     var mountedElement: WhiskerMountedElement?
-    private let defaultChildrenHost = WhiskerChildrenHostView(frame: .zero)
-    private lazy var paintView = HostNodePaintView(painter: boxPainter)
+    private var defaultChildrenHost: NSView?
+    private var viewContent: WhiskerContainerView?
+    private var hostsChildrenInContent = false
+    private var boxPresentation: HostBoxPresentation?
+    private var paintedRevision: UInt64?
+    private var paintedContentBox = CGRect.null
+    private var paintedSize = CGSize.zero
+    private var uniformClipHost: NSView?
+    private var uniformClipRestoresMasksToBounds = false
+    private var contentCornerClipRestoresMasksToBounds: Bool?
     private let overflowMask = OverflowMaskLayer()
     private var overflowMaskScrollOrigin = CGPoint.zero
     private var overflowMaskCompositionBounds = CGRect.zero
@@ -50,10 +63,6 @@ final class WhiskerNodeView: NSView {
         wantsLayer = true
         layerContentsRedrawPolicy = .never
         backingLayer.masksToBounds = false
-        paintView.backingLayer.zPosition = 0
-        defaultChildrenHost.layer?.zPosition = 2
-        addSubview(paintView)
-        addSubview(defaultChildrenHost)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -128,26 +137,21 @@ final class WhiskerNodeView: NSView {
 
     override func layout() {
         super.layout()
-        if let mountedElement {
+        if let mountedElement, viewContent == nil {
             mountedElement.view.frame = contentFrame
         }
-        defaultChildrenHost.frame = bounds
-        paintView.frame = bounds
-        paintView.contentBox = contentFrame
+        updateBoxPaint()
         updateBackdropBlurGeometry()
         updateBoxShadowLayers()
         updateOverflowMask()
         updateClipPathMask()
         updateContentClipMask()
-        paintView.needsDisplay = true
     }
 
     func setLayoutFrame(_ frame: CGRect) {
         setFrameSize(frame.size)
         setFrameOrigin(frame.origin)
-        defaultChildrenHost.frame = bounds
-        paintView.frame = bounds
-        paintView.contentBox = contentFrame
+        boxPresentation?.setFrame(bounds, in: self)
         updateBackdropBlurGeometry()
         updateOverflowMask()
         updateClipPathMask()
@@ -186,12 +190,44 @@ final class WhiskerNodeView: NSView {
     }
 
     func sceneChildrenHost() -> NSView {
-        mountedElement?.childrenHost() ?? defaultChildrenHost
+        if let host = mountedElement?.childrenHost() { return host }
+        if let viewContent { return hostsChildrenInContent ? viewContent : self }
+        if let defaultChildrenHost { return defaultChildrenHost }
+        let host = WhiskerChildrenHostView(frame: bounds)
+        host.layer?.zPosition = 2
+        addSubview(host)
+        defaultChildrenHost = host
+        updateOverflowMask()
+        return host
     }
 
-    func mountedContentDidInstall() {
+    /// The children host only when one exists, so a childless element never creates one.
+    private func existingChildrenHost() -> NSView? {
+        if let host = mountedElement?.childrenHost() { return host }
+        if let viewContent { return hostsChildrenInContent ? viewContent : self }
+        return defaultChildrenHost
+    }
+
+    func installMountedContent() {
+        mountedElement?.view.frame = bounds
         mountedElement?.view.layer?.zPosition = 2
-        bringSubviewToFront(defaultChildrenHost)
+        if let mountedElement, mountedElement.registration.name == WhiskerBuiltInElements.viewName,
+           let content = mountedElement.view as? WhiskerContainerView {
+            // The built-in View's content view draws nothing, so it stays out of the
+            // hierarchy until `updateChildrenHosting` needs it between this view and the children.
+            content.removeFromSuperview()
+            content.autoresizingMask = []
+            content.isHidden = false
+            content.layer?.mask = nil
+            content.layer?.cornerRadius = 0
+            content.layer?.masksToBounds = false
+            viewContent = content
+            hostsChildrenInContent = false
+        } else if let content = mountedElement?.view {
+            content.autoresizingMask = [.width, .height]
+            addSubview(content)
+        }
+        if let defaultChildrenHost { bringSubviewToFront(defaultChildrenHost) }
         let scrollView = mountedElement?.view as? WhiskerScrollContainerView
         scrollView?.installWhiskerContentExtentSource { [weak self] in
             self?.scrollableChildrenExtent() ?? .zero
@@ -223,7 +259,7 @@ final class WhiskerNodeView: NSView {
     }
 
     private func scrollableChildrenExtent() -> CGSize {
-        let host = sceneChildrenHost()
+        guard let host = existingChildrenHost() else { return .zero }
         var right: CGFloat = 0
         var bottom: CGFloat = 0
         for child in host.subviews {
@@ -239,8 +275,8 @@ final class WhiskerNodeView: NSView {
         // Nested scroll contents belong to their own viewport, not the outer scroll range.
         guard !(mountedElement?.view is NSScrollView) else { return bounds }
         layoutSubtreeIfNeeded()
+        guard let host = existingChildrenHost() else { return bounds }
         let extent = scrollableChildrenExtent()
-        let host = sceneChildrenHost()
         let rect = host.convert(CGRect(origin: .zero, size: extent), to: self)
         return CGRect(
             origin: bounds.origin,
@@ -252,8 +288,7 @@ final class WhiskerNodeView: NSView {
     }
 
     func boxPaintDidChange() {
-        paintView.contentBox = contentFrame
-        paintView.needsDisplay = true
+        updateBoxPaint()
         updateBackdropBlurGeometry()
         updateBoxShadowLayers()
         updateOverflowMask()
@@ -283,7 +318,7 @@ final class WhiskerNodeView: NSView {
             let shadowLayer = boxShadowLayers[index]
             shadowLayer.isHidden = !whiskerVisible
             if shadows[index].inset {
-                paintView.backingLayer.addSublayer(shadowLayer)
+                ensureBoxPresentation().layer.addSublayer(shadowLayer)
             } else {
                 shadowLayer.zPosition = -1
                 backingLayer.addSublayer(shadowLayer)
@@ -306,6 +341,7 @@ final class WhiskerNodeView: NSView {
             blurView.isHidden = !whiskerVisible
             insertSubview(blurView, at: 0)
             backdropBlurView = blurView
+            updateChildrenHosting()
         }
         blurView.setBlurRadius(radius)
         updateBackdropBlurGeometry()
@@ -314,7 +350,7 @@ final class WhiskerNodeView: NSView {
     func setImageRendering(_ value: HostImageRendering) {
         imageRendering = value
         boxPainter.setImageRendering(value)
-        paintView.needsDisplay = true
+        updateBoxPaint()
     }
 
     func setHitTestBehavior(_ value: Int32) {
@@ -342,12 +378,12 @@ final class WhiskerNodeView: NSView {
         if !visible, let responder = window?.firstResponder as? NSView, responder.isDescendant(of: self) {
             window?.makeFirstResponder(nil)
         }
-        paintView.isHidden = !visible
+        boxPresentation?.setHidden(!visible)
         boxShadowLayers.forEach { $0.isHidden = !visible }
         backdropBlurView?.isHidden = !visible
         (mountedElement?.view as? WhiskerScrollContainerView)?
             .setWhiskerChromeVisible(visible)
-        if let mountedElement, mountedElement.childrenHost() == nil {
+        if let mountedElement, mountedElement.childrenHost() == nil, viewContent == nil {
             mountedElement.view.isHidden = !visible
         }
     }
@@ -467,12 +503,71 @@ final class WhiskerNodeView: NSView {
         shadowLayer.mask = maskLayer
     }
 
+    private func updateBoxPaint() {
+        boxPresentation?.setFrame(bounds, in: self)
+        switch boxPainter.paintPlan(in: bounds) {
+        case .none:
+            boxPresentation?.showLayerPaint(HostLayerBoxPaint())
+        case .layer(let layerPaint):
+            ensureBoxPresentation().showLayerPaint(layerPaint)
+        case .draw:
+            let presentation = ensureBoxPresentation()
+            let stale = paintedRevision != boxPainter.revision ||
+                paintedContentBox != contentFrame || paintedSize != bounds.size
+            presentation.showDrawnPaint(in: self, contentBox: contentFrame, redraw: stale)
+            paintedRevision = boxPainter.revision
+            paintedContentBox = contentFrame
+            paintedSize = bounds.size
+        }
+        updateChildrenHosting()
+    }
+
+    private func ensureBoxPresentation() -> HostBoxPresentation {
+        if let boxPresentation { return boxPresentation }
+        let presentation = HostBoxPresentation(painter: boxPainter)
+        presentation.setFrame(bounds, in: self)
+        presentation.setHidden(!whiskerVisible)
+        boxPresentation = presentation
+        return presentation
+    }
+
+    /// Children of the built-in View are subviews of this view itself. Its content view
+    /// comes between them only for a clip, or when this view holds painted subviews:
+    /// the scene inserts children by index, which only counts them when they are alone.
+    private func updateChildrenHosting() {
+        guard let viewContent else { return }
+        let needsContent = clipsOverflowHorizontally || clipsOverflowVertically ||
+            backdropBlurView != nil || boxPresentation?.drawsInView == true
+        guard needsContent != hostsChildrenInContent else { return }
+        if needsContent {
+            viewContent.frame = bounds
+            viewContent.bounds = bounds
+            addSubview(viewContent)
+            for child in subviews where child is WhiskerNodeView { viewContent.addSubview(child) }
+        } else {
+            for child in viewContent.subviews where child is WhiskerNodeView { addSubview(child) }
+            viewContent.layer?.mask = nil
+            removeUniformClip(from: viewContent)
+            viewContent.removeFromSuperview()
+        }
+        hostsChildrenInContent = needsContent
+    }
+
     private func updateOverflowMask() {
-        let host = overflowClipHost()
+        updateChildrenHosting()
+        guard let host = overflowClipHost() else { return }
         guard clipsOverflowHorizontally || clipsOverflowVertically else {
+            host.layer?.mask = nil
+            removeUniformClip(from: host)
+            return
+        }
+        if clipsOverflowHorizontally, clipsOverflowVertically,
+           let clip = boxPainter.uniformOverflowClip(in: bounds),
+           installUniformClip(clip, on: host) {
             host.layer?.mask = nil
             return
         }
+        removeUniformClip(from: host)
         let compositionBounds = hostCompositionBounds()
         let nodePath = boxPainter.overflowClipPath(
             in: bounds,
@@ -552,11 +647,51 @@ final class WhiskerNodeView: NSView {
     /// A children host is allowed to move inside its element root: the
     /// document view of an `NSScrollView` moves as the user scrolls, so the
     /// mask belongs on the mounted root, which stays put.
-    private func overflowClipHost() -> NSView {
+    private func overflowClipHost() -> NSView? {
         if let mountedElement, mountedElement.childrenHost() != nil {
             return mountedElement.view
         }
+        if let viewContent { return hostsChildrenInContent ? viewContent : nil }
         return defaultChildrenHost
+    }
+
+    /// A mask layer is rendered offscreen on every frame its subtree is on screen;
+    /// clipping to the host's own bounds is not.
+    private func installUniformClip(_ clip: HostUniformClip, on host: NSView) -> Bool {
+        if host === defaultChildrenHost || host === viewContent {
+            // The bounds origin keeps children in this element's coordinates while
+            // the host itself shrinks to the padding box it clips to.
+            host.frame = clip.rect
+            host.bounds = clip.rect
+        } else {
+            // A module's own view keeps its geometry, so it can only clip to itself.
+            let frame = host.frame
+            guard abs(frame.minX - clip.rect.minX) < 0.01, abs(frame.minY - clip.rect.minY) < 0.01,
+                  abs(frame.width - clip.rect.width) < 0.01,
+                  abs(frame.height - clip.rect.height) < 0.01
+            else { return false }
+        }
+        host.wantsLayer = true
+        guard let layer = host.layer else { return false }
+        if uniformClipHost !== host {
+            uniformClipRestoresMasksToBounds = layer.masksToBounds
+            uniformClipHost = host
+        }
+        layer.cornerRadius = clip.cornerRadius
+        layer.masksToBounds = true
+        return true
+    }
+
+    private func removeUniformClip(from host: NSView) {
+        if uniformClipHost === host {
+            host.layer?.cornerRadius = 0
+            host.layer?.masksToBounds = uniformClipRestoresMasksToBounds
+            uniformClipHost = nil
+        }
+        if host === defaultChildrenHost || host === viewContent {
+            host.frame = bounds
+            host.bounds = bounds
+        }
     }
 
     private func updateClipPathMask() {
@@ -579,7 +714,26 @@ final class WhiskerNodeView: NSView {
     private func updateContentClipMask() {
         guard let mountedElement else { return }
         let contentView = mountedElement.view
-        guard mountedElement.registration.childPolicy == .none,
+        let childless = mountedElement.registration.childPolicy == .none
+        if childless,
+           let radius = boxPainter.uniformContentClipRadius(in: bounds, contentBox: contentFrame),
+           radius > 0 {
+            contentView.wantsLayer = true
+            guard let contentLayer = contentView.layer else { return }
+            if contentLayer.mask === contentClipMask { contentLayer.mask = nil }
+            if contentCornerClipRestoresMasksToBounds == nil {
+                contentCornerClipRestoresMasksToBounds = contentLayer.masksToBounds
+            }
+            contentLayer.cornerRadius = radius
+            contentLayer.masksToBounds = true
+            return
+        }
+        if let restore = contentCornerClipRestoresMasksToBounds {
+            contentView.layer?.cornerRadius = 0
+            contentView.layer?.masksToBounds = restore
+            contentCornerClipRestoresMasksToBounds = nil
+        }
+        guard childless,
               let path = boxPainter.contentBoxClipPath(in: bounds, contentBox: contentFrame)
         else {
             if contentView.layer?.mask === contentClipMask { contentView.layer?.mask = nil }
@@ -708,11 +862,68 @@ private final class HostNodeLayer: CALayer {
     }
 }
 
+/// Presents an element's box paint from layer properties, and rasterizes only
+/// the paints those cannot express: a `draw(_:)` view owns a bitmap as large as
+/// the element, which most elements never need.
+private final class HostBoxPresentation {
+    let layer = HostPaintLayer()
+    private var drawView: HostNodePaintView?
+    private unowned let painter: HostBoxPainter
+    var drawsInView: Bool { drawView != nil }
+
+    init(painter: HostBoxPainter) {
+        self.painter = painter
+        // Below child elements, above the drawn paint so inset shadows stay over the background.
+        layer.zPosition = -0.25
+    }
+
+    /// AppKit may rebuild a view's sublayers, so the paint layer is re-attached when it went missing.
+    func setFrame(_ frame: CGRect, in owner: WhiskerNodeView) {
+        if layer.superlayer !== owner.backingLayer {
+            owner.backingLayer.insertSublayer(layer, at: 0)
+        }
+        layer.frame = frame
+        drawView?.frame = frame
+    }
+
+    func showLayerPaint(_ paint: HostLayerBoxPaint) {
+        drawView?.removeFromSuperview()
+        drawView = nil
+        applyLayerPaint(paint)
+    }
+
+    func showDrawnPaint(in owner: NSView, contentBox: CGRect, redraw: Bool) {
+        applyLayerPaint(HostLayerBoxPaint())
+        if let drawView {
+            drawView.contentBox = contentBox
+            if redraw { drawView.needsDisplay = true }
+            return
+        }
+        let view = HostNodePaintView(painter: painter)
+        view.frame = layer.frame
+        view.contentBox = contentBox
+        view.isHidden = layer.isHidden
+        owner.insertSubview(view, at: 0)
+        view.needsDisplay = true
+        drawView = view
+    }
+
+    func setHidden(_ hidden: Bool) {
+        layer.isHidden = hidden
+        drawView?.isHidden = hidden
+    }
+
+    private func applyLayerPaint(_ paint: HostLayerBoxPaint) {
+        layer.backgroundColor = paint.background?.cgColor
+        layer.cornerRadius = paint.cornerRadius
+        layer.borderWidth = paint.borderWidth
+        layer.borderColor = paint.borderColor?.cgColor
+    }
+}
+
 private final class HostNodePaintView: NSView {
     private unowned let painter: HostBoxPainter
     var contentBox = CGRect.zero
-
-    var backingLayer: CALayer { layer! }
 
     override var isFlipped: Bool { true }
 
@@ -721,6 +932,7 @@ private final class HostNodePaintView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        layer?.zPosition = -0.3
     }
 
     required init?(coder: NSCoder) { nil }
