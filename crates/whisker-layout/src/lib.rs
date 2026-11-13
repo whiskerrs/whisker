@@ -14,6 +14,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
+    rc::Rc,
 };
 
 use taffy::{
@@ -261,9 +262,11 @@ impl Error for LayoutError {}
 #[derive(Clone, Debug)]
 struct RetainedNode {
     backend: taffy::NodeId,
-    style: ComputedLayoutStyle,
+    // Shared so that cloning the tree, which every speculative style pass does,
+    // copies no per-node heap data.
+    style: Rc<ComputedLayoutStyle>,
     parent: Option<NodeId>,
-    children: Vec<NodeId>,
+    children: Rc<Vec<NodeId>>,
     measurable: bool,
     paragraph: bool,
 }
@@ -320,7 +323,7 @@ impl LayoutTree {
 
     /// Returns a live node's retained layout style.
     pub fn style(&self, node: NodeId) -> Option<&ComputedLayoutStyle> {
-        self.nodes.get(&node).map(|node| &node.style)
+        self.nodes.get(&node).map(|node| &*node.style)
     }
 
     /// Returns whether a live node participates in intrinsic measurement.
@@ -355,9 +358,9 @@ impl LayoutTree {
             node,
             RetainedNode {
                 backend,
-                style,
+                style: Rc::new(style),
                 parent: None,
-                children: Vec::new(),
+                children: Rc::default(),
                 measurable: false,
                 paragraph: false,
             },
@@ -390,7 +393,7 @@ impl LayoutTree {
         self.backend
             .set_style(backend_node, converted)
             .expect("retained backend node");
-        self.nodes.get_mut(&node).expect("checked above").style = style;
+        self.nodes.get_mut(&node).expect("checked above").style = Rc::new(style);
         if let Some(parent) = parent {
             self.sync_backend_children(parent);
         }
@@ -492,13 +495,13 @@ impl LayoutTree {
                 });
             }
         }
-        if old_children == children {
+        if *old_children == children {
             return Ok(());
         }
-        for child in old_children {
+        for &child in old_children.iter() {
             self.nodes.get_mut(&child).expect("retained child").parent = None;
         }
-        self.nodes.get_mut(&parent).expect("checked above").children = children.to_vec();
+        self.nodes.get_mut(&parent).expect("checked above").children = Rc::new(children.to_vec());
         for &child in children {
             self.nodes.get_mut(&child).expect("checked above").parent = Some(parent);
         }
@@ -538,20 +541,26 @@ impl LayoutTree {
         }
 
         if let Some(old_parent) = old_parent {
-            self.nodes
-                .get_mut(&old_parent)
-                .expect("retained old parent")
-                .children
-                .retain(|node| *node != child);
+            Rc::make_mut(
+                &mut self
+                    .nodes
+                    .get_mut(&old_parent)
+                    .expect("retained old parent")
+                    .children,
+            )
+            .retain(|node| *node != child);
             if old_parent != parent {
                 self.sync_backend_children(old_parent);
             }
         }
-        self.nodes
-            .get_mut(&parent)
-            .expect("retained destination")
-            .children
-            .insert(index, child);
+        Rc::make_mut(
+            &mut self
+                .nodes
+                .get_mut(&parent)
+                .expect("retained destination")
+                .children,
+        )
+        .insert(index, child);
         self.nodes.get_mut(&child).expect("retained child").parent = Some(parent);
         self.sync_backend_children(parent);
         Ok(())
@@ -566,7 +575,7 @@ impl LayoutTree {
             .parent;
         if let Some(parent) = parent {
             let parent_node = self.nodes.get_mut(&parent).expect("retained parent");
-            parent_node.children.retain(|child| *child != node);
+            Rc::make_mut(&mut parent_node.children).retain(|child| *child != node);
             self.sync_backend_children(parent);
         }
         let mut postorder = Vec::new();
@@ -706,7 +715,7 @@ impl LayoutTree {
                 retained.style.display,
                 DisplayValue::Flex | DisplayValue::Grid
             ) {
-            let mut children = retained.children.clone();
+            let mut children = retained.children.to_vec();
             children
                 .sort_by_key(|child| self.nodes.get(child).expect("retained child").style.order);
             children
@@ -726,7 +735,7 @@ impl LayoutTree {
     }
 
     fn collect_postorder(&self, node: NodeId, output: &mut Vec<NodeId>) {
-        for child in &self.nodes.get(&node).expect("live node").children {
+        for child in self.nodes.get(&node).expect("live node").children.iter() {
             self.collect_postorder(*child, output);
         }
         output.push(node);
@@ -777,7 +786,7 @@ impl LayoutTree {
         if suppressed {
             snapshot.suppressed_by_display_none.insert(node);
         }
-        for child in &retained.children {
+        for child in retained.children.iter() {
             self.collect_snapshot(*child, suppressed, snapshot);
         }
     }
@@ -2357,12 +2366,12 @@ mod tests {
         tree.set_children(first_parent, &[first, moved]).unwrap();
 
         tree.reparent(moved, first_parent, 0).unwrap();
-        assert_eq!(tree.nodes[&first_parent].children, [moved, first]);
+        assert_eq!(*tree.nodes[&first_parent].children, [moved, first]);
         tree.reparent(moved, second_parent, 0).unwrap();
-        assert_eq!(tree.nodes[&first_parent].children, [first]);
-        assert_eq!(tree.nodes[&second_parent].children, [moved]);
+        assert_eq!(*tree.nodes[&first_parent].children, [first]);
+        assert_eq!(*tree.nodes[&second_parent].children, [moved]);
         tree.reparent(unattached, second_parent, 1).unwrap();
-        assert_eq!(tree.nodes[&second_parent].children, [moved, unattached]);
+        assert_eq!(*tree.nodes[&second_parent].children, [moved, unattached]);
 
         assert_eq!(
             tree.reparent(unknown, second_parent, 0),
@@ -2394,7 +2403,7 @@ mod tests {
                 max_index: 0
             })
         );
-        assert_eq!(tree.nodes[&first_parent].children, [first]);
+        assert_eq!(*tree.nodes[&first_parent].children, [first]);
     }
 
     #[test]
