@@ -357,12 +357,28 @@ fn tree_is_drawn_once_no_double_mount() {
         flush();
 
         // Home (the selected tab's leaf) mounts exactly once; the list
-        // tab's `list` also mounts once (Switch keeps all branches alive),
-        // but neither mounts twice.
+        // tab is not selected yet, so its leaf has not mounted.
+        {
+            let c = counts.borrow();
+            assert_eq!(c.get("home").copied(), Some(1), "home mounted once");
+            assert_eq!(
+                c.get("list").copied(),
+                None,
+                "unvisited tab stays unmounted"
+            );
+            assert_eq!(c.get("detail").copied(), None);
+        }
+
+        // A tab mounts when first selected and is kept from then on.
+        h.navigate("/list").unwrap();
+        flush();
+        h.navigate("/").unwrap();
+        flush();
+        h.navigate("/list").unwrap();
+        flush();
         let c = counts.borrow();
-        assert_eq!(c.get("home").copied(), Some(1), "home mounted once");
+        assert_eq!(c.get("home").copied(), Some(1), "home not re-mounted");
         assert_eq!(c.get("list").copied(), Some(1), "list mounted once");
-        assert_eq!(c.get("detail").copied(), None);
     });
 }
 
@@ -1003,6 +1019,140 @@ fn edge_drag_becomes_a_swipe_only_when_it_travels_right() {
     assert_eq!(drag_intent(14.0, -9.0), DragIntent::Swipe);
     assert_eq!(drag_intent(9.0, -14.0), DragIntent::Scroll);
     assert_eq!(drag_intent(-14.0, 2.0), DragIntent::Scroll);
+}
+
+/// A home → detail → extra stack whose pushed screens log their mounts and cleanups.
+fn logging_stack() -> (RouterHandle, Rc<RefCell<Vec<&'static str>>>) {
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
+        RouteTree::route("", "home"),
+        RouteTree::route("detail/:id", "detail"),
+        RouteTree::route("extra", "extra"),
+    ]));
+    let logged = |log: &Rc<RefCell<Vec<&'static str>>>| {
+        let log = log.clone();
+        move |_: &RouteInstance| {
+            log.borrow_mut().push("mount");
+            let log = log.clone();
+            whisker::on_cleanup(move || log.borrow_mut().push("cleanup"));
+            whisker::runtime::view::create_phantom_element()
+        }
+    };
+    let registry = RouteRegistry::new()
+        .route_with("home", RouteTransition::slide(), |_: &RouteInstance| {
+            whisker::runtime::view::create_phantom_element()
+        })
+        .route_with("detail", RouteTransition::slide(), logged(&log))
+        .route_with("extra", RouteTransition::slide(), logged(&log));
+    (RouterHandle::new((tree, registry)), log)
+}
+
+/// Runs a started pop to the end of its slide-out, stopping short of the teardown delay.
+fn finish_slide_out() {
+    for t in [1000.0, 1016.0, 5000.0, 5016.0] {
+        whisker_animation::__step_for_tests(t);
+        flush();
+    }
+}
+
+#[test]
+fn popped_entry_is_torn_down_after_its_slide_out_not_in_it() {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
+        let (h, log) = logging_stack();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+
+        h.back().unwrap();
+        flush();
+        finish_slide_out();
+        whisker_animation::__step_for_tests(5100.0);
+        flush();
+        assert_eq!(
+            *log.borrow(),
+            ["mount"],
+            "the slide-out's frames carry no teardown"
+        );
+
+        whisker_animation::__step_for_tests(5200.0);
+        flush();
+        assert_eq!(*log.borrow(), ["mount", "cleanup"]);
+    });
+}
+
+#[test]
+fn navigation_tears_a_retired_entry_down_before_mounting() {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
+        let (h, log) = logging_stack();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+        h.back().unwrap();
+        flush();
+        finish_slide_out();
+
+        h.navigate("/detail/1").unwrap();
+        flush();
+        assert_eq!(*log.borrow(), ["mount", "cleanup", "mount"]);
+
+        settle_animations();
+        assert_eq!(*log.borrow(), ["mount", "cleanup", "mount"]);
+    });
+}
+
+#[test]
+fn second_back_tears_the_first_popped_entry_down() {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
+        let (h, log) = logging_stack();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+        h.push("/extra").unwrap();
+        flush();
+        settle_animations();
+        h.back().unwrap();
+        flush();
+        finish_slide_out();
+        assert_eq!(*log.borrow(), ["mount", "mount"]);
+
+        h.back().unwrap();
+        flush();
+        assert_eq!(*log.borrow(), ["mount", "mount", "cleanup"]);
+
+        settle_animations();
+        assert_eq!(*log.borrow(), ["mount", "mount", "cleanup", "cleanup"]);
+    });
+}
+
+#[test]
+fn unmounting_the_stack_cleans_up_a_retired_entry() {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
+        let (h, log) = logging_stack();
+        let stack = Owner::new(None);
+        let _slot = stack.with(|| mount_node(&h, NodePath::root()));
+        flush();
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+        h.back().unwrap();
+        flush();
+        finish_slide_out();
+        assert_eq!(*log.borrow(), ["mount"]);
+
+        stack.dispose();
+        flush();
+        assert_eq!(*log.borrow(), ["mount", "cleanup"]);
+    });
 }
 
 // The native module delivery can't run headless, but the mapping Android's
@@ -2465,9 +2615,9 @@ mod replace_repro {
         RouterHandle::new((tree, registry))
     }
 
-    /// A native leaf in an inactive Switch branch is eager-mounted with its
-    /// props and retains its layout, but neither paints nor accepts pointer
-    /// input until its branch becomes active.
+    /// A native leaf in a Switch branch that was visited and left keeps its
+    /// props and layout, but neither paints nor accepts pointer input until
+    /// its branch becomes active again.
     #[test]
     fn inactive_switch_branch_keeps_layout_without_paint_or_pointer_input() {
         with_runtime(|| {
@@ -2476,12 +2626,21 @@ mod replace_repro {
                 let h = switch_with_native_second_branch();
                 let root = mount_node(&h, NodePath::root());
                 flush();
+                assert!(
+                    rec.by_cid("native-b").is_none(),
+                    "a branch that was never selected must not mount"
+                );
+                h.navigate("/b").unwrap();
+                flush();
+                h.navigate("/").unwrap();
+                flush();
 
                 // (1) The non-first branch's native leaf is created AND
-                // attributed at mount — props are dispatched, Rust-side.
+                // attributed when its branch mounts — props are dispatched,
+                // Rust-side.
                 let native_b = rec
                     .by_cid("native-b")
-                    .expect("non-first branch's native leaf must be created at mount");
+                    .expect("non-first branch's native leaf must be created once visited");
                 {
                     let inner = rec.0.borrow();
                     let attrs = inner.attrs.get(&native_b).expect("has attrs");

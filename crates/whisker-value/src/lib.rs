@@ -30,6 +30,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod de;
+
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -144,11 +146,11 @@ impl WhiskerValue {
     /// it together with the raw value rather than silently dropping
     /// the handler call.
     pub fn deserialize_into<T: DeserializeOwned>(&self) -> Result<T, String> {
-        serde_json::from_value(self.to_json()).map_err(|e| e.to_string())
+        T::deserialize(de::ValueDeserializer(self)).map_err(|e| e.to_string())
     }
 
-    /// Lower this value tree into a `serde_json::Value`. In-memory
-    /// only — the target of [`deserialize_into`](Self::deserialize_into).
+    /// Lower this value tree into a `serde_json::Value`, the shape
+    /// [`deserialize_into`](Self::deserialize_into) reads values as.
     pub fn to_json(&self) -> serde_json::Value {
         use serde_json::Value as J;
         match self {
@@ -446,7 +448,104 @@ impl TryFrom<WhiskerValue> for Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    enum Shape {
+        Unit,
+        Newtype(u8),
+        Tuple(i32, String),
+        Struct { side: f32 },
+    }
+
+    #[derive(Debug, Default, PartialEq, Deserialize)]
+    struct Sample {
+        scroll_top: f64,
+        count: i32,
+        #[serde(default)]
+        missing: u8,
+        label: Option<String>,
+        flags: Vec<bool>,
+        by_index: HashMap<u32, String>,
+        pair: (i64, f32),
+    }
+
+    fn sample() -> WhiskerValue {
+        WhiskerValue::map([
+            ("scroll_top", WhiskerValue::Int(12)),
+            ("count", WhiskerValue::Int(-3)),
+            ("label", WhiskerValue::Float(f64::NAN)),
+            (
+                "flags",
+                WhiskerValue::Array(vec![WhiskerValue::Bool(true), WhiskerValue::Bool(false)]),
+            ),
+            (
+                "by_index",
+                WhiskerValue::map([("7", WhiskerValue::String("seven".into()))]),
+            ),
+            (
+                "pair",
+                WhiskerValue::Array(vec![WhiskerValue::Int(4), WhiskerValue::Float(0.5)]),
+            ),
+            ("ignored", WhiskerValue::Bytes(vec![1, 2])),
+        ])
+    }
+
+    /// `deserialize_into` promises the shape rules of the JSON lowering.
+    fn assert_matches_json<T: DeserializeOwned + PartialEq + fmt::Debug>(value: &WhiskerValue) {
+        let through_json = serde_json::from_value::<T>(value.to_json()).map_err(|e| e.to_string());
+        assert_eq!(
+            value.deserialize_into::<T>().ok(),
+            through_json.ok(),
+            "{value:?}"
+        );
+    }
+
+    #[test]
+    fn typed_deserialization_matches_the_json_lowering() {
+        assert_matches_json::<Sample>(&sample());
+        assert_eq!(
+            sample().deserialize_into::<Sample>().unwrap(),
+            Sample {
+                scroll_top: 12.0,
+                count: -3,
+                missing: 0,
+                label: None,
+                flags: vec![true, false],
+                by_index: HashMap::from([(7, "seven".to_string())]),
+                pair: (4, 0.5),
+            }
+        );
+        for value in [
+            WhiskerValue::String("Unit".into()),
+            WhiskerValue::map([("Newtype", WhiskerValue::Int(9))]),
+            WhiskerValue::map([(
+                "Tuple",
+                WhiskerValue::Array(vec![
+                    WhiskerValue::Int(-1),
+                    WhiskerValue::String("a".into()),
+                ]),
+            )]),
+            WhiskerValue::map([(
+                "Struct",
+                WhiskerValue::map([("side", WhiskerValue::Float(2.5))]),
+            )]),
+            WhiskerValue::map([("Newtype", WhiskerValue::Int(300))]),
+            WhiskerValue::Int(1),
+        ] {
+            assert_matches_json::<Shape>(&value);
+        }
+        assert_matches_json::<Vec<u8>>(&WhiskerValue::Bytes(vec![0, 255]));
+        assert_matches_json::<String>(&WhiskerValue::Error("failed".into()));
+        assert_matches_json::<(i64,)>(&WhiskerValue::Array(vec![
+            WhiskerValue::Int(1),
+            WhiskerValue::Int(2),
+        ]));
+        assert_matches_json::<Sample>(&WhiskerValue::map([("count", WhiskerValue::Int(1))]));
+        assert_matches_json::<Sample>(&WhiskerValue::Null);
+    }
 
     #[test]
     fn data_validation_rejects_error_at_every_depth() {

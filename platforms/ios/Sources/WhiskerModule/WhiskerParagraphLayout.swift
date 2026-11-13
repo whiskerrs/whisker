@@ -1,7 +1,9 @@
 #if canImport(UIKit)
 import UIKit
+typealias WhiskerTextEditActions = NSTextStorage.EditActions
 #else
 import AppKit
+typealias WhiskerTextEditActions = NSTextStorageEditActions
 #endif
 
 public final class WhiskerParagraphLayout {
@@ -57,6 +59,23 @@ final class WhiskerParagraphLayoutManager: NSLayoutManager, NSLayoutManagerDeleg
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         delegate = self
+    }
+
+    /// Set while the storage changes only attributes that leave glyphs and line breaks alone.
+    var editingPaintOnly = false
+
+    override func processEditing(
+        for textStorage: NSTextStorage,
+        edited editMask: WhiskerTextEditActions,
+        range newCharRange: NSRange,
+        changeInLength delta: Int,
+        invalidatedRange invalidatedCharRange: NSRange
+    ) {
+        if editingPaintOnly { return }
+        super.processEditing(
+            for: textStorage, edited: editMask, range: newCharRange,
+            changeInLength: delta, invalidatedRange: invalidatedCharRange
+        )
     }
 
     /// TextKit keeps a fixed line height's slack above the text, while CSS and

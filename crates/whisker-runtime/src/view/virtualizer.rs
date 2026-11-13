@@ -116,6 +116,8 @@ struct MountedEntry<T: 'static> {
     handle: Element,
     mount_handle: Element,
     item: RwSignal<T>,
+    /// `LayoutIndex::source_generation` whose item the signal holds.
+    source_generation: u64,
 }
 
 struct MountedTrack<K> {
@@ -807,6 +809,7 @@ pub fn virtualize<T, K>(
                         let key = layout.keys[index].clone();
                         let entry = new_mounted_entry(
                             layout.items[index].clone(),
+                            layout.source_generation,
                             children.as_ref(),
                             None,
                             list_owner,
@@ -867,10 +870,14 @@ pub fn virtualize<T, K>(
                 for index in window.start..window.end {
                     let key = &layout.keys[index];
                     if let Some(entry) = mounted.get_mut(key) {
-                        entry.item.set(layout.items[index].clone());
+                        if entry.source_generation != layout.source_generation {
+                            entry.item.set(layout.items[index].clone());
+                            entry.source_generation = layout.source_generation;
+                        }
                     } else {
                         let entry = new_mounted_entry(
                             layout.items[index].clone(),
+                            layout.source_generation,
                             children.as_ref(),
                             None,
                             list_owner,
@@ -1330,6 +1337,7 @@ fn resolve_layout_target<T, K: Eq + Hash + Clone>(
 
 fn new_mounted_entry<T: Clone + 'static>(
     item: T,
+    source_generation: u64,
     children: &dyn Fn(ReadSignal<T>) -> Element,
     cell_style: Option<&SpecifiedStyle>,
     parent: Owner,
@@ -1354,6 +1362,7 @@ fn new_mounted_entry<T: Clone + 'static>(
         handle,
         mount_handle,
         item,
+        source_generation,
     }
 }
 
@@ -1515,12 +1524,16 @@ fn reconcile_grid_window<T, K>(
         for item_index in layout.track_start_item(track_index)..layout.track_end_item(track_index) {
             let key = &layout.keys[item_index];
             if let Some(entry) = mounted.get_mut(key) {
-                entry.item.set(layout.items[item_index].clone());
+                if entry.source_generation != layout.source_generation {
+                    entry.item.set(layout.items[item_index].clone());
+                    entry.source_generation = layout.source_generation;
+                }
             } else {
                 mounted.insert(
                     key.clone(),
                     new_mounted_entry(
                         layout.items[item_index].clone(),
+                        layout.source_generation,
                         children,
                         Some(&grid.cell_style),
                         list_owner,
@@ -1706,6 +1719,7 @@ mod tests {
         assert!(Owner::current().is_none());
         let entry = new_mounted_entry(
             1_u32,
+            0,
             &|_| {
                 assert_eq!(
                     crate::reactive::use_context::<String>().as_deref(),

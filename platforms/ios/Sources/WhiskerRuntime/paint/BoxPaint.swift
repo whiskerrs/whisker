@@ -31,31 +31,128 @@ struct HostBoxShadow {
     let inset: Bool
 }
 
+/// A box paint that layer properties express without a rasterized backing store.
+struct HostLayerBoxPaint {
+    var background: WhiskerPlatformColor?
+    var cornerRadius: CGFloat = 0
+    var borderWidth: CGFloat = 0
+    var borderColor: WhiskerPlatformColor?
+}
+
+enum HostBoxPaintPlan {
+    case none
+    case layer(HostLayerBoxPaint)
+    case draw
+}
+
+/// A rectangular or uniformly rounded clip that `masksToBounds` expresses without a mask layer.
+struct HostUniformClip {
+    var rect: CGRect
+    var cornerRadius: CGFloat
+}
+
 final class HostBoxPainter {
     private let backgroundPainter = HostBackgroundPainter()
+    private var hasBackgroundLayers = false
     private var fillColor = WhiskerPlatformColor.clear
     /// CSS order: top, right, bottom, left.
     private var borderWidths = [CGFloat](repeating: 0, count: 4)
     private var borderColors = [WhiskerPlatformColor](repeating: .clear, count: 4)
     private var borderStyles = [UInt32](repeating: 0, count: 4)
     private var cornerRadii = [CGSize](repeating: .zero, count: 4)
+    /// Advances whenever the painted result can differ, so a view redraws only then.
+    private(set) var revision: UInt64 = 0
 
     func update(_ paint: HostBoxPaint, bounds: CGRect) {
-        fillColor = paint.background
-        borderWidths = [
+        let widths = [
             resolve(paint.widths[0], axis: bounds.height),
             resolve(paint.widths[1], axis: bounds.width),
             resolve(paint.widths[2], axis: bounds.height),
             resolve(paint.widths[3], axis: bounds.width)
         ]
-        borderColors = paint.colors
-        borderStyles = paint.styles
-        cornerRadii = paint.radiiHorizontal.indices.map { index in
+        let radii = paint.radiiHorizontal.indices.map { index in
             CGSize(
                 width: resolve(paint.radiiHorizontal[index], axis: bounds.width),
                 height: resolve(paint.radiiVertical[index], axis: bounds.height)
             )
         }
+        let unchanged = fillColor.isEqual(paint.background) && widths == borderWidths &&
+            radii == cornerRadii && paint.styles == borderStyles &&
+            paint.colors.count == borderColors.count &&
+            zip(paint.colors, borderColors).allSatisfy { $0.isEqual($1) }
+        guard !unchanged else { return }
+        fillColor = paint.background
+        borderWidths = widths
+        borderColors = paint.colors
+        borderStyles = paint.styles
+        cornerRadii = radii
+        revision &+= 1
+    }
+
+    func paintPlan(in bounds: CGRect) -> HostBoxPaintPlan {
+        guard !hasBackgroundLayers else { return .draw }
+        let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
+        let styles = Array((borderStyles + [0, 0, 0, 0]).prefix(4))
+        let colors = Array((borderColors + [.clear, .clear, .clear, .clear]).prefix(4))
+        let paintedSides = (0..<4).filter { widths[$0] > 0 && paintsBorderStyle(styles[$0]) }
+        let fills = (whiskerRGBAComponents(fillColor)?.alpha ?? 1) > 0
+        guard fills || !paintedSides.isEmpty else { return .none }
+        guard let radius = uniformRadius(normalizedRadii(cornerRadii, in: bounds)) else {
+            return .draw
+        }
+        var layerPaint = HostLayerBoxPaint(
+            background: fills ? fillColor : nil,
+            cornerRadius: radius
+        )
+        if !paintedSides.isEmpty {
+            guard paintedSides.count == 4,
+                  styles.allSatisfy({ $0 == borderStyleSolid }),
+                  widths.dropFirst().allSatisfy({ $0 == widths[0] }),
+                  colors.dropFirst().allSatisfy({ $0.isEqual(colors[0]) }),
+                  widths[0] * 2 <= min(bounds.width, bounds.height)
+            else { return .draw }
+            layerPaint.borderWidth = widths[0]
+            layerPaint.borderColor = colors[0]
+        }
+        return .layer(layerPaint)
+    }
+
+    /// The overflow clip when it is the padding box with square or uniformly circular corners.
+    func uniformOverflowClip(in bounds: CGRect) -> HostUniformClip? {
+        let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
+        let top = min(widths[0], bounds.height)
+        let right = min(widths[1], bounds.width)
+        let bottom = min(widths[2], bounds.height)
+        let left = min(widths[3], bounds.width)
+        let inner = insetCornerRadii(
+            normalizedRadii(cornerRadii, in: bounds),
+            top: top,
+            right: right,
+            bottom: bottom,
+            left: left
+        )
+        guard let radius = uniformRadius(inner) else { return nil }
+        return HostUniformClip(rect: paddingBoxRect(in: bounds), cornerRadius: radius)
+    }
+
+    /// The content-box clip of a childless element when its corners are uniformly circular.
+    func uniformContentClipRadius(in bounds: CGRect, contentBox: CGRect) -> CGFloat? {
+        guard !contentBox.isEmpty else { return nil }
+        let radii = insetCornerRadii(
+            normalizedRadii(cornerRadii, in: bounds),
+            top: max(0, contentBox.minY - bounds.minY),
+            right: max(0, bounds.maxX - contentBox.maxX),
+            bottom: max(0, bounds.maxY - contentBox.maxY),
+            left: max(0, contentBox.minX - bounds.minX)
+        )
+        return uniformRadius(radii)
+    }
+
+    private func uniformRadius(_ radii: [CGSize]) -> CGFloat? {
+        // A corner with one zero axis is square, matching `normalizedRadii`.
+        let corners = radii.map { $0.width > 0 && $0.height > 0 ? $0 : .zero }
+        guard corners.allSatisfy({ $0.width == $0.height && $0 == corners[0] }) else { return nil }
+        return corners[0].width
     }
 
     func draw(in bounds: CGRect, contentBox: CGRect) {
@@ -99,10 +196,13 @@ final class HostBoxPainter {
 
     func updateBackgroundLayers(_ layers: [HostBackgroundLayer]) {
         backgroundPainter.update(layers)
+        hasBackgroundLayers = !layers.isEmpty
+        revision &+= 1
     }
 
     func setImageRendering(_ value: HostImageRendering) {
         backgroundPainter.setImageRendering(value)
+        revision &+= 1
     }
 
     func hardBoxShadowPath(in bounds: CGRect, shadow: HostBoxShadow) -> CGPath? {

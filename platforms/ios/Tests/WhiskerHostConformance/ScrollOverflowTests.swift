@@ -28,10 +28,9 @@ extension HostConformanceTests {
         let scroll = try XCTUnwrap(mounted.view as? WhiskerScrollContainerView)
         let node = WhiskerNodeView(element: registration.name)
         node.mountedElement = mounted
-        node.addSubview(scroll)
         node.contentFrame = CGRect(x: 0, y: 0, width: 300, height: 200)
         node.setLayoutFrame(node.contentFrame)
-        node.mountedContentDidInstall()
+        node.installMountedContent()
         node.layoutIfNeeded()
         scroll.setScrollOrientation("horizontal")
         return (node, scroll)

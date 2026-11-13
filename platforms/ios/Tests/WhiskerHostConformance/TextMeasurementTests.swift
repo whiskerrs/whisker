@@ -222,13 +222,68 @@ final class TextMeasurementTests: XCTestCase {
         var builds = 0
         for _ in 0..<2 {
             for node in 0..<1_000 {
-                _ = cache.plain(node: UInt64(node), input: input) {
+                _ = cache.plain(node: UInt64(node), input: input, probe: false) {
                     builds += 1
                     return TextMeasurementCache.Plain(layout: nil, size: .zero, firstBaseline: 0, lastBaseline: 0)
                 }
             }
         }
         XCTAssertEqual(builds, 1_000)
+    }
+
+    func testPlainLayoutServesEveryWidthItsLinesFit() throws {
+        let view = WhiskerView(frame: .zero)
+        let fixture: (String, WhiskerValue?) = ("One short line", nil)
+        let widest = try measure(view, fixture: fixture) { $0.available_width_kind = 2 }
+        let layout = try XCTUnwrap(view.preparedParagraphs.layout(widest.raw.key))
+        let fitting = try measure(view, fixture: fixture) { $0.available_width = widest.raw.width }
+        XCTAssertTrue(view.preparedParagraphs.layout(fitting.raw.key) === layout)
+        assertEqual(fitting, widest)
+        let narrow: (inout WhiskerMobileMeasureRequest) -> Void = { $0.available_width = widest.raw.width / 2 }
+        let wrapped = try measure(view, fixture: fixture, change: narrow)
+        XCTAssertFalse(view.preparedParagraphs.layout(wrapped.raw.key) === layout)
+        assertEqual(wrapped, try measure(WhiskerView(frame: .zero), fixture: fixture, change: narrow))
+        let wide = try measure(view, fixture: fixture) { $0.available_width = 2_000 }
+        assertEqual(wide, widest)
+
+        let long: (String, WhiskerValue?) = ("Several words that wrap onto more than one line at this width.", nil)
+        let lines = try measure(view, fixture: long) { $0.node = 2; $0.available_width = 200 }
+        let tighter: (inout WhiskerMobileMeasureRequest) -> Void = { $0.node = 2; $0.available_width = lines.raw.width }
+        let same = try measure(view, fixture: long, change: tighter)
+        XCTAssertLessThan(lines.raw.width, 200)
+        XCTAssertTrue(view.preparedParagraphs.layout(same.raw.key) === view.preparedParagraphs.layout(lines.raw.key))
+        assertEqual(same, try measure(WhiskerView(frame: .zero), fixture: long, change: tighter))
+    }
+
+    func testMinContentProbeIsMeasuredOncePerTextAndStyle() throws {
+        let view = WhiskerView(frame: .zero)
+        let fixture: (String, WhiskerValue?) = ("Words to break", nil)
+        let probe: (inout WhiskerMobileMeasureRequest) -> Void = { $0.available_width_kind = 1 }
+        let first = try measure(view, fixture: fixture, change: probe)
+        XCTAssertNil(view.preparedParagraphs.layout(first.raw.key))
+        var response = WhiskerMobileApplyResponse()
+        _ = view.applyFrame(WhiskerMobileFrame(), response: &response)
+        assertEqual(try measure(view, fixture: fixture) { $0.available_width_kind = 1; $0.node = 2 }, first)
+        assertEqual(try measure(view, fixture: fixture) { $0.available_width_kind = 1; $0.font_size = 32 },
+            try measure(WhiskerView(frame: .zero), fixture: fixture) { $0.available_width_kind = 1; $0.font_size = 32 })
+
+        var request = WhiskerMobileMeasureRequest()
+        request.font_size = 16
+        let input = TextMeasurementCache.Input(
+            source: "text", payload: nil,
+            style: TextMeasurementCache.Style(request, families: ["system"], widthBasis: 0),
+            width: 1, maxLines: 0, overflow: 0, wordBreak: 0, environmentEpoch: 0
+        )
+        let cache = TextMeasurementCache()
+        var builds = 0
+        for node in 0..<3 {
+            _ = cache.plain(node: UInt64(node), input: input, probe: true) {
+                builds += 1
+                return TextMeasurementCache.Plain(layout: nil, size: .zero, firstBaseline: 0, lastBaseline: 0)
+            }
+            cache.removeAll()
+        }
+        XCTAssertEqual(builds, 1)
     }
 
     private var nextKey: UInt64 = 0
