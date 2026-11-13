@@ -1051,8 +1051,7 @@ final class HostConformanceTests: XCTestCase {
         let scrollView = try XCTUnwrap(mounted.view as? WhiskerScrollContainerView)
         let node = WhiskerNodeView(element: registration.name)
         node.mountedElement = mounted
-        node.addSubview(scrollView)
-        node.mountedContentDidInstall()
+        node.installMountedContent()
         node.contentFrame = CGRect(x: 0, y: 0, width: 100, height: 100)
         node.setLayoutFrame(CGRect(x: 0, y: 0, width: 100, height: 100))
         node.layoutIfNeeded()

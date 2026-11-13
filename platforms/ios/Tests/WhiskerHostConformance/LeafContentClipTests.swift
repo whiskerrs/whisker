@@ -43,8 +43,7 @@ extension HostConformanceTests {
         let mounted = try XCTUnwrap(WhiskerElementRegistry.mount(30) { _, _ in })
         let node = WhiskerNodeView(element: registration.name)
         node.mountedElement = mounted
-        node.addSubview(mounted.view)
-        node.mountedContentDidInstall()
+        node.installMountedContent()
         let bounds = CGRect(x: 0, y: 0, width: 40, height: 40)
         node.contentFrame = bounds.insetBy(dx: inset, dy: inset)
         node.setLayoutFrame(bounds)
