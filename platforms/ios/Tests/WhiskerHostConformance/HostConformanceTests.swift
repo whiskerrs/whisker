@@ -911,6 +911,7 @@ final class HostConformanceTests: XCTestCase {
                 WhiskerPropertyBinding(id: 2, name: "item-snap", value: .map),
                 WhiskerPropertyBinding(id: 3, name: "scroll-snap-stop", value: .string),
                 WhiskerPropertyBinding(id: 4, name: "enable-scroll", value: .bool),
+                WhiskerPropertyBinding(id: 5, name: "show-scroll-indicator", value: .bool),
             ],
             events: [WhiskerEventBinding(id: 1, name: "scroll", detail: .map)],
             commands: [
@@ -932,6 +933,22 @@ final class HostConformanceTests: XCTestCase {
 
         scrollView.setScrollOrientation("horizontal")
         node.setWhiskerVisibility(true)
+        XCTAssertTrue(scrollView.showsHorizontalScrollIndicator)
+        XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
+    }
+
+    func testScrollIndicatorCanBeDisabledIndependentlyOfVisibility() {
+        let scrollView = WhiskerScrollContainerView(frame: .zero)
+        scrollView.setScrollOrientation("horizontal")
+
+        scrollView.setScrollIndicatorVisible(false)
+        XCTAssertFalse(scrollView.showsHorizontalScrollIndicator)
+        XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
+
+        scrollView.setWhiskerChromeVisible(true)
+        XCTAssertFalse(scrollView.showsHorizontalScrollIndicator)
+
+        scrollView.setScrollIndicatorVisible(true)
         XCTAssertTrue(scrollView.showsHorizontalScrollIndicator)
         XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
     }
@@ -977,6 +994,7 @@ final class HostConformanceTests: XCTestCase {
                 WhiskerPropertyBinding(id: 2, name: "item-snap", value: .map),
                 WhiskerPropertyBinding(id: 3, name: "scroll-snap-stop", value: .string),
                 WhiskerPropertyBinding(id: 4, name: "enable-scroll", value: .bool),
+                WhiskerPropertyBinding(id: 5, name: "show-scroll-indicator", value: .bool),
             ],
             events: [WhiskerEventBinding(id: 1, name: "scroll", detail: .map)],
             commands: [

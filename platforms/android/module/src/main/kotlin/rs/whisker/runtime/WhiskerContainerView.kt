@@ -324,6 +324,11 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
         snapStopAlways = value == "always"
     }
 
+    public fun setScrollIndicatorVisible(visible: Boolean) {
+        verticalScroller.isVerticalScrollBarEnabled = visible
+        horizontalScroller.isHorizontalScrollBarEnabled = visible
+    }
+
     /** Enables touch-driven scrolling while keeping imperative commands live. */
     public fun setUserScrollEnabled(value: Boolean) {
         userScrollEnabled = value

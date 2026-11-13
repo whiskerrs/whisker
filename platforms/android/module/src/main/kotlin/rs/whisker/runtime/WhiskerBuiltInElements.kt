@@ -138,6 +138,12 @@ public class BuiltInElementModule : Module() {
             ) { view: WhiskerScrollContainerView, value ->
                 view.setUserScrollEnabled(value.asBool() ?: true)
             }
+            Prop(
+                "show-scroll-indicator",
+                clear = { view: WhiskerScrollContainerView -> view.setScrollIndicatorVisible(true) },
+            ) { view: WhiskerScrollContainerView, value ->
+                view.setScrollIndicatorVisible(value.asBool() ?: true)
+            }
             Command("scrollTo") { view: WhiskerScrollContainerView, value ->
                 val arguments = (value as? WhiskerValue.Map)?.value.orEmpty()
                 view.scrollToLogicalOffset(

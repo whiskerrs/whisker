@@ -29,6 +29,10 @@ pub const SCROLL_SNAP_STOP_PROPERTY: PropertyId =
 /// Stable property ID controlling user-driven ScrollView gestures.
 pub const SCROLL_ENABLED_PROPERTY: PropertyId =
     PropertyId::new(4).expect("the standard scroll enabled property ID is non-zero");
+/// Stable property ID controlling whether the ScrollView shows its native
+/// scroll indicator.
+pub const SHOW_SCROLL_INDICATOR_PROPERTY: PropertyId =
+    PropertyId::new(5).expect("the standard show scroll indicator property ID is non-zero");
 /// Stable command ID for absolute ScrollView movement.
 pub const SCROLL_TO_COMMAND: CommandId =
     CommandId::new(1).expect("the standard scrollTo command ID is non-zero");
@@ -125,6 +129,11 @@ pub fn scroll_view_element_binding() -> ElementSchema {
             name: "enable-scroll".to_owned(),
             value: ElementValueKind::Bool,
         },
+        ElementPropertySchema {
+            property: SHOW_SCROLL_INDICATOR_PROPERTY,
+            name: "show-scroll-indicator".to_owned(),
+            value: ElementValueKind::Bool,
+        },
     ]);
     schema.events.push(ElementEventSchema {
         event: EventId::new(1).expect("the standard scroll event ID is non-zero"),
@@ -209,7 +218,7 @@ mod tests {
         assert_eq!(definition.elements[0].schema, view_element_binding());
         assert_eq!(definition.elements[1].schema, text_element_binding());
         assert_eq!(definition.elements[2].schema, scroll_view_element_binding());
-        assert_eq!(definition.elements[2].schema.properties.len(), 4);
+        assert_eq!(definition.elements[2].schema.properties.len(), 5);
         assert!(definition.elements[0].schema.properties.is_empty());
         assert!(definition.elements[0].schema.events.is_empty());
         assert!(definition.elements[0].schema.commands.is_empty());
@@ -231,6 +240,10 @@ mod tests {
         assert_eq!(
             definition.elements[2].schema.properties[3].name,
             "enable-scroll"
+        );
+        assert_eq!(
+            definition.elements[2].schema.properties[4].name,
+            "show-scroll-indicator"
         );
         assert_eq!(
             definition.elements[2]
