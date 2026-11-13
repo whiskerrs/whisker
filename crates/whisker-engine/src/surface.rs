@@ -2125,8 +2125,26 @@ mod tests {
         );
         let pointer = PointerId::new(1).unwrap();
         assert_eq!(surface.pointer_capture_target(pointer), None);
-        surface.scene.set_pointer_capture(root, pointer).unwrap();
+        surface.set_pointer_capture(root, pointer).unwrap();
         assert_eq!(surface.pointer_capture_target(pointer), Some(root));
+        assert_eq!(
+            surface.set_pointer_capture(missing, pointer),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        assert_eq!(
+            surface.release_pointer_capture(missing, pointer),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        surface.release_pointer_capture(root, pointer).unwrap();
+        assert_eq!(surface.pointer_capture_target(pointer), None);
+        surface.set_pointer_capture(root, pointer).unwrap();
+        surface.release_pointer_captures().unwrap();
+        assert_eq!(surface.pointer_capture_target(pointer), None);
+        surface.set_pointer_capture(root, pointer).unwrap();
 
         let unsupported = resolve_style(
             &SpecifiedStyle::new().push(

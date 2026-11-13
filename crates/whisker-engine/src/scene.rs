@@ -1756,6 +1756,36 @@ mod tests {
     }
 
     #[test]
+    fn releasing_every_capture_reports_each_released_pointer() {
+        let (mut scene, mut renderer, root, child) = initialized_scene();
+        scene
+            .set_pointer_capture(root, pointer(1))
+            .expect("capture first");
+        scene
+            .set_pointer_capture(child, pointer(2))
+            .expect("capture second");
+        present_and_accept(&mut scene, &mut renderer);
+
+        scene.release_pointer_captures().expect("release all");
+        assert_eq!(scene.pointer_capture_target(pointer(1)), None);
+        assert_eq!(scene.pointer_capture_target(pointer(2)), None);
+        let packet = present_and_accept(&mut scene, &mut renderer);
+        assert_eq!(
+            packet.operations,
+            vec![
+                Operation::ReleasePointerCapture {
+                    node: root,
+                    pointer: pointer(1),
+                },
+                Operation::ReleasePointerCapture {
+                    node: child,
+                    pointer: pointer(2),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn structural_delta_supports_move_remove_reinsert_and_subtree_delete() {
         let (mut scene, mut renderer, root, child) = initialized_scene();
         let sibling = scene.create_node(element_type(3)).expect("sibling");
@@ -1823,6 +1853,10 @@ mod tests {
             Err(SceneError::FramePending)
         );
         assert_eq!(scene.delete_node(root), Err(SceneError::FramePending));
+        assert_eq!(
+            scene.release_pointer_captures(),
+            Err(SceneError::FramePending)
+        );
         assert_eq!(
             scene.insert_child(root, root, 0),
             Err(SceneError::FramePending)
