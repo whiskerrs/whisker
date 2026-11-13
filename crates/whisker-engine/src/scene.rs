@@ -1,6 +1,7 @@
 //! Retained scene state and coalescing frame journal.
 
-use std::collections::{BTreeMap, HashMap};
+use rustc_hash::FxHashMap;
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -277,7 +278,7 @@ enum DirtySlot {
 #[derive(Clone, Debug, Default)]
 struct ChangeJournal {
     operations: Vec<Operation>,
-    coalesced: HashMap<DirtySlot, usize>,
+    coalesced: FxHashMap<DirtySlot, usize>,
 }
 
 impl ChangeJournal {

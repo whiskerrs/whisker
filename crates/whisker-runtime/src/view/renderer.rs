@@ -18,8 +18,8 @@
 //! In production the bridge driver installs the Host renderer
 //! once at startup and keeps it for the life of the process.
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use super::handle::Element;
@@ -307,7 +307,7 @@ pub trait DynRenderer {
 }
 
 thread_local! {
-    static ELEMENT_CALLBACKS: RefCell<HashMap<Element, Vec<crate::lifetime::Cancellation>>> = RefCell::new(HashMap::new());
+    static ELEMENT_CALLBACKS: RefCell<FxHashMap<Element, Vec<crate::lifetime::Cancellation>>> = RefCell::new(FxHashMap::default());
     /// The active renderer for this thread. `None` outside any mount.
     ///
     /// Wrapped in `RefCell<Option<Box<dyn>>>` rather than holding the
@@ -322,8 +322,8 @@ thread_local! {
     ///
     /// The mirror makes sibling/index queries deterministic without requiring
     /// a reverse query API from each Host.
-    static CHILDREN_OF: RefCell<HashMap<Element, Vec<Element>>> =
-        RefCell::new(HashMap::new());
+    static CHILDREN_OF: RefCell<FxHashMap<Element, Vec<Element>>> =
+        RefCell::new(FxHashMap::default());
 
     /// Reverse direction of [`CHILDREN_OF`]: child → its mirror
     /// parent. Maintained in lockstep with [`append_child`] /
@@ -333,8 +333,8 @@ thread_local! {
     /// Each child has at most one parent — every move is a detach +
     /// re-attach through us, never a DOM-style reparent. A missing
     /// entry means the child is currently detached.
-    static PARENT_OF: RefCell<HashMap<Element, Element>> =
-        RefCell::new(HashMap::new());
+    static PARENT_OF: RefCell<FxHashMap<Element, Element>> =
+        RefCell::new(FxHashMap::default());
 
     /// IDs allocated by [`create_phantom_element`]. A phantom is an
     /// Element that lives in [`CHILDREN_OF`] / [`PARENT_OF`] but is
@@ -344,28 +344,28 @@ thread_local! {
     /// there is no such ancestor yet (the phantom is still
     /// unattached), the real children stay in the mirror only and
     /// land in Host when the phantom subtree is finally attached.
-    static PHANTOM_ELEMENTS: RefCell<HashSet<Element>> =
-        RefCell::new(HashSet::new());
+    static PHANTOM_ELEMENTS: RefCell<FxHashSet<Element>> =
+        RefCell::new(FxHashSet::default());
 
     /// Monotonic counter for phantom IDs, starting at [`PHANTOM_BASE`].
     static NEXT_PHANTOM_ID: Cell<u32> = const { Cell::new(PHANTOM_BASE) };
 }
 
 pub(crate) struct ViewRuntimeState {
-    callbacks: HashMap<Element, Vec<crate::lifetime::Cancellation>>,
-    children: HashMap<Element, Vec<Element>>,
-    parents: HashMap<Element, Element>,
-    phantoms: HashSet<Element>,
+    callbacks: FxHashMap<Element, Vec<crate::lifetime::Cancellation>>,
+    children: FxHashMap<Element, Vec<Element>>,
+    parents: FxHashMap<Element, Element>,
+    phantoms: FxHashSet<Element>,
     next_phantom_id: u32,
 }
 
 impl ViewRuntimeState {
     pub(crate) fn new() -> Self {
         Self {
-            callbacks: HashMap::new(),
-            children: HashMap::new(),
-            parents: HashMap::new(),
-            phantoms: HashSet::new(),
+            callbacks: FxHashMap::default(),
+            children: FxHashMap::default(),
+            parents: FxHashMap::default(),
+            phantoms: FxHashSet::default(),
             next_phantom_id: PHANTOM_BASE,
         }
     }

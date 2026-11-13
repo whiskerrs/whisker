@@ -5143,6 +5143,7 @@ dependencies = [
 name = "whisker-engine"
 version = "0.18.1"
 dependencies = [
+ "rustc-hash 2.1.3",
  "whisker-layout",
  "whisker-protocol",
  "whisker-style",
@@ -5401,6 +5402,7 @@ dependencies = [
 name = "whisker-layout"
 version = "0.18.1"
 dependencies = [
+ "rustc-hash 2.1.3",
  "taffy",
  "whisker-protocol",
  "whisker-style",
@@ -5555,6 +5557,7 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "linkme",
+ "rustc-hash 2.1.3",
  "serde",
  "slotmap",
  "whisker-engine",

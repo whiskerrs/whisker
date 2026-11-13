@@ -33,7 +33,7 @@ fn same_paragraph(a: &whisker_engine::SceneNode, b: &whisker_engine::SceneNode) 
 }
 
 impl BindingState {
-    pub(super) fn commit_paragraph_presentations(&mut self, changed: &HashSet<NodeId>) {
+    pub(super) fn commit_paragraph_presentations(&mut self, changed: &FxHashSet<NodeId>) {
         self.presented_paragraphs
             .retain(|node, _| self.surface.node(*node).is_some());
         let mut affected = changed.clone();
@@ -223,16 +223,16 @@ impl BindingState {
 }
 pub(super) struct ParagraphFrameSink<'a, Sink> {
     sink: &'a mut Sink,
-    presented: &'a HashMap<NodeId, PresentedParagraph>,
-    pub changed: HashSet<NodeId>,
+    presented: &'a FxHashMap<NodeId, PresentedParagraph>,
+    pub changed: FxHashSet<NodeId>,
 }
 
 impl<'a, Sink> ParagraphFrameSink<'a, Sink> {
-    pub fn new(sink: &'a mut Sink, presented: &'a HashMap<NodeId, PresentedParagraph>) -> Self {
+    pub fn new(sink: &'a mut Sink, presented: &'a FxHashMap<NodeId, PresentedParagraph>) -> Self {
         Self {
             sink,
             presented,
-            changed: HashSet::new(),
+            changed: FxHashSet::default(),
         }
     }
 }

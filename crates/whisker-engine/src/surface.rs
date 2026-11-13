@@ -1,6 +1,7 @@
 //! Surface-level orchestration of retained scene and layout state.
 
-use std::{collections::HashMap, error::Error, fmt, rc::Rc};
+use rustc_hash::FxHashMap;
+use std::{error::Error, fmt, rc::Rc};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
@@ -210,8 +211,8 @@ pub struct SurfaceEngine {
     last_inputs: Option<LayoutInputs>,
     layout_dirty: bool,
     layout_provisional: bool,
-    transforms: Rc<HashMap<NodeId, ComputedTransformStyle>>,
-    radial_backgrounds: Rc<HashMap<NodeId, Vec<RadialBackgroundSource>>>,
+    transforms: Rc<FxHashMap<NodeId, ComputedTransformStyle>>,
+    radial_backgrounds: Rc<FxHashMap<NodeId, Vec<RadialBackgroundSource>>>,
     paragraph_visibility: Rc<crate::paragraph_visibility::ParagraphVisibility>,
     measurements: Rc<MeasurementCoordinator>,
 }
@@ -239,8 +240,8 @@ impl SurfaceEngine {
             last_inputs: None,
             layout_dirty: false,
             layout_provisional: false,
-            transforms: Rc::new(HashMap::new()),
-            radial_backgrounds: Rc::new(HashMap::new()),
+            transforms: Rc::new(FxHashMap::default()),
+            radial_backgrounds: Rc::new(FxHashMap::default()),
             paragraph_visibility: Rc::default(),
             measurements: Rc::new(MeasurementCoordinator::default()),
         }

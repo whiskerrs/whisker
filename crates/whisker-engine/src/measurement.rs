@@ -1,7 +1,8 @@
 //! Retained intrinsic-measurement coordination for one surface.
 
+use rustc_hash::FxHashMap;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
 };
@@ -254,10 +255,10 @@ struct PassState {
 #[derive(Clone, Debug)]
 pub(crate) struct MeasurementCoordinator {
     specs: BTreeMap<NodeId, SpecState>,
-    cache: HashMap<CacheKey, CacheEntry>,
-    consumer_keys: HashMap<NodeId, Vec<CacheKey>>,
+    cache: FxHashMap<CacheKey, CacheEntry>,
+    consumer_keys: FxHashMap<NodeId, Vec<CacheKey>>,
     outstanding: BTreeMap<MeasurementKey, OutstandingRequest>,
-    outstanding_by_cache: HashMap<CacheKey, MeasurementKey>,
+    outstanding_by_cache: FxHashMap<CacheKey, MeasurementKey>,
     pending: BTreeMap<MeasurementRequestId, PendingRequest>,
     environment_epoch: Option<u64>,
     next_key: u64,
@@ -269,10 +270,10 @@ impl Default for MeasurementCoordinator {
     fn default() -> Self {
         Self {
             specs: BTreeMap::new(),
-            cache: HashMap::new(),
-            consumer_keys: HashMap::new(),
+            cache: FxHashMap::default(),
+            consumer_keys: FxHashMap::default(),
             outstanding: BTreeMap::new(),
-            outstanding_by_cache: HashMap::new(),
+            outstanding_by_cache: FxHashMap::default(),
             pending: BTreeMap::new(),
             environment_epoch: None,
             next_key: 1,

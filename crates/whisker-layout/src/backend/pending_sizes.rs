@@ -1,5 +1,6 @@
 use super::{LayoutInput, LayoutOutput, NodeId, RunMode, SIZE_CACHE_CAPACITY};
-use std::collections::{HashMap, VecDeque};
+use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 
 #[derive(Clone, Copy)]
 pub(super) struct PendingSize {
@@ -10,7 +11,7 @@ pub(super) struct PendingSize {
 
 #[derive(Default)]
 pub(super) struct PendingSizes {
-    nodes: HashMap<NodeId, VecDeque<(LayoutInput, PendingSize)>>,
+    nodes: FxHashMap<NodeId, VecDeque<(LayoutInput, PendingSize)>>,
 }
 
 impl PendingSizes {
