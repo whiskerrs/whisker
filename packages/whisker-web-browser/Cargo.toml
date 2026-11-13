@@ -1,6 +1,6 @@
 [package]
 name = "whisker-web-browser"
-version = "0.14.6"
+version = "0.14.7"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -34,5 +34,5 @@ windows = { manifest = "desktop/Cargo.toml" }
 linux = { manifest = "desktop/Cargo.toml" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.18.0" }
+whisker = { path = "../../crates/whisker", version = "0.18.1" }
 futures-channel = "0.3"
