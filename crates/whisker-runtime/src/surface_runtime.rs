@@ -534,6 +534,50 @@ impl SurfaceRuntime {
             .is_some_and(|entry| entry.kind.is_rich_text() && entry.text_selectable == Some(true))
     }
 
+    /// The nodes of `node`'s element ancestors, nearest first.
+    pub(crate) fn node_ancestors(&self, node: NodeId) -> Vec<NodeId> {
+        let state = self.state.borrow();
+        let mut ancestors = Vec::new();
+        let mut current = state
+            .node_elements
+            .get(&node)
+            .and_then(|element| state.elements.get(element))
+            .and_then(|entry| entry.parent);
+        while let Some(entry) = current.and_then(|element| state.elements.get(&element)) {
+            ancestors.extend(entry.node);
+            current = entry.parent;
+        }
+        ancestors
+    }
+
+    /// Whether `node` is still in the tree under the root.
+    pub(crate) fn is_attached(&self, node: NodeId) -> bool {
+        let state = self.state.borrow();
+        let Some(root) = state.root.and_then(|root| state.node_elements.get(&root)) else {
+            return false;
+        };
+        let mut current = state.node_elements.get(&node);
+        while let Some(element) = current {
+            if element == root {
+                return true;
+            }
+            current = state
+                .elements
+                .get(element)
+                .and_then(|entry| entry.parent.as_ref());
+        }
+        false
+    }
+
+    #[cfg(test)]
+    pub(crate) fn node_of(&self, element: Element) -> Option<NodeId> {
+        self.state
+            .borrow()
+            .elements
+            .get(&element)
+            .and_then(|entry| entry.node)
+    }
+
     pub(crate) fn has_input_listener(&self, target: NodeId, event: &str) -> bool {
         let state = self.state.borrow();
         state.root.is_some_and(|root| {
@@ -550,7 +594,74 @@ impl SurfaceRuntime {
     /// Forgets every pointer that is down. Hosts end no pointer stream when
     /// the surface stops receiving input, so the owner calls this instead.
     pub(crate) fn clear_active_pointers(&self) {
-        self.state.borrow_mut().active_pointers.clear();
+        let mut state = self.state.borrow_mut();
+        state.active_pointers.clear();
+        let result = state
+            .surface
+            .release_pointer_captures()
+            .map_err(RuntimeBindingError::from);
+        state.record(result);
+    }
+
+    /// The node holding `pointer`'s capture, if any.
+    pub(crate) fn pointer_capture_target(
+        &self,
+        pointer: whisker_protocol::PointerId,
+    ) -> Option<NodeId> {
+        self.state.borrow().surface.pointer_capture_target(pointer)
+    }
+
+    /// Fires `event` on `target`'s listeners below the element that captured its pointer.
+    pub(crate) fn dispatch_below_capture(
+        &self,
+        event: &InputEvent,
+        target: NodeId,
+    ) -> Result<(), RuntimeInputError> {
+        let (firings, body) = {
+            let state = self.state.borrow();
+            let (Some(root), Some(pointer)) = (state.root, event.pointer) else {
+                return Ok(());
+            };
+            let Some(physical) = state.node_elements.get(&target).copied() else {
+                return Ok(());
+            };
+            let mut above = Vec::new();
+            let mut current = state
+                .surface
+                .pointer_capture_target(pointer.id)
+                .and_then(|node| state.node_elements.get(&node).copied());
+            while let Some(element) = current {
+                above.push(element);
+                current = state.elements.get(&element).and_then(|entry| entry.parent);
+            }
+            let Ok(planned) = state.plan_element_event(
+                root,
+                target,
+                physical,
+                event.kind.name(Some(pointer.kind)),
+            ) else {
+                return Ok(());
+            };
+            let firings = planned
+                .into_iter()
+                .filter(|(current_target, _)| !above.contains(current_target))
+                .map(|(current_target, callback)| {
+                    (callback, state.element_target_value(current_target))
+                })
+                .collect::<Vec<_>>();
+            (
+                firings,
+                input_body(
+                    event,
+                    &state.active_pointers,
+                    state.element_target_value(physical),
+                ),
+            )
+        };
+        for (callback, current_target) in firings {
+            callback(with_current_target(&body, current_target));
+        }
+        Ok(())
     }
 
     /// Hit-tests and routes one Host-normalized event through Rust listeners.
@@ -604,7 +715,32 @@ impl SurfaceRuntime {
             let captured = event
                 .pointer
                 .and_then(|pointer| state.surface.pointer_capture_target(pointer.id));
+            // A Host that ended the previous sequence without an up or a cancel must not have
+            // its capture claim the next contact with the same id.
+            let captured = match (&event.kind, captured, event.pointer) {
+                (whisker_protocol::InputEventKind::PointerDown, Some(stale), Some(pointer)) => {
+                    state
+                        .surface
+                        .release_pointer_capture(stale, pointer.id)
+                        .map_err(RuntimeBindingError::from)
+                        .map_err(RuntimeInputError::Binding)?;
+                    None
+                }
+                _ => captured,
+            };
             let target = if let Some(captured) = captured {
+                if let (
+                    whisker_protocol::InputEventKind::PointerUp
+                    | whisker_protocol::InputEventKind::PointerCancel,
+                    Some(pointer),
+                ) = (&event.kind, event.pointer)
+                {
+                    state
+                        .surface
+                        .release_pointer_capture(captured, pointer.id)
+                        .map_err(RuntimeBindingError::from)
+                        .map_err(RuntimeInputError::Binding)?;
+                }
                 Some(captured)
             } else if let Some(target) = event.target {
                 if state.surface.node(target).is_none() {

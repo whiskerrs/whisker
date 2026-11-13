@@ -353,6 +353,51 @@ impl DynRenderer for SurfaceRuntime {
         true
     }
 
+    fn set_pointer_capture(&self, handle: Element, pointer: i64) -> bool {
+        let mut state = self.state.borrow_mut();
+        let Some(pointer) = u64::try_from(pointer)
+            .ok()
+            .and_then(whisker_protocol::PointerId::new)
+        else {
+            return false;
+        };
+        if !state
+            .active_pointers
+            .iter()
+            .any(|active| active.id == pointer)
+        {
+            return false;
+        }
+        let Some(node) = state.elements.get(&handle).and_then(|entry| entry.node) else {
+            return false;
+        };
+        let result = state
+            .surface
+            .set_pointer_capture(node, pointer)
+            .map_err(RuntimeBindingError::from);
+        let captured = result.is_ok();
+        state.record(result);
+        captured
+    }
+
+    fn release_pointer_capture(&self, handle: Element, pointer: i64) {
+        let mut state = self.state.borrow_mut();
+        let Some(pointer) = u64::try_from(pointer)
+            .ok()
+            .and_then(whisker_protocol::PointerId::new)
+        else {
+            return;
+        };
+        let Some(node) = state.elements.get(&handle).and_then(|entry| entry.node) else {
+            return;
+        };
+        let result = state
+            .surface
+            .release_pointer_capture(node, pointer)
+            .map_err(RuntimeBindingError::from);
+        state.record(result);
+    }
+
     fn observe_layout(&self, handle: Element, callback: Box<dyn Fn(LayoutObservation) + 'static>) {
         let mut state = self.state.borrow_mut();
         let result = state.element_mut(handle).map(|entry| {
