@@ -25,7 +25,7 @@ use whisker::event::TouchEvent;
 use whisker::platform_module::WhiskerValue;
 use whisker::runtime::event::bind_typed;
 use whisker::runtime::reactive::on_mount;
-use whisker::runtime::view::{BindType, Element};
+use whisker::runtime::view::{BindType, Element, set_pointer_capture};
 use whisker::{AnimationController, module, on_cleanup};
 
 use crate::render::handle::{PoseBinding, RouterHandle, StackBridge};
@@ -38,6 +38,8 @@ use crate::render::transition::{self, PoseMode, Role, RouteTransition, SwipeEdge
 const SWIPE_FULL_DISTANCE_PX: f32 = 402.0;
 /// `clientX` within which a touchstart qualifies as an edge swipe.
 const SWIPE_EDGE_THRESHOLD_PX: f32 = 24.0;
+/// Travel (pt) before a drag from the edge is read as a swipe or as a scroll.
+const SWIPE_DECISION_SLOP_PX: f32 = 10.0;
 /// Progress (toward back) at release above which the gesture commits.
 const SWIPE_COMMIT_THRESHOLD: f32 = 0.5;
 /// Gain mapping release progress → a rough hand-off velocity for the settle
@@ -73,11 +75,31 @@ fn pb_module() -> whisker::PlatformModule {
 /// In-flight gesture state. `None` when no swipe is active.
 struct Gesture {
     start_x: f32,
+    start_y: f32,
     last_x: f32,
     identifier: i64,
-    bridge: StackBridge,
+    /// `None` until the drag turns out to be a swipe.
+    bridge: Option<StackBridge>,
     /// Back progress 0..1 (0 = top fully present, 1 = fully swiped away).
     progress: f32,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum DragIntent {
+    Undecided,
+    Swipe,
+    Scroll,
+}
+
+/// What a drag that started at the left edge is, from its travel so far.
+pub(crate) fn drag_intent(dx: f32, dy: f32) -> DragIntent {
+    if dx.abs().max(dy.abs()) < SWIPE_DECISION_SLOP_PX {
+        DragIntent::Undecided
+    } else if dx > dy.abs() {
+        DragIntent::Swipe
+    } else {
+        DragIntent::Scroll
+    }
 }
 
 /// Install the Host navigation inputs owned by one [`Router`](crate::render::Router).
@@ -100,7 +122,6 @@ fn install_edge_swipe(container: Element, nav: RouterHandle) {
 
     {
         let gesture = gesture.clone();
-        let nav = nav.clone();
         bind_typed::<TouchEvent, _>(container, "touchstart", BindType::Bind, move |e| {
             if gesture.borrow().is_some() {
                 return;
@@ -117,17 +138,12 @@ fn install_edge_swipe(container: Element, nav: RouterHandle) {
             if start_x > SWIPE_EDGE_THRESHOLD_PX {
                 return;
             }
-            // Grab the active stack's bridge and point both wrappers at the
-            // top controller (shared with Android predictive-back). The iOS
-            // edge swipe is always a left-edge gesture.
-            let Some(bridge) = begin(&nav, SwipeEdge::Left) else {
-                return;
-            };
             *gesture.borrow_mut() = Some(Gesture {
                 start_x,
+                start_y: touch.client_y as f32,
                 last_x: start_x,
                 identifier: touch.identifier,
-                bridge,
+                bridge: None,
                 progress: 0.0,
             });
         });
@@ -135,6 +151,7 @@ fn install_edge_swipe(container: Element, nav: RouterHandle) {
 
     {
         let gesture = gesture.clone();
+        let nav = nav.clone();
         bind_typed::<TouchEvent, _>(container, "touchmove", BindType::Bind, move |e| {
             let mut g = gesture.borrow_mut();
             let Some(state) = g.as_mut() else { return };
@@ -152,11 +169,34 @@ fn install_edge_swipe(container: Element, nav: RouterHandle) {
                 return;
             };
             let x = touch.client_x as f32;
+            if state.bridge.is_none() {
+                // A vertical drag from the edge stays the scroll view's; the swipe starts only
+                // once the drag is horizontal.
+                let swipe =
+                    match drag_intent(x - state.start_x, touch.client_y as f32 - state.start_y) {
+                        DragIntent::Undecided => return,
+                        DragIntent::Scroll => None,
+                        // Grab the active stack's bridge and point both wrappers at the
+                        // top controller (shared with Android predictive-back). The iOS
+                        // edge swipe is always a left-edge gesture.
+                        DragIntent::Swipe => begin(&nav, SwipeEdge::Left),
+                    };
+                let Some(bridge) = swipe else {
+                    *g = None;
+                    return;
+                };
+                // Without the capture a scroll view under the finger scrolls along with the swipe.
+                set_pointer_capture(container, state.identifier);
+                state.bridge = Some(bridge);
+            }
+            let Some(bridge) = state.bridge.as_ref() else {
+                return;
+            };
             state.last_x = x;
             let delta = (x - state.start_x).max(0.0);
             let progress = (delta / SWIPE_FULL_DISTANCE_PX).clamp(0.0, 1.0);
             state.progress = progress;
-            scrub(&state.bridge, progress);
+            scrub(bridge, progress);
         });
     }
 
@@ -167,12 +207,15 @@ fn install_edge_swipe(container: Element, nav: RouterHandle) {
             let Some(state) = gesture.borrow_mut().take() else {
                 return;
             };
+            let Some(bridge) = state.bridge else {
+                return;
+            };
             let commit = state.progress >= SWIPE_COMMIT_THRESHOLD;
             // A rough release velocity in progress units / second. Without
             // precise timestamps we approximate from the gesture's reach;
             // the controller clamps and springs regardless.
             let velocity = (state.progress * SWIPE_VELOCITY_GAIN).clamp(0.0, SWIPE_VELOCITY_MAX);
-            settle(&nav, &state.bridge, commit, Some(velocity));
+            settle(&nav, &bridge, commit, Some(velocity));
         });
     }
 }

@@ -995,6 +995,16 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
     });
 }
 
+#[test]
+fn edge_drag_becomes_a_swipe_only_when_it_travels_right() {
+    use crate::render::platform_navigation::{DragIntent, drag_intent};
+
+    assert_eq!(drag_intent(6.0, -7.0), DragIntent::Undecided);
+    assert_eq!(drag_intent(14.0, -9.0), DragIntent::Swipe);
+    assert_eq!(drag_intent(9.0, -14.0), DragIntent::Scroll);
+    assert_eq!(drag_intent(-14.0, 2.0), DragIntent::Scroll);
+}
+
 // The native module delivery can't run headless, but the mapping Android's
 // internal platform driver performs — `backProgressed{progress}`
 // -> scrub the top controller, `backInvoked` -> commit -> `back()` — is

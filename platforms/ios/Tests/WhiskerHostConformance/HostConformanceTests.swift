@@ -482,6 +482,51 @@ final class HostConformanceTests: XCTestCase {
         }
     }
 
+    func testSceneReportsACapturedPointerAndNotItsRelease() {
+        let registration = WhiskerElementRegistration(
+            elementType: 1,
+            name: WhiskerBuiltInElements.viewName,
+            childPolicy: .elements,
+            measurement: .none
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+        var captured = [UInt64]()
+        let root = UIView()
+        let scene = HostScene(
+            root: root,
+            resources: HostResourceStore(),
+            logicalBounds: { .zero },
+            emitElementEvent: { _, _, _ in },
+            updateScrollOffset: { _, _ in },
+            removeScrollOffset: { _ in },
+            capturePointer: { captured.append($0) }
+        )
+        var operations = [
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CAPTURE), node: 1, wide: 7),
+            operation(tag: UInt32(WHISKER_OP_RELEASE_CAPTURE), node: 1, wide: 7),
+        ]
+        operations.withUnsafeMutableBufferPointer { buffer in
+            var frame = WhiskerMobileFrame()
+            frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+            frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
+            frame.protocol_major = 1
+            frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
+            frame.surface = 1
+            frame.scene_epoch = 1
+            frame.viewport_epoch = 1
+            frame.frame_id = 1
+            frame.target_revision = 1
+            frame.operations = UnsafePointer(buffer.baseAddress!)
+            frame.operation_count = buffer.count
+            var response = WhiskerMobileApplyResponse()
+            XCTAssertTrue(scene.applyFrame(frame, response: &response))
+            XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
+        }
+
+        XCTAssertEqual(captured, [7])
+    }
+
     func testEllipsisMeasurementKeepsMultilineWrapping() {
         var request = WhiskerMobileMeasureRequest()
         request.overflow = 1

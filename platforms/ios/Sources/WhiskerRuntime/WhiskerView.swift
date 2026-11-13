@@ -19,6 +19,7 @@ public final class WhiskerView: UIView {
         return recognizer
     }()
     private var touchIdentities = HostTouchIdentityMap()
+    private var nativeScrollArbiter = HostNativeScrollArbiter()
     private var dirtyScrollOffsets: [UInt64: CGPoint] = [:]
     private let modules = HostModuleDispatcher()
     let preparedParagraphs = PreparedParagraphs()
@@ -39,6 +40,9 @@ public final class WhiskerView: UIView {
         },
         removeScrollOffset: { [weak self] node in
             self?.dirtyScrollOffsets.removeValue(forKey: node)
+        },
+        capturePointer: { [weak self] pointer in
+            self?.nativeScrollArbiter.capture(pointer: pointer)
         }
     )
 
@@ -215,6 +219,7 @@ public final class WhiskerView: UIView {
             let pointerID: UInt64
             if event == .down {
                 pointerID = touchIdentities.begin(key)
+                nativeScrollArbiter.begin(pointer: pointerID, touched: touch.view, root: self)
             } else if let existing = touchIdentities.existing(key) {
                 pointerID = existing
             } else { continue }
@@ -229,7 +234,10 @@ public final class WhiskerView: UIView {
                 x: Float(logicalPosition.x),
                 y: Float(logicalPosition.y)
             )
-            if event == .up || event == .cancel { touchIdentities.end(key) }
+            if event == .up || event == .cancel {
+                touchIdentities.end(key)
+                nativeScrollArbiter.end(pointer: pointerID)
+            }
         }
     }
 
@@ -279,6 +287,7 @@ public final class WhiskerView: UIView {
         if ownedRuntime { scene.clear() }
         pendingModuleEvents.clear()
         touchIdentities.clear()
+        nativeScrollArbiter.clear()
         dirtyScrollOffsets.removeAll(keepingCapacity: false)
         if let token = hostToken {
             Unmanaged<WhiskerView>.fromOpaque(token).release()

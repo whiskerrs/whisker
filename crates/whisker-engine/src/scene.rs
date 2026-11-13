@@ -976,6 +976,18 @@ impl Scene {
         Ok(())
     }
 
+    /// Releases every captured pointer.
+    pub fn release_pointer_captures(&mut self) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        for (pointer, node) in std::mem::take(&mut self.pointer_captures) {
+            self.journal.push_coalesced(
+                DirtySlot::Pointer(node, pointer),
+                Operation::ReleasePointerCapture { node, pointer },
+            );
+        }
+        Ok(())
+    }
+
     /// Queues an element command after preceding visual mutations.
     pub fn invoke_command(
         &mut self,

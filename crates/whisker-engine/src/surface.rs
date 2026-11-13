@@ -306,6 +306,35 @@ impl SurfaceEngine {
             .map_err(SurfaceError::Scene)
     }
 
+    /// Captures a pointer stream for a node.
+    pub fn set_pointer_capture(
+        &mut self,
+        node: NodeId,
+        pointer: PointerId,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_pointer_capture(node, pointer)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Releases a pointer stream previously captured by a node.
+    pub fn release_pointer_capture(
+        &mut self,
+        node: NodeId,
+        pointer: PointerId,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .release_pointer_capture(node, pointer)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Releases every captured pointer.
+    pub fn release_pointer_captures(&mut self) -> Result<(), SurfaceError> {
+        self.scene
+            .release_pointer_captures()
+            .map_err(SurfaceError::Scene)
+    }
+
     /// Returns the node currently retaining one pointer capture.
     pub fn pointer_capture_target(&self, pointer: PointerId) -> Option<NodeId> {
         self.scene.pointer_capture_target(pointer)

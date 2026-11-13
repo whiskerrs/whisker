@@ -14,6 +14,7 @@ final class HostScene {
     private let emitElementEvent: (UInt64, String, WhiskerValue) -> Void
     private let updateScrollOffset: (UInt64, CGPoint) -> Void
     private let removeScrollOffset: (UInt64) -> Void
+    private let capturePointer: (UInt64) -> Void
     private var nodes: [UInt64: WhiskerNodeView] = [:]
     private var nodeOrder: [UInt64] = []
     private var parents: [UInt64: UInt64] = [:]
@@ -32,7 +33,8 @@ final class HostScene {
         logicalBounds: @escaping () -> CGRect,
         emitElementEvent: @escaping (UInt64, String, WhiskerValue) -> Void,
         updateScrollOffset: @escaping (UInt64, CGPoint) -> Void,
-        removeScrollOffset: @escaping (UInt64) -> Void
+        removeScrollOffset: @escaping (UInt64) -> Void,
+        capturePointer: @escaping (UInt64) -> Void = { _ in }
     ) {
         self.root = root
         self.resources = resources
@@ -41,6 +43,7 @@ final class HostScene {
         self.emitElementEvent = emitElementEvent
         self.updateScrollOffset = updateScrollOffset
         self.removeScrollOffset = removeScrollOffset
+        self.capturePointer = capturePointer
     }
 
     func applyFrame(
@@ -527,9 +530,9 @@ final class HostScene {
             nodes[id]?.setHitTestBehavior(operation.integer)
         case UInt32(WHISKER_OP_CURSOR):
             nodes[id]?.setCursorKeyword(operation.integer)
-        // Capture targeting is owned by SurfaceRuntime. UIKit already keeps a
-        // UITouch stream attached to its recognizer, so no Host mirror is needed.
-        case UInt32(WHISKER_OP_CAPTURE), UInt32(WHISKER_OP_RELEASE_CAPTURE): break
+        // SurfaceRuntime routes a captured pointer; the Host only stops its own gestures for it.
+        case UInt32(WHISKER_OP_CAPTURE): capturePointer(operation.wide)
+        case UInt32(WHISKER_OP_RELEASE_CAPTURE): break
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):
