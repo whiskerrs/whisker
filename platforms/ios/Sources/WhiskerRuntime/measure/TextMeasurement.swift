@@ -154,7 +154,8 @@ private func measureText(
         }
         return
     }
-    let measured = cache.plain(node: request.node, input: input) {
+    let probe = request.wrap != 0 && request.available_width_kind == 1
+    let measured = cache.plain(node: request.node, input: input, probe: probe) {
         let measuredText = request.word_break == 2 ? protectCJKBreaks(source) : source
         if measuredText.isEmpty {
             let (baseFont, attributes) = prepareAttributes()
