@@ -420,6 +420,82 @@ mod tests {
     }
 
     #[test]
+    fn touch_whose_target_is_removed_continues_on_its_nearest_ancestor() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(83).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let child = Rc::new(Cell::new(None));
+        runtime
+            .mount({
+                let seen = Rc::clone(&seen);
+                let child = Rc::clone(&child);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    let leaf = create_element(ElementTag::View);
+                    append_child(root, leaf);
+                    child.set(Some(leaf));
+                    for name in ["touchmove", "touchend"] {
+                        let seen = Rc::clone(&seen);
+                        set_event_listener(
+                            root,
+                            name,
+                            BindType::Bind,
+                            Box::new(move |_| seen.borrow_mut().push(name)),
+                        );
+                    }
+                    set_event_listener(
+                        root,
+                        "unmount-leaf",
+                        BindType::Bind,
+                        Box::new(move |_| remove_child(root, leaf)),
+                    );
+                    root
+                }
+            })
+            .unwrap();
+        let leaf = surface.node_of(child.get().unwrap()).unwrap();
+        let touch = |kind, target| InputEvent {
+            presentation_revision: None,
+            surface: surface.surface(),
+            timestamp_ms: 1.0,
+            kind,
+            pointer: Some(PointerInput {
+                id: PointerId::new(1).unwrap(),
+                kind: PointerKind::Touch,
+                position: InputPoint { x: 5.0, y: 5.0 },
+                buttons: 1,
+                changed_button: 0,
+            }),
+            target,
+            detail: WhiskerValue::Null,
+        };
+
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerDown, Some(leaf)))
+            .unwrap();
+        runtime
+            .dispatch_input(&InputEvent {
+                kind: InputEventKind::Named("unmount-leaf".to_owned()),
+                pointer: None,
+                target: surface.root(),
+                ..touch(InputEventKind::PointerMove, None)
+            })
+            .unwrap();
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerMove, None))
+            .unwrap();
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerUp, None))
+            .unwrap();
+
+        assert_eq!(*seen.borrow(), ["touchmove", "touchend"]);
+    }
+
+    #[test]
     fn root_remount_replaces_only_the_instance_application_tree() {
         __reset_for_tests();
         let surface = SurfaceRuntime::new(
@@ -569,10 +645,12 @@ enum PendingHostEvent {
 }
 
 const HOST_EVENT_QUEUE_CAP: usize = 4096;
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct ActivationCandidate {
     presentation_revision: Option<u64>,
     target: NodeId,
+    /// The target's ancestors at pointer-down, nearest first.
+    ancestors: Vec<NodeId>,
     origin: InputPoint,
     started_at_ms: f64,
     pointer_kind: PointerKind,
@@ -603,7 +681,13 @@ impl ActivationRecognizer {
     // Touch and pen contacts keep the node selected by pointer-down for their
     // whole active sequence. This gives raw touch listeners the same stable
     // target as implicit pointer capture without changing mouse hover routing.
-    fn implicit_capture_target(&self, event: &InputEvent) -> Option<NodeId> {
+    // A target removed mid-sequence hands the contact to its nearest ancestor
+    // still in the tree, so a gesture listening above it sees the sequence end.
+    fn implicit_capture_target(
+        &self,
+        event: &InputEvent,
+        is_attached: impl Fn(NodeId) -> bool,
+    ) -> Option<NodeId> {
         let pointer = event.pointer?;
         if !matches!(pointer.kind, PointerKind::Touch | PointerKind::Pen)
             || !matches!(
@@ -615,9 +699,17 @@ impl ActivationRecognizer {
         {
             return None;
         }
-        self.pointers
-            .get(&pointer.id)
-            .map(|candidate| candidate.target)
+        let candidate = self.pointers.get(&pointer.id)?;
+        std::iter::once(candidate.target)
+            .chain(candidate.ancestors.iter().copied())
+            .find(|node| is_attached(*node))
+            .or(Some(candidate.target))
+    }
+
+    fn set_capture_ancestors(&mut self, pointer: PointerId, ancestors: Vec<NodeId>) {
+        if let Some(candidate) = self.pointers.get_mut(&pointer) {
+            candidate.ancestors = ancestors;
+        }
     }
 
     fn observe(
@@ -654,6 +746,7 @@ impl ActivationRecognizer {
                         pointer.id,
                         ActivationCandidate {
                             target,
+                            ancestors: Vec::new(),
                             origin: pointer.position,
                             started_at_ms: event.timestamp_ms,
                             presentation_revision: event.presentation_revision,
@@ -1301,7 +1394,7 @@ impl RuntimeInstance {
             let routed_event = if event.target.is_none() {
                 self.activations
                     .borrow()
-                    .implicit_capture_target(event)
+                    .implicit_capture_target(event, |node| self.surface.is_attached(node))
                     .map(|target| InputEvent {
                         target: Some(target),
                         ..event.clone()
@@ -1322,6 +1415,13 @@ impl RuntimeInstance {
                 self.activations
                     .borrow_mut()
                     .observe(event, dispatch.target, accepts_longpress);
+            if let (InputEventKind::PointerDown, Some(pointer), Some(target)) =
+                (&event.kind, event.pointer, dispatch.target)
+            {
+                self.activations
+                    .borrow_mut()
+                    .set_capture_ancestors(pointer.id, self.surface.node_ancestors(target));
+            }
             if self.activations.borrow().has_pending_longpress() {
                 self.wake.wake();
             }

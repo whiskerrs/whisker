@@ -534,6 +534,50 @@ impl SurfaceRuntime {
             .is_some_and(|entry| entry.kind.is_rich_text() && entry.text_selectable == Some(true))
     }
 
+    /// The nodes of `node`'s element ancestors, nearest first.
+    pub(crate) fn node_ancestors(&self, node: NodeId) -> Vec<NodeId> {
+        let state = self.state.borrow();
+        let mut ancestors = Vec::new();
+        let mut current = state
+            .node_elements
+            .get(&node)
+            .and_then(|element| state.elements.get(element))
+            .and_then(|entry| entry.parent);
+        while let Some(entry) = current.and_then(|element| state.elements.get(&element)) {
+            ancestors.extend(entry.node);
+            current = entry.parent;
+        }
+        ancestors
+    }
+
+    /// Whether `node` is still in the tree under the root.
+    pub(crate) fn is_attached(&self, node: NodeId) -> bool {
+        let state = self.state.borrow();
+        let Some(root) = state.root.and_then(|root| state.node_elements.get(&root)) else {
+            return false;
+        };
+        let mut current = state.node_elements.get(&node);
+        while let Some(element) = current {
+            if element == root {
+                return true;
+            }
+            current = state
+                .elements
+                .get(element)
+                .and_then(|entry| entry.parent.as_ref());
+        }
+        false
+    }
+
+    #[cfg(test)]
+    pub(crate) fn node_of(&self, element: Element) -> Option<NodeId> {
+        self.state
+            .borrow()
+            .elements
+            .get(&element)
+            .and_then(|entry| entry.node)
+    }
+
     pub(crate) fn has_input_listener(&self, target: NodeId, event: &str) -> bool {
         let state = self.state.borrow();
         state.root.is_some_and(|root| {
