@@ -33,6 +33,13 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     private var lastScrollOffset = CGPoint.zero
     private var releaseVelocity = CGPoint.zero
     private var pendingLogicalOffset: (offset: CGFloat, smooth: Bool)?
+    private var refreshEnabled = false
+    private var refreshRequested = false
+    private lazy var whiskerRefreshControl: UIRefreshControl = {
+        let control = UIRefreshControl()
+        control.addTarget(self, action: #selector(refreshControlTriggered), for: .valueChanged)
+        return control
+    }()
 
     public override var isScrollEnabled: Bool {
         didSet {
@@ -79,6 +86,42 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     public func setScrollOrientation(_ value: String) {
         horizontal = value == "horizontal"
         updateIndicatorVisibility()
+        updateRefreshControl()
+    }
+
+    /** Attaches the native pull-to-refresh control while the axis is vertical. */
+    public func setRefreshEnabled(_ enabled: Bool) {
+        refreshEnabled = enabled
+        updateRefreshControl()
+    }
+
+    /** Shows or hides the refresh indicator; a user pull starts it natively. */
+    public func setRefreshing(_ refreshing: Bool) {
+        refreshRequested = refreshing
+        guard let control = refreshControl else { return }
+        if refreshing, !control.isRefreshing {
+            control.beginRefreshing()
+        } else if !refreshing, control.isRefreshing {
+            control.endRefreshing()
+        }
+    }
+
+    private func updateRefreshControl() {
+        let active = refreshEnabled && !horizontal
+        // A pull needs vertical bounce even when the content fits the viewport.
+        alwaysBounceVertical = active
+        if active {
+            guard refreshControl == nil else { return }
+            refreshControl = whiskerRefreshControl
+            if refreshRequested { whiskerRefreshControl.beginRefreshing() }
+        } else if let control = refreshControl {
+            control.endRefreshing()
+            refreshControl = nil
+        }
+    }
+
+    @objc private func refreshControlTriggered() {
+        eventSink?("refresh", .map([:]))
     }
 
     public func setWhiskerChromeVisible(_ visible: Bool) {

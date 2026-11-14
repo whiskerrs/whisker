@@ -61,6 +61,8 @@ Optional configuration:
 - `content_style`, applied to the internal content View while `style` applies
   to the ScrollView viewport;
 - reactive `scroll_enabled`;
+- `on_refresh` and reactive `refreshing`, the ScrollView's native
+  pull-to-refresh (see [architecture.md](architecture.md#scrolling-lists-and-platform-modules));
 - `header`, `footer`, and `empty` render functions;
 - logical-pixel `start_reached_threshold` / `end_reached_threshold` and their
   edge-entry callbacks;

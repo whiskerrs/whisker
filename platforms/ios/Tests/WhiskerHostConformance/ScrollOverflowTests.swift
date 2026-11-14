@@ -16,8 +16,13 @@ extension HostConformanceTests {
                 WhiskerPropertyBinding(id: 2, name: "item-snap", value: .map),
                 WhiskerPropertyBinding(id: 3, name: "scroll-snap-stop", value: .string),
                 WhiskerPropertyBinding(id: 4, name: "enable-scroll", value: .bool),
+                WhiskerPropertyBinding(id: 6, name: "enable-refresh", value: .bool),
+                WhiskerPropertyBinding(id: 7, name: "refreshing", value: .bool),
             ],
-            events: [WhiskerEventBinding(id: 1, name: "scroll", detail: .map)],
+            events: [
+                WhiskerEventBinding(id: 1, name: "scroll", detail: .map),
+                WhiskerEventBinding(id: 2, name: "refresh", detail: .map),
+            ],
             commands: [
                 WhiskerCommandBinding(id: 1, name: "scrollTo", arguments: .map),
                 WhiskerCommandBinding(id: 2, name: "scrollBy", arguments: .map),

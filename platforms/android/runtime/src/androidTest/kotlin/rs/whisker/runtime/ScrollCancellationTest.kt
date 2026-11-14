@@ -27,7 +27,13 @@ class ScrollCancellationActivity : Activity() {
     var horizontal = false
 
     val nativeScroller: View
-        get() = scroll.getChildAt(if (horizontal) 1 else 0)
+        get() = if (horizontal) {
+            scroll.getChildAt(1)
+        } else {
+            // The vertical scroller sits inside the SwipeRefreshLayout.
+            val refresh = scroll.getChildAt(0) as ViewGroup
+            (0 until refresh.childCount).map(refresh::getChildAt).first { it is ScrollView }
+        }
 
     val offset: Int
         get() = if (horizontal) nativeScroller.scrollX else nativeScroller.scrollY
