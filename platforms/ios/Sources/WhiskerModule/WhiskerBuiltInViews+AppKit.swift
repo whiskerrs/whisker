@@ -118,6 +118,12 @@ public final class WhiskerScrollContainerView: NSScrollView, WhiskerEventSource 
         snapStopAlways = value == "always"
     }
 
+    /** AppKit has no native pull-to-refresh control; the configuration is accepted and ignored. */
+    public func setRefreshEnabled(_ enabled: Bool) {}
+
+    /** AppKit has no native refresh indicator; the state is accepted and ignored. */
+    public func setRefreshing(_ refreshing: Bool) {}
+
     public var contentOffset: CGPoint { contentView.bounds.origin }
 
     public var documentSize: CGSize { whiskerContentView.frame.size }
