@@ -31,10 +31,10 @@ pub const SCROLL_ENABLED_PROPERTY: PropertyId =
     PropertyId::new(4).expect("the standard scroll enabled property ID is non-zero");
 /// Stable property ID enabling the Host's native pull-to-refresh control.
 pub const REFRESH_ENABLED_PROPERTY: PropertyId =
-    PropertyId::new(5).expect("the standard refresh enabled property ID is non-zero");
+    PropertyId::new(6).expect("the standard refresh enabled property ID is non-zero");
 /// Stable property ID showing or hiding the native refresh indicator.
 pub const REFRESHING_PROPERTY: PropertyId =
-    PropertyId::new(6).expect("the standard refreshing property ID is non-zero");
+    PropertyId::new(7).expect("the standard refreshing property ID is non-zero");
 /// Stable command ID for absolute ScrollView movement.
 pub const SCROLL_TO_COMMAND: CommandId =
     CommandId::new(1).expect("the standard scrollTo command ID is non-zero");
