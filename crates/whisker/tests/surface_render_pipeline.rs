@@ -4602,3 +4602,212 @@ mod paragraph_truncation;
 
 #[path = "surface_render_pipeline/paragraph_queries.rs"]
 mod paragraph_queries;
+
+struct RefreshHarness {
+    owner: Owner,
+    surface: SurfaceRuntime,
+    host: TextHost,
+    renderer: RecordingRenderer,
+    frame: u32,
+}
+
+impl RefreshHarness {
+    fn mount(surface: u64, build: impl FnOnce() -> whisker::Element) -> Self {
+        __reset_for_tests();
+        let owner = Owner::new(None);
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(surface).unwrap(),
+            StyleEnvironment::new(320.0, 200.0, 1.0, 14.0),
+        );
+        with_installed_renderer(surface.renderer(), || {
+            let root = owner.with(build);
+            set_root(root);
+        });
+        assert_eq!(surface.binding_error(), None);
+        let renderer = RecordingRenderer::new(surface.surface());
+        let mut harness = Self {
+            owner,
+            surface,
+            host: TextHost::default(),
+            renderer,
+            frame: 0,
+        };
+        harness.render();
+        harness
+    }
+
+    fn property(&self, name: &str) -> PropertyId {
+        self.surface
+            .element_registrations()
+            .iter()
+            .find(|registration| registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME)
+            .and_then(|registration| registration.property_named(name))
+            .unwrap_or_else(|| panic!("ScrollView declares `{name}`"))
+            .property
+    }
+
+    fn scroll_node(&self) -> whisker_engine::whisker_protocol::NodeId {
+        let scroll_type = self
+            .surface
+            .element_registrations()
+            .iter()
+            .find(|registration| registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME)
+            .unwrap()
+            .element_type;
+        self.renderer.frames()[0]
+            .packet
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                Operation::CreateNode {
+                    node, element_type, ..
+                } if *element_type == scroll_type => Some(*node),
+                _ => None,
+            })
+            .expect("a ScrollView node")
+    }
+
+    fn render(&mut self) -> Vec<Operation> {
+        let frames = self.renderer.frames().len();
+        self.frame += 1;
+        self.surface
+            .render_frame(
+                LayoutSize::new(320.0, 200.0),
+                1,
+                self.frame,
+                &mut self.host,
+                &mut self.renderer,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+        self.renderer.frames()[frames..]
+            .iter()
+            .flat_map(|frame| frame.packet.operations.iter().cloned())
+            .collect()
+    }
+
+    fn pull(&mut self) -> Vec<Operation> {
+        let node = self.scroll_node();
+        with_installed_renderer(self.surface.renderer(), || {
+            self.surface
+                .dispatch_input(&InputEvent {
+                    presentation_revision: None,
+                    surface: self.surface.surface(),
+                    timestamp_ms: 16.0,
+                    kind: InputEventKind::Named("refresh".to_owned()),
+                    pointer: None,
+                    target: Some(node),
+                    detail: WhiskerValue::Map(Default::default()),
+                })
+                .unwrap();
+            whisker::flush();
+        });
+        self.render()
+    }
+
+    fn refreshing_writes(&self, operations: &[Operation]) -> Vec<bool> {
+        let refreshing = self.property("refreshing");
+        operations
+            .iter()
+            .filter_map(|operation| match operation {
+                Operation::SetProperty {
+                    property,
+                    value: WhiskerValue::Bool(value),
+                    ..
+                } if *property == refreshing => Some(*value),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn dispose(self) {
+        with_installed_renderer(self.surface.renderer(), || self.owner.dispose());
+    }
+}
+
+#[test]
+fn scroll_view_refresh_enables_the_native_control_and_settles_without_a_binding() {
+    let pulls = Rc::new(Cell::new(0));
+    let counter = pulls.clone();
+    let mut harness = RefreshHarness::mount(73, move || {
+        render! {
+            ScrollView(
+                style: css!(width: px(320), height: px(200)),
+                on_refresh: move || counter.set(counter.get() + 1),
+            )
+        }
+    });
+    let enabled = harness.property("enable-refresh");
+    assert!(harness.renderer.frames()[0].packet.operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetProperty { property, value: WhiskerValue::Bool(true), .. } if *property == enabled
+    )));
+
+    let operations = harness.pull();
+    assert_eq!(pulls.get(), 1);
+    assert_eq!(harness.refreshing_writes(&operations), [false]);
+
+    let operations = harness.pull();
+    assert_eq!(pulls.get(), 2);
+    assert_eq!(harness.refreshing_writes(&operations), [false]);
+    harness.dispose();
+}
+
+#[test]
+fn scroll_view_refresh_follows_the_bound_refreshing_signal() {
+    let refreshing = Rc::new(Cell::new(None::<RwSignal<bool>>));
+    let slot = refreshing.clone();
+    let mut harness = RefreshHarness::mount(74, move || {
+        let state = RwSignal::new(false);
+        slot.set(Some(state));
+        render! {
+            ScrollView(
+                style: css!(width: px(320), height: px(200)),
+                refreshing: state,
+                on_refresh: move || state.set(true),
+            )
+        }
+    });
+    let state = refreshing.get().unwrap();
+
+    let operations = harness.pull();
+    assert_eq!(harness.refreshing_writes(&operations), [true]);
+    let operations = harness.render();
+    assert_eq!(harness.refreshing_writes(&operations), Vec::<bool>::new());
+
+    with_installed_renderer(harness.surface.renderer(), || {
+        state.set(false);
+        whisker::flush();
+    });
+    let operations = harness.render();
+    assert_eq!(harness.refreshing_writes(&operations), [false]);
+    harness.dispose();
+}
+
+#[test]
+fn list_refresh_settles_when_the_bound_signal_never_changes() {
+    let pulls = Rc::new(Cell::new(0));
+    let counter = pulls.clone();
+    let mut harness = RefreshHarness::mount(75, move || {
+        render! {
+            List(
+                style: css!(width: px(320), height: px(200)),
+                on_refresh: move || counter.set(counter.get() + 1),
+                refreshing: false,
+                each: || (0_u32..3).collect::<Vec<_>>(),
+                key: |row: &u32| *row,
+                children: |row: ReadSignal<u32>| render! {
+                    Text(
+                        value: computed(move || row.get().to_string()),
+                        style: css!(font_size: px(20)),
+                    )
+                },
+            )
+        }
+    });
+
+    let operations = harness.pull();
+    assert_eq!(pulls.get(), 1);
+    assert_eq!(harness.refreshing_writes(&operations), [false]);
+    harness.dispose();
+}

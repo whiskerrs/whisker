@@ -1,12 +1,13 @@
 use crate::ElementTag;
 use whisker_runtime::event::{
     AnimationEvent, ScrollEvent, SelectionChangeEvent, TextLayoutEvent, TouchEvent, bind_typed,
+    bind_unit,
 };
 use whisker_runtime::reactive::{Signal, effect};
 use whisker_runtime::view::{
     BindType, Element, append_child, apply_accessibility, apply_attr, apply_attr_bool,
     apply_dataset, apply_element_id, apply_text_max_lines, create_element, create_phantom_element,
-    set_attribute_object,
+    set_attribute_bool, set_attribute_object,
 };
 
 // A trait, not `macro_rules!`: RA's method-completion does NOT
@@ -465,7 +466,8 @@ impl Text {
 /// the visible items should hold platform views, reach for
 /// [`List`] instead — `ScrollView` keeps every child mounted.
 /// Direction defaults to `Vertical`; flip with
-/// [`axis`](Self::axis).
+/// [`axis`](Self::axis). A vertical `ScrollView` can offer the platform's
+/// pull-to-refresh gesture through [`on_refresh`](Self::on_refresh).
 ///
 /// ```ignore
 /// render! {
@@ -479,11 +481,13 @@ impl Text {
 /// ```
 pub struct ScrollView {
     handle: Element,
+    refresh: RefreshBinding,
 }
 impl ScrollView {
     pub fn builder() -> Self {
         Self {
             handle: create_element(ElementTag::ScrollView),
+            refresh: RefreshBinding::default(),
         }
     }
 
@@ -579,6 +583,84 @@ impl ScrollView {
     pub fn on_scroll<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
         bind_typed(self.handle, "scroll", BindType::Bind, f);
         self
+    }
+
+    /// Enables the platform's native pull-to-refresh control and calls `f`
+    /// when the user triggers it.
+    ///
+    /// iOS attaches a `UIRefreshControl` and Android wraps the scroller in a
+    /// `SwipeRefreshLayout`; both appear only while the axis is vertical.
+    /// Web and desktop Hosts accept the configuration without showing a
+    /// control. The indicator stays visible while [`refreshing`](Self::refreshing)
+    /// is `true` after `f` returns, so start asynchronous work in `f`, set the
+    /// bound signal to `true`, and reset it to `false` when the work finishes.
+    /// Without a `refreshing` binding the indicator hides as soon as `f`
+    /// returns.
+    ///
+    /// ```ignore
+    /// let refreshing = RwSignal::new(false);
+    /// render! {
+    ///     ScrollView(
+    ///         refreshing: refreshing,
+    ///         on_refresh: move || {
+    ///             refreshing.set(true);
+    ///             spawn_local(async move {
+    ///                 reload().await;
+    ///                 refreshing.set(false);
+    ///             });
+    ///         },
+    ///     ) { /* ... */ }
+    /// }
+    /// ```
+    pub fn on_refresh<F: Fn() + 'static>(self, f: F) -> Self {
+        self.refresh.on_refresh(self.handle, f);
+        self
+    }
+
+    /// Shows the native refresh indicator while `true`.
+    ///
+    /// Setting it to `true` outside a pull starts the indicator
+    /// programmatically. It has a visible effect only together with
+    /// [`on_refresh`](Self::on_refresh).
+    pub fn refreshing<V>(self, v: V) -> Self
+    where
+        V: ::std::convert::Into<Signal<bool>>,
+    {
+        self.refresh.refreshing(self.handle, v);
+        self
+    }
+}
+
+/// Pull-to-refresh wiring shared by [`ScrollView`] and [`List`], whose
+/// handle is the same ScrollView element.
+#[derive(Clone, Default)]
+struct RefreshBinding(::std::rc::Rc<::std::cell::Cell<Option<Signal<bool>>>>);
+
+impl RefreshBinding {
+    fn on_refresh<F: Fn() + 'static>(&self, handle: Element, f: F) {
+        set_attribute_bool(handle, "enable-refresh", true);
+        let refreshing = self.0.clone();
+        bind_unit(handle, "refresh", BindType::Bind, move || {
+            // The Host is already refreshing; recording that lets the
+            // `false` written below survive the scene's unchanged-value
+            // coalescing instead of leaving the indicator spinning.
+            set_attribute_bool(handle, "refreshing", true);
+            f();
+            let current = refreshing
+                .get()
+                .and_then(|value| value.try_get_untracked())
+                .unwrap_or(false);
+            set_attribute_bool(handle, "refreshing", current);
+        });
+    }
+
+    fn refreshing<V>(&self, handle: Element, v: V)
+    where
+        V: ::std::convert::Into<Signal<bool>>,
+    {
+        let value = v.into();
+        self.0.set(Some(value));
+        apply_attr_bool(handle, "refreshing", value);
     }
 }
 

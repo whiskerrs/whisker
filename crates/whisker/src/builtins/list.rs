@@ -48,6 +48,7 @@ struct ListOptions {
     header: Option<::std::rc::Rc<dyn Fn() -> Element>>,
     footer: Option<::std::rc::Rc<dyn Fn() -> Element>>,
     empty: Option<::std::rc::Rc<dyn Fn() -> Element>>,
+    refresh: RefreshBinding,
 }
 
 fn configure_list_presentation(
@@ -92,6 +93,7 @@ impl List<(), (), ()> {
                 header: None,
                 footer: None,
                 empty: None,
+                refresh: RefreshBinding::default(),
             },
             each: (),
             key: (),
@@ -187,6 +189,23 @@ impl<EachF, KeyF, ChildF, RefF, InitialF> List<EachF, KeyF, ChildF, RefF, Initia
     /// drag transitions and release velocity; see [`crate::event::ScrollDetail`].
     pub fn on_scroll<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
         bind_typed(self.handle, "scroll", BindType::Bind, f);
+        self
+    }
+
+    /// Enables native pull-to-refresh on the List's ScrollView. Same contract
+    /// as [`ScrollView::on_refresh`].
+    pub fn on_refresh<F: Fn() + 'static>(self, f: F) -> Self {
+        self.options.refresh.on_refresh(self.handle, f);
+        self
+    }
+
+    /// Shows the native refresh indicator while `true`. Same contract as
+    /// [`ScrollView::refreshing`].
+    pub fn refreshing<V>(self, v: V) -> Self
+    where
+        V: ::std::convert::Into<Signal<bool>>,
+    {
+        self.options.refresh.refreshing(self.handle, v);
         self
     }
 }

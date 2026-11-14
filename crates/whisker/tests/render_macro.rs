@@ -412,6 +412,48 @@ fn built_in_control_options_route_to_typed_setters() {
 }
 
 #[test]
+fn refresh_props_route_to_the_scroll_view_element() {
+    let has = |ops: &[Op], key: &str, val: &str| {
+        ops.iter()
+            .any(|op| matches!(op, Op::SetAttr { id: 0, key: k, value: v } if k == key && v == val))
+    };
+    let listens = |ops: &[Op]| {
+        ops.iter().any(|op| {
+            matches!(
+                op,
+                Op::Event { id: 0, name, bind_type: BindType::Bind } if name == "refresh"
+            )
+        })
+    };
+
+    with_recorder(|log| {
+        let _ = render! {
+            ScrollView(on_refresh: || {}, refreshing: true)
+        };
+        let ops = log.borrow();
+        assert!(has(&ops, "enable-refresh", "true"), "got {ops:?}");
+        assert!(has(&ops, "refreshing", "true"), "got {ops:?}");
+        assert!(listens(&ops), "got {ops:?}");
+    });
+
+    with_recorder_and_owner(|log| {
+        let _ = render! {
+            List(
+                refreshing: false,
+                on_refresh: || {},
+                each: || vec![1_u32],
+                key: |row: &u32| *row,
+                children: |_row: ReadSignal<u32>| render! { View {} },
+            )
+        };
+        let ops = log.borrow();
+        assert!(has(&ops, "enable-refresh", "true"), "got {ops:?}");
+        assert!(has(&ops, "refreshing", "false"), "got {ops:?}");
+        assert!(listens(&ops), "got {ops:?}");
+    });
+}
+
+#[test]
 fn on_tap_emits_set_event_listener() {
     with_recorder(|log| {
         let fired = Rc::new(RefCell::new(false));

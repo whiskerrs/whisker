@@ -189,9 +189,10 @@ pub mod attrs;
 pub use style::{Style, apply_style};
 pub use whisker_runtime::{
     ElementAuthoringBinding, ElementModuleDefinition, ElementProviderMetadata, ElementRegistry,
-    ElementRegistryBuilder, ElementRegistryError, FrameTiming, InputDispatch, ResourceEventApply,
-    RuntimeBindingError, RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeFrame,
-    RuntimeFrameError, RuntimeInputError, RuntimeInstance, RuntimeLayoutError, RuntimeLifecycle,
+    ElementRegistryBuilder, ElementRegistryError, FrameTiming, InputDispatch,
+    REFRESH_ENABLED_PROPERTY, REFRESHING_PROPERTY, ResourceEventApply, RuntimeBindingError,
+    RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeFrame, RuntimeFrameError,
+    RuntimeInputError, RuntimeInstance, RuntimeLayoutError, RuntimeLifecycle,
     RuntimeLifecycleError, RuntimePresentError, RuntimeResourceError, SCROLL_BY_COMMAND,
     SCROLL_ENABLED_PROPERTY, SCROLL_TO_COMMAND, SCROLL_VIEW_ELEMENT_NAME, SurfaceRuntime,
     TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME, scroll_view_element_binding,
