@@ -39,6 +39,8 @@ internal class CanvasVisitor(
     private var fillIsTint = false
     private var strokeIsTint = false
     private var currentStrokeWidth = 1f
+    private var currentStrokeCap = Paint.Cap.BUTT
+    private var currentStrokeJoin = Paint.Join.MITER
     private var currentOpacity = 1f
 
     private var currentPath: Path? = null
@@ -56,6 +58,8 @@ internal class CanvasVisitor(
         val fillIsTint: Boolean,
         val strokeIsTint: Boolean,
         val strokeWidth: Float,
+        val strokeCap: Paint.Cap,
+        val strokeJoin: Paint.Join,
         val opacity: Float,
     )
 
@@ -70,6 +74,8 @@ internal class CanvasVisitor(
                 fillIsTint,
                 strokeIsTint,
                 currentStrokeWidth,
+                currentStrokeCap,
+                currentStrokeJoin,
                 currentOpacity,
             ),
         )
@@ -83,6 +89,8 @@ internal class CanvasVisitor(
             fillIsTint = it.fillIsTint
             strokeIsTint = it.strokeIsTint
             currentStrokeWidth = it.strokeWidth
+            currentStrokeCap = it.strokeCap
+            currentStrokeJoin = it.strokeJoin
             currentOpacity = it.opacity
         }
     }
@@ -118,6 +126,22 @@ internal class CanvasVisitor(
 
     override fun strokeWidth(w: Float) {
         currentStrokeWidth = w
+    }
+
+    override fun strokeCap(cap: Int) {
+        currentStrokeCap = when (cap) {
+            DLFormat.CAP_ROUND -> Paint.Cap.ROUND
+            DLFormat.CAP_SQUARE -> Paint.Cap.SQUARE
+            else -> Paint.Cap.BUTT
+        }
+    }
+
+    override fun strokeJoin(join: Int) {
+        currentStrokeJoin = when (join) {
+            DLFormat.JOIN_ROUND -> Paint.Join.ROUND
+            DLFormat.JOIN_BEVEL -> Paint.Join.BEVEL
+            else -> Paint.Join.MITER
+        }
     }
 
     override fun opacity(a: Float) {
@@ -170,6 +194,8 @@ internal class CanvasVisitor(
         val resolved = resolveStrokeColor() ?: return
         strokePaint.color = applyOpacity(resolved)
         strokePaint.strokeWidth = currentStrokeWidth
+        strokePaint.strokeCap = currentStrokeCap
+        strokePaint.strokeJoin = currentStrokeJoin
         canvas.drawPath(path, strokePaint)
     }
 
@@ -182,6 +208,8 @@ internal class CanvasVisitor(
         resolveStrokeColor()?.let { argb ->
             strokePaint.color = applyOpacity(argb)
             strokePaint.strokeWidth = currentStrokeWidth
+            strokePaint.strokeCap = currentStrokeCap
+            strokePaint.strokeJoin = currentStrokeJoin
             canvas.drawPath(path, strokePaint)
         }
     }

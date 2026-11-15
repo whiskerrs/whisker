@@ -95,6 +95,48 @@ impl Transform {
     }
 }
 
+/// Stroke end-point shape (`PAINT_STROKE_CAP` operand).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum LineCap {
+    #[default]
+    Butt = 0,
+    Round = 1,
+    Square = 2,
+}
+
+impl LineCap {
+    /// Decodes a wire operand; unknown values fall back to `Butt` per SPEC.
+    pub const fn from_u8(v: u8) -> LineCap {
+        match v {
+            1 => LineCap::Round,
+            2 => LineCap::Square,
+            _ => LineCap::Butt,
+        }
+    }
+}
+
+/// Stroke corner shape (`PAINT_STROKE_JOIN` operand).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum LineJoin {
+    #[default]
+    Miter = 0,
+    Round = 1,
+    Bevel = 2,
+}
+
+impl LineJoin {
+    /// Decodes a wire operand; unknown values fall back to `Miter` per SPEC.
+    pub const fn from_u8(v: u8) -> LineJoin {
+        match v {
+            1 => LineJoin::Round,
+            2 => LineJoin::Bevel,
+            _ => LineJoin::Miter,
+        }
+    }
+}
+
 /// Encoder for a v1 display-list stream.
 ///
 /// Build with [`DisplayListBuilder::new`], call any combination of
@@ -174,6 +216,16 @@ impl DisplayListBuilder {
     pub fn stroke_width(&mut self, w: f32) {
         self.buf.push(OP_PAINT_STROKE_WIDTH);
         self.buf.extend_from_slice(&w.to_le_bytes());
+    }
+
+    pub fn stroke_cap(&mut self, cap: LineCap) {
+        self.buf.push(OP_PAINT_STROKE_CAP);
+        self.buf.push(cap as u8);
+    }
+
+    pub fn stroke_join(&mut self, join: LineJoin) {
+        self.buf.push(OP_PAINT_STROKE_JOIN);
+        self.buf.push(join as u8);
     }
 
     pub fn opacity(&mut self, alpha: f32) {

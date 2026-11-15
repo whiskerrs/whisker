@@ -9,7 +9,7 @@
 //! implementations of this logic against the same SPEC. All hosts
 //! consume the same fixture-generated display-list bytes.
 
-use crate::builder::{Color, Transform};
+use crate::builder::{Color, LineCap, LineJoin, Transform};
 use crate::format::*;
 
 /// Error surface for a malformed or unsupported display-list
@@ -50,6 +50,8 @@ pub trait Visitor {
     fn fill_color(&mut self, color: Color) {}
     fn stroke_color(&mut self, color: Color) {}
     fn stroke_width(&mut self, width: f32) {}
+    fn stroke_cap(&mut self, cap: LineCap) {}
+    fn stroke_join(&mut self, join: LineJoin) {}
     fn opacity(&mut self, alpha: f32) {}
     fn fill_tint(&mut self) {}
     fn stroke_tint(&mut self) {}
@@ -101,6 +103,14 @@ pub fn replay<V: Visitor>(bytes: &[u8], visitor: &mut V) -> Result<(), ReplayErr
             OP_PAINT_STROKE_WIDTH => {
                 let w = cur.read_f32()?;
                 visitor.stroke_width(w);
+            }
+            OP_PAINT_STROKE_CAP => {
+                let v = cur.read_u8()?;
+                visitor.stroke_cap(LineCap::from_u8(v));
+            }
+            OP_PAINT_STROKE_JOIN => {
+                let v = cur.read_u8()?;
+                visitor.stroke_join(LineJoin::from_u8(v));
             }
             OP_PAINT_OPACITY => {
                 let a = cur.read_f32()?;
@@ -269,6 +279,22 @@ impl Visitor for TraceVisitor {
     }
     fn stroke_width(&mut self, w: f32) {
         self.lines.push(format!("STROKE_WIDTH {}", fmt_f(w)));
+    }
+    fn stroke_cap(&mut self, cap: LineCap) {
+        let name = match cap {
+            LineCap::Butt => "BUTT",
+            LineCap::Round => "ROUND",
+            LineCap::Square => "SQUARE",
+        };
+        self.lines.push(format!("STROKE_CAP {name}"));
+    }
+    fn stroke_join(&mut self, join: LineJoin) {
+        let name = match join {
+            LineJoin::Miter => "MITER",
+            LineJoin::Round => "ROUND",
+            LineJoin::Bevel => "BEVEL",
+        };
+        self.lines.push(format!("STROKE_JOIN {name}"));
     }
     fn opacity(&mut self, a: f32) {
         self.lines.push(format!("OPACITY {}", fmt_f(a)));
