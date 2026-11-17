@@ -1,24 +1,3 @@
-// CSS `line-height` for the native EditText, shared by the measurer and the
-// view so the two always agree on the field's height.
-//
-// `setLineSpacing(extra)` puts all of the extra leading below each line, so
-// text sits at the top of its line box instead of in the middle as CSS
-// places it. It also leaves line heights to the font metrics of whichever
-// font draws the line: with fallback line spacing (the EditText default
-// since API 28) a line of CJK text, drawn by the fallback font, is taller
-// than the primary font's line the measurer assumed, so an auto-sized
-// multiline field overflows and scrolls the top of its first line out of
-// view.
-//
-// A LineHeightSpan pins every line to exactly `line-height`, independent of
-// fallback fonts. Android, however, lays out the empty line after a trailing
-// newline (and an empty text) from the paint's metrics without consulting
-// spans (InputTypography keeps API 35's locale minimum off that line). To keep that line consistent, every line keeps the primary font's
-// ascent as its baseline offset, the last line keeps the primary font's
-// descent, and the half-leading CSS would put above the first line and below
-// the last one becomes view padding. The resulting height is
-// `lines * line-height` whether or not the text ends with a newline.
-
 package rs.whisker.elements.input
 
 import android.graphics.Paint
@@ -49,8 +28,7 @@ internal data class InputLineBox(
             if (lineHeightPixels == null || lineHeightPixels <= 0f) return null
             val metrics = paint.fontMetricsInt
             val natural = metrics.descent - metrics.ascent
-            // A line-height below the font's own height would need negative
-            // padding; keep the natural height instead.
+            // Android view padding cannot represent negative half-leading.
             val lineHeight = lineHeightPixels.roundToInt().coerceAtLeast(natural)
             return InputLineBox(lineHeight, metrics.ascent, metrics.descent)
         }
