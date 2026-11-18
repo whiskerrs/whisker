@@ -53,6 +53,28 @@ public final class FirebaseAuthModule: Module {
                     Auth.auth().signIn(with: try Self.credential(args.first), completion: Self.credentialCallback(promise))
                 } catch { promise.resolve(Self.failure("invalid-argument", error.localizedDescription)) }
             }
+            AsyncFunction("verifyPhoneNumber") { (args: [WhiskerValue], promise: WhiskerPromise) in
+                guard let phoneNumber = args.first?.asString else {
+                    promise.resolve(Self.failure("invalid-argument", "Expected a phone number")); return
+                }
+                // The reCAPTCHA fallback presents from the key window.
+                DispatchQueue.main.async {
+                    PhoneAuthProvider.provider().verifyPhoneNumber(phoneNumber, uiDelegate: nil) { verificationID, error in
+                        if let error { promise.resolve(Self.sdkFailure(error)); return }
+                        guard let verificationID else {
+                            promise.resolve(Self.failure("internal-error", "Missing verification ID")); return
+                        }
+                        promise.resolve(Self.success(.map(["verification_id": .string(verificationID)])))
+                    }
+                }
+            }
+            Function("setAppVerificationDisabledForTesting") { (args: [WhiskerValue]) -> WhiskerValue in
+                guard let disabled = args.first?.asBool else {
+                    return Self.failure("invalid-argument", "Expected a boolean")
+                }
+                Auth.auth().settings?.isAppVerificationDisabledForTesting = disabled
+                return Self.success(.null)
+            }
             AsyncFunction("sendPasswordResetEmail") { (args: [WhiskerValue], promise: WhiskerPromise) in
                 guard let email = args.first?.asString else {
                     promise.resolve(Self.failure("invalid-argument", "Expected an email")); return
@@ -212,6 +234,10 @@ public final class FirebaseAuthModule: Module {
         case "apple.com":
             guard let idToken else { throw missing }
             return OAuthProvider.appleCredential(withIDToken: idToken, rawNonce: fields["raw_nonce"]?.asString, fullName: nil)
+        case "phone":
+            guard let verificationID = fields["verification_id"]?.asString,
+                  let code = fields["sms_code"]?.asString else { throw missing }
+            return PhoneAuthProvider.provider().credential(withVerificationID: verificationID, verificationCode: code)
         default:
             guard let idToken else { throw missing }
             return OAuthProvider.credential(providerID: .custom(provider), idToken: idToken, accessToken: accessToken)

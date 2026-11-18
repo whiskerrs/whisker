@@ -10,10 +10,21 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Firebase Authentication for Whisker"
-include = ["Cargo.toml", "src/**", "Package.swift", "build.gradle.kts", "android/**/*.kt", "ios/**/*.swift"]
+include = ["Cargo.toml", "src/**", "bin/**", "Package.swift", "build.gradle.kts", "android/**/*.kt", "ios/**/*.swift"]
 
 [lib]
 crate-type = ["rlib"]
+
+[package.metadata.whisker.plugins.whisker-firebase-auth]
+bin = "whisker-firebase-auth-plugin"
+protocol = "project"
+
+[[bin]]
+name = "whisker-firebase-auth-plugin"
+path = "bin/whisker_firebase_auth_plugin.rs"
+test = false
+bench = false
+doc = false
 
 [package.metadata.whisker.module.platforms]
 android = { manifest = "build.gradle.kts" }
@@ -22,3 +33,10 @@ ios = { manifest = "Package.swift" }
 [dependencies]
 whisker = { path = "../../../crates/whisker", version = "0.18.1" }
 whisker-firebase-core = { path = "../core", version = "0.1.4" }
+whisker-plugin = { path = "../../../crates/whisker-plugin", version = "0.18.1" }
+serde = { workspace = true }
+anyhow = { workspace = true }
+plist = { version = "1.8", default-features = false }
+
+[dev-dependencies]
+whisker-cng = { path = "../../../crates/whisker-cng", version = "0.18.1" }

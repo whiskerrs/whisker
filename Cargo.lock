@@ -5183,8 +5183,13 @@ dependencies = [
 name = "whisker-firebase-auth"
 version = "0.1.4"
 dependencies = [
+ "anyhow",
+ "plist",
+ "serde",
  "whisker",
+ "whisker-cng",
  "whisker-firebase-core",
+ "whisker-plugin",
 ]
 
 [[package]]

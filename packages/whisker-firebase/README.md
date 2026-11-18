@@ -144,6 +144,30 @@ Also available: `sign_in_with_custom_token`, `send_password_reset_email`, `on_id
 
 Google, Apple, and other OAuth providers work through `AuthCredential::google`, `::apple`, and `::oauth` with tokens from a native sign-in library; this package does not present provider sign-in UI. Error codes match the JavaScript SDK (`invalid-credential`, `email-already-in-use`, `requires-recent-login`, …). With email enumeration protection enabled, a wrong password reports `invalid-credential`.
 
+### Phone numbers
+
+```rust,ignore
+use whisker_firebase::auth::{Auth, AuthCredential, PhoneVerification};
+
+let auth = Auth::instance()?;
+let credential = match auth.verify_phone_number("+16505550101").await? {
+    PhoneVerification::CodeSent { verification_id } => {
+        // Ask the user for the SMS code, then:
+        AuthCredential::phone(&verification_id, &code)
+    }
+    // Android only: the number was verified without a code.
+    PhoneVerification::Verified(credential) => credential,
+};
+auth.sign_in_with_credential(&credential).await?;
+```
+
+The same credential works with `link_with_credential` and `reauthenticate_with_credential`. A wrong code reports `invalid-verification-code`; a malformed number reports `invalid-phone-number`.
+
+- **Console.** Enable the Phone provider. Android also needs the app's SHA-256 fingerprint in the project settings for Play Integrity.
+- **iOS.** Firebase verifies the app with a silent push when APNs is set up (upload an APNs key, as for Cloud Messaging), and otherwise with a reCAPTCHA in a browser view. Enabling `auth` runs its CNG plugin, which registers the app's encoded app ID (`app-1-…-ios-…`, read from `GoogleService-Info.plist`) as a URL scheme for the reCAPTCHA return; set `phone_url_scheme = false` to skip it.
+- **Android.** Verification needs a visible activity and fails with `missing-activity` without one. The SDK can verify a number without a code (`PhoneVerification::Verified`); that credential lives only in the current process. An auto-retrieved code that arrives after `CodeSent` is not reported, so keep the manual code entry.
+- **Testing.** Add test numbers in the console and call `auth.set_app_verification_disabled_for_testing(true)` to skip APNs, reCAPTCHA and Play Integrity on simulators and emulators. No SMS is sent for test numbers. Never ship it enabled.
+
 ## Cloud Storage
 
 ```rust,ignore
@@ -244,7 +268,7 @@ Native crashes are reported on the next launch, including the abort that ends a 
 
 ## Not yet supported
 
-Transactions, OR/composite filters, snapshot cursors, aggregate `sum`/`average`, persistence settings, named apps/databases/buckets, phone and multi-factor auth, provider sign-in UI, upload progress, background message handlers, Analytics ecommerce helpers beyond `items`, and other Firebase services (Remote Config, Functions, Realtime Database, App Check, Performance Monitoring). Desktop and Web calls return `unsupported-platform`.
+Transactions, OR/composite filters, snapshot cursors, aggregate `sum`/`average`, persistence settings, named apps/databases/buckets, multi-factor auth, resending a phone code with a resend token, provider sign-in UI, upload progress, background message handlers, Analytics ecommerce helpers beyond `items`, and other Firebase services (Remote Config, Functions, Realtime Database, App Check, Performance Monitoring). Desktop and Web calls return `unsupported-platform`.
 
 ## Local smoke test
 

@@ -214,7 +214,7 @@ fn service_features_control_the_actual_native_module_graph() {
             }
             let plugin = |name: &str| graph.cng_plugins.iter().any(|p| p.name == name);
             assert!(plugin("whisker-firebase"));
-            for service in ["messaging", "analytics", "crashlytics"] {
+            for service in ["auth", "messaging", "analytics", "crashlytics"] {
                 assert_eq!(
                     plugin(&format!("whisker-firebase-{service}")),
                     enabled.contains(&service),
