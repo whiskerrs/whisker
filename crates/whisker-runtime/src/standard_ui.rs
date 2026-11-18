@@ -29,6 +29,10 @@ pub const SCROLL_SNAP_STOP_PROPERTY: PropertyId =
 /// Stable property ID controlling user-driven ScrollView gestures.
 pub const SCROLL_ENABLED_PROPERTY: PropertyId =
     PropertyId::new(4).expect("the standard scroll enabled property ID is non-zero");
+/// Stable property ID controlling whether the ScrollView shows its native
+/// scroll indicator.
+pub const SHOW_SCROLL_INDICATOR_PROPERTY: PropertyId =
+    PropertyId::new(5).expect("the standard show scroll indicator property ID is non-zero");
 /// Stable property ID enabling the Host's native pull-to-refresh control.
 pub const REFRESH_ENABLED_PROPERTY: PropertyId =
     PropertyId::new(6).expect("the standard refresh enabled property ID is non-zero");
@@ -132,6 +136,11 @@ pub fn scroll_view_element_binding() -> ElementSchema {
             value: ElementValueKind::Bool,
         },
         ElementPropertySchema {
+            property: SHOW_SCROLL_INDICATOR_PROPERTY,
+            name: "show-scroll-indicator".to_owned(),
+            value: ElementValueKind::Bool,
+        },
+        ElementPropertySchema {
             property: REFRESH_ENABLED_PROPERTY,
             name: "enable-refresh".to_owned(),
             value: ElementValueKind::Bool,
@@ -232,7 +241,7 @@ mod tests {
         assert_eq!(definition.elements[0].schema, view_element_binding());
         assert_eq!(definition.elements[1].schema, text_element_binding());
         assert_eq!(definition.elements[2].schema, scroll_view_element_binding());
-        assert_eq!(definition.elements[2].schema.properties.len(), 6);
+        assert_eq!(definition.elements[2].schema.properties.len(), 7);
         assert!(definition.elements[0].schema.properties.is_empty());
         assert!(definition.elements[0].schema.events.is_empty());
         assert!(definition.elements[0].schema.commands.is_empty());
@@ -256,19 +265,23 @@ mod tests {
             "enable-scroll"
         );
         assert_eq!(
-            definition.elements[2].schema.properties[4].property,
-            REFRESH_ENABLED_PROPERTY
-        );
-        assert_eq!(
             definition.elements[2].schema.properties[4].name,
-            "enable-refresh"
+            "show-scroll-indicator"
         );
         assert_eq!(
             definition.elements[2].schema.properties[5].property,
-            REFRESHING_PROPERTY
+            REFRESH_ENABLED_PROPERTY
         );
         assert_eq!(
             definition.elements[2].schema.properties[5].name,
+            "enable-refresh"
+        );
+        assert_eq!(
+            definition.elements[2].schema.properties[6].property,
+            REFRESHING_PROPERTY
+        );
+        assert_eq!(
+            definition.elements[2].schema.properties[6].name,
             "refreshing"
         );
         assert_eq!(

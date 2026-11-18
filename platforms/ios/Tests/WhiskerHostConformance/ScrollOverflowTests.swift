@@ -16,6 +16,7 @@ extension HostConformanceTests {
                 WhiskerPropertyBinding(id: 2, name: "item-snap", value: .map),
                 WhiskerPropertyBinding(id: 3, name: "scroll-snap-stop", value: .string),
                 WhiskerPropertyBinding(id: 4, name: "enable-scroll", value: .bool),
+                WhiskerPropertyBinding(id: 5, name: "show-scroll-indicator", value: .bool),
                 WhiskerPropertyBinding(id: 6, name: "enable-refresh", value: .bool),
                 WhiskerPropertyBinding(id: 7, name: "refreshing", value: .bool),
             ],

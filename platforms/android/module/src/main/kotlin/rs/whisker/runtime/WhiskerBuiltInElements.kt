@@ -139,6 +139,12 @@ public class BuiltInElementModule : Module() {
                 view.setUserScrollEnabled(value.asBool() ?: true)
             }
             Prop(
+                "show-scroll-indicator",
+                clear = { view: WhiskerScrollContainerView -> view.setScrollIndicatorVisible(true) },
+            ) { view: WhiskerScrollContainerView, value ->
+                view.setScrollIndicatorVisible(value.asBool() ?: true)
+            }
+            Prop(
                 "enable-refresh",
                 clear = { view: WhiskerScrollContainerView -> view.setRefreshEnabled(false) },
             ) { view: WhiskerScrollContainerView, value ->
