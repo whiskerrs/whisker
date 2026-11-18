@@ -37,6 +37,8 @@ struct HostLayerBoxPaint {
     var cornerRadius: CGFloat = 0
     var borderWidth: CGFloat = 0
     var borderColor: WhiskerPlatformColor?
+    /// A gradient line in the layer's own coordinates.
+    var gradient: HostLinearGradientAxis?
 }
 
 enum HostBoxPaintPlan {
@@ -90,19 +92,27 @@ final class HostBoxPainter {
     }
 
     func paintPlan(in bounds: CGRect) -> HostBoxPaintPlan {
-        guard !hasBackgroundLayers else { return .draw }
+        var gradient: HostLinearGradientAxis?
+        if hasBackgroundLayers {
+            guard let axis = backgroundPainter.borderBoxLinearGradient(
+                borderBox: bounds,
+                paddingBox: paddingBoxRect(in: bounds)
+            ) else { return .draw }
+            gradient = axis.offsetBy(dx: -bounds.minX, dy: -bounds.minY)
+        }
         let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
         let styles = Array((borderStyles + [0, 0, 0, 0]).prefix(4))
         let colors = Array((borderColors + [.clear, .clear, .clear, .clear]).prefix(4))
         let paintedSides = (0..<4).filter { widths[$0] > 0 && paintsBorderStyle(styles[$0]) }
         let fills = (whiskerRGBAComponents(fillColor)?.alpha ?? 1) > 0
-        guard fills || !paintedSides.isEmpty else { return .none }
+        guard fills || gradient != nil || !paintedSides.isEmpty else { return .none }
         guard let radius = uniformRadius(normalizedRadii(cornerRadii, in: bounds)) else {
             return .draw
         }
         var layerPaint = HostLayerBoxPaint(
             background: fills ? fillColor : nil,
-            cornerRadius: radius
+            cornerRadius: radius,
+            gradient: gradient
         )
         if !paintedSides.isEmpty {
             guard paintedSides.count == 4,
