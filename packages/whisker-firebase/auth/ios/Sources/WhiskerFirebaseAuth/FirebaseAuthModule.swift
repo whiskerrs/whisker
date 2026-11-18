@@ -1,5 +1,8 @@
 import Foundation
 import FirebaseAuth
+#if os(iOS)
+import GoogleUtilities_AppDelegateSwizzler
+#endif
 import WhiskerModule
 
 @WhiskerModule
@@ -13,7 +16,14 @@ public final class FirebaseAuthModule: Module {
     private var listeners: [Int64: Handle] = [:]
 
     public override func definition() -> ModuleDefinition {
-        ModuleDefinition {
+        #if os(iOS)
+        // Phone sign-in's reCAPTCHA returns through scene(_:openURLContexts:). Auth proxies
+        // the scene delegate only for scenes that connect after Auth is created, and a
+        // Whisker app creates Auth on first use, after its scene connected. Modules are
+        // installed from didFinishLaunching, so starting the proxy here covers that scene.
+        GULSceneDelegateSwizzler.proxyOriginalSceneDelegate()
+        #endif
+        return ModuleDefinition {
             Name("FirebaseAuth")
             Events("authState")
             Function("useEmulator") { (args: [WhiskerValue]) -> WhiskerValue in
