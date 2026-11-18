@@ -34,6 +34,7 @@ class FirebaseAuthModule : Module() {
     private val authListeners = ConcurrentHashMap<Long, FirebaseAuth.AuthStateListener>()
     private val tokenListeners = ConcurrentHashMap<Long, FirebaseAuth.IdTokenListener>()
     private val verifiedPhones = ConcurrentHashMap<String, PhoneAuthCredential>()
+    private val resendTokens = ConcurrentHashMap<String, PhoneAuthProvider.ForceResendingToken>()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val auth get() = FirebaseAuth.getInstance()
@@ -69,13 +70,30 @@ class FirebaseAuthModule : Module() {
             fun settle(value: WhiskerValue) = settled.compareAndSet(false, true).also { if (it) promise.resolve(value) }
             try {
                 val phoneNumber = string(args, 0)
+                val resendHandle = args.getOrNull(1)?.asString()
                 val activity = appContext.currentActivity
+                // Take the token only once the call can run, so a missing activity keeps it usable.
+                val resendToken = if (activity == null) null else resendHandle?.let { resendTokens.remove(it) }
                 if (activity == null) {
                     settle(failure("missing-activity", "Phone verification needs a visible activity"))
+                } else if (resendHandle != null && resendToken == null) {
+                    settle(failure("invalid-resend-token", "The resend token is unknown or already used"))
                 } else {
                     val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
                         override fun onCodeSent(verificationId: String, token: PhoneAuthProvider.ForceResendingToken) {
-                            settle(success(WhiskerValue.Map(mapOf("verification_id" to WhiskerValue.Str(verificationId)))))
+                            val handle = UUID.randomUUID().toString()
+                            resendTokens[handle] = token
+                            val sent = settle(
+                                success(
+                                    WhiskerValue.Map(
+                                        mapOf(
+                                            "verification_id" to WhiskerValue.Str(verificationId),
+                                            "resend" to WhiskerValue.Str(handle),
+                                        ),
+                                    ),
+                                ),
+                            )
+                            if (!sent) resendTokens.remove(handle)
                         }
 
                         override fun onVerificationCompleted(credential: PhoneAuthCredential) {
@@ -90,14 +108,13 @@ class FirebaseAuthModule : Module() {
                             settle(failure(error))
                         }
                     }
-                    PhoneAuthProvider.verifyPhoneNumber(
-                        PhoneAuthOptions.newBuilder(auth)
-                            .setPhoneNumber(phoneNumber)
-                            .setTimeout(60L, TimeUnit.SECONDS)
-                            .setActivity(activity)
-                            .setCallbacks(callbacks)
-                            .build(),
-                    )
+                    val options = PhoneAuthOptions.newBuilder(auth)
+                        .setPhoneNumber(phoneNumber)
+                        .setTimeout(60L, TimeUnit.SECONDS)
+                        .setActivity(activity)
+                        .setCallbacks(callbacks)
+                    resendToken?.let(options::setForceResendingToken)
+                    PhoneAuthProvider.verifyPhoneNumber(options.build())
                 }
             } catch (error: Exception) { settle(failure(error)) }
         }

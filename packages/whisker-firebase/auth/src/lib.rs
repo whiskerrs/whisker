@@ -21,7 +21,7 @@
 //!
 //! let auth = Auth::instance()?;
 //! let credential = match auth.verify_phone_number("+16505550101").await? {
-//!     PhoneVerification::CodeSent { verification_id } => {
+//!     PhoneVerification::CodeSent { verification_id, .. } => {
 //!         AuthCredential::phone(&verification_id, &code_typed_by_the_user)
 //!     }
 //!     PhoneVerification::Verified(credential) => credential,
@@ -69,6 +69,20 @@ async fn invoke_async(method: &str, args: Vec<Wire>) -> Result<Wire> {
 
 fn string(value: &str) -> Wire {
     Wire::String(value.into())
+}
+
+async fn verify_phone(phone_number: &str, resend: Wire) -> Result<PhoneVerification> {
+    let fields = map(invoke_async("verifyPhoneNumber", vec![string(phone_number), resend]).await?)?;
+    if let Some(handle) = optional(&fields, "credential") {
+        return Ok(PhoneVerification::Verified(AuthCredential::new(
+            "phone",
+            [("handle", Some(handle.as_str()))],
+        )));
+    }
+    Ok(PhoneVerification::CodeSent {
+        verification_id: required(&fields, "verification_id")?,
+        resend: ResendToken(optional(&fields, "resend")),
+    })
 }
 
 fn unit(value: Wire) -> Result<()> {
@@ -158,16 +172,19 @@ impl Auth {
     /// Send a verification code by SMS to a phone number in E.164 form, e.g. `+16505550101`.
     /// Android needs a visible activity; iOS may present a reCAPTCHA when APNs is unavailable.
     pub async fn verify_phone_number(&self, phone_number: &str) -> Result<PhoneVerification> {
-        let fields = map(invoke_async("verifyPhoneNumber", vec![string(phone_number)]).await?)?;
-        if let Some(handle) = optional(&fields, "credential") {
-            return Ok(PhoneVerification::Verified(AuthCredential::new(
-                "phone",
-                [("handle", Some(handle.as_str()))],
-            )));
-        }
-        Ok(PhoneVerification::CodeSent {
-            verification_id: required(&fields, "verification_id")?,
-        })
+        verify_phone(phone_number, Wire::Null).await
+    }
+
+    /// Send a new code to the same number with the token from [`PhoneVerification::CodeSent`].
+    /// On Android, calling [`Auth::verify_phone_number`] again before the 60-second timeout
+    /// sends no new SMS; this call forces one. Each token works once.
+    pub async fn resend_phone_code(
+        &self,
+        phone_number: &str,
+        resend: &ResendToken,
+    ) -> Result<PhoneVerification> {
+        let handle = resend.0.as_deref().map_or(Wire::Null, string);
+        verify_phone(phone_number, handle).await
     }
 
     /// Skip app verification (APNs, reCAPTCHA, Play Integrity) so the test phone numbers
@@ -326,11 +343,21 @@ impl AuthCredential {
 #[non_exhaustive]
 pub enum PhoneVerification {
     /// The SMS was sent; pass this ID and the code to [`AuthCredential::phone`].
-    CodeSent { verification_id: String },
+    /// Pass `resend` to [`Auth::resend_phone_code`] for a new code.
+    CodeSent {
+        verification_id: String,
+        resend: ResendToken,
+    },
     /// Android verified the number without a code (instant verification or SMS auto-retrieval).
     /// The credential is valid in this app process only.
     Verified(AuthCredential),
 }
+
+/// Sends a new code with [`Auth::resend_phone_code`]. On Android it holds the SDK's
+/// `ForceResendingToken`, valid once and in this app process only. iOS has no such token,
+/// so there a resend is a new verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResendToken(Option<String>);
 
 /// Profile information from one sign-in provider linked to a user.
 #[derive(Debug, Clone, PartialEq, Eq)]

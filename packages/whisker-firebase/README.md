@@ -151,8 +151,9 @@ use whisker_firebase::auth::{Auth, AuthCredential, PhoneVerification};
 
 let auth = Auth::instance()?;
 let credential = match auth.verify_phone_number("+16505550101").await? {
-    PhoneVerification::CodeSent { verification_id } => {
-        // Ask the user for the SMS code, then:
+    PhoneVerification::CodeSent { verification_id, resend } => {
+        // Ask the user for the SMS code. "Resend code" calls
+        // `auth.resend_phone_code("+16505550101", &resend)`, which returns a new verification ID.
         AuthCredential::phone(&verification_id, &code)
     }
     // Android only: the number was verified without a code.
@@ -162,6 +163,8 @@ auth.sign_in_with_credential(&credential).await?;
 ```
 
 The same credential works with `link_with_credential` and `reauthenticate_with_credential`. A wrong code reports `invalid-verification-code`; a malformed number reports `invalid-phone-number`.
+
+Use `resend_phone_code` for a "Resend code" button. On Android, `verify_phone_number` for the same number before the 60-second timeout sends no new SMS; the resend token forces one. Each token works once (`invalid-resend-token` after that) and only in the current process. iOS has no resend token, so there `resend_phone_code` is a new verification.
 
 - **Console.** Enable the Phone provider. Android also needs the app's SHA-256 fingerprint in the project settings for Play Integrity.
 - **iOS.** Firebase verifies the app with a silent push when APNs is set up (upload an APNs key, as for Cloud Messaging), and otherwise with a reCAPTCHA in a browser view. Enabling `auth` runs its CNG plugin, which registers the app's encoded app ID (`app-1-…-ios-…`, read from `GoogleService-Info.plist`) as a URL scheme for the reCAPTCHA return; set `phone_url_scheme = false` to skip it.
@@ -268,7 +271,7 @@ Native crashes are reported on the next launch, including the abort that ends a 
 
 ## Not yet supported
 
-Transactions, OR/composite filters, snapshot cursors, aggregate `sum`/`average`, persistence settings, named apps/databases/buckets, multi-factor auth, resending a phone code with a resend token, provider sign-in UI, upload progress, background message handlers, Analytics ecommerce helpers beyond `items`, and other Firebase services (Remote Config, Functions, Realtime Database, App Check, Performance Monitoring). Desktop and Web calls return `unsupported-platform`.
+Transactions, OR/composite filters, snapshot cursors, aggregate `sum`/`average`, persistence settings, named apps/databases/buckets, multi-factor auth, provider sign-in UI, upload progress, background message handlers, Analytics ecommerce helpers beyond `items`, and other Firebase services (Remote Config, Functions, Realtime Database, App Check, Performance Monitoring). Desktop and Web calls return `unsupported-platform`.
 
 ## Local smoke test
 

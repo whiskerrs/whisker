@@ -57,6 +57,7 @@ public final class FirebaseAuthModule: Module {
                 guard let phoneNumber = args.first?.asString else {
                     promise.resolve(Self.failure("invalid-argument", "Expected a phone number")); return
                 }
+                // iOS has no resend token: a new call sends a new code, so args[1] is ignored.
                 // The reCAPTCHA fallback presents from the key window.
                 DispatchQueue.main.async {
                     PhoneAuthProvider.provider().verifyPhoneNumber(phoneNumber, uiDelegate: nil) { verificationID, error in
