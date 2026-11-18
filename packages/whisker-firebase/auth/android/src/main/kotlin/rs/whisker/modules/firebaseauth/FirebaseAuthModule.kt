@@ -302,7 +302,9 @@ class FirebaseAuthModule : Module() {
         "provider_data" to WhiskerValue.Array(user.providerData.map { info ->
             WhiskerValue.Map(mapOf(
                 "provider_id" to WhiskerValue.Str(info.providerId),
-                "uid" to WhiskerValue.Str(info.uid),
+                // The phone provider's UserInfo has a null uid on Android, although the SDK
+                // annotates it as non-null; iOS and the web use the phone number there.
+                "uid" to WhiskerValue.Str((info.uid as String?) ?: info.phoneNumber.orEmpty()),
                 "email" to optional(info.email),
                 "display_name" to optional(info.displayName),
                 "photo_url" to optional(info.photoUrl?.toString()),
