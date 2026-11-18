@@ -68,6 +68,10 @@ public final class FirebaseAuthModule: Module {
                     promise.resolve(Self.failure("invalid-argument", "Expected a phone number")); return
                 }
                 // iOS has no resend token: a new call sends a new code, so args[1] is ignored.
+                // A new Auth sets up phone auth (its notification manager) on its serial work
+                // queue after init; verifying before that fails with notification-not-forwarded.
+                // currentUser reads on the same queue, so it returns once that setup is done.
+                _ = Auth.auth().currentUser
                 // The reCAPTCHA fallback presents from the key window.
                 DispatchQueue.main.async {
                     PhoneAuthProvider.provider().verifyPhoneNumber(phoneNumber, uiDelegate: nil) { verificationID, error in
@@ -78,10 +82,6 @@ public final class FirebaseAuthModule: Module {
                         promise.resolve(Self.success(.map(["verification_id": .string(verificationID)])))
                     }
                 }
-                // A new Auth sets up phone auth (its notification manager) on its serial work
-                // queue after init; verifying before that fails with notification-not-forwarded.
-                // currentUser reads on the same queue, so it returns once that setup is done.
-                _ = Auth.auth().currentUser
             }
             Function("setAppVerificationDisabledForTesting") { (args: [WhiskerValue]) -> WhiskerValue in
                 guard let disabled = args.first?.asBool else {
@@ -265,10 +265,24 @@ public final class FirebaseAuthModule: Module {
     private static func failure(_ code: String, _ message: String) -> WhiskerValue {
         .map(["error": .map(["code": .string(code), "message": .string(message)])])
     }
+    private static let serverResponseKey = "FIRAuthErrorUserInfoDeserializedResponseKey"
     private static func sdkFailure(_ error: Error) -> WhiskerValue {
         let error = error as NSError
         let name = error.userInfo["FIRAuthErrorUserInfoNameKey"] as? String ?? "ERROR_INTERNAL_ERROR"
-        return failure(name, error.localizedDescription)
+        var message = error.localizedDescription
+        // An internal error's description only says to inspect the details; carry them.
+        if name == "ERROR_INTERNAL_ERROR" {
+            let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+            let response = error.userInfo[serverResponseKey] ?? underlying?.userInfo[serverResponseKey]
+            if let server = (response as? [String: Any])?["message"] as? String {
+                message += " Server: \(server)" // e.g. BILLING_NOT_ENABLED for SMS on the Spark plan
+            } else if let response {
+                message += " Server: \(response)"
+            } else if let underlying {
+                message += " Underlying: \(underlying.domain) \(underlying.code)"
+            }
+        }
+        return failure(name, message)
     }
     private static func unitCallback(_ promise: WhiskerPromise) -> (Error?) -> Void {
         { error in promise.resolve(error.map(sdkFailure) ?? success(.null)) }
