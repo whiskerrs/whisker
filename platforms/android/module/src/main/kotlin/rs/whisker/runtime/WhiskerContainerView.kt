@@ -11,6 +11,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ScrollView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -169,6 +170,8 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
     private var velocityTracker: VelocityTracker? = null
     private var activePointerId = MotionEvent.INVALID_POINTER_ID
     private var touchAction = -1
+    private var refreshEnabled = false
+    private var refreshRequested = false
 
     private val verticalScroller = object : ScrollView(context) {
         fun scrollInstantlyTo(x: Int, y: Int) {
@@ -210,6 +213,18 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
             } else {
                 super.fling(velocityY)
                 scheduleSnap()
+            }
+        }
+    }
+
+    private val refreshLayout = object : SwipeRefreshLayout(context) {
+        override fun requestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {
+            // SwipeRefreshLayout drops this request while its target has nested
+            // scrolling disabled, which would let ancestors steal an inner drag.
+            if (verticalScroller.isNestedScrollingEnabled) {
+                super.requestDisallowInterceptTouchEvent(disallowIntercept)
+            } else {
+                parent?.requestDisallowInterceptTouchEvent(disallowIntercept)
             }
         }
     }
@@ -264,7 +279,14 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
         horizontalScroller.isFillViewport = true
         verticalScroller.clipToPadding = false
         horizontalScroller.clipToPadding = false
-        addView(verticalScroller, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        refreshLayout.isEnabled = false
+        // Nested scrolling would chain an inner refreshable list into outer scrollers.
+        refreshLayout.isNestedScrollingEnabled = false
+        refreshLayout.setOnRefreshListener {
+            eventSink?.invoke("refresh", WhiskerValue.Map(emptyMap()))
+        }
+        refreshLayout.addView(verticalScroller, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(refreshLayout, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(horizontalScroller, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         verticalScroller.addView(
             contentView,
@@ -304,9 +326,32 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
                 FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
             )
         }
-        verticalScroller.visibility = if (horizontal) View.GONE else View.VISIBLE
+        refreshLayout.visibility = if (horizontal) View.GONE else View.VISIBLE
         horizontalScroller.visibility = if (horizontal) View.VISIBLE else View.GONE
+        updateRefreshAvailability()
         post { activeScroller().scrollTo(if (horizontal) oldX else 0, if (horizontal) 0 else oldY) }
+    }
+
+    /** Enables native pull-to-refresh while the axis is vertical and user scrolling is on. */
+    public fun setRefreshEnabled(value: Boolean) {
+        refreshEnabled = value
+        updateRefreshAvailability()
+    }
+
+    /** Shows or hides the refresh indicator; a user pull starts it natively. */
+    public fun setRefreshing(value: Boolean) {
+        refreshRequested = value
+        refreshLayout.isRefreshing = value && refreshLayout.isEnabled
+    }
+
+    private fun updateRefreshAvailability() {
+        val active = refreshEnabled && !horizontal && userScrollEnabled
+        if (refreshLayout.isEnabled == active) return
+        refreshLayout.isEnabled = active
+        // SwipeRefreshLayout follows the scroller's nested pre-scroll only while refreshable;
+        // otherwise nested scrolling stays off as for an unwrapped ScrollView.
+        verticalScroller.isNestedScrollingEnabled = active
+        refreshLayout.isRefreshing = active && refreshRequested
     }
 
     /** Configures direct-child snapping in logical pixels. */
@@ -327,6 +372,7 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
     /** Enables touch-driven scrolling while keeping imperative commands live. */
     public fun setUserScrollEnabled(value: Boolean) {
         userScrollEnabled = value
+        updateRefreshAvailability()
         if (!value) {
             finishDrag(cancelled = true)
             verticalScroller.stopNestedScroll()

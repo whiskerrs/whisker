@@ -241,6 +241,16 @@ travels in the opposite direction as a command. The Runtime uses reported
 offsets for input routing and List reconciliation. This transient presentation
 state is why a scroll is not a new flex-layout pass for every finger movement.
 
+Pull-to-refresh follows the same split. `on_refresh` sets the ScrollView's
+`enable-refresh` property, and a vertical ScrollView on iOS (`UIRefreshControl`)
+or Android (`SwipeRefreshLayout`) then shows the native control and reports a
+`refresh` event when the user pulls. The `refreshing` property drives the
+indicator. Because the Host starts the indicator itself, the Runtime records
+`refreshing = true` before calling the handler and then writes the bound value
+(or `false` without a binding), so a value that never changed in the
+application still reaches the Host. Web and desktop Hosts accept both
+properties and never emit the event.
+
 `List` builds on that `ScrollView` in Rust. It chooses the keyed item subtrees
 to mount, keeps track of item extents, and uses spacers for unmounted ranges.
 The Host receives ordinary elements; there is no separate native List protocol.

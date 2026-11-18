@@ -553,9 +553,13 @@ impl WhiskerModule for BuiltInElementModule {
                         |element, value| set_scroll_enabled(element, value),
                         |element| set_scroll_enabled(element, &WhiskerValue::Bool(true)),
                     )
+                    // Browsers have no native pull-to-refresh for an element.
+                    .prop("enable-refresh", |_, _| Ok(()), |_| Ok(()))
+                    .prop("refreshing", |_, _| Ok(()), |_| Ok(()))
                     .command("scrollTo", |element, value| scroll(element, value, false))
                     .command("scrollBy", |element, value| scroll(element, value, true))
-                    .event("scroll"),
+                    .event("scroll")
+                    .event("refresh"),
             )
     }
 }
