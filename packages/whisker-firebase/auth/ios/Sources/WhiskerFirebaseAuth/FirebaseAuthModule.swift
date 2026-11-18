@@ -68,6 +68,10 @@ public final class FirebaseAuthModule: Module {
                         promise.resolve(Self.success(.map(["verification_id": .string(verificationID)])))
                     }
                 }
+                // A new Auth sets up phone auth (its notification manager) on its serial work
+                // queue after init; verifying before that fails with notification-not-forwarded.
+                // currentUser reads on the same queue, so it returns once that setup is done.
+                _ = Auth.auth().currentUser
             }
             Function("setAppVerificationDisabledForTesting") { (args: [WhiskerValue]) -> WhiskerValue in
                 guard let disabled = args.first?.asBool else {
