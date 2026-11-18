@@ -29,6 +29,8 @@ pub const OP_PAINT_STROKE_WIDTH: u8 = 0x12;
 pub const OP_PAINT_OPACITY: u8 = 0x13;
 pub const OP_PAINT_FILL_TINT: u8 = 0x14;
 pub const OP_PAINT_STROKE_TINT: u8 = 0x15;
+pub const OP_PAINT_STROKE_CAP: u8 = 0x16;
+pub const OP_PAINT_STROKE_JOIN: u8 = 0x17;
 
 // ---- path commands (0x20 – 0x2F) -------------------------------------------
 
