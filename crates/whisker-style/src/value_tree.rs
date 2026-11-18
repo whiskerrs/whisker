@@ -966,10 +966,14 @@ mod tests {
         }
     }
 
+    fn component_variable_count(value: &StyleValue) -> usize {
+        let mut count = 0;
+        visit_component_variables(value, &mut |_| count += 1);
+        count
+    }
+
     fn assert_maps_every_component(value: StyleValue, expected: usize) {
-        let mut visited = 0;
-        visit_component_variables(&value, &mut |_| visited += 1);
-        assert_eq!(visited, expected);
+        assert_eq!(component_variable_count(&value), expected);
 
         let replacement = |kind| match kind {
             ComponentKind::Color => StyleValue::Color(transparent()),
@@ -979,9 +983,7 @@ mod tests {
         };
         let mapped = try_map_component_variables(&value, &mut |_, kind| Some(replacement(kind)))
             .expect("every typed component maps");
-        let mut remaining = 0;
-        visit_component_variables(&mapped, &mut |_| remaining += 1);
-        assert_eq!(remaining, 0);
+        assert_eq!(component_variable_count(&mapped), 0);
 
         for failure_index in 0..expected {
             let mut index = 0;

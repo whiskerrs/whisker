@@ -108,6 +108,22 @@ struct CGContextVisitor: DLVisitor {
         cg.setLineWidth(CGFloat(w))
     }
 
+    mutating func strokeCap(_ cap: UInt8) {
+        switch cap {
+        case DLFormat.capRound: cg.setLineCap(.round)
+        case DLFormat.capSquare: cg.setLineCap(.square)
+        default: cg.setLineCap(.butt)
+        }
+    }
+
+    mutating func strokeJoin(_ join: UInt8) {
+        switch join {
+        case DLFormat.joinRound: cg.setLineJoin(.round)
+        case DLFormat.joinBevel: cg.setLineJoin(.bevel)
+        default: cg.setLineJoin(.miter)
+        }
+    }
+
     mutating func opacity(_ a: Float) {
         cg.setAlpha(CGFloat(a))
     }

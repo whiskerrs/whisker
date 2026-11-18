@@ -33,6 +33,12 @@ pub const SCROLL_ENABLED_PROPERTY: PropertyId =
 /// scroll indicator.
 pub const SHOW_SCROLL_INDICATOR_PROPERTY: PropertyId =
     PropertyId::new(5).expect("the standard show scroll indicator property ID is non-zero");
+/// Stable property ID enabling the Host's native pull-to-refresh control.
+pub const REFRESH_ENABLED_PROPERTY: PropertyId =
+    PropertyId::new(6).expect("the standard refresh enabled property ID is non-zero");
+/// Stable property ID showing or hiding the native refresh indicator.
+pub const REFRESHING_PROPERTY: PropertyId =
+    PropertyId::new(7).expect("the standard refreshing property ID is non-zero");
 /// Stable command ID for absolute ScrollView movement.
 pub const SCROLL_TO_COMMAND: CommandId =
     CommandId::new(1).expect("the standard scrollTo command ID is non-zero");
@@ -134,12 +140,29 @@ pub fn scroll_view_element_binding() -> ElementSchema {
             name: "show-scroll-indicator".to_owned(),
             value: ElementValueKind::Bool,
         },
+        ElementPropertySchema {
+            property: REFRESH_ENABLED_PROPERTY,
+            name: "enable-refresh".to_owned(),
+            value: ElementValueKind::Bool,
+        },
+        ElementPropertySchema {
+            property: REFRESHING_PROPERTY,
+            name: "refreshing".to_owned(),
+            value: ElementValueKind::Bool,
+        },
     ]);
-    schema.events.push(ElementEventSchema {
-        event: EventId::new(1).expect("the standard scroll event ID is non-zero"),
-        name: "scroll".to_owned(),
-        detail: Some(ElementValueKind::Map),
-    });
+    schema.events.extend([
+        ElementEventSchema {
+            event: EventId::new(1).expect("the standard scroll event ID is non-zero"),
+            name: "scroll".to_owned(),
+            detail: Some(ElementValueKind::Map),
+        },
+        ElementEventSchema {
+            event: EventId::new(2).expect("the standard refresh event ID is non-zero"),
+            name: "refresh".to_owned(),
+            detail: Some(ElementValueKind::Map),
+        },
+    ]);
     schema.commands.extend([
         ElementCommandSchema {
             command: SCROLL_TO_COMMAND,
@@ -218,7 +241,7 @@ mod tests {
         assert_eq!(definition.elements[0].schema, view_element_binding());
         assert_eq!(definition.elements[1].schema, text_element_binding());
         assert_eq!(definition.elements[2].schema, scroll_view_element_binding());
-        assert_eq!(definition.elements[2].schema.properties.len(), 5);
+        assert_eq!(definition.elements[2].schema.properties.len(), 7);
         assert!(definition.elements[0].schema.properties.is_empty());
         assert!(definition.elements[0].schema.events.is_empty());
         assert!(definition.elements[0].schema.commands.is_empty());
@@ -246,13 +269,29 @@ mod tests {
             "show-scroll-indicator"
         );
         assert_eq!(
+            definition.elements[2].schema.properties[5].property,
+            REFRESH_ENABLED_PROPERTY
+        );
+        assert_eq!(
+            definition.elements[2].schema.properties[5].name,
+            "enable-refresh"
+        );
+        assert_eq!(
+            definition.elements[2].schema.properties[6].property,
+            REFRESHING_PROPERTY
+        );
+        assert_eq!(
+            definition.elements[2].schema.properties[6].name,
+            "refreshing"
+        );
+        assert_eq!(
             definition.elements[2]
                 .schema
                 .events
                 .iter()
                 .map(|event| event.name.as_str())
                 .collect::<Vec<_>>(),
-            ["scroll"]
+            ["scroll", "refresh"]
         );
         assert_eq!(
             definition.elements[2]

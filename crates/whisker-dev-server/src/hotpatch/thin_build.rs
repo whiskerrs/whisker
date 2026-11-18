@@ -326,7 +326,7 @@ pub fn library_filename_for_os(crate_name: &str, os: super::link_plan::LinkerOs)
     match os {
         LinkerOs::Macos => format!("lib{stem}.dylib"),
         LinkerOs::Linux => format!("lib{stem}.so"),
-        LinkerOs::Other => format!("{stem}.dll"),
+        LinkerOs::Windows | LinkerOs::Other => format!("{stem}.dll"),
     }
 }
 

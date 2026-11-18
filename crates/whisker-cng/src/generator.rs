@@ -208,7 +208,7 @@ fn sync_android(
         "discovered Android plugins must not reuse a built-in plugin name"
     );
 
-    let binaries = build_discovered_plugins(workspace_root, discovered)?;
+    let binaries = build_discovered_plugins(workspace_root, package, selection, discovered)?;
     let has_legacy = discovered
         .iter()
         .any(|p| p.protocol == crate::discovery::PluginProtocol::Legacy);
@@ -342,10 +342,12 @@ fn sync_ios(
     }
     .with_app_crate_dir(crate_dir);
     let mut project_binaries = Vec::new();
-    for (plugin, binary) in discovered
-        .iter()
-        .zip(build_discovered_plugins(workspace_root, discovered)?)
-    {
+    for (plugin, binary) in discovered.iter().zip(build_discovered_plugins(
+        workspace_root,
+        package,
+        selection,
+        discovered,
+    )?) {
         match plugin.protocol {
             crate::discovery::PluginProtocol::Legacy => {
                 legacy.register_subprocess(
@@ -483,10 +485,12 @@ fn sync_macos(
     }
     let mut engine =
         crate::ProjectEngine::with_macos_application(inputs).with_app_crate_dir(crate_dir);
-    for (plugin, binary) in discovered
-        .iter()
-        .zip(build_discovered_plugins(workspace_root, &discovered)?)
-    {
+    for (plugin, binary) in discovered.iter().zip(build_discovered_plugins(
+        workspace_root,
+        package,
+        selection,
+        &discovered,
+    )?) {
         engine.register_subprocess(&plugin.name, binary);
     }
     let result = engine
@@ -646,10 +650,12 @@ fn sync_desktop(
         crate::ProjectEngine::with_linux_application(inputs)
     }
     .with_app_crate_dir(crate_dir);
-    for (plugin, binary) in discovered
-        .iter()
-        .zip(build_discovered_plugins(workspace_root, &discovered)?)
-    {
+    for (plugin, binary) in discovered.iter().zip(build_discovered_plugins(
+        workspace_root,
+        package,
+        selection,
+        &discovered,
+    )?) {
         engine.register_subprocess(&plugin.name, binary);
     }
     let result = engine
@@ -715,10 +721,12 @@ fn sync_web(
     }
     let mut engine =
         crate::ProjectEngine::with_web_application(inputs).with_app_crate_dir(crate_dir);
-    for (plugin, binary) in discovered
-        .iter()
-        .zip(build_discovered_plugins(workspace_root, &discovered)?)
-    {
+    for (plugin, binary) in discovered.iter().zip(build_discovered_plugins(
+        workspace_root,
+        package,
+        selection,
+        &discovered,
+    )?) {
         engine.register_subprocess(&plugin.name, binary);
     }
     let result = engine
@@ -759,20 +767,38 @@ fn sync_web(
 }
 
 /// Compile plugin executables into the workspace target directory.
+///
+/// Plugins are discovered from the application's selected Cargo graph, so a
+/// plugin crate may be reachable only through an application feature (an
+/// optional dependency). Cargo cannot address such a package unless the build
+/// enables that feature, so the plugin is built with the application's feature
+/// selection. Plugins always run on the host, so `selection.target` is unused.
 fn build_discovered_plugins(
     workspace_root: &Path,
+    app_package: &str,
+    selection: &crate::CargoSelection,
     discovered: &[DiscoveredPlugin],
 ) -> Result<Vec<PathBuf>> {
+    if discovered.is_empty() {
+        return Ok(Vec::new());
+    }
     let host = host_target()?;
+    let members = workspace_member_dirs(workspace_root)?;
     let mut binaries = Vec::new();
     for plugin in discovered {
+        let is_member = std::fs::canonicalize(&plugin.source_manifest_dir)
+            .is_ok_and(|dir| members.contains(&dir));
         let output = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
             .arg("build")
             .arg("--quiet")
             .arg("--manifest-path")
             .arg(workspace_root.join("Cargo.toml"))
-            .arg("--package")
-            .arg(&plugin.source_crate)
+            .args(plugin_package_args(
+                app_package,
+                selection,
+                plugin,
+                is_member,
+            ))
             .arg("--bin")
             .arg(&plugin.bin_target_name)
             .arg("--target")
@@ -804,6 +830,66 @@ fn build_discovered_plugins(
         binaries.push(binary.into_std_path_buf());
     }
     Ok(binaries)
+}
+
+/// Canonical directories of the workspace members.
+fn workspace_member_dirs(workspace_root: &Path) -> Result<std::collections::HashSet<PathBuf>> {
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(workspace_root.join("Cargo.toml"))
+        .no_deps()
+        .exec()
+        .context("resolve workspace members for CNG plugins")?;
+    Ok(metadata
+        .workspace_packages()
+        .into_iter()
+        .filter_map(|package| package.manifest_path.parent())
+        .filter_map(|dir| std::fs::canonicalize(dir).ok())
+        .collect())
+}
+
+/// Package selection for one plugin build.
+///
+/// A workspace member is always addressable, and Cargo applies feature flags
+/// to every selected member, so it is built alone to keep its own default
+/// features. Any other package exists in the resolve only through the
+/// application's selected features: select the application too and qualify
+/// its feature names (`--features` on a non-member alone is rejected).
+/// `--no-default-features` then reaches only the application, because Cargo
+/// never applies command-line features to packages outside the workspace.
+fn plugin_package_args(
+    app_package: &str,
+    selection: &crate::CargoSelection,
+    plugin: &DiscoveredPlugin,
+    is_member: bool,
+) -> Vec<String> {
+    if is_member {
+        return vec!["--package".into(), plugin.source_crate.clone()];
+    }
+    let mut args = vec![
+        "--package".into(),
+        app_package.into(),
+        "--package".into(),
+        plugin.source_crate.clone(),
+    ];
+    if selection.no_default_features {
+        args.push("--no-default-features".into());
+    }
+    for feature in selection
+        .features
+        .iter()
+        .flat_map(|s| s.split(|c: char| c == ',' || c.is_whitespace()))
+        .filter(|s| !s.is_empty())
+    {
+        args.push("--features".into());
+        // `dep/feature` already names its package; a bare name belongs to
+        // the application and would be ambiguous with two selected packages.
+        args.push(if feature.contains('/') {
+            feature.to_owned()
+        } else {
+            format!("{app_package}/{feature}")
+        });
+    }
+    args
 }
 
 pub(crate) fn host_target() -> Result<String> {
@@ -955,5 +1041,142 @@ mod tests {
             r#"whisker-svg-web = {{ package = "whisker-svg-web", {git} }}"#
         )));
         assert!(!dependencies.contains("/cargo/git/checkouts"));
+    }
+
+    /// Write a library package with a plugin `[[bin]]` that fails to compile
+    /// unless its own default feature is enabled.
+    fn plugin_package(dir: &Path) {
+        std::fs::create_dir_all(dir.join("src/bin")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+        std::fs::write(
+            dir.join("src/bin/plug_cng.rs"),
+            "#[cfg(not(feature = \"own\"))]\ncompile_error!(\"default feature disabled\");\nfn main() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = 'plug'\nversion = '0.1.0'\nedition = '2021'\n\
+             [features]\ndefault = ['own']\nown = []\n\
+             [[bin]]\nname = 'plug-cng'\npath = 'src/bin/plug_cng.rs'\n\
+             [package.metadata.whisker.plugins.plug-cng]\nbin = 'plug-cng'\n",
+        )
+        .unwrap();
+    }
+
+    fn app_package(dir: &Path, manifest: &str) {
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = 'app'\nversion = '0.1.0'\nedition = '2021'\n{manifest}"),
+        )
+        .unwrap();
+    }
+
+    fn build_selected_plugins(
+        workspace_root: &Path,
+        manifest: &Path,
+        selection: &crate::CargoSelection,
+    ) -> Result<Vec<PathBuf>> {
+        let graph = ProjectDependencyGraph::resolve_with_selection(manifest, "app", selection)?;
+        assert_eq!(
+            graph
+                .cng_plugins
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["plug-cng"]
+        );
+        build_discovered_plugins(workspace_root, "app", selection, &graph.cng_plugins)
+    }
+
+    #[test]
+    fn plugins_behind_application_features_build_with_that_selection() {
+        // A standalone app workspace, as `whisker new` generates, where the
+        // plugin crate is reachable only through the `voice` feature.
+        let root = tempdir();
+        plugin_package(&root.join("plug"));
+        app_package(
+            &root.join("app"),
+            "[workspace]\n[features]\ndefault = []\nvoice = ['dep:plug']\n\
+             [dependencies]\nplug = { path = '../plug', optional = true }\n",
+        );
+        let workspace = root.join("app");
+        let selection = crate::CargoSelection {
+            features: vec!["voice".into()],
+            no_default_features: true,
+            target: None,
+        }
+        .for_platform(Target::Ios);
+        let binaries =
+            build_selected_plugins(&workspace, &workspace.join("Cargo.toml"), &selection).unwrap();
+        assert_eq!(binaries.len(), 1);
+        assert!(binaries[0].is_file(), "{}", binaries[0].display());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn workspace_member_plugins_keep_their_own_default_features() {
+        // `--no-default-features` applies to every selected member, so a
+        // member plugin must not be built alongside the application.
+        let root = tempdir();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nresolver = '2'\nmembers = ['app', 'plug']\n",
+        )
+        .unwrap();
+        plugin_package(&root.join("plug"));
+        app_package(
+            &root.join("app"),
+            "[features]\nvoice = ['dep:plug']\n\
+             [dependencies]\nplug = { path = '../plug', optional = true, default-features = false }\n",
+        );
+        let selection = crate::CargoSelection {
+            features: vec!["voice".into()],
+            no_default_features: true,
+            target: None,
+        }
+        .for_platform(Target::Ios);
+        let binaries = build_selected_plugins(&root, &root.join("Cargo.toml"), &selection).unwrap();
+        assert!(binaries[0].is_file(), "{}", binaries[0].display());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn plugin_package_args_select_the_application_for_external_plugins() {
+        let plugin = DiscoveredPlugin {
+            name: "plug-cng".into(),
+            source_crate: "plug".into(),
+            source_manifest_dir: PathBuf::from("/plug"),
+            bin_target_name: "plug-cng".into(),
+            protocol: crate::discovery::PluginProtocol::Project,
+            after: Vec::new(),
+            before: Vec::new(),
+        };
+        let selection = crate::CargoSelection {
+            features: vec!["voice,runtime/dev".into(), "extra".into()],
+            no_default_features: true,
+            target: Some("aarch64-apple-ios".into()),
+        };
+        assert_eq!(
+            plugin_package_args("app", &selection, &plugin, false),
+            [
+                "--package",
+                "app",
+                "--package",
+                "plug",
+                "--no-default-features",
+                "--features",
+                "app/voice",
+                "--features",
+                "runtime/dev",
+                "--features",
+                "app/extra",
+            ]
+        );
+        assert_eq!(
+            plugin_package_args("app", &selection, &plugin, true),
+            ["--package", "plug"]
+        );
     }
 }

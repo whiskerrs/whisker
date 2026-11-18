@@ -42,6 +42,8 @@ protocol DLVisitor {
     mutating func fillColor(_ c: DLColor)
     mutating func strokeColor(_ c: DLColor)
     mutating func strokeWidth(_ w: Float)
+    mutating func strokeCap(_ cap: UInt8)
+    mutating func strokeJoin(_ join: UInt8)
     mutating func opacity(_ a: Float)
     mutating func fillTint()
     mutating func strokeTint()
@@ -64,6 +66,8 @@ extension DLVisitor {
     mutating func fillColor(_ c: DLColor) {}
     mutating func strokeColor(_ c: DLColor) {}
     mutating func strokeWidth(_ w: Float) {}
+    mutating func strokeCap(_ cap: UInt8) {}
+    mutating func strokeJoin(_ join: UInt8) {}
     mutating func opacity(_ a: Float) {}
     mutating func fillTint() {}
     mutating func strokeTint() {}
@@ -133,6 +137,12 @@ func dlReplay<V: DLVisitor>(_ bytes: Data, into visitor: inout V) throws {
         case DLFormat.opPaintStrokeWidth:
             let w = try cur.readF32()
             visitor.strokeWidth(w)
+        case DLFormat.opPaintStrokeCap:
+            let v = try cur.readU8()
+            visitor.strokeCap(v == DLFormat.capRound || v == DLFormat.capSquare ? v : DLFormat.capButt)
+        case DLFormat.opPaintStrokeJoin:
+            let v = try cur.readU8()
+            visitor.strokeJoin(v == DLFormat.joinRound || v == DLFormat.joinBevel ? v : DLFormat.joinMiter)
         case DLFormat.opPaintOpacity:
             let a = try cur.readF32()
             visitor.opacity(a)
@@ -243,6 +253,20 @@ struct DLTraceVisitor: DLVisitor {
         lines.append(String(format: "STROKE_COLOR #%02X%02X%02X%02X", c.r, c.g, c.b, c.a))
     }
     mutating func strokeWidth(_ w: Float) { lines.append("STROKE_WIDTH \(fmtF(w))") }
+    mutating func strokeCap(_ cap: UInt8) {
+        switch cap {
+        case DLFormat.capRound: lines.append("STROKE_CAP ROUND")
+        case DLFormat.capSquare: lines.append("STROKE_CAP SQUARE")
+        default: lines.append("STROKE_CAP BUTT")
+        }
+    }
+    mutating func strokeJoin(_ join: UInt8) {
+        switch join {
+        case DLFormat.joinRound: lines.append("STROKE_JOIN ROUND")
+        case DLFormat.joinBevel: lines.append("STROKE_JOIN BEVEL")
+        default: lines.append("STROKE_JOIN MITER")
+        }
+    }
     mutating func opacity(_ a: Float) { lines.append("OPACITY \(fmtF(a))") }
     mutating func fillTint() { lines.append("FILL_TINT") }
     mutating func strokeTint() { lines.append("STROKE_TINT") }

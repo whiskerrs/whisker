@@ -144,6 +144,18 @@ public class BuiltInElementModule : Module() {
             ) { view: WhiskerScrollContainerView, value ->
                 view.setScrollIndicatorVisible(value.asBool() ?: true)
             }
+            Prop(
+                "enable-refresh",
+                clear = { view: WhiskerScrollContainerView -> view.setRefreshEnabled(false) },
+            ) { view: WhiskerScrollContainerView, value ->
+                view.setRefreshEnabled(value.asBool() ?: false)
+            }
+            Prop(
+                "refreshing",
+                clear = { view: WhiskerScrollContainerView -> view.setRefreshing(false) },
+            ) { view: WhiskerScrollContainerView, value ->
+                view.setRefreshing(value.asBool() ?: false)
+            }
             Command("scrollTo") { view: WhiskerScrollContainerView, value ->
                 val arguments = (value as? WhiskerValue.Map)?.value.orEmpty()
                 view.scrollToLogicalOffset(
@@ -158,7 +170,7 @@ public class BuiltInElementModule : Module() {
                     arguments["smooth"]?.asBool() ?: false,
                 )
             }
-            Events("scroll")
+            Events("scroll", "refresh")
         }
     }
 }

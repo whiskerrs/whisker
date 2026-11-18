@@ -90,6 +90,40 @@ struct HostTouchIdentityMap {
 }
 
 #if canImport(UIKit)
+/// Stops the native scroll views under a touch once Rust captures its pointer.
+struct HostNativeScrollArbiter {
+    private var scrollers = [UInt64: [UIScrollView]]()
+
+    mutating func begin(pointer: UInt64, touched: UIView?, root: UIView) {
+        var found = [UIScrollView]()
+        var view = touched
+        while let current = view, current !== root {
+            if let scroller = current as? UIScrollView { found.append(scroller) }
+            view = current.superview
+        }
+        scrollers[pointer] = found
+    }
+
+    mutating func end(pointer: UInt64) {
+        scrollers.removeValue(forKey: pointer)
+    }
+
+    mutating func clear() {
+        scrollers.removeAll(keepingCapacity: true)
+    }
+
+    @discardableResult
+    func capture(pointer: UInt64) -> [UIScrollView] {
+        let stopped = (scrollers[pointer] ?? []).filter(\.panGestureRecognizer.isEnabled)
+        for scroller in stopped {
+            // Disabling cancels a pan in progress and drops the touch, so no pan begins later in this sequence.
+            scroller.panGestureRecognizer.isEnabled = false
+            scroller.panGestureRecognizer.isEnabled = true
+        }
+        return stopped
+    }
+}
+
 /// Passive ancestor observer: it never recognizes, so descendant controls and
 /// scroll recognizers continue to receive and arbitrate the original touches.
 final class WhiskerTouchObserverGestureRecognizer: UIGestureRecognizer {

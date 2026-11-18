@@ -20,9 +20,10 @@ use crate::value::WhiskerValue;
 use crate::view::{BindType, DynRenderer, Element, LayoutObservation, with_installed_renderer};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
-    Accessibility, BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior,
-    HostPresentationUpdate, InputEvent, InputEventError, MeasurementReady, NodeId, PaintColor,
-    PointerInput, ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
+    Accessibility, BoxPaint, ElementRegistration, ElementSchema, ElementTypeId, ElementValueKind,
+    HitTestBehavior, HostPresentationUpdate, InputEvent, InputEventError, MeasurementReady, NodeId,
+    PaintColor, PointerInput, ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError,
+    SurfaceId,
 };
 #[cfg(test)]
 use whisker_engine::whisker_style::ComputedTransformFunction;
@@ -432,6 +433,8 @@ impl SurfaceRuntime {
                 mutation_batch: None,
                 list_layout_requested: false,
                 active_pointers: Vec::new(),
+                base_resolutions: HashMap::new(),
+                initial_inherited: RefCell::new(None),
                 #[cfg(test)]
                 surface_snapshot_count: 0,
                 #[cfg(test)]
@@ -534,6 +537,50 @@ impl SurfaceRuntime {
             .is_some_and(|entry| entry.kind.is_rich_text() && entry.text_selectable == Some(true))
     }
 
+    /// The nodes of `node`'s element ancestors, nearest first.
+    pub(crate) fn node_ancestors(&self, node: NodeId) -> Vec<NodeId> {
+        let state = self.state.borrow();
+        let mut ancestors = Vec::new();
+        let mut current = state
+            .node_elements
+            .get(&node)
+            .and_then(|element| state.elements.get(element))
+            .and_then(|entry| entry.parent);
+        while let Some(entry) = current.and_then(|element| state.elements.get(&element)) {
+            ancestors.extend(entry.node);
+            current = entry.parent;
+        }
+        ancestors
+    }
+
+    /// Whether `node` is still in the tree under the root.
+    pub(crate) fn is_attached(&self, node: NodeId) -> bool {
+        let state = self.state.borrow();
+        let Some(root) = state.root.and_then(|root| state.node_elements.get(&root)) else {
+            return false;
+        };
+        let mut current = state.node_elements.get(&node);
+        while let Some(element) = current {
+            if element == root {
+                return true;
+            }
+            current = state
+                .elements
+                .get(element)
+                .and_then(|entry| entry.parent.as_ref());
+        }
+        false
+    }
+
+    #[cfg(test)]
+    pub(crate) fn node_of(&self, element: Element) -> Option<NodeId> {
+        self.state
+            .borrow()
+            .elements
+            .get(&element)
+            .and_then(|entry| entry.node)
+    }
+
     pub(crate) fn has_input_listener(&self, target: NodeId, event: &str) -> bool {
         let state = self.state.borrow();
         state.root.is_some_and(|root| {
@@ -550,7 +597,74 @@ impl SurfaceRuntime {
     /// Forgets every pointer that is down. Hosts end no pointer stream when
     /// the surface stops receiving input, so the owner calls this instead.
     pub(crate) fn clear_active_pointers(&self) {
-        self.state.borrow_mut().active_pointers.clear();
+        let mut state = self.state.borrow_mut();
+        state.active_pointers.clear();
+        let result = state
+            .surface
+            .release_pointer_captures()
+            .map_err(RuntimeBindingError::from);
+        state.record(result);
+    }
+
+    /// The node holding `pointer`'s capture, if any.
+    pub(crate) fn pointer_capture_target(
+        &self,
+        pointer: whisker_protocol::PointerId,
+    ) -> Option<NodeId> {
+        self.state.borrow().surface.pointer_capture_target(pointer)
+    }
+
+    /// Fires `event` on `target`'s listeners below the element that captured its pointer.
+    pub(crate) fn dispatch_below_capture(
+        &self,
+        event: &InputEvent,
+        target: NodeId,
+    ) -> Result<(), RuntimeInputError> {
+        let (firings, body) = {
+            let state = self.state.borrow();
+            let (Some(root), Some(pointer)) = (state.root, event.pointer) else {
+                return Ok(());
+            };
+            let Some(physical) = state.node_elements.get(&target).copied() else {
+                return Ok(());
+            };
+            let mut above = Vec::new();
+            let mut current = state
+                .surface
+                .pointer_capture_target(pointer.id)
+                .and_then(|node| state.node_elements.get(&node).copied());
+            while let Some(element) = current {
+                above.push(element);
+                current = state.elements.get(&element).and_then(|entry| entry.parent);
+            }
+            let Ok(planned) = state.plan_element_event(
+                root,
+                target,
+                physical,
+                event.kind.name(Some(pointer.kind)),
+            ) else {
+                return Ok(());
+            };
+            let firings = planned
+                .into_iter()
+                .filter(|(current_target, _)| !above.contains(current_target))
+                .map(|(current_target, callback)| {
+                    (callback, state.element_target_value(current_target))
+                })
+                .collect::<Vec<_>>();
+            (
+                firings,
+                input_body(
+                    event,
+                    &state.active_pointers,
+                    state.element_target_value(physical),
+                ),
+            )
+        };
+        for (callback, current_target) in firings {
+            callback(with_current_target(&body, current_target));
+        }
+        Ok(())
     }
 
     /// Hit-tests and routes one Host-normalized event through Rust listeners.
@@ -604,7 +718,32 @@ impl SurfaceRuntime {
             let captured = event
                 .pointer
                 .and_then(|pointer| state.surface.pointer_capture_target(pointer.id));
+            // A Host that ended the previous sequence without an up or a cancel must not have
+            // its capture claim the next contact with the same id.
+            let captured = match (&event.kind, captured, event.pointer) {
+                (whisker_protocol::InputEventKind::PointerDown, Some(stale), Some(pointer)) => {
+                    state
+                        .surface
+                        .release_pointer_capture(stale, pointer.id)
+                        .map_err(RuntimeBindingError::from)
+                        .map_err(RuntimeInputError::Binding)?;
+                    None
+                }
+                _ => captured,
+            };
             let target = if let Some(captured) = captured {
+                if let (
+                    whisker_protocol::InputEventKind::PointerUp
+                    | whisker_protocol::InputEventKind::PointerCancel,
+                    Some(pointer),
+                ) = (&event.kind, event.pointer)
+                {
+                    state
+                        .surface
+                        .release_pointer_capture(captured, pointer.id)
+                        .map_err(RuntimeBindingError::from)
+                        .map_err(RuntimeInputError::Binding)?;
+                }
                 Some(captured)
             } else if let Some(target) = event.target {
                 if state.surface.node(target).is_none() {
@@ -1228,6 +1367,8 @@ struct BindingState {
     // Down order is what `touches` exposes, so a hash map would reshuffle
     // fingers between the events of one gesture.
     active_pointers: Vec<PointerInput>,
+    base_resolutions: HashMap<ElementTypeId, (StyleEnvironment, ResolvedNodeStyle)>,
+    initial_inherited: RefCell<Option<(StyleEnvironment, InheritedStyle)>>,
     #[cfg(test)]
     surface_snapshot_count: usize,
     #[cfg(test)]
@@ -1607,6 +1748,24 @@ impl BindingState {
         self.allocate_registration(Some(registration))
     }
 
+    fn base_resolution(
+        &mut self,
+        registration: &ElementRegistration,
+        base_specified: &SpecifiedStyle,
+    ) -> Result<ResolvedNodeStyle, RuntimeBindingError> {
+        if let Some((environment, resolved)) = self.base_resolutions.get(&registration.element_type)
+            && *environment == self.environment
+        {
+            return Ok(resolved.clone());
+        }
+        let resolved = resolve_style(base_specified, None, self.environment)?;
+        self.base_resolutions.insert(
+            registration.element_type,
+            (self.environment, resolved.clone()),
+        );
+        Ok(resolved)
+    }
+
     fn allocate_registration(
         &mut self,
         registration: Option<ElementRegistration>,
@@ -1619,7 +1778,7 @@ impl BindingState {
         let (kind, node, base_specified, resolved, text) = if let Some(registration) = registration
         {
             let base_specified = self.registry.base_style(&registration).clone();
-            let resolved = resolve_style(&base_specified, None, self.environment)?;
+            let resolved = self.base_resolution(&registration, &base_specified)?;
             let node = if registration.child_policy
                 == whisker_engine::whisker_protocol::ChildPolicy::RichText
             {
@@ -1968,6 +2127,11 @@ impl BindingState {
         environment: StyleEnvironment,
     ) -> Result<ResolvedNodeStyle, RuntimeBindingError> {
         let entry = self.element(element)?;
+        // `resolve_style` reads a missing parent as the initial inherited style, so both share one cache entry.
+        let parent = match parent {
+            Some(parent) if self.is_initial_inherited(parent, environment)? => None,
+            parent => parent,
+        };
         if let Some(cached) = entry.resolution.borrow().as_ref()
             && cached.specified == *specified
             && cached.parent.as_ref() == parent
@@ -1990,6 +2154,21 @@ impl BindingState {
             resolved: resolved.clone(),
         });
         Ok(resolved)
+    }
+
+    fn is_initial_inherited(
+        &self,
+        inherited: &InheritedStyle,
+        environment: StyleEnvironment,
+    ) -> Result<bool, RuntimeBindingError> {
+        let mut initial = self.initial_inherited.borrow_mut();
+        if !matches!(&*initial, Some((cached, _)) if *cached == environment) {
+            let resolved = resolve_style(&SpecifiedStyle::new(), None, environment)?;
+            *initial = Some((environment, resolved.inherited_for_children().clone()));
+        }
+        Ok(initial
+            .as_ref()
+            .is_some_and(|(_, initial)| initial == inherited))
     }
 
     fn style_changes_inheritance(
@@ -2036,6 +2215,24 @@ impl BindingState {
                     .as_ref()
                     .ok_or(RuntimeBindingError::UnknownElement { element })?;
                 let computed = resolved.computed();
+                if !entry.style_initialized {
+                    // Nothing transitions from an element that was never styled, so only `resolved` is read.
+                    return Ok(MotionSnapshot {
+                        element,
+                        resolved: resolved.clone(),
+                        initialized: false,
+                        layout_targets: HashMap::new(),
+                        layout_current: HashMap::new(),
+                        opacity_target: 0.0,
+                        opacity_current: 0.0,
+                        box_paint: BoxPaint::default(),
+                        current_colors: HashMap::new(),
+                        transform_target: computed.paint().transform.clone(),
+                        transform_current: computed.paint().transform.clone(),
+                        text_color_target: None,
+                        text_color_current: None,
+                    });
+                }
                 let opacity_target = computed.paint().opacity.get();
                 let opacity_current = entry
                     .opacity_transition
@@ -2763,6 +2960,122 @@ mod layout_observer_tests {
             set_specified_style(parent, &color("blue"));
         });
         verify();
+    }
+
+    #[test]
+    fn a_missing_parent_resolves_like_the_initial_inherited_style() {
+        let environment = StyleEnvironment::new(320.0, 480.0, 1.0, 14.0);
+        let initial = resolve_style(&SpecifiedStyle::new(), None, environment)
+            .unwrap()
+            .inherited_for_children()
+            .clone();
+        let em = |value| {
+            StyleValue::Size(SizeValue::LengthPercentage(LengthPercentageValue::Length(
+                LengthValue::Dimension {
+                    value: StyleNumber::new(value),
+                    unit: LengthUnit::Em,
+                },
+            )))
+        };
+        for style in [
+            SpecifiedStyle::new(),
+            absolute_box(40.0, 60.0),
+            SpecifiedStyle::new().push(StyleProperty::Width, em(2.0)),
+            SpecifiedStyle::new().push(
+                StyleProperty::Color,
+                StyleValue::Color(whisker_style::ColorValue::Named("red".into())),
+            ),
+        ] {
+            assert_eq!(
+                resolve_style(&style, None, environment).unwrap(),
+                resolve_style(&style, Some(&initial), environment).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn a_fresh_subtree_resolves_each_style_once() {
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(96).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        let handles = Rc::new(RefCell::new(Vec::new()));
+        runtime
+            .mount({
+                let handles = Rc::clone(&handles);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    for _ in 0..8 {
+                        let plain = create_element(ElementTag::View);
+                        let styled = create_element(ElementTag::View);
+                        set_specified_style(styled, &absolute_box(40.0, 60.0));
+                        append_child(plain, styled);
+                        append_child(root, plain);
+                        handles.borrow_mut().push(styled);
+                    }
+                    root
+                }
+            })
+            .unwrap();
+        let state = surface.state.borrow();
+        assert_eq!(state.style_resolution_count.get(), 8);
+        assert_eq!(state.motion_snapshot_count.get(), 8);
+        for styled in handles.borrow().iter() {
+            let entry = state.element(*styled).unwrap();
+            assert!(entry.style_initialized);
+            let expected =
+                resolve_style(&entry.effective_specified(), None, state.environment).unwrap();
+            assert_eq!(entry.resolved.as_ref(), Some(&expected));
+        }
+    }
+
+    #[test]
+    fn a_fresh_child_of_a_styled_text_context_resolves_against_it() {
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(97).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        let handles = Rc::new(RefCell::new(Vec::new()));
+        runtime
+            .mount({
+                let handles = Rc::clone(&handles);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    set_specified_style(
+                        root,
+                        &SpecifiedStyle::new().push(
+                            StyleProperty::Color,
+                            StyleValue::Color(whisker_style::ColorValue::Named("red".into())),
+                        ),
+                    );
+                    let child = create_element(ElementTag::View);
+                    set_specified_style(child, &absolute_box(40.0, 60.0));
+                    append_child(root, child);
+                    handles.borrow_mut().extend([root, child]);
+                    root
+                }
+            })
+            .unwrap();
+        let state = surface.state.borrow();
+        let root = state.element(handles.borrow()[0]).unwrap();
+        let child = state.element(handles.borrow()[1]).unwrap();
+        let expected = resolve_style(
+            &child.effective_specified(),
+            Some(root.resolved.as_ref().unwrap().inherited_for_children()),
+            state.environment,
+        )
+        .unwrap();
+        assert_eq!(child.resolved.as_ref(), Some(&expected));
+        assert_ne!(
+            Some(&expected),
+            resolve_style(&child.effective_specified(), None, state.environment)
+                .ok()
+                .as_ref()
+        );
     }
 
     #[test]

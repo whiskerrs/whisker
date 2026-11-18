@@ -106,6 +106,11 @@ fn stroke_outline() {
 }
 
 #[test]
+fn stroke_round_caps() {
+    run_fixture(&fixtures_dir().join("stroke_round_caps.svg"));
+}
+
+#[test]
 fn currentcolor() {
     run_fixture(&fixtures_dir().join("currentcolor.svg"));
 }

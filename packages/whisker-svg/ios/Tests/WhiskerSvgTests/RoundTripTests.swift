@@ -55,6 +55,10 @@ final class RoundTripTests: XCTestCase {
         // STROKE_WIDTH 2.5
         raw.append(DLFormat.opPaintStrokeWidth)
         raw += leBytes(2.5)
+        // STROKE_CAP ROUND, STROKE_JOIN BEVEL, STROKE_CAP 0x7F (unknown → BUTT)
+        raw += [DLFormat.opPaintStrokeCap, DLFormat.capRound]
+        raw += [DLFormat.opPaintStrokeJoin, DLFormat.joinBevel]
+        raw += [DLFormat.opPaintStrokeCap, 0x7F]
         // FILL_TINT
         raw.append(DLFormat.opPaintFillTint)
         // STROKE_TINT
@@ -89,6 +93,9 @@ final class RoundTripTests: XCTestCase {
         FILL_COLOR #102030C0
         STROKE_COLOR #AABBCCDD
         STROKE_WIDTH 2.5
+        STROKE_CAP ROUND
+        STROKE_JOIN BEVEL
+        STROKE_CAP BUTT
         FILL_TINT
         STROKE_TINT
         PATH_BEGIN

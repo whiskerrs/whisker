@@ -124,6 +124,8 @@ pub struct Config {
     pub web: Option<WebParams>,
     /// Generated Linux Cargo Host. Required iff `target == Target::Linux`.
     pub linux: Option<LinuxParams>,
+    /// Generated Windows Cargo Host. Required iff `target == Target::Windows`.
+    pub windows: Option<WindowsParams>,
 }
 
 impl Config {
@@ -144,6 +146,7 @@ impl Config {
             macos: None,
             web: None,
             linux: None,
+            windows: None,
         }
     }
 }
@@ -217,6 +220,17 @@ pub struct LinuxParams {
     pub generated_package: String,
 }
 
+/// Flat parameters for the generated Windows Cargo Host.
+#[derive(Debug, Clone)]
+pub struct WindowsParams {
+    /// Generated `gen/windows` Cargo project.
+    pub project_dir: PathBuf,
+    /// Dedicated Cargo output directory, shared with `whisker build windows`.
+    pub target_dir: PathBuf,
+    /// Generated package and executable name.
+    pub generated_package: String,
+}
+
 /// Flat parameters for Whisker's generated browser Host.
 #[derive(Debug, Clone)]
 pub struct WebParams {
@@ -244,6 +258,8 @@ pub enum Target {
     Macos,
     /// Native Linux app: the generated Cargo Host executable, run locally.
     Linux,
+    /// Native Windows app: the generated Cargo Host executable, run locally.
+    Windows,
     /// Browser WASM application built and served by Whisker.
     Web,
 }
@@ -434,13 +450,15 @@ impl DevServer {
         )
         .with_macos(self.config.macos.clone())
         .with_web(self.config.web.clone())
-        .with_linux(self.config.linux.clone());
+        .with_linux(self.config.linux.clone())
+        .with_windows(self.config.windows.clone());
 
         let hot_reload_init = if self.config.hot_patch_mode == HotPatchMode::HotReload {
             let feature = match self.config.target {
                 Target::Web => "hot-reload",
                 Target::Android | Target::IosSimulator | Target::Macos => "whisker/hot-reload",
                 Target::Linux => "whisker-linux/hot-reload",
+                Target::Windows => "whisker-windows/hot-reload",
             };
             builder = builder.with_features(vec![feature.into()]);
             match prepare_hot_reload_capture(&self.config) {
@@ -466,6 +484,7 @@ impl DevServer {
             self.config.ios.clone(),
             self.config.macos.clone(),
             self.config.linux.clone(),
+            self.config.windows.clone(),
             self.config.workspace_root.clone(),
             self.config.package.clone(),
             hot_reload_init.as_ref().map(|p| p.capture.clone()),

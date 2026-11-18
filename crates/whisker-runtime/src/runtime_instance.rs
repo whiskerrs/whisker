@@ -50,7 +50,7 @@ mod tests {
     use crate::reactive::{__reset_for_tests, RwSignal, effect};
     use crate::view::{
         BindType, append_child, create_element, remove_child, set_attribute, set_event_listener,
-        set_specified_style,
+        set_pointer_capture, set_specified_style,
     };
     use whisker_engine::whisker_protocol::{
         InputEventKind, MeasuredSize, MeasurementKey, MeasurementMetrics, MeasurementRequestId,
@@ -420,6 +420,282 @@ mod tests {
     }
 
     #[test]
+    fn touch_whose_target_is_removed_continues_on_its_nearest_ancestor() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(83).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let child = Rc::new(Cell::new(None));
+        runtime
+            .mount({
+                let seen = Rc::clone(&seen);
+                let child = Rc::clone(&child);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    let leaf = create_element(ElementTag::View);
+                    append_child(root, leaf);
+                    child.set(Some(leaf));
+                    for name in ["touchmove", "touchend"] {
+                        let seen = Rc::clone(&seen);
+                        set_event_listener(
+                            root,
+                            name,
+                            BindType::Bind,
+                            Box::new(move |_| seen.borrow_mut().push(name)),
+                        );
+                    }
+                    set_event_listener(
+                        root,
+                        "unmount-leaf",
+                        BindType::Bind,
+                        Box::new(move |_| remove_child(root, leaf)),
+                    );
+                    root
+                }
+            })
+            .unwrap();
+        let leaf = surface.node_of(child.get().unwrap()).unwrap();
+        let touch = |kind, target| InputEvent {
+            presentation_revision: None,
+            surface: surface.surface(),
+            timestamp_ms: 1.0,
+            kind,
+            pointer: Some(PointerInput {
+                id: PointerId::new(1).unwrap(),
+                kind: PointerKind::Touch,
+                position: InputPoint { x: 5.0, y: 5.0 },
+                buttons: 1,
+                changed_button: 0,
+            }),
+            target,
+            detail: WhiskerValue::Null,
+        };
+
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerDown, Some(leaf)))
+            .unwrap();
+        runtime
+            .dispatch_input(&InputEvent {
+                kind: InputEventKind::Named("unmount-leaf".to_owned()),
+                pointer: None,
+                target: surface.root(),
+                ..touch(InputEventKind::PointerMove, None)
+            })
+            .unwrap();
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerMove, None))
+            .unwrap();
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerUp, None))
+            .unwrap();
+
+        assert_eq!(*seen.borrow(), ["touchmove", "touchend"]);
+    }
+
+    #[test]
+    fn captured_pointer_is_routed_to_its_capture_element_until_it_goes_up() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(84).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let pressed = Rc::new(Cell::new(None));
+        let captured = Rc::new(Cell::new(None));
+        runtime
+            .mount({
+                let seen = Rc::clone(&seen);
+                let pressed = Rc::clone(&pressed);
+                let captured = Rc::clone(&captured);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    let under_finger = create_element(ElementTag::View);
+                    let gesture = create_element(ElementTag::View);
+                    append_child(root, under_finger);
+                    append_child(root, gesture);
+                    pressed.set(Some(under_finger));
+                    for (element, name) in [(under_finger, "under-finger"), (gesture, "gesture")] {
+                        let seen = Rc::clone(&seen);
+                        set_event_listener(
+                            element,
+                            "touchmove",
+                            BindType::Bind,
+                            Box::new(move |_| seen.borrow_mut().push(name)),
+                        );
+                    }
+                    for (element, name) in [
+                        (under_finger, "under-finger cancelled"),
+                        (root, "root cancelled"),
+                    ] {
+                        let seen = Rc::clone(&seen);
+                        set_event_listener(
+                            element,
+                            "touchcancel",
+                            BindType::Bind,
+                            Box::new(move |_| seen.borrow_mut().push(name)),
+                        );
+                    }
+                    set_event_listener(
+                        root,
+                        "capture",
+                        BindType::Bind,
+                        Box::new(move |_| captured.set(Some(set_pointer_capture(gesture, 1)))),
+                    );
+                    root
+                }
+            })
+            .unwrap();
+        let under_finger = surface.node_of(pressed.get().unwrap()).unwrap();
+        let touch = |kind, target| InputEvent {
+            presentation_revision: None,
+            surface: surface.surface(),
+            timestamp_ms: 1.0,
+            kind,
+            pointer: Some(PointerInput {
+                id: PointerId::new(1).unwrap(),
+                kind: PointerKind::Touch,
+                position: InputPoint { x: 5.0, y: 5.0 },
+                buttons: 1,
+                changed_button: 0,
+            }),
+            target,
+            detail: WhiskerValue::Null,
+        };
+        let capture = InputEvent {
+            kind: InputEventKind::Named("capture".to_owned()),
+            pointer: None,
+            target: surface.root(),
+            ..touch(InputEventKind::PointerMove, None)
+        };
+
+        runtime.dispatch_input(&capture).unwrap();
+        assert_eq!(captured.get(), Some(false), "no pointer is down yet");
+
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerDown, Some(under_finger)))
+            .unwrap();
+        runtime.dispatch_input(&capture).unwrap();
+        assert_eq!(captured.get(), Some(true));
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerMove, None))
+            .unwrap();
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerUp, None))
+            .unwrap();
+
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerDown, Some(under_finger)))
+            .unwrap();
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerMove, None))
+            .unwrap();
+
+        assert_eq!(
+            *seen.borrow(),
+            ["under-finger cancelled", "gesture", "under-finger"]
+        );
+    }
+
+    #[test]
+    fn capture_does_not_outlive_a_sequence_the_host_never_ended() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(85).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let pressed = Rc::new(Cell::new(None));
+        runtime
+            .mount({
+                let seen = Rc::clone(&seen);
+                let pressed = Rc::clone(&pressed);
+                move || {
+                    let root = create_element(ElementTag::View);
+                    let under_finger = create_element(ElementTag::View);
+                    let gesture = create_element(ElementTag::View);
+                    append_child(root, under_finger);
+                    append_child(root, gesture);
+                    pressed.set(Some(under_finger));
+                    for (element, name) in [(under_finger, "under-finger"), (gesture, "gesture")] {
+                        let seen = Rc::clone(&seen);
+                        set_event_listener(
+                            element,
+                            "touchmove",
+                            BindType::Bind,
+                            Box::new(move |_| seen.borrow_mut().push(name)),
+                        );
+                    }
+                    set_event_listener(
+                        root,
+                        "capture",
+                        BindType::Bind,
+                        Box::new(move |_| {
+                            set_pointer_capture(gesture, 1);
+                        }),
+                    );
+                    root
+                }
+            })
+            .unwrap();
+        let under_finger = surface.node_of(pressed.get().unwrap()).unwrap();
+        let touch = |kind, target| InputEvent {
+            presentation_revision: None,
+            surface: surface.surface(),
+            timestamp_ms: 1.0,
+            kind,
+            pointer: Some(PointerInput {
+                id: PointerId::new(1).unwrap(),
+                kind: PointerKind::Touch,
+                position: InputPoint { x: 5.0, y: 5.0 },
+                buttons: 1,
+                changed_button: 0,
+            }),
+            target,
+            detail: WhiskerValue::Null,
+        };
+        let capture = InputEvent {
+            kind: InputEventKind::Named("capture".to_owned()),
+            pointer: None,
+            target: surface.root(),
+            ..touch(InputEventKind::PointerMove, None)
+        };
+        let press_capture_move = |runtime: &RuntimeInstance| {
+            runtime
+                .dispatch_input(&touch(InputEventKind::PointerDown, Some(under_finger)))
+                .unwrap();
+            runtime.dispatch_input(&capture).unwrap();
+            runtime
+                .dispatch_input(&touch(InputEventKind::PointerMove, None))
+                .unwrap();
+        };
+
+        press_capture_move(&runtime);
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerDown, Some(under_finger)))
+            .unwrap();
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerMove, None))
+            .unwrap();
+        assert_eq!(*seen.borrow(), ["gesture", "under-finger"]);
+
+        seen.borrow_mut().clear();
+        press_capture_move(&runtime);
+        surface.clear_active_pointers();
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerDown, Some(under_finger)))
+            .unwrap();
+        runtime
+            .dispatch_input(&touch(InputEventKind::PointerMove, None))
+            .unwrap();
+        assert_eq!(*seen.borrow(), ["gesture", "under-finger"]);
+    }
+
+    #[test]
     fn root_remount_replaces_only_the_instance_application_tree() {
         __reset_for_tests();
         let surface = SurfaceRuntime::new(
@@ -569,10 +845,14 @@ enum PendingHostEvent {
 }
 
 const HOST_EVENT_QUEUE_CAP: usize = 4096;
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct ActivationCandidate {
     presentation_revision: Option<u64>,
     target: NodeId,
+    /// The target's ancestors at pointer-down, nearest first.
+    ancestors: Vec<NodeId>,
+    /// Another element captured the pointer and the target was told the touch is over.
+    handed_off: bool,
     origin: InputPoint,
     started_at_ms: f64,
     pointer_kind: PointerKind,
@@ -603,7 +883,13 @@ impl ActivationRecognizer {
     // Touch and pen contacts keep the node selected by pointer-down for their
     // whole active sequence. This gives raw touch listeners the same stable
     // target as implicit pointer capture without changing mouse hover routing.
-    fn implicit_capture_target(&self, event: &InputEvent) -> Option<NodeId> {
+    // A target removed mid-sequence hands the contact to its nearest ancestor
+    // still in the tree, so a gesture listening above it sees the sequence end.
+    fn implicit_capture_target(
+        &self,
+        event: &InputEvent,
+        is_attached: impl Fn(NodeId) -> bool,
+    ) -> Option<NodeId> {
         let pointer = event.pointer?;
         if !matches!(pointer.kind, PointerKind::Touch | PointerKind::Pen)
             || !matches!(
@@ -615,9 +901,36 @@ impl ActivationRecognizer {
         {
             return None;
         }
+        let candidate = self.pointers.get(&pointer.id)?;
+        std::iter::once(candidate.target)
+            .chain(candidate.ancestors.iter().copied())
+            .find(|node| is_attached(*node))
+            .or(Some(candidate.target))
+    }
+
+    /// The contacts another element has captured since the last call, with their pointer-down targets.
+    fn take_handed_off(
+        &mut self,
+        capture_target: impl Fn(PointerId) -> Option<NodeId>,
+    ) -> Vec<(PointerInput, NodeId)> {
         self.pointers
-            .get(&pointer.id)
-            .map(|candidate| candidate.target)
+            .iter_mut()
+            .filter_map(|(id, candidate)| {
+                let captured_by = capture_target(*id)?;
+                if candidate.handed_off || captured_by == candidate.target {
+                    return None;
+                }
+                candidate.handed_off = true;
+                candidate.cancelled = true;
+                Some((candidate.pointer, candidate.target))
+            })
+            .collect()
+    }
+
+    fn set_capture_ancestors(&mut self, pointer: PointerId, ancestors: Vec<NodeId>) {
+        if let Some(candidate) = self.pointers.get_mut(&pointer) {
+            candidate.ancestors = ancestors;
+        }
     }
 
     fn observe(
@@ -654,6 +967,8 @@ impl ActivationRecognizer {
                         pointer.id,
                         ActivationCandidate {
                             target,
+                            ancestors: Vec::new(),
+                            handed_off: false,
                             origin: pointer.position,
                             started_at_ms: event.timestamp_ms,
                             presentation_revision: event.presentation_revision,
@@ -1301,7 +1616,7 @@ impl RuntimeInstance {
             let routed_event = if event.target.is_none() {
                 self.activations
                     .borrow()
-                    .implicit_capture_target(event)
+                    .implicit_capture_target(event, |node| self.surface.is_attached(node))
                     .map(|target| InputEvent {
                         target: Some(target),
                         ..event.clone()
@@ -1322,6 +1637,31 @@ impl RuntimeInstance {
                 self.activations
                     .borrow_mut()
                     .observe(event, dispatch.target, accepts_longpress);
+            if let (InputEventKind::PointerDown, Some(pointer), Some(target)) =
+                (&event.kind, event.pointer, dispatch.target)
+            {
+                self.activations
+                    .borrow_mut()
+                    .set_capture_ancestors(pointer.id, self.surface.node_ancestors(target));
+            }
+            // The elements a capture was taken from see their touch cancelled, as when a native
+            // gesture takes it; otherwise a pressed state set on touchstart never clears.
+            let handed_off = self
+                .activations
+                .borrow_mut()
+                .take_handed_off(|pointer| self.surface.pointer_capture_target(pointer));
+            for (pointer, target) in handed_off {
+                self.surface.dispatch_below_capture(
+                    &InputEvent {
+                        kind: InputEventKind::PointerCancel,
+                        pointer: Some(pointer),
+                        target: None,
+                        detail: WhiskerValue::Null,
+                        ..event.clone()
+                    },
+                    target,
+                )?;
+            }
             if self.activations.borrow().has_pending_longpress() {
                 self.wake.wake();
             }

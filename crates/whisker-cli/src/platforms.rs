@@ -13,6 +13,7 @@ pub fn generation_target(target: Target) -> whisker_cng::GenerationTarget {
         Target::IosSimulator => whisker_cng::GenerationTarget::Ios,
         Target::Macos => whisker_cng::GenerationTarget::Macos,
         Target::Linux => whisker_cng::GenerationTarget::Linux,
+        Target::Windows => whisker_cng::GenerationTarget::Windows,
         Target::Web => whisker_cng::GenerationTarget::Web,
     }
 }
