@@ -1,9 +1,13 @@
 #if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 @testable import WhiskerModule
 @testable import WhiskerRuntime
 import XCTest
 
+#if canImport(UIKit)
 @MainActor
 final class ParagraphTests: XCTestCase {
     func testTopAndBottomAttachmentsShareOneLineHeight() throws {
@@ -193,6 +197,21 @@ extension ParagraphTests {
         return nil
     }
 
+    func testFixedLineHeightCentersTheContentAreaLikeCSS() {
+        let font = UIFont.systemFont(ofSize: 15)
+        for lineHeight: CGFloat in [12, 16, 30] {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = lineHeight
+            paragraph.maximumLineHeight = lineHeight
+            let text = NSAttributedString(string: "B+\nB+", attributes: [.font: font, .paragraphStyle: paragraph])
+            let layout = WhiskerParagraphLayout(text: text, width: 200, maxLines: 0, overflow: .clip)
+            let halfLeading = (lineHeight - (font.ascender - font.descender)) / 2
+            XCTAssertEqual(layout.baselines.first, halfLeading + font.ascender, accuracy: 0.01, "line-height \(lineHeight)")
+            XCTAssertEqual(layout.baselines.last, lineHeight + halfLeading + font.ascender, accuracy: 0.01, "line-height \(lineHeight)")
+            XCTAssertEqual(layout.size.height, lineHeight * 2, accuracy: 0.01, "line-height \(lineHeight)")
+        }
+    }
+
     func testPreparationLeaseRetainsLayoutUntilCacheRelease() {
         let cache = PreparedParagraphs()
         var layout: WhiskerParagraphLayout? = WhiskerParagraphLayout(text: NSAttributedString(string: "kept", attributes: [.font: UIFont.systemFont(ofSize: 16)]), width: 100, maxLines: 0, overflow: .clip)
@@ -208,3 +227,44 @@ extension ParagraphTests {
     }
 }
 #endif
+
+@MainActor
+final class ParagraphPaintTests: XCTestCase {
+    func testApplyingIdenticalPaintSkipsStorageEdits() {
+        let red = paint(.red)
+        let layout = WhiskerParagraphLayout(text: red, width: 100, maxLines: 0, overflow: .clip)
+        let observer = StorageEdits()
+        layout.storage.delegate = observer
+
+        layout.applyPaint(paint(.red))
+        XCTAssertEqual(observer.count, 0)
+
+        layout.applyPaint(NSAttributedString(string: red.string, attributes: [.foregroundColor: WhiskerPlatformColor.blue]))
+        XCTAssertEqual(observer.count, 1)
+        XCTAssertEqual(layout.storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? WhiskerPlatformColor, .blue)
+        XCTAssertNil(layout.storage.attribute(.whiskerInlineWave, at: 0, effectiveRange: nil))
+
+        layout.applyPaint(red)
+        XCTAssertEqual(observer.count, 2)
+        XCTAssertEqual(layout.storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? WhiskerPlatformColor, .red)
+        XCTAssertNotNil(layout.storage.attribute(.whiskerInlineWave, at: 0, effectiveRange: nil))
+        layout.applyPaint(paint(.red))
+        XCTAssertEqual(observer.count, 2)
+    }
+
+    private func paint(_ color: WhiskerPlatformColor) -> NSAttributedString {
+        NSAttributedString(string: "paint", attributes: [
+            .foregroundColor: color,
+            .whiskerInlineWave: WhiskerInlineWave(color: color, underline: true, strike: false),
+        ])
+    }
+
+    private final class StorageEdits: NSObject, NSTextStorageDelegate {
+        private(set) var count = 0
+
+        func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: WhiskerTextEditActions,
+                         range editedRange: NSRange, changeInLength delta: Int) {
+            count += 1
+        }
+    }
+}

@@ -11,6 +11,7 @@ import android.util.Log
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
+import androidx.core.view.ViewCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -230,6 +231,8 @@ class WhiskerView(context: Context) :
             if (nativeHandle != 0L) {
                 runtimePaused = false
                 requestFrameFromNative()
+                // Module channels this runtime joined after another surface only reach it on the next inset dispatch.
+                mainHandler.post { if (isAttachedToWindow) ViewCompat.requestApplyInsets(this) }
             } else {
                 moduleEventSinkEpoch += 1
                 WhiskerModuleEventCenter.installEventSink(this, null)

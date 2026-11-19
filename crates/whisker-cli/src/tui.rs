@@ -90,6 +90,12 @@ mod render;
 
 use render::*;
 
+#[cfg(unix)]
+const STDERR_FD: c_int = libc::STDERR_FILENO;
+// The MSVC CRT keeps POSIX descriptor numbers but `libc` exposes no constant for them.
+#[cfg(windows)]
+const STDERR_FD: c_int = 2;
+
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 // ============================================================================
@@ -556,7 +562,7 @@ struct OriginalStderr(c_int);
 
 impl Write for OriginalStderr {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let n = unsafe { libc::write(self.0, buf.as_ptr() as *const _, buf.len()) };
+        let n = unsafe { libc::write(self.0, buf.as_ptr() as *const _, buf.len() as _) };
         if n < 0 {
             Err(std::io::Error::last_os_error())
         } else {
@@ -833,7 +839,7 @@ impl Tui {
         // unwinds the ratatui Terminal cleanly (hidden_cursor is
         // already false, so Drop is a no-op).
         unsafe {
-            libc::dup2(self.saved_stderr_fd, libc::STDERR_FILENO);
+            libc::dup2(self.saved_stderr_fd, STDERR_FD);
             libc::close(self.saved_stderr_fd);
         }
         Ok(())
@@ -859,13 +865,16 @@ fn request_user_quit(state: &mut LiveState) {
 
 fn install_stderr_capture() -> Result<(c_int, c_int)> {
     let mut fds: [c_int; 2] = [-1, -1];
+    #[cfg(unix)]
     let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    #[cfg(windows)]
+    let rc = unsafe { libc::pipe(fds.as_mut_ptr(), 64 * 1024, libc::O_BINARY) };
     if rc != 0 {
         return Err(std::io::Error::last_os_error()).context("pipe(2)");
     }
     let read_fd = fds[0];
     let write_fd = fds[1];
-    let saved_fd = unsafe { libc::dup(libc::STDERR_FILENO) };
+    let saved_fd = unsafe { libc::dup(STDERR_FD) };
     if saved_fd == -1 {
         let e = std::io::Error::last_os_error();
         unsafe {
@@ -874,7 +883,7 @@ fn install_stderr_capture() -> Result<(c_int, c_int)> {
         }
         return Err(e).context("dup STDERR_FILENO");
     }
-    if unsafe { libc::dup2(write_fd, libc::STDERR_FILENO) } == -1 {
+    if unsafe { libc::dup2(write_fd, STDERR_FD) } == -1 {
         let e = std::io::Error::last_os_error();
         unsafe {
             libc::close(read_fd);
@@ -893,7 +902,7 @@ fn capture_reader_loop(read_fd: c_int, tx: Sender<HistoryItem>) {
     let mut buf = [0u8; 4096];
     let mut partial: Vec<u8> = Vec::new();
     loop {
-        let n = unsafe { libc::read(read_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
+        let n = unsafe { libc::read(read_fd, buf.as_mut_ptr() as *mut _, buf.len() as _) };
         if n == -1 {
             if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
                 continue;

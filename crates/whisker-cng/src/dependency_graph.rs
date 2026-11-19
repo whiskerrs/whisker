@@ -1,6 +1,6 @@
 //! Canonical Cargo dependency graph used by every CNG target.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use cargo_metadata::MetadataCommand;
@@ -15,6 +15,13 @@ pub struct ProjectDependencyGraph {
     pub modules: Vec<ResolvedModule>,
     /// Generation-time plugins activated by those same dependencies.
     pub cng_plugins: Vec<DiscoveredPlugin>,
+    /// Source tree whose `platforms/` back the generated Hosts. `None` keeps
+    /// the published SDK.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_sdk: Option<PathBuf>,
+    /// Git source of the `whisker` crate, which the generated Rust Hosts must share.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub whisker_git: Option<crate::GitSource>,
 }
 
 impl ProjectDependencyGraph {
@@ -84,6 +91,8 @@ impl ProjectDependencyGraph {
                 .context("resolve Whisker modules")?,
             cng_plugins: discover_plugins_from_metadata(&metadata, app_package)
                 .context("resolve Whisker CNG plugins")?,
+            host_sdk: crate::host_sdk::source_root(&metadata),
+            whisker_git: crate::git_source::whisker(&metadata),
         })
     }
 }

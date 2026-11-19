@@ -91,12 +91,17 @@ impl<'a> Client<'a> {
     /// Exchange the service-account key for an access token. Proves
     /// the key itself works; says nothing about Play Console access.
     pub fn connect(account: &'a PlaystoreServiceAccount, package: &'a str) -> Result<Self> {
+        anyhow::ensure!(
+            account.token_uri == "https://oauth2.googleapis.com/token",
+            "service-account token_uri must be https://oauth2.googleapis.com/token"
+        );
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock before 1970")?
             .as_secs();
         let jwt = assertion(account, now)?;
-        let resp = ureq::post(&account.token_uri).send_form(&[
+        let agent = ureq::AgentBuilder::new().redirects(0).build();
+        let resp = agent.post(&account.token_uri).send_form(&[
             ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
             ("assertion", &jwt),
         ]);
@@ -346,6 +351,32 @@ mod tests {
         out.status
             .success()
             .then(|| String::from_utf8(out.stdout).unwrap())
+    }
+
+    #[test]
+    fn rejects_untrusted_token_endpoints_before_signing() {
+        for endpoint in [
+            "http://oauth2.googleapis.com/token",
+            "https://oauth2.googleapis.com.evil.test/token",
+            "https://evil.test/token",
+            "https://oauth2.googleapis.com/token?redirect=evil",
+            "https://oauth2.googleapis.com/token/extra",
+            "https://user@oauth2.googleapis.com/token",
+        ] {
+            let account = PlaystoreServiceAccount {
+                client_email: "example@example.test".into(),
+                private_key: "invalid".into(),
+                token_uri: endpoint.into(),
+            };
+            let error = match Client::connect(&account, "com.example.app") {
+                Ok(_) => panic!("untrusted token endpoint accepted"),
+                Err(error) => error,
+            };
+            assert!(
+                error.to_string().contains("token_uri"),
+                "{endpoint}: {error}"
+            );
+        }
     }
 
     #[test]

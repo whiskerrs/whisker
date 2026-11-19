@@ -81,6 +81,11 @@ pub struct AndroidInputs {
     /// typically pass `../..` (or similar) — the path to the cargo
     /// workspace root containing the user app's `Cargo.toml`.
     pub whisker_workspace_path: PathBuf,
+    /// Whisker source checkout whose `platforms/android` builds the Host
+    /// runtime and Gradle plugin. `None` uses the published artifacts unless
+    /// `whisker_workspace_path` is a Whisker source checkout.
+    #[serde(default)]
+    pub whisker_host_sdk_path: Option<PathBuf>,
     /// Cargo crate name of the user app. Echoed into
     /// `whisker { userPackage = "..." }`. The Settings plugin
     /// walks the cargo dep graph rooted here for
@@ -116,6 +121,10 @@ pub struct AndroidInputs {
     /// `MainActivity` deep-link schemes. See `AndroidManifest::main_activity_url_schemes`.
     #[serde(default)]
     pub main_activity_url_schemes: Vec<String>,
+    /// `MainActivity`'s `android:screenOrientation`. See
+    /// `AndroidManifest::main_activity_screen_orientation`.
+    #[serde(default)]
+    pub main_activity_screen_orientation: Option<String>,
     /// Overrides `<application android:theme>`. `None` → the template
     /// default. See `AndroidManifest::application_theme`.
     #[serde(default)]
@@ -210,6 +219,15 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
     v.insert(
         "whisker_workspace_path",
         inputs.whisker_workspace_path.display().to_string(),
+    );
+    v.insert(
+        "whisker_host_sdk_path",
+        inputs
+            .whisker_host_sdk_path
+            .as_ref()
+            .unwrap_or(&inputs.whisker_workspace_path)
+            .display()
+            .to_string(),
     );
     v.insert("whisker_user_package", inputs.whisker_user_package.clone());
     v.insert("whisker_sdk_version", inputs.whisker_sdk_version.clone());
@@ -654,6 +672,8 @@ pub fn inputs_from_with_engine(
     let extra_meta_data = android_ir.manifest.application_meta_data.clone();
     let extra_application_attributes = android_ir.manifest.application_attributes.clone();
     let main_activity_url_schemes = android_ir.manifest.main_activity_url_schemes.clone();
+    let main_activity_screen_orientation =
+        android_ir.manifest.main_activity_screen_orientation.clone();
     let android_theme = android_ir.manifest.application_theme.clone();
     let main_activity_imports = android_ir.manifest.main_activity_imports.clone();
     let main_activity_pre_super = android_ir.manifest.main_activity_pre_super.clone();
@@ -672,6 +692,7 @@ pub fn inputs_from_with_engine(
         target_sdk,
         rust_lib_name,
         whisker_workspace_path,
+        whisker_host_sdk_path: None,
         whisker_user_package,
         whisker_sdk_version,
         whisker_gradle_plugin_version,
@@ -680,6 +701,7 @@ pub fn inputs_from_with_engine(
         extra_meta_data,
         extra_application_attributes,
         main_activity_url_schemes,
+        main_activity_screen_orientation,
         android_theme,
         main_activity_imports,
         main_activity_pre_super,
@@ -687,7 +709,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 39,
+        template_version: 44,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -706,6 +728,21 @@ mod tests {
         p
     }
 
+    #[test]
+    fn host_sdk_path_selects_local_android_sources() {
+        let mut inputs = sample_inputs();
+        assert_eq!(template_vars(&inputs)["whisker_host_sdk_path"], "../..");
+        inputs.whisker_host_sdk_path = Some(PathBuf::from("/checkouts/whisker/4c4fdcf"));
+        assert_eq!(
+            template_vars(&inputs)["whisker_host_sdk_path"],
+            "/checkouts/whisker/4c4fdcf"
+        );
+        let project = crate::android::application::declarations(&inputs).unwrap();
+        let settings = format!("{:?}", project.settings);
+        assert!(settings.contains("/checkouts/whisker/4c4fdcf/platforms/android/gradle-plugin"));
+        assert!(settings.contains("file(\\\"/checkouts/whisker/4c4fdcf\\\")"));
+    }
+
     fn sample_inputs() -> AndroidInputs {
         AndroidInputs {
             app_name: "HelloWorld".into(),
@@ -717,6 +754,7 @@ mod tests {
             target_sdk: 34,
             rust_lib_name: "hello_world".into(),
             whisker_workspace_path: PathBuf::from("../.."),
+            whisker_host_sdk_path: None,
             whisker_user_package: "hello-world".into(),
             whisker_sdk_version: "0.1.0".into(),
             whisker_gradle_plugin_version: "0.1.0".into(),
@@ -725,6 +763,7 @@ mod tests {
             extra_meta_data: Vec::new(),
             extra_application_attributes: Vec::new(),
             main_activity_url_schemes: Vec::new(),
+            main_activity_screen_orientation: None,
             android_theme: None,
             main_activity_imports: Vec::new(),
             main_activity_pre_super: Vec::new(),
@@ -732,7 +771,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 39,
+            template_version: 44,
             cargo_selection: crate::CargoSelection::default(),
         }
     }

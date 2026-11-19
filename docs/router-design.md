@@ -61,7 +61,7 @@ kinds:
 | --- | --- | --- |
 | `Route` | A screen (leaf) or a layout (with children) | optional |
 | `Stack` | **Ordered** container: push/pop, has history | `Route` (+ `..spread`) |
-| `Switch` | **Parallel** container: keeps all children alive, selects one, no history | containers (one per branch) |
+| `Switch` | **Parallel** container: mounts a child when it is first selected and keeps it alive, selects one, no history | containers (one per branch) |
 
 A `Route` with both a `component` and children is a **layout route**
 (the Expo `_layout.tsx` equivalent): its component renders with an
@@ -167,6 +167,9 @@ spreading the same group into N stacks creates N instances of
 `/post/:id` that **share a route id** (`"post"`). Relative resolution
 (see below) picks the right instance at navigate time.
 
+Fragments may precede layout routes or appear inside them; layout chrome wraps
+the same container regardless of the number of roots each fragment contributes.
+
 ### Per-screen animation
 
 Transitions are **parameters of the `Route` in `routes!`**, not
@@ -201,6 +204,13 @@ When a route does not specify `transition`, the default is platform-aware:
 iOS uses a slide transition, Android uses its native-style transition, and
 Web/Desktop switch screens immediately. An explicit `transition` on the
 `Route` overrides that default on every platform.
+
+A `replace` transition pairs the incoming screen (`Role::Top`) with the
+replaced screen (`Role::Under`) using the incoming route's transition and
+one controller. The outgoing content remains paused while its wrapper
+animates, and is disposed when the transition finishes or is cancelled.
+Custom transitions can fade out transparent outgoing content before fading
+in the incoming content without changing the shared background.
 
 ### Chrome (tab bar) is a layout `Route`, not the `Switch`
 

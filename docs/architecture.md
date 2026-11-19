@@ -6,7 +6,7 @@ and layout. A **Host** connects that Runtime to a particular platform: it owns
 the window and event loop, measures platform content, and draws the UI.
 
 **Runtime and Host are separated by responsibility, not by language or thread.**
-The Web and Desktop Hosts are also written in Rust. On each platform, the Host
+The Web and Linux Hosts are also written in Rust. On each platform, the Host
 calls into the Runtime on its UI thread, and the Runtime calls back into Host
 services when it needs measurement or presentation.
 
@@ -85,7 +85,7 @@ threads. The Host owns the mounted Runtime's lifetime and initiates lifecycle
 transitions; the Runtime implements what those transitions do to UI state.
 
 Android, iOS, and macOS carry these interactions through the mobile FFI Driver.
-Web and Desktop use Rust calls directly. The Driver adapts the boundary; it
+Web and Linux use Rust calls directly. The Driver adapts the boundary; it
 does not take over layout, scheduling policy, or platform drawing.
 
 ### Shared UI terms
@@ -216,16 +216,12 @@ They differ in how they connect to the operating system or browser.
 | [Android](../platforms/android/runtime/) | Kotlin/JNI and the mobile FFI Driver | Android views, frame callbacks, text measurement, drawing, and native modules |
 | [iOS](../platforms/ios/) | Swift and the mobile FFI Driver | UIKit views, frame callbacks, text measurement, drawing, and native modules |
 | [macOS](../platforms/ios/) | Swift and the mobile FFI Driver | The iOS Host built against AppKit: AppKit views, frame callbacks, text measurement, drawing, and native modules |
+| [Windows](../platforms/windows/host/) | C++/WinRT and the mobile FFI Driver | A WinUI 3 window with Composition visuals per node, Direct2D drawing, DirectWrite text measurement, and WIC image decoding; shipped as the `Whisker.WindowsHost` NuGet package that `whisker-windows` links |
 | [Linux](../platforms/linux/src/lib.rs) | Direct Rust calls | GTK4 widgets placed with Rust geometry, Pango text measurement, GSK snapshot drawing, and the GLib frame clock |
 | [Web](../platforms/web/src/lib.rs) | Direct Rust calls from WebAssembly | DOM presentation, browser measurement and input, `requestAnimationFrame` scheduling |
-| [Desktop](../platforms/desktop/src/lib.rs) | Direct Rust calls | A shared `winit` window/event loop, `cosmic-text` measurement, and `wgpu` drawing |
 
-The Windows target crate sits above the common Desktop Host.
-It provides an OS-named entry point and a place for platform-specific integration;
-the common renderer lives in `platforms/desktop`.
-
-Android, iOS, and macOS need a foreign-function interface because their launch
-shells are written in Kotlin and Swift:
+Android, iOS, macOS, and Windows need a foreign-function interface because their
+launch shells are written in Kotlin, Swift, and C++:
 
 - [`whisker-driver-sys`](../crates/whisker-driver-sys/src/lib.rs) defines the raw
   mobile ABI: C-compatible values, callbacks, and entry points. Host declarations
@@ -233,7 +229,7 @@ shells are written in Kotlin and Swift:
 - [`whisker-driver`](../crates/whisker-driver/src/lib.rs) owns the opaque runtime
   handle, translates borrowed values, and adapts callbacks to the Rust runtime.
 
-Web and Desktop do not pass through this mobile ABI. They instantiate the
+Web and Linux do not pass through this mobile ABI. They instantiate the
 runtime directly and supply Rust implementations of the same Host boundaries.
 
 ### Scrolling, lists, and platform modules
@@ -244,6 +240,16 @@ the current offset back to the Runtime; an application `scroll_to` request
 travels in the opposite direction as a command. The Runtime uses reported
 offsets for input routing and List reconciliation. This transient presentation
 state is why a scroll is not a new flex-layout pass for every finger movement.
+
+Pull-to-refresh follows the same split. `on_refresh` sets the ScrollView's
+`enable-refresh` property, and a vertical ScrollView on iOS (`UIRefreshControl`)
+or Android (`SwipeRefreshLayout`) then shows the native control and reports a
+`refresh` event when the user pulls. The `refreshing` property drives the
+indicator. Because the Host starts the indicator itself, the Runtime records
+`refreshing = true` before calling the handler and then writes the bound value
+(or `false` without a binding), so a value that never changed in the
+application still reaches the Host. Web and desktop Hosts accept both
+properties and never emit the event.
 
 `List` builds on that `ScrollView` in Rust. It chooses the keyed item subtrees
 to mount, keeps track of item extents, and uses spacers for unmounted ranges.
@@ -284,8 +290,12 @@ program in a generated Cargo package under `target/.whisker/generator`. This
 avoids compiling the application library, which a direct `cargo run` of the
 application's configuration bin also compiles. The generated package uses the
 application's resolved CNG dependency and discovered plugin dependencies;
-arbitrary application dependencies and features are not inherited. Legacy
-`configure(&mut Config)` files receive an entry point that calls `whisker_cng::run`.
+arbitrary application dependencies and features are not inherited. Each
+dependency keeps its resolved source (registry version, git reference, or path)
+so it unifies with the application's `[patch]` entries, and the package starts
+from the application's `Cargo.lock` so git branches stay on the locked commits.
+Legacy `configure(&mut Config)` files receive an entry point that calls
+`whisker_cng::run`.
 There is no configuration-only execution mode or configuration-output cache.
 
 Each execution performs generation and its fingerprint checks. After all requested
@@ -346,3 +356,9 @@ For focused explanations, continue with [reactivity](reactivity-design.md),
 [lists](list-design.md), [routing](router-design.md), or
 [animation](animation-design.md). These documents describe the current design;
 issues, PRs, and Git history preserve the discussions behind it.
+
+## Gradle wrapper integrity
+
+The generated wrapper pins `distributionSha256Sum` to Gradle's official checksum
+for the selected binary ZIP. Update the URL and checksum together when deliberately
+changing Gradle versions. The wrapper verifies downloaded distributions before use.

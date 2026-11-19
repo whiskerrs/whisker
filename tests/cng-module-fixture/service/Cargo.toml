@@ -7,4 +7,4 @@ publish = false
 [package.metadata.whisker.module.platforms]
 ios = { kind = "common" }
 web = { manifest = "web/Cargo.toml" }
-desktop = { kind = "common" }
+linux = { kind = "common" }

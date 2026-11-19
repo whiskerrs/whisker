@@ -41,9 +41,7 @@
 //!   `WindowInsetsCompat.getInsets(systemBars() | displayCutout())`
 //!   from the host Activity's decor view. Re-fires through
 //!   `OnApplyWindowInsetsListener`, and the module re-installs the
-//!   listener on each new host attach so a config-change Activity
-//!   recreation (the default behaviour without
-//!   `android:configChanges="orientation|screenSize"` on the manifest)
+//!   listener on each new host attach, so a recreated Activity
 //!   transparently rewires.
 //! - **Web and Desktop**: returns zero on every edge. Whisker content owns the
 //!   browser viewport or desktop window and has no mobile system-bar inset to

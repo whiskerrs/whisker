@@ -111,10 +111,13 @@ fn published_packages(root: &Path) -> Result<Vec<Package>> {
 }
 
 /// The crates a mobile app links: the framework, the mobile Driver, and every
-/// module except its Web and Desktop Host halves.
+/// module except its Rust Host halves.
 fn is_mobile(name: &str, is_module: bool) -> bool {
     matches!(name, "whisker" | "whisker-driver")
-        || (is_module && !name.ends_with("-web") && !name.ends_with("-desktop"))
+        || (is_module
+            && !["-web", "-linux", "-desktop"]
+                .iter()
+                .any(|suffix| name.ends_with(suffix)))
 }
 
 fn unpack(root: &Path, work: &Path, packages: &[Package]) -> Result<PathBuf> {
@@ -172,7 +175,8 @@ mod tests {
         assert!(is_mobile("whisker-driver", false));
         assert!(is_mobile("whisker-input", true));
         assert!(!is_mobile("whisker-input-web", true));
-        assert!(!is_mobile("whisker-image-desktop", true));
+        assert!(!is_mobile("whisker-image-linux", true));
+        assert!(!is_mobile("whisker-local-store-desktop", true));
         assert!(!is_mobile("whisker-cli", false));
         assert!(!is_mobile("whisker-web", false));
     }

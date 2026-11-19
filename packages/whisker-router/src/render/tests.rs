@@ -357,12 +357,28 @@ fn tree_is_drawn_once_no_double_mount() {
         flush();
 
         // Home (the selected tab's leaf) mounts exactly once; the list
-        // tab's `list` also mounts once (Switch keeps all branches alive),
-        // but neither mounts twice.
+        // tab is not selected yet, so its leaf has not mounted.
+        {
+            let c = counts.borrow();
+            assert_eq!(c.get("home").copied(), Some(1), "home mounted once");
+            assert_eq!(
+                c.get("list").copied(),
+                None,
+                "unvisited tab stays unmounted"
+            );
+            assert_eq!(c.get("detail").copied(), None);
+        }
+
+        // A tab mounts when first selected and is kept from then on.
+        h.navigate("/list").unwrap();
+        flush();
+        h.navigate("/").unwrap();
+        flush();
+        h.navigate("/list").unwrap();
+        flush();
         let c = counts.borrow();
-        assert_eq!(c.get("home").copied(), Some(1), "home mounted once");
+        assert_eq!(c.get("home").copied(), Some(1), "home not re-mounted");
         assert_eq!(c.get("list").copied(), Some(1), "list mounted once");
-        assert_eq!(c.get("detail").copied(), None);
     });
 }
 
@@ -382,6 +398,83 @@ fn navigate_mounts_new_leaf_exactly_once() {
         assert_eq!(c.get("detail").copied(), Some(1), "detail mounted once");
         assert_eq!(c.get("home").copied(), Some(1), "home not re-mounted");
     });
+}
+
+/// `Stack { Switch(tabs) Route(modal) }` with mount-counting leaves; `layout`
+/// wraps the Switch in a layout Route, as `routes!` does for a tab bar.
+fn counting_stacked_tabs_handle(counts: Counts, layout: bool) -> RouterHandle {
+    let tabs = RouteTree::Switch(
+        SwitchDef::new("tabs", 0),
+        vec![
+            RouteTree::Stack(vec![
+                RouteTree::route("", "home"),
+                RouteTree::route("detail/:id", "detail"),
+            ]),
+            RouteTree::Stack(vec![
+                RouteTree::route("list", "list"),
+                RouteTree::route("detail/:id", "detail"),
+            ]),
+        ],
+    );
+    let tabs = if layout {
+        RouteTree::route_with(RouteDef::new("", "layout"), vec![tabs])
+    } else {
+        tabs
+    };
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
+        tabs,
+        RouteTree::route("modal", "modal"),
+    ]));
+    let mk = |id: &'static str, counts: Counts| {
+        move |_: &RouteInstance| {
+            *counts.borrow_mut().entry(id).or_insert(0) += 1;
+            whisker::runtime::view::create_phantom_element()
+        }
+    };
+    let registry = RouteRegistry::new()
+        .route("home", mk("home", counts.clone()))
+        .route("list", mk("list", counts.clone()))
+        .route_with(
+            "detail",
+            RouteTransition::none(),
+            mk("detail", counts.clone()),
+        )
+        .route_with(
+            "modal",
+            RouteTransition::none(),
+            mk("modal", counts.clone()),
+        );
+    RouterHandle::new((tree, registry))
+}
+
+/// A tab switch changes only the nested Switch, so the outer Stack must keep
+/// the tabs (and their layout) mounted instead of replacing its top entry.
+#[test]
+fn tab_switch_inside_stack_keeps_tabs_mounted() {
+    for layout in [false, true] {
+        with_runtime(|| {
+            let counts: Counts = Rc::new(RefCell::new(HashMap::new()));
+            let h = counting_stacked_tabs_handle(counts.clone(), layout);
+            let _slot = mount_node(&h, NodePath::root());
+            flush();
+
+            h.navigate("/list").unwrap();
+            flush();
+            h.navigate("/").unwrap();
+            flush();
+            h.navigate("/list").unwrap();
+            flush();
+            h.navigate("/modal").unwrap();
+            flush();
+            h.back().unwrap();
+            flush();
+
+            let c = counts.borrow();
+            assert_eq!(c.get("home").copied(), Some(1), "layout={layout}");
+            assert_eq!(c.get("list").copied(), Some(1), "layout={layout}");
+            assert_eq!(c.get("modal").copied(), Some(1), "layout={layout}");
+        });
+    }
 }
 
 /// A single root Stack with mount-counting leaves (`home` at `""`, `detail`
@@ -915,6 +1008,150 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
             1,
             "detail content disposed exactly once, on exit-animation finish"
         );
+    });
+}
+
+#[test]
+fn edge_drag_becomes_a_swipe_only_when_it_travels_right() {
+    use crate::render::platform_navigation::{DragIntent, drag_intent};
+
+    assert_eq!(drag_intent(6.0, -7.0), DragIntent::Undecided);
+    assert_eq!(drag_intent(14.0, -9.0), DragIntent::Swipe);
+    assert_eq!(drag_intent(9.0, -14.0), DragIntent::Scroll);
+    assert_eq!(drag_intent(-14.0, 2.0), DragIntent::Scroll);
+}
+
+/// A home → detail → extra stack whose pushed screens log their mounts and cleanups.
+fn logging_stack() -> (RouterHandle, Rc<RefCell<Vec<&'static str>>>) {
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
+        RouteTree::route("", "home"),
+        RouteTree::route("detail/:id", "detail"),
+        RouteTree::route("extra", "extra"),
+    ]));
+    let logged = |log: &Rc<RefCell<Vec<&'static str>>>| {
+        let log = log.clone();
+        move |_: &RouteInstance| {
+            log.borrow_mut().push("mount");
+            let log = log.clone();
+            whisker::on_cleanup(move || log.borrow_mut().push("cleanup"));
+            whisker::runtime::view::create_phantom_element()
+        }
+    };
+    let registry = RouteRegistry::new()
+        .route_with("home", RouteTransition::slide(), |_: &RouteInstance| {
+            whisker::runtime::view::create_phantom_element()
+        })
+        .route_with("detail", RouteTransition::slide(), logged(&log))
+        .route_with("extra", RouteTransition::slide(), logged(&log));
+    (RouterHandle::new((tree, registry)), log)
+}
+
+/// Runs a started pop to the end of its slide-out, stopping short of the teardown delay.
+fn finish_slide_out() {
+    for t in [1000.0, 1016.0, 5000.0, 5016.0] {
+        whisker_animation::__step_for_tests(t);
+        flush();
+    }
+}
+
+#[test]
+fn popped_entry_is_torn_down_after_its_slide_out_not_in_it() {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
+        let (h, log) = logging_stack();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+
+        h.back().unwrap();
+        flush();
+        finish_slide_out();
+        whisker_animation::__step_for_tests(5100.0);
+        flush();
+        assert_eq!(
+            *log.borrow(),
+            ["mount"],
+            "the slide-out's frames carry no teardown"
+        );
+
+        whisker_animation::__step_for_tests(5200.0);
+        flush();
+        assert_eq!(*log.borrow(), ["mount", "cleanup"]);
+    });
+}
+
+#[test]
+fn navigation_tears_a_retired_entry_down_before_mounting() {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
+        let (h, log) = logging_stack();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+        h.back().unwrap();
+        flush();
+        finish_slide_out();
+
+        h.navigate("/detail/1").unwrap();
+        flush();
+        assert_eq!(*log.borrow(), ["mount", "cleanup", "mount"]);
+
+        settle_animations();
+        assert_eq!(*log.borrow(), ["mount", "cleanup", "mount"]);
+    });
+}
+
+#[test]
+fn second_back_tears_the_first_popped_entry_down() {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
+        let (h, log) = logging_stack();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+        h.push("/extra").unwrap();
+        flush();
+        settle_animations();
+        h.back().unwrap();
+        flush();
+        finish_slide_out();
+        assert_eq!(*log.borrow(), ["mount", "mount"]);
+
+        h.back().unwrap();
+        flush();
+        assert_eq!(*log.borrow(), ["mount", "mount", "cleanup"]);
+
+        settle_animations();
+        assert_eq!(*log.borrow(), ["mount", "mount", "cleanup", "cleanup"]);
+    });
+}
+
+#[test]
+fn unmounting_the_stack_cleans_up_a_retired_entry() {
+    with_runtime(|| {
+        whisker_animation::__reset_for_tests();
+        let (h, log) = logging_stack();
+        let stack = Owner::new(None);
+        let _slot = stack.with(|| mount_node(&h, NodePath::root()));
+        flush();
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+        h.back().unwrap();
+        flush();
+        finish_slide_out();
+        assert_eq!(*log.borrow(), ["mount"]);
+
+        stack.dispose();
+        flush();
+        assert_eq!(*log.borrow(), ["mount", "cleanup"]);
     });
 }
 
@@ -1469,6 +1706,7 @@ mod replace_repro {
         visibility: HashMap<Element, String>,
         opacity: HashMap<Element, f32>,
         pointer_events: HashMap<Element, String>,
+        a11y_hidden: HashMap<Element, bool>,
         ops: Vec<String>,
         /// A positioned insert whose reference wasn't a live child — the
         /// on-device silent drop. Non-empty = the bug is reproduced.
@@ -1582,6 +1820,26 @@ mod replace_repro {
             )
         }
 
+        fn path_a11y_hidden(&self, root: Element, el: Element) -> Option<Vec<bool>> {
+            let path = self.path_elements(root, el)?;
+            let inner = self.0.borrow();
+            Some(
+                path.iter()
+                    .map(|e| inner.a11y_hidden.get(e).copied().unwrap_or(false))
+                    .collect(),
+            )
+        }
+
+        /// `(a11y hidden, visibility, opacity)` last applied to `el`.
+        fn concealment(&self, el: Element) -> (bool, Option<String>, Option<f32>) {
+            let inner = self.0.borrow();
+            (
+                inner.a11y_hidden.get(&el).copied().unwrap_or(false),
+                inner.visibility.get(&el).cloned(),
+                inner.opacity.get(&el).copied(),
+            )
+        }
+
         fn path_opacities(&self, root: Element, el: Element) -> Option<Vec<Option<f32>>> {
             let path = self.path_elements(root, el)?;
             let inner = self.0.borrow();
@@ -1623,6 +1881,12 @@ mod replace_repro {
                 .entry(handle)
                 .or_default()
                 .insert(key.to_string(), value.to_string());
+        }
+        fn set_accessibility(&self, handle: Element, accessibility: whisker::Accessibility) {
+            self.0
+                .borrow_mut()
+                .a11y_hidden
+                .insert(handle, accessibility.hidden);
         }
         fn set_specified_style(
             &self,
@@ -1957,6 +2221,99 @@ mod replace_repro {
         });
     }
 
+    /// A transparent incoming screen must be able to fade the replaced
+    /// screen out, even when that screen used a different transition.
+    #[test]
+    fn replace_drives_outgoing_opacity_with_the_incoming_transition() {
+        use crate::render::transition::{Pose, PoseContext, Role, Transition};
+
+        struct SequentialFade;
+        impl Transition for SequentialFade {
+            fn config(&self) -> whisker::AnimConfig {
+                whisker::AnimConfig::ease_out(240)
+            }
+            fn pose(&self, ctx: PoseContext) -> Pose {
+                let p = ctx.progress.clamp(0.0, 1.0);
+                let opacity = match ctx.role {
+                    Role::Top => (2.0 * p - 1.0).max(0.0),
+                    Role::Under => (1.0 - 2.0 * p).max(0.0),
+                };
+                Pose::new(whisker::css::Transform::new(), opacity)
+            }
+        }
+
+        with_runtime(|| {
+            whisker_animation::__reset_for_tests();
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle_with_transition(RouteTransition::custom(SequentialFade));
+                let slot = mount_node(&h, NodePath::root());
+                flush();
+                let old_content = rec.by_cid("home").unwrap();
+                let old = rec.direct_child_ancestor(slot, old_content).unwrap();
+                h.replace("/detail/1").unwrap();
+                flush();
+                let new_content = rec.by_cid("1").unwrap();
+                let new = rec.direct_child_ancestor(slot, new_content).unwrap();
+                let ctrl = h
+                    .active_stack_bridge_for_test(&NodePath::root())
+                    .unwrap()
+                    .top_ctrl
+                    .unwrap();
+                let mut saw_exit = false;
+                let mut saw_enter = false;
+                for frame in 0..16 {
+                    whisker_animation::__step_for_tests(1000.0 + frame as f64 * 16.0);
+                    flush();
+                    let p = ctrl.value().get_untracked();
+                    let inner = rec.0.borrow();
+                    let top = inner.opacity.get(&new).copied().unwrap_or(1.0);
+                    assert_eq!(top, (2.0 * p - 1.0).max(0.0));
+                    if p < 1.0 {
+                        let under = inner.opacity.get(&old).copied().unwrap_or(1.0);
+                        assert_eq!(under, (1.0 - 2.0 * p).max(0.0));
+                        assert!(top == 0.0 || under == 0.0);
+                        saw_exit |= under > 0.0 && under < 1.0;
+                        saw_enter |= top > 0.0 && top < 1.0;
+                    }
+                }
+                assert!(saw_exit && saw_enter);
+                settle_animations();
+                assert!(!rec.reachable(slot, old_content));
+                assert!(rec.reachable(slot, new_content));
+            });
+        });
+    }
+
+    #[test]
+    fn back_during_replace_removes_both_replaced_and_popped_contents() {
+        with_runtime(|| {
+            whisker_animation::__reset_for_tests();
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle_with_transition(RouteTransition::fade());
+                let slot = mount_node(&h, NodePath::root());
+                h.push("/detail/1").unwrap();
+                flush();
+                settle_animations();
+                let old = rec.by_cid("1").unwrap();
+                h.replace("/detail/2").unwrap();
+                flush();
+                let new = rec.by_cid("2").unwrap();
+                whisker_animation::__step_for_tests(1000.0);
+                whisker_animation::__step_for_tests(1016.0);
+                flush();
+                assert!(rec.reachable(slot, old));
+                h.back().unwrap();
+                flush();
+                settle_animations();
+                assert!(!rec.reachable(slot, old));
+                assert!(!rec.reachable(slot, new));
+                assert!(rec.reachable(slot, rec.by_cid("home").unwrap()));
+            });
+        });
+    }
+
     #[test]
     fn replace_attaches_new_leaf_content_to_the_real_tree() {
         with_runtime(|| {
@@ -2135,6 +2492,98 @@ mod replace_repro {
         });
     }
 
+    const COVERED: (bool, Option<&str>, Option<f32>) = (true, Some("hidden"), Some(0.0));
+
+    fn concealment_of(rec: &Rec, el: Element) -> (bool, Option<&'static str>, Option<f32>) {
+        let (hidden, visibility, opacity) = rec.concealment(el);
+        let visibility = visibility.map(|v| if v == "hidden" { "hidden" } else { "visible" });
+        (hidden, visibility, opacity)
+    }
+
+    fn covered_under_after_push(rec: &Rec) -> (RouterHandle, Element) {
+        let h = real_leaf_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+        let under = h
+            .active_stack_bridge()
+            .and_then(|b| b.under_wrapper)
+            .expect("under wrapper after push");
+        assert_eq!(concealment_of(rec, under), COVERED, "precondition");
+        (h, under)
+    }
+
+    #[test]
+    fn push_hides_the_covered_under_once_the_slide_settles() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle();
+                let _slot = mount_node(&h, NodePath::root());
+                flush();
+                h.navigate("/detail/1").unwrap();
+                flush();
+                whisker_animation::__step_for_tests(0.0);
+                flush();
+                let bridge = h.active_stack_bridge().expect("bridge mid-push");
+                let under = bridge.under_wrapper.expect("under wrapper");
+                assert!(
+                    !rec.concealment(under).0,
+                    "the under stays exposed while the push slides"
+                );
+
+                settle_animations();
+                assert_eq!(concealment_of(&rec, under), COVERED);
+                let top = bridge.top_wrapper.expect("top wrapper");
+                assert!(!rec.concealment(top).0, "the top stays accessible");
+            });
+        });
+    }
+
+    #[test]
+    fn pop_start_reveals_the_covered_under() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let (h, under) = covered_under_after_push(&rec);
+                assert!(h.back().is_ok());
+                flush();
+                assert_eq!(
+                    concealment_of(&rec, under),
+                    (false, Some("visible"), Some(1.0)),
+                    "the revealed screen is exposed from the pop's first frame"
+                );
+                settle_animations();
+                assert!(!rec.concealment(under).0);
+            });
+        });
+    }
+
+    #[test]
+    fn cancelled_back_gesture_re_hides_the_under() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let (h, under) = covered_under_after_push(&rec);
+                let bridge = begin(&h, SwipeEdge::Left).expect("detail can reveal home");
+                flush();
+                assert!(
+                    !rec.concealment(under).0,
+                    "a starting back gesture exposes the under"
+                );
+                scrub(&bridge, 0.4);
+                flush();
+                assert_eq!(rec.concealment(under).1.as_deref(), Some("visible"));
+
+                settle(&h, &bridge, /* commit = */ false, None);
+                settle_animations();
+                assert_eq!(concealment_of(&rec, under), COVERED);
+            });
+        });
+    }
+
     /// Two-tab `Switch`; the NON-first branch's leaf renders a
     /// `create_element_by_name` element (standing in for a
     /// `module_element` / `whisker-svg` `SvgRenderer`, i.e. what
@@ -2166,9 +2615,9 @@ mod replace_repro {
         RouterHandle::new((tree, registry))
     }
 
-    /// A native leaf in an inactive Switch branch is eager-mounted with its
-    /// props and retains its layout, but neither paints nor accepts pointer
-    /// input until its branch becomes active.
+    /// A native leaf in a Switch branch that was visited and left keeps its
+    /// props and layout, but neither paints nor accepts pointer input until
+    /// its branch becomes active again.
     #[test]
     fn inactive_switch_branch_keeps_layout_without_paint_or_pointer_input() {
         with_runtime(|| {
@@ -2177,12 +2626,21 @@ mod replace_repro {
                 let h = switch_with_native_second_branch();
                 let root = mount_node(&h, NodePath::root());
                 flush();
+                assert!(
+                    rec.by_cid("native-b").is_none(),
+                    "a branch that was never selected must not mount"
+                );
+                h.navigate("/b").unwrap();
+                flush();
+                h.navigate("/").unwrap();
+                flush();
 
                 // (1) The non-first branch's native leaf is created AND
-                // attributed at mount — props are dispatched, Rust-side.
+                // attributed when its branch mounts — props are dispatched,
+                // Rust-side.
                 let native_b = rec
                     .by_cid("native-b")
-                    .expect("non-first branch's native leaf must be created at mount");
+                    .expect("non-first branch's native leaf must be created once visited");
                 {
                     let inner = rec.0.borrow();
                     let attrs = inner.attrs.get(&native_b).expect("has attrs");
@@ -2234,6 +2692,19 @@ mod replace_repro {
                     "inactive branch must reject pointer input\nops:\n{}",
                     rec.0.borrow().ops.join("\n")
                 );
+                assert!(
+                    rec.path_a11y_hidden(root, native_b)
+                        .expect("native leaf reachable from root")
+                        .contains(&true),
+                    "inactive branch must be hidden from accessibility"
+                );
+                let native_a = rec.by_cid("native-a").expect("first branch leaf");
+                assert!(
+                    !rec.path_a11y_hidden(root, native_a)
+                        .expect("first branch leaf reachable from root")
+                        .contains(&true),
+                    "the selected branch must stay accessible"
+                );
 
                 // Selecting the branch restores paint and input without any
                 // 0→real layout transition.
@@ -2270,6 +2741,18 @@ mod replace_repro {
                     pointer_events.iter().all(|v| v.as_deref() != Some("none")),
                     "selected branch must accept pointer input\nops:\n{}",
                     rec.0.borrow().ops.join("\n")
+                );
+                assert!(
+                    !rec.path_a11y_hidden(root, native_b)
+                        .expect("native leaf still reachable after group navigation")
+                        .contains(&true),
+                    "selected branch must be accessible"
+                );
+                assert!(
+                    rec.path_a11y_hidden(root, native_a)
+                        .expect("first branch leaf reachable from root")
+                        .contains(&true),
+                    "the deselected branch must leave the accessibility tree"
                 );
             });
         });
@@ -2327,5 +2810,91 @@ fn stack_unmount_removes_registered_gesture_bridge() {
             router.state().get().current().location.pathname,
             "/detail/1"
         );
+    });
+}
+
+#[whisker::component]
+fn spread_layout_probe() -> whisker::runtime::view::Element {
+    if let Some(count) = whisker::use_context::<Rc<std::cell::Cell<usize>>>() {
+        count.set(count.get() + 1);
+    }
+    crate::render::Outlet::builder().build()
+}
+
+#[test]
+fn layout_paths_include_spread_roots_at_every_depth() {
+    use crate::render::registry::RouteFragment;
+    use crate::routes;
+
+    with_runtime(|| {
+        for count in 0..=3 {
+            let fragment = RouteFragment::new(
+                (0..count)
+                    .map(|i| RouteTree::route(format!("outer{i}"), format!("outer{i}")))
+                    .collect(),
+                RouteRegistry::new(),
+            );
+            let routes = routes! {
+                Stack {
+                    ..fragment
+                    Route(path: "before")
+                    ..fragment
+                    Route(component: SpreadLayoutProbe) {
+                        Stack {
+                            ..fragment
+                            Route(component: SpreadLayoutProbe) {
+                                Stack {
+                                    Route(path: "home")
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+            let handle = RouterHandle::new(routes);
+            let outer = NodePath(vec![2 * count + 1]);
+            let nested = outer.child(0).child(count);
+            assert!(
+                handle.layout_at(&outer).is_some(),
+                "outer layout, count={count}"
+            );
+            assert!(
+                handle.layout_at(&nested).is_some(),
+                "nested layout, count={count}"
+            );
+            assert!(
+                handle.layout_at(&NodePath(vec![count])).is_none(),
+                "ordinary route, count={count}"
+            );
+        }
+    });
+}
+
+#[test]
+fn layout_routes_after_spreads_are_mounted() {
+    use crate::routes;
+
+    with_runtime(|| {
+        let count = Rc::new(std::cell::Cell::new(0usize));
+        whisker::provide_context(count.clone());
+        let fragment = routes! {
+            Route(path: "landing")
+            Route(path: "help")
+        };
+        let handle = RouterHandle::new(routes! {
+            Stack {
+                ..fragment
+                Route(component: SpreadLayoutProbe) {
+                    Stack {
+                        Route(path: "home")
+                    }
+                }
+            }
+        });
+        whisker::provide_context(handle.clone());
+        handle.reset("/home").unwrap();
+        let _root = mount_node(&handle, NodePath::root());
+        flush();
+        assert_eq!(count.get(), 1);
     });
 }

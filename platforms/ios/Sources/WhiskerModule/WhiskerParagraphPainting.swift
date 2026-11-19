@@ -115,6 +115,9 @@ extension WhiskerParagraphLayout {
     func applyPaint(_ text: NSAttributedString) {
         let keys: Set<NSAttributedString.Key> = [.foregroundColor, .backgroundColor, .underlineStyle, .underlineColor,
             .strikethroughStyle, .strikethroughColor, .shadow, .whiskerInlineBackground, .whiskerInlineWave]
+        let paragraphManager = manager as? WhiskerParagraphLayoutManager
+        paragraphManager?.editingPaintOnly = true
+        defer { paragraphManager?.editingPaintOnly = false }
         storage.beginEditing()
         for key in keys { storage.removeAttribute(key, range: NSRange(location: 0, length: storage.length)) }
         text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, range, _ in

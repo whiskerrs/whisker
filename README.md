@@ -76,7 +76,7 @@ fn counter() -> Element {
 cargo install whisker-cli
 rustup target add aarch64-apple-ios-sim   # iOS Simulator on Apple silicon
 whisker new my-app && cd my-app
-whisker run ios          # also: android, web, desktop
+whisker run ios          # also: android, web, macos
 ```
 
 Each platform needs its Rust target: `aarch64-linux-android` for Android (plus

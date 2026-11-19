@@ -9,10 +9,13 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Native Windows application shell for Whisker."
+description = "Native WinUI 3 Windows Host for Whisker."
+# Exposes the Whisker.WindowsHost headers to C++ module builds as DEP_WHISKER_WINDOWS_INCLUDE.
+links = "whisker-windows"
+exclude = ["host"]
 
 [features]
-hot-reload = ["whisker-desktop/hot-reload"]
+hot-reload = ["whisker/hot-reload"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
-whisker-desktop = { workspace = true }
+whisker = { workspace = true }

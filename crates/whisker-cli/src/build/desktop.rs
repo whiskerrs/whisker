@@ -38,6 +38,8 @@ pub fn run(args: Args, no_tui: bool, platform: GenerationTarget) -> Result<()> {
         project_dir: &sync.gen_dir,
         target_dir: &target,
         profile: whisker_build::Profile::Release,
+        features: &[],
+        capture: None,
     })?;
     ui.complete(&artifact);
     Ok(())

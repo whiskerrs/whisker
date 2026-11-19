@@ -41,21 +41,31 @@ fn module_packages_pin_the_runtime_version_the_cli_generates() {
     let packages = workspace.join("packages");
     // Absent when this crate is built from its published .crate,
     // which carries no sibling packages to check.
-    let Ok(entries) = std::fs::read_dir(&packages) else {
+    if !packages.is_dir() {
         return;
-    };
+    }
 
     let expected = format!(
         "\"https://github.com/whiskerrs/whisker.git\", exact: \"{WHISKER_IOS_SPM_VERSION}\""
     );
     let mut stale = Vec::new();
-    for entry in entries.flatten() {
-        let manifest = entry.path().join("Package.swift");
-        let Ok(source) = std::fs::read_to_string(&manifest) else {
-            continue;
-        };
-        if source.contains("whiskerrs/whisker.git") && !source.contains(&expected) {
-            stale.push(manifest.display().to_string());
+    let mut directories = vec![packages];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(&directory).unwrap().flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                // Build caches and CNG output hold untracked manifests.
+                if !name.starts_with('.') && name != "target" && name != "gen" {
+                    directories.push(path);
+                }
+            } else if name == "Package.swift" {
+                let source = std::fs::read_to_string(&path).unwrap();
+                if source.contains("whiskerrs/whisker.git") && !source.contains(&expected) {
+                    stale.push(path.display().to_string());
+                }
+            }
         }
     }
     assert!(
@@ -75,6 +85,25 @@ fn bridge_exports_have_leading_underscore() {
             "BRIDGE_EXPORTS entry missing leading underscore: {sym}",
         );
     }
+}
+
+/// rustc strips Apple dylibs with `rust-objcopy`, whose misaligned
+/// LINKEDIT string pool Xcode's `ld` refuses to link the app against.
+#[test]
+fn apple_slices_never_let_rustc_strip() {
+    for hot_reload in [false, true] {
+        assert!(
+            release_profile_env(hot_reload).contains(&("CARGO_PROFILE_RELEASE_STRIP", "none")),
+            "hot_reload={hot_reload}",
+        );
+        assert!(strip_link_args(hot_reload).contains(&"-Clink-arg=-Wl,-S"));
+    }
+}
+
+#[test]
+fn only_production_slices_drop_local_symbols() {
+    assert!(strip_link_args(false).contains(&"-Clink-arg=-Wl,-x"));
+    assert!(!strip_link_args(true).contains(&"-Clink-arg=-Wl,-x"));
 }
 
 #[test]

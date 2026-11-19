@@ -47,7 +47,7 @@ impl std::str::FromStr for GenerationTarget {
         match value {
             "android" => Ok(Self::Android),
             "ios" => Ok(Self::Ios),
-            "macos" | "desktop" => Ok(Self::Macos),
+            "macos" => Ok(Self::Macos),
             "windows" => Ok(Self::Windows),
             "linux" => Ok(Self::Linux),
             "web" => Ok(Self::Web),

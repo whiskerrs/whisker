@@ -103,13 +103,7 @@ fn cargo_build_ios_dylib(
         "--crate-type",
         crate_type,
     ]);
-    if !hot_reload {
-        cmd.env("CARGO_PROFILE_RELEASE_LTO", "fat")
-            .env("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1")
-            .env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "z")
-            .env("CARGO_PROFILE_RELEASE_STRIP", "symbols")
-            .env("CARGO_PROFILE_RELEASE_PANIC", "abort");
-    }
+    cmd.envs(release_profile_env(hot_reload));
     let generation_target = if triple.ends_with("-apple-darwin") {
         whisker_cng::GenerationTarget::Macos
     } else {
@@ -130,6 +124,7 @@ fn cargo_build_ios_dylib(
     for sym in BRIDGE_EXPORTS {
         cmd.arg(format!("-Clink-arg=-Wl,-exported_symbol,{sym}"));
     }
+    cmd.args(strip_link_args(hot_reload));
     if let Some(c) = capture {
         std::fs::create_dir_all(&c.rustc_cache_dir)
             .with_context(|| format!("create rustc cache dir {}", c.rustc_cache_dir.display()))?;
@@ -148,6 +143,36 @@ fn cargo_build_ios_dylib(
         return Err(anyhow!("cargo rustc failed for {triple} ({status})"));
     }
     Ok(())
+}
+
+/// Cargo release-profile overrides for one Apple dylib slice.
+///
+/// `STRIP` stays `none` because rustc strips Apple dylibs with
+/// `rust-objcopy`, which can leave the LINKEDIT string pool 4-byte
+/// aligned, and Xcode's `ld` then rejects the app link with
+/// "mis-aligned LINKEDIT string pool"; [`strip_link_args`] strips instead.
+fn release_profile_env(hot_reload: bool) -> Vec<(&'static str, &'static str)> {
+    let mut env = vec![("CARGO_PROFILE_RELEASE_STRIP", "none")];
+    if !hot_reload {
+        env.extend([
+            ("CARGO_PROFILE_RELEASE_LTO", "fat"),
+            ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+            ("CARGO_PROFILE_RELEASE_OPT_LEVEL", "z"),
+            ("CARGO_PROFILE_RELEASE_PANIC", "abort"),
+        ]);
+    }
+    env
+}
+
+/// `ld` flags that strip the slice at link time: `-S` drops the debug
+/// map, and production adds `-x` for local symbols, which hot reload
+/// keeps because patches are resolved against them.
+fn strip_link_args(hot_reload: bool) -> &'static [&'static str] {
+    if hot_reload {
+        &["-Clink-arg=-Wl,-S"]
+    } else {
+        &["-Clink-arg=-Wl,-S", "-Clink-arg=-Wl,-x"]
+    }
 }
 
 /// Build a `<FRAMEWORK_NAME>.framework/` directory inside `parent`,

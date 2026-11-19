@@ -36,6 +36,16 @@ internal object DLFormat {
     const val OP_PAINT_OPACITY: Byte = 0x13
     const val OP_PAINT_FILL_TINT: Byte = 0x14
     const val OP_PAINT_STROKE_TINT: Byte = 0x15
+    const val OP_PAINT_STROKE_CAP: Byte = 0x16
+    const val OP_PAINT_STROKE_JOIN: Byte = 0x17
+
+    // Operands of OP_PAINT_STROKE_CAP / OP_PAINT_STROKE_JOIN; unknown values fall back to 0.
+    const val CAP_BUTT = 0
+    const val CAP_ROUND = 1
+    const val CAP_SQUARE = 2
+    const val JOIN_MITER = 0
+    const val JOIN_ROUND = 1
+    const val JOIN_BEVEL = 2
 
     // ---- path commands (0x20 – 0x2F) -------------------------------------
 

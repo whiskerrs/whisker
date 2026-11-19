@@ -14,6 +14,11 @@ import rs.whisker.runtime.generated.WhiskerModuleBehaviors
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
 {{main_activity_pre_super}}        super.onCreate(savedInstanceState)
+        // A launcher tap on a task rooted by a non-launcher intent (e.g. `am start -n`) would stack a second runtime.
+        if (!isTaskRoot && intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            finish()
+            return
+        }
 
         window.setBackgroundDrawableResource(R.color.whisker_background)
         WhiskerWindow.enableEdgeToEdge(this)

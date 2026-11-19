@@ -132,10 +132,36 @@ fn declarations(inputs: &IosInputs) -> Result<IosProjectIr> {
     info.insert(
         "UIApplicationSceneManifest".into(),
         PropertyListValue::Dict(
-            [(
-                "UIApplicationSupportsMultipleScenes".into(),
-                PropertyListValue::Boolean(false),
-            )]
+            [
+                (
+                    "UIApplicationSupportsMultipleScenes".into(),
+                    PropertyListValue::Boolean(false),
+                ),
+                (
+                    "UISceneConfigurations".into(),
+                    PropertyListValue::Dict(
+                        [(
+                            "UIWindowSceneSessionRoleApplication".into(),
+                            PropertyListValue::Array(vec![PropertyListValue::Dict(
+                                [
+                                    (
+                                        "UISceneConfigurationName".into(),
+                                        PropertyListValue::String("Default Configuration".into()),
+                                    ),
+                                    (
+                                        "UISceneDelegateClassName".into(),
+                                        PropertyListValue::String(
+                                            "$(PRODUCT_MODULE_NAME).SceneDelegate".into(),
+                                        ),
+                                    ),
+                                ]
+                                .into(),
+                            )]),
+                        )]
+                        .into(),
+                    ),
+                ),
+            ]
             .into(),
         ),
     );
@@ -166,11 +192,13 @@ fn declarations(inputs: &IosInputs) -> Result<IosProjectIr> {
         product_name: inputs.scheme.clone(),
         product_type: Some("com.apple.product-type.application".into()),
         info_plist: info,
-        sources: vec![AppleSource {
-            path: AppleBuildPath::Project(ProjectPath::new("Sources/AppDelegate.swift")?),
-            platform_filters: vec![],
-            compiler_flags: vec![],
-        }],
+        sources: ["Sources/AppDelegate.swift", "Sources/SceneDelegate.swift"]
+            .map(|p| AppleSource {
+                path: AppleBuildPath::Project(ProjectPath::new(p).unwrap()),
+                platform_filters: vec![],
+                compiler_flags: vec![],
+            })
+            .into(),
         resources: [
             "Resources/Assets.xcassets",
             "Resources/LaunchScreen.storyboard",
@@ -311,6 +339,7 @@ fn declarations(inputs: &IosInputs) -> Result<IosProjectIr> {
         );
     for (path, template) in [
         ("Sources/AppDelegate.swift", APP_DELEGATE_SWIFT),
+        ("Sources/SceneDelegate.swift", SCENE_DELEGATE_SWIFT),
         (
             "Resources/LaunchScreen.storyboard",
             LAUNCH_SCREEN_STORYBOARD,
@@ -330,7 +359,7 @@ fn declarations(inputs: &IosInputs) -> Result<IosProjectIr> {
     }
     for (path, entry) in crate::ios_modules::module_files(
         &inputs.modules,
-        &inputs.workspace_root,
+        inputs.host_sdk.as_deref().unwrap_or(&inputs.workspace_root),
         crate::modules::ModulePlatform::Ios,
     ) {
         apple.files.insert(path, ProjectFile::Generated { entry });

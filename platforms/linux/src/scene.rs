@@ -14,6 +14,8 @@ use whisker_protocol::{
 };
 
 use crate::LinuxError;
+use crate::app::request_frame;
+use crate::module::{LinuxViewFactory, NativeView};
 use crate::node::{NodeWidget, PaintedText, ScrollState};
 use crate::text::{self, PreparedLayouts};
 
@@ -35,6 +37,7 @@ enum ElementKind {
 struct ElementBinding {
     registration: ElementRegistration,
     kind: ElementKind,
+    view: Option<LinuxViewFactory>,
 }
 
 /// Shared Host state that input handlers mutate between frames.
@@ -57,6 +60,10 @@ impl ScrollFeedback {
     pub(crate) fn take_events(&mut self) -> Vec<ProviderEvent> {
         self.events.drain(..).collect()
     }
+
+    pub(crate) fn push_event(&mut self, event: ProviderEvent) {
+        self.events.push_back(event);
+    }
 }
 
 /// Projects accepted frame packets onto a retained GTK widget tree.
@@ -71,6 +78,7 @@ pub(crate) struct GtkFrameSink {
     parents: HashMap<NodeId, NodeId>,
     texts: HashMap<NodeId, TextContent>,
     event_masks: HashMap<NodeId, u64>,
+    natives: HashMap<NodeId, Box<dyn NativeView>>,
     prepared: PreparedLayouts,
     context: pango::Context,
     feedback: SharedScrollFeedback,
@@ -84,6 +92,7 @@ impl GtkFrameSink {
         capabilities: RenderCapabilities,
         prepared: PreparedLayouts,
         context: pango::Context,
+        views: Vec<LinuxViewFactory>,
     ) -> Self {
         let elements = registrations
             .iter()
@@ -98,6 +107,10 @@ impl GtkFrameSink {
                     ElementBinding {
                         registration: registration.clone(),
                         kind,
+                        view: views
+                            .iter()
+                            .find(|view| view.name == registration.name)
+                            .cloned(),
                     },
                 )
             })
@@ -113,6 +126,7 @@ impl GtkFrameSink {
             parents: HashMap::new(),
             texts: HashMap::new(),
             event_masks: HashMap::new(),
+            natives: HashMap::new(),
             prepared,
             context,
             feedback: SharedScrollFeedback::default(),
@@ -245,6 +259,7 @@ impl GtkFrameSink {
         self.parents.clear();
         self.texts.clear();
         self.event_masks.clear();
+        self.natives.clear();
         *self.feedback.borrow_mut() = ScrollFeedback::default();
     }
 
@@ -279,6 +294,7 @@ impl GtkFrameSink {
         self.node_order.retain(|candidate| *candidate != node);
         self.texts.remove(&node);
         self.event_masks.remove(&node);
+        self.natives.remove(&node);
         self.feedback.borrow_mut().offsets.remove(&node);
     }
 
@@ -358,6 +374,12 @@ impl GtkFrameSink {
         value: Option<&WhiskerValue>,
     ) -> Result<(), LinuxError> {
         let binding = self.binding(node)?;
+        if let Some(native) = self.natives.get(&node) {
+            if let Some(schema) = binding.registration.property(property) {
+                native.set_property(&schema.name, value);
+            }
+            return Ok(());
+        }
         if binding.kind != ElementKind::ScrollView {
             return Ok(());
         }
@@ -389,6 +411,12 @@ impl GtkFrameSink {
         command: whisker_protocol::CommandId,
         arguments: &WhiskerValue,
     ) -> Result<(), LinuxError> {
+        if let Some(native) = self.natives.get(&node) {
+            if let Some(schema) = self.binding(node)?.registration.command(command) {
+                native.invoke(&schema.name, arguments);
+            }
+            return Ok(());
+        }
         if self.binding(node)?.kind != ElementKind::ScrollView
             || (command != SCROLL_TO_COMMAND && command != SCROLL_BY_COMMAND)
         {
@@ -427,6 +455,14 @@ impl GtkFrameSink {
                 widget.state_mut().id = Some(*node);
                 if binding.kind == ElementKind::ScrollView {
                     widget.state_mut().scroll = Some(ScrollState::default());
+                }
+                if let Some(view) = &binding.view {
+                    let native =
+                        view.create(*node, Rc::clone(&self.feedback), Rc::new(request_frame));
+                    let child = native.widget();
+                    child.set_parent(&widget);
+                    widget.state_mut().native = Some(child);
+                    self.natives.insert(*node, native);
                 }
                 self.nodes.insert(*node, widget);
                 self.node_types.insert(*node, *element_type);
@@ -547,8 +583,12 @@ impl GtkFrameSink {
                 widget.state_mut().effects = effects.clone();
                 widget.queue_draw();
             }
-            Operation::SetTextStyle { .. }
-            | Operation::SetAccessibility { .. }
+            Operation::SetTextStyle { node, style } => {
+                if let Some(native) = self.natives.get(node) {
+                    native.set_text_style(style);
+                }
+            }
+            Operation::SetAccessibility { .. }
             | Operation::SetHitTest { .. }
             | Operation::SetPointerCapture { .. }
             | Operation::ReleasePointerCapture { .. } => {}

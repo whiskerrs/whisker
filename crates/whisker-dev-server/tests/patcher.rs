@@ -35,7 +35,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use whisker_dev_server::hotpatch::{
-    CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, LinkerOs, Patcher,
+    CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, Patcher,
     build_link_plan, build_obj_plan, library_filename, linker_os_for_current_platform,
     parse_symbol_table, run_link_plan, run_obj_plan,
 };
@@ -123,6 +123,8 @@ fn captured_linker_for_fixture(output_dylib: &Path) -> CapturedLinkerInvocation 
         output: Some(output_dylib.to_string_lossy().to_string()),
         args,
         timestamp_micros: 0,
+        linker: None,
+        envs: Default::default(),
     }
 }
 
@@ -132,14 +134,14 @@ fn captured_linker_for_fixture(output_dylib: &Path) -> CapturedLinkerInvocation 
 async fn build_original_via_pipeline(lib_rs: &Path, out_dir: &Path, cwd: &Path) -> PathBuf {
     let captured = captured_rustc_for_fixture(lib_rs);
     let obj_plan = build_obj_plan(&captured, out_dir);
-    let object = run_obj_plan(&obj_plan, &rustc_path(), cwd)
+    let objects = run_obj_plan(&obj_plan, &rustc_path(), cwd)
         .await
         .expect("v1 obj");
     let dylib = out_dir.join(library_filename(FIXTURE_CRATE_NAME));
     let captured_linker = captured_linker_for_fixture(&dylib);
     let link_plan = build_link_plan(
         &captured_linker.args,
-        &object,
+        &objects,
         &dylib,
         linker_os_for_current_platform(),
         &[],
@@ -202,11 +204,7 @@ async fn build_patch_emits_a_jump_table_entry_for_a_mangled_function() {
         linker_path(),
         work.clone(),
         patch_out.clone(),
-        match linker_os_for_current_platform() {
-            LinkerOs::Macos => LinkerOs::Macos,
-            LinkerOs::Linux => LinkerOs::Linux,
-            LinkerOs::Other => LinkerOs::Other,
-        },
+        linker_os_for_current_platform(),
         original_cache,
         captured_rustc_args,
         captured_linker_args,

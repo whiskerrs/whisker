@@ -205,25 +205,24 @@ impl Patcher {
         validate_environment(captured_rustc, &self.rustc_path)
             .context("environment validation before thin rebuild")?;
 
-        // Stage 1: rustc the changed crate to a `.o` file.
+        // Stage 1: rustc the changed crate to its codegen-unit objects.
         let obj_plan = thin_build::build_obj_plan(captured_rustc, &self.patch_out_dir);
-        let object = run_obj_plan(&obj_plan, &self.rustc_path, &self.cwd)
+        let objects = run_obj_plan(&obj_plan, &self.rustc_path, &self.cwd)
             .await
             .context("rustc --emit=obj for thin patch")?;
 
         // Stage 1b: for sub-crate patches, also rebuild the user
-        // crate's `.o` so the patch dylib carries the anchor symbols
+        // crate's objects so the patch dylib carries the anchor symbols
         // subsecond needs (see Stage 1's `user_rustc` doc above).
-        // Skipped on user-crate patches because `object` already
+        // Skipped on user-crate patches because `objects` already
         // covers it.
-        let user_object_for_link: Option<PathBuf> = if let Some(user_rustc) = user_rustc {
+        let user_objects_for_link: Vec<PathBuf> = if let Some(user_rustc) = user_rustc {
             let user_obj_plan = thin_build::build_obj_plan(user_rustc, &self.patch_out_dir);
-            let obj = run_obj_plan(&user_obj_plan, &self.rustc_path, &self.cwd)
+            run_obj_plan(&user_obj_plan, &self.rustc_path, &self.cwd)
                 .await
-                .context("rustc --emit=obj for user crate (sub-crate patch anchor source)")?;
-            Some(obj)
+                .context("rustc --emit=obj for user crate (sub-crate patch anchor source)")?
         } else {
-            None
+            Vec::new()
         };
 
         // Stage 2: synthesize a stub `.o` that maps every host symbol
@@ -241,27 +240,25 @@ impl Patcher {
         // has been reported.
         let extras: Vec<PathBuf> = if aslr_reference == 0 {
             // Test-fixture path: even without a stub we still need to
-            // pass the user crate's `.o` for sub-crate patches so
+            // pass the user crate's objects for sub-crate patches so
             // the anchor symbol exists.
-            user_object_for_link.iter().cloned().collect()
+            user_objects_for_link.clone()
         } else {
             let stub_path = self.patch_out_dir.join("aslr-stub.o");
-            // Feed BOTH input objects into the UND-symbol scan when
-            // building the stub. The sub-crate `.o` references
-            // whisker / kit symbols; the user crate `.o` references
+            // Feed BOTH crates' objects into the UND-symbol scan when
+            // building the stub. The sub-crate's objects reference
+            // whisker / kit symbols; the user crate's reference
             // sub-crate symbols + framework symbols. Missing the
             // latter set would leave UNDs unresolved at link time.
             let stub_bytes = self
-                .stub_bytes_for_objects(&object, user_object_for_link.as_deref(), aslr_reference)
+                .stub_bytes_for_objects(&objects, &user_objects_for_link, aslr_reference)
                 .context("synthesize stub object")?;
             std::fs::write(&stub_path, &stub_bytes)
                 .with_context(|| format!("write stub object to {}", stub_path.display()))?;
             let mut e = vec![stub_path];
-            // Pull in the user crate's `.o` alongside the sub-crate's
-            // (no-op for user-crate patches where this is None).
-            if let Some(uo) = user_object_for_link.as_ref() {
-                e.push(uo.clone());
-            }
+            // Pull in the user crate's objects alongside the sub-crate's
+            // (no-op for user-crate patches where this is empty).
+            e.extend(user_objects_for_link.iter().cloned());
             // Belt-and-suspenders on Linux/Android: the stub is
             // Text-only and emits weak symbols, so non-Text host
             // refs (thread-locals, static OnceCells like
@@ -274,13 +271,13 @@ impl Patcher {
             // weak Text stubs lose to strong host defs, which is
             // what we want for `_Unwind_Resume`, `whisker_bridge_*`,
             // etc.).
-            if matches!(self.target_os, LinkerOs::Linux) {
+            if matches!(self.target_os, LinkerOs::Linux) && !self.original_cache.is_elf_executable {
                 e.push(self.original_cache.lib.clone());
             }
             e
         };
 
-        // Stage 3: link the `.o` (+ optional stub `.o`) into a patch dylib.
+        // Stage 3: link the objects (+ optional stub `.o`) into a patch dylib.
         let output_dylib = self.expected_patch_path();
         // Required exports for the patch dylib's `.dynsym`. See
         // `build_link_plan` doc for the `whisker_aslr_anchor`
@@ -292,15 +289,36 @@ impl Patcher {
             LinkerOs::Macos => &["_whisker_aslr_anchor"],
             _ => &[],
         };
-        let link_plan = build_link_plan(
-            &captured_linker.args,
-            &object,
-            &output_dylib,
-            self.target_os,
-            &extras,
-            extra_exports,
-        );
-        let new_dylib = run_link_plan(&link_plan, &self.linker_path, &self.cwd)
+        let mut link_plan = if self.target_os == LinkerOs::Windows {
+            super::msvc::build_link_plan(
+                &captured_linker.args,
+                &objects,
+                &extras,
+                &output_dylib,
+                captured_linker.envs.clone(),
+            )
+        } else {
+            build_link_plan(
+                &captured_linker.args,
+                &objects,
+                &output_dylib,
+                self.target_os,
+                &extras,
+                extra_exports,
+            )
+        };
+        if self.original_cache.is_elf_executable {
+            // The program's exported symbols sit ahead of the patch in
+            // the loader's lookup order, so an unbound call between two
+            // patched functions would land on the old code.
+            link_plan.args.push("-Wl,-Bsymbolic".into());
+        }
+        // An MSVC capture names the `link.exe` rustc itself resolved.
+        let linker = captured_linker
+            .linker
+            .as_deref()
+            .map_or(self.linker_path.as_path(), Path::new);
+        let new_dylib = run_link_plan(&link_plan, linker, &self.cwd)
             .await
             .context("link patch dylib (object + stub)")?;
 
@@ -324,18 +342,15 @@ impl Patcher {
     /// when an edit only touches a function body.
     ///
     /// Pass `extra` for a sub-crate patch: the union of UND symbols
-    /// across both objects, minus their union of defined, gives the
+    /// across every object, minus their union of defined, gives the
     /// right "still unresolved" set.
     fn stub_bytes_for_objects(
         &self,
-        object: &Path,
-        extra: Option<&Path>,
+        objects: &[PathBuf],
+        extra: &[PathBuf],
         aslr_reference: u64,
     ) -> Result<Vec<u8>> {
-        let mut paths: Vec<&Path> = vec![object];
-        if let Some(p) = extra {
-            paths.push(p);
-        }
+        let paths: Vec<&Path> = objects.iter().chain(extra).map(PathBuf::as_path).collect();
         let needed =
             super::compute_needed_symbols_multi(&paths).context("compute_needed_symbols_multi")?;
         let needed_hash = hash_needed(&needed);
@@ -393,6 +408,7 @@ impl Patcher {
         let exts: &[&str] = match self.target_os {
             LinkerOs::Macos => &[".dylib"],
             LinkerOs::Linux => &[".so"],
+            LinkerOs::Windows => &[".exe"],
             LinkerOs::Other => &[".dll"],
         };
         let mut best: Option<&CapturedLinkerInvocation> = None;
@@ -403,8 +419,13 @@ impl Patcher {
             let Some(name) = Path::new(out).file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
-            let matches_ext = exts.iter().any(|ext| name.ends_with(ext))
-                || (self.target_os == LinkerOs::Macos && Path::new(name).extension().is_none());
+            let extensionless = Path::new(name).extension().is_none();
+            let matches_ext = if self.original_cache.is_elf_executable {
+                extensionless
+            } else {
+                exts.iter().any(|ext| name.ends_with(ext))
+                    || (self.target_os == LinkerOs::Macos && extensionless)
+            };
             if !matches_ext {
                 continue;
             }
@@ -492,6 +513,8 @@ mod tests {
             lib: PathBuf::from("/orig.dylib"),
             symbols: SymbolTable::default(),
             aslr_reference: 0x1_0000_0000,
+            architecture: object::Architecture::Aarch64,
+            is_elf_executable: false,
         }
     }
 
@@ -500,6 +523,8 @@ mod tests {
             output: Some(output.into()),
             args: vec!["-shared".into()],
             timestamp_micros: ts,
+            linker: None,
+            envs: Default::default(),
         }
     }
 

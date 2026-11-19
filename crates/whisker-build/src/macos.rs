@@ -1,6 +1,6 @@
 //! Build the CNG-generated macOS Xcode project.
 //!
-//! Both `whisker build macos` and `whisker run desktop` call [`build_app`].
+//! Both `whisker build macos` and `whisker run macos` call [`build_app`].
 //! The Rust app is compiled by the project's own run-script phase
 //! (`whisker build-ios --platform=macosx`), so cargo features and the hot
 //! reload capture envelope ride along on the `xcodebuild` environment.

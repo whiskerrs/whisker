@@ -79,6 +79,9 @@ fn application_features_and_metadata_are_lowered_for_both_platforms() {
             manifest["dependencies"]["whisker-app"]["features"][0].as_str(),
             Some("auth")
         );
+        let dependencies = manifest["dependencies"].as_table().unwrap();
+        assert!(dependencies.contains_key(&format!("whisker-{}", target.as_str())));
+        assert!(!dependencies.contains_key("whisker-desktop"));
         let main = text(&files, "src/main.rs");
         assert!(main.contains(".with_background_rgb(16, 32, 48)"));
         assert!(main.contains("run_with_application_hash"));
@@ -103,6 +106,30 @@ fn application_features_and_metadata_are_lowered_for_both_platforms() {
             assert!(!files.contains_key(&path("build.rs")));
         }
     }
+}
+#[test]
+fn windows_cpp_modules_are_whole_archived_through_a_helper_crate() {
+    let app = App::new();
+    let mut inputs = app.inputs(Target::Windows);
+    inputs.windows_sources = vec![app.0.join("svg/windows")];
+    let files = render_project(&app.compose(inputs)).unwrap();
+    let manifest: toml::Value = text(&files, "Cargo.toml").parse().unwrap();
+    assert_eq!(
+        manifest["dependencies"]["whisker-windows-modules"]["path"].as_str(),
+        Some("modules")
+    );
+    assert!(text(&files, "src/main.rs").contains("whisker_windows_modules::link();"));
+    let build = text(&files, "modules/build.rs");
+    assert!(build.contains(&format!(
+        "{:?}",
+        app.0.join("svg/windows").to_str().unwrap()
+    )));
+    assert!(build.contains("+whole-archive"));
+    let modules: toml::Value = text(&files, "modules/Cargo.toml").parse().unwrap();
+    assert_eq!(
+        modules["package"]["name"].as_str(),
+        Some("demo-whisker-windows-modules")
+    );
 }
 #[test]
 fn linux_serializes_actions_lists_xml_and_dbus_without_shell_rewriting() {

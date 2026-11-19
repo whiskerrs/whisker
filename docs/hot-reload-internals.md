@@ -77,7 +77,9 @@ wired in (`prepare_hot_reload_capture` in `lib.rs`):
   thin rebuild replays those vars so `env!("CARGO_PKG_*")` /
   `env!("OUT_DIR")` in user code still compiles under the raw
   (cargo-less) rustc spawn. Android, iOS, and macOS builds install it
-  through `RUSTC_WORKSPACE_WRAPPER`.
+  through `RUSTC_WORKSPACE_WRAPPER`; Linux, Windows and Web, whose
+  generated Cargo Host takes the user crate as a path dependency,
+  through `RUSTC_WRAPPER`.
 - `-C linker=whisker-linker-shim` — records each linker invocation's
   argv (keyed by output basename) to the linker-args cache, then
   forwards to the real linker.
@@ -105,32 +107,44 @@ On a `RustCode` change, `Patcher::build_patch(aslr_reference, crate_key)`
 runs:
 
 1. **`rustc --emit=obj`** for the changed crate, replaying its captured
-   rustc args (`thin_build::build_obj_plan` + `run_obj_plan`). This
-   yields an `.o` that still contains every `pub fn`'s mangled symbol —
+   rustc args (`thin_build::build_obj_plan` + `run_obj_plan`) with
+   `-C codegen-units=256`, so an edit re-runs LLVM only for the units
+   it touches. This yields one `.o` per codegen unit, which together
+   still contain every `pub fn`'s mangled symbol —
    object files are pre-link, so dead-code elimination and cdylib
    symbol stripping haven't run yet. (Going through cargo's `cdylib`
    path here would silently drop every mangled `pub fn`; that's why the
    pipeline drives `rustc`/the linker directly.)
 2. **Stub object synthesis** (`stub_object`, Option B / Dioxus-style).
-   For each undefined symbol the patch references, a tiny ARM64/Mach-O
-   stub defines a trampoline to that symbol's *live runtime address* in
+   For each undefined symbol the patch references, a tiny stub (ARM64
+   or x86-64, chosen from the original binary) defines a trampoline to that symbol's *live runtime address* in
    the host, computed from the host's static address plus the ASLR
    slide (`aslr_reference - cache.aslr_reference`). The stub bytes are
    cached per-session keyed by the FNV-1a hash of the needed-symbol set,
-   so body-only edits reuse them. On Linux/Android the host `.so` is
+   so body-only edits reuse them. On Android the host `.so` is
    also added to the link line as a `DT_NEEDED` fallback for the
    non-Text symbols the weak stubs don't cover (thread-locals, statics).
+   A Linux Host is a program, which can't be a link input: its exported
+   symbols resolve from the loader's global scope instead.
 3. **Explicit link** (`build_link_plan` + `run_link_plan`) of the thin
-   `.o` (+ stub + extras) into a patch dylib, replaying the captured
+   objects (+ stub + extras) into a patch dylib, replaying the captured
    linker args. On macOS, `_whisker_aslr_anchor` is force-exported so
-   subsecond's `dlsym(patch, …)` resolves.
+   subsecond's `dlsym(patch, …)` resolves. A patch for a Linux program
+   is linked `-Bsymbolic`: the program's own exports precede the patch
+   in lookup order, so an unbound call between two patched functions
+   would reach the old code. On Windows the line is rebuilt for
+   `link.exe` (`msvc::build_link_plan`) as a DLL that keeps only the
+   system import libraries: a PE image resolves nothing against the
+   program that loads it, so every Host function comes from the stubs,
+   and so does the `__imp_` pointer through which MSVC code reads
+   another crate's `static`.
 4. **JumpTable construction** (`symbol_table` + `cache` +
    `build_jump_table`). Parse the patch dylib's symbols with the
    `object` crate, diff against the cached original, and emit a
    `subsecond_types::JumpTable` of `old_addr → new_addr` pairs.
 
 Sub-crate patches (`crate_key != user crate`) additionally rebuild the
-*user* crate's `.o` and link it in, because the user crate carries the
+*user* crate's objects and link them in, because the user crate carries the
 `whisker_aslr_anchor` symbol subsecond needs in the patch dylib's
 `.dynsym`.
 
@@ -185,7 +199,7 @@ crash the device.
    elsewhere), and rewrite `table.lib` to that local path.
 2. Publish the JumpTable as a monotonically numbered generation in the
    process-wide coordinator. A bounded history ensures multiple
-   `WhiskerView` / desktop runtime instances can each observe every patch.
+   `WhiskerView` instances can each observe every patch.
 3. Wake every registered runtime through its own `RuntimeWakeHandle`.
 
 At the beginning of the next Host-driven runtime transaction,
@@ -198,8 +212,7 @@ edits (new elements, new signals) therefore reflect in every mounted tree.
 State local to a remounted component is lost; state above the remount point
 and in unchanged components survives.
 
-Android and iOS call this safe point from `MobileRuntime::tick`; desktop calls
-it at the start of `DesktopApplication::drive_frame`. Both use the same
+Android and iOS call this safe point from `MobileRuntime::tick` through the
 `NativeHotReload` adapter. The receiver thread never enters a runtime and
 never applies code while a `subsecond::call` frame is active.
 
@@ -362,7 +375,11 @@ the next save anyway.
 
 - **iOS hardware is unsupported** for Hot Reload: `mmap(PROT_WRITE |
   PROT_EXEC)` is blocked by Apple's W^X policy, so `apply_patch` can't
-  run. Targets are macOS host, Android, and the iOS Simulator.
+  run. Targets are macOS, Linux, Windows, Android, and the iOS Simulator.
+- **Windows reads symbols from PDBs.** A PE image has no symbol table, so
+  the capture build links with `/EXPORT:whisker_aslr_anchor`, `/OPT:NOREF`
+  and `/INCREMENTAL:NO`, and both the program and each patch DLL are read
+  through their PDBs.
 - **Web patches WebAssembly side modules.** `whisker run web` owns the Cargo,
   wasm-bindgen, static-server, and WebSocket loop. Rust edits are compiled as
   PIC side modules and applied through subsecond's indirect function table;
@@ -379,3 +396,10 @@ the next save anyway.
   function, type, or constant leaves every component hash unchanged, and
   editing the application's root component has no parent to remount into;
   both fall back to a full remount, which resets all state.
+
+## Compiler environment capture
+
+Thin rebuild capture persists only Cargo package metadata, crate and binary names,
+manifest paths, the Cargo executable, and OUT_DIR. Registry configuration,
+authentication tokens, arbitrary CARGO_* variables, and jobserver descriptors
+are excluded. Do not use secret environment variables as compile-time app data.

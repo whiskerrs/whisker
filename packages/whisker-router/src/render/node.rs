@@ -13,8 +13,8 @@
 //!   geometry, matching the design's parallel-container rule.
 //! - **`Stack`** → keeps every history entry mounted (lower entries
 //!   frozen via [`Owner::pause`]) and runs a float-`Tween` transition on
-//!   push / pop; the popped entry is unmounted when its reverse run
-//!   finishes.
+//!   push / pop; the popped entry is hidden when its reverse run finishes
+//!   and unmounted shortly after.
 //!
 //! Each container reads only **its own slice** (via
 //! `RouterHandle::slice_at`), so
@@ -32,10 +32,11 @@ use whisker::css::{
 use whisker::runtime::reactive::{Owner, effect};
 use whisker::runtime::view::{
     Element, append_child, create_element, create_phantom_element, insert_child_at,
-    on_next_frame_applied, remove_child,
+    on_next_frame_applied, remove_child, set_accessibility,
 };
 use whisker::{
-    AnimationController, ElementTag, apply_style, computed, provide_context, use_context,
+    Accessibility, AnimConfig, AnimationController, ElementTag, apply_style, computed,
+    provide_context, use_context,
 };
 
 use crate::core::{NodePath, RouteState, RouteTree};
@@ -127,7 +128,7 @@ fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
         // `RouteState` by a `back()`/pop — must NOT tear the content down.
         // The leaf's content lifetime belongs to its enclosing `Stack`
         // wrapper, which keeps the popped screen mounted through its exit
-        // animation and disposes the whole subtree only when that finishes.
+        // animation and disposes the whole subtree only after that finishes.
         // Removing here would blank the screen on frame 1 of the slide-out.
         let Some(inst) = inst else {
             return;
@@ -183,28 +184,48 @@ fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
         .map(|n| n.children().len())
         .unwrap_or(0);
 
-    // Mount every branch once into its own wrapper; keep them all alive.
     // The wrapper MUST be a real `view` (not a phantom): it carries
     // visibility / hit-test / `position: absolute` styles, and a phantom is a
     // style-less transparent bundler whose layout never reaches the retained
     // surface (so non-selected branches would not hide).
     let mut wrappers: Vec<Element> = Vec::with_capacity(branch_count);
-    for i in 0..branch_count {
+    for _ in 0..branch_count {
         let wrapper = create_element(ElementTag::View);
         // Each branch fills the switch; visibility is toggled below.
         apply_style(wrapper, branch_base_style(false));
-        let child = mount_node(&handle, path.child(i));
-        append_child(wrapper, child);
         append_child(container, wrapper);
         wrappers.push(wrapper);
     }
 
     let selected = handle.selected_at(path.clone());
     let wrappers = Rc::new(wrappers);
+    // A branch mounts the first time it is selected and stays alive from then
+    // on. Its owner is the switch's, not the selection effect's, whose re-run
+    // would otherwise dispose the branch on the next switch.
+    let branch_owner = Owner::new(Owner::current());
+    let mounted = RefCell::new(vec![false; branch_count]);
+    let mount_branch = {
+        let wrappers = Rc::clone(&wrappers);
+        move |index: usize| {
+            let Some(wrapper) = wrappers.get(index).copied() else {
+                return;
+            };
+            if std::mem::replace(&mut mounted.borrow_mut()[index], true) {
+                return;
+            }
+            branch_owner.with(|| {
+                let child = mount_node(&handle, path.child(index));
+                append_child(wrapper, child);
+            });
+        }
+    };
+    mount_branch(selected.get_untracked().unwrap_or(0));
     effect(move || {
         let sel = selected.get().unwrap_or(0);
+        mount_branch(sel);
         for (i, w) in wrappers.iter().enumerate() {
             apply_style(*w, branch_base_style(i == sel));
+            set_accessibility(*w, Accessibility::new().hidden(i != sel));
         }
     });
 
@@ -267,9 +288,8 @@ struct StackWrapper {
     /// `replace` (same index, different child/params) so the top can be
     /// swapped in place.
     child: NodePath,
-    /// A fingerprint of the entry's nested state at mount time, so a
-    /// `replace` that keeps the same child path but changes params still
-    /// re-mounts.
+    /// The entry's state at mount time, compared with [`same_entry`] so a
+    /// `replace` that keeps the child path but changes params re-mounts.
     fingerprint: RouteState,
     /// The wrapper element (carries the transition transform).
     wrapper: Element,
@@ -295,8 +315,84 @@ struct StackWrapper {
     /// The pose mode — the route transition normally, flipped to
     /// `Predictive(edge)` by a back gesture for the Material preview.
     pose_mode: whisker::RwSignal<PoseMode>,
+    /// Fully covered by the entry above: hidden from paint and accessibility.
+    covered: whisker::RwSignal<bool>,
     /// The transition kind chosen for this entry's route.
     transition: RouteTransition,
+}
+
+/// Tearing an entry down takes a long frame, and one landing among a
+/// transition's frames shows as a hitch.
+const TEARDOWN_DELAY_MS: u32 = 150;
+
+struct Retired {
+    wrapper: Element,
+    owner: Owner,
+}
+
+/// Entries whose exit animation is over: hidden and paused at once, torn
+/// down once the stack has been still for [`TEARDOWN_DELAY_MS`].
+#[derive(Clone)]
+struct Retirement {
+    slot: Element,
+    scope: Option<Owner>,
+    entries: Rc<RefCell<Vec<Retired>>>,
+    live: Rc<RefCell<Vec<StackWrapper>>>,
+    armed: Rc<Cell<bool>>,
+}
+
+impl Retirement {
+    fn retire(
+        &self,
+        wrapper: Element,
+        owner: Owner,
+        content_owner: Owner,
+        covered: whisker::RwSignal<bool>,
+    ) {
+        content_owner.pause();
+        covered.set(true);
+        self.entries.borrow_mut().push(Retired { wrapper, owner });
+        self.arm();
+    }
+
+    fn drain(&self) {
+        let entries = std::mem::take(&mut *self.entries.borrow_mut());
+        for entry in entries {
+            remove_child(self.slot, entry.wrapper);
+            entry.owner.dispose();
+        }
+    }
+
+    fn arm(&self) {
+        if self.armed.replace(true) {
+            return;
+        }
+        let this = self.clone();
+        let start = move || {
+            let timer = AnimationController::new(AnimConfig::linear(TEARDOWN_DELAY_MS));
+            timer.on_finish(move |_| {
+                this.armed.set(false);
+                if this.entries.borrow().is_empty() {
+                    return;
+                }
+                let in_transition =
+                    this.live.borrow().iter().any(|w| {
+                        w.pending_push.get() || w.pose_ctrl.get_untracked().is_animating()
+                    });
+                if in_transition {
+                    this.arm();
+                } else {
+                    this.drain();
+                }
+            });
+            timer.forward();
+        };
+        // The stack's owner, so a later run of the reconcile effect cannot cancel the timer.
+        match self.scope {
+            Some(owner) => owner.with(start),
+            None => start(),
+        }
+    }
 }
 
 fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
@@ -331,6 +427,13 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
     // The history length + the top entry's child path drive diffing.
     // We read the whole StackState slice (cheap clone) and reconcile.
     let live: Rc<RefCell<Vec<StackWrapper>>> = Rc::new(RefCell::new(Vec::new()));
+    let retirement = Retirement {
+        slot,
+        scope: Owner::current(),
+        entries: Rc::new(RefCell::new(Vec::new())),
+        live: live.clone(),
+        armed: Rc::new(Cell::new(false)),
+    };
 
     let handle_eff = handle.clone();
     let path_eff = path.clone();
@@ -338,7 +441,16 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
         let Some(RouteState::Stack(stack)) = slice.get() else {
             return;
         };
-        reconcile_stack(&handle_eff, &path_eff, slot, dim, dim_drive, &live, &stack);
+        reconcile_stack(
+            &handle_eff,
+            &path_eff,
+            slot,
+            dim,
+            dim_drive,
+            &live,
+            &retirement,
+            &stack,
+        );
     });
 
     slot
@@ -365,7 +477,7 @@ fn dim_style(opacity: f32) -> Css {
 /// transition by one controller**: that controller's `0..1` progress
 /// poses the moving top (`Role::Top`) and the screen beneath
 /// (`Role::Under`) at once. A push runs it `0 → 1`; a pop runs it
-/// `1 → 0` and unmounts the popped entry on finish. At rest the top sits
+/// `1 → 0` and retires the popped entry on finish. At rest the top sits
 /// at `Role::Top` / `1.0` (translateX 0%) and lower entries are frozen.
 #[allow(clippy::too_many_arguments)]
 fn reconcile_stack(
@@ -375,8 +487,11 @@ fn reconcile_stack(
     dim: Element,
     dim_drive: whisker::RwSignal<Option<AnimationController>>,
     live: &Rc<RefCell<Vec<StackWrapper>>>,
+    retirement: &Retirement,
     stack: &crate::core::StackState,
 ) {
+    // A retired entry must be gone before this navigation mounts anything in its place.
+    retirement.drain();
     let new_len = stack.history.len();
     let old_len = live.borrow().len();
 
@@ -385,7 +500,9 @@ fn reconcile_stack(
         entries
             .last()
             .zip(stack.history.last())
-            .is_some_and(|(old, new)| old.child != new.child || old.fingerprint != new.state)
+            .is_some_and(|(old, new)| {
+                old.child != new.child || !same_entry(&old.fingerprint, &new.state)
+            })
     };
     if navigation_changed {
         // A retained wrapper can outlive its pending push (Back, replace, or a
@@ -424,6 +541,7 @@ fn reconcile_stack(
                         // child owner, and therefore still animates in lockstep.
                         under.content_owner.pause();
                         set_pose(under, &drive, Role::Under, Direction::Push);
+                        cover_on_push_finish(under, &drive);
                     }
                 }
                 if w.transition.is_instant() {
@@ -450,7 +568,7 @@ fn reconcile_stack(
             let l = live.borrow();
             let w = &l[new_len - 1];
             let entry = &stack.history[new_len - 1];
-            w.child == entry.child && w.fingerprint == entry.state
+            w.child == entry.child && same_entry(&w.fingerprint, &entry.state)
         };
         let popped: Vec<StackWrapper> = live.borrow_mut().split_off(new_len);
         if survivor_matches {
@@ -459,7 +577,7 @@ fn reconcile_stack(
             // (multi-pop) just vanish.
             let mut popped = popped.into_iter();
             if let Some(top_popped) = popped.next() {
-                run_pop(slot, dim, live, top_popped);
+                run_pop(slot, dim, live, retirement, top_popped);
             }
             for w in popped {
                 dispose_wrapper(slot, w);
@@ -485,7 +603,7 @@ fn reconcile_stack(
 
     // ----- Same length but the top changed = `replace`. Animate it like a
     // push: the new screen slides in OVER the old top (kept mounted as a
-    // transient `Under`), and the old wrapper is disposed when the slide
+    // transient `Under`), and the old wrapper is retired when the slide
     // finishes. The entry *below* the old top is left untouched (it stays
     // covered), so the lower screen never flashes into view behind the
     // incoming one.
@@ -495,7 +613,7 @@ fn reconcile_stack(
         let needs_swap = {
             let l = live.borrow();
             let w = &l[top_idx];
-            w.child != entry.child || w.fingerprint != entry.state
+            w.child != entry.child || !same_entry(&w.fingerprint, &entry.state)
         };
         if needs_swap {
             // Detach the old top from `live` but keep it mounted — it is the
@@ -517,28 +635,39 @@ fn reconcile_stack(
             let instant = w.transition.is_instant();
             w.ctrl.set_value(0.0);
             set_pose(&w, &drive, Role::Top, Direction::Push);
+            old.pose_ctrl.set(drive.clone());
+            old.pose_role.set(Role::Under);
+            old.pose_mode
+                .set(PoseMode::Transition(w.transition.clone(), Direction::Push));
             live.borrow_mut().insert(top_idx, w);
 
             if instant {
                 drive.set_value(1.0);
                 dispose_wrapper(slot, old);
             } else {
-                // Tear the old top down on the slide's first completion —
-                // whether it finished or was cancelled by a follow-up nav
-                // (e.g. an immediate Back, which `reverse()`s this same
-                // controller and fires `on_finish(false)`). The old top is
+                // Take the old top away on the slide's first completion —
+                // retired if it finished, torn down at once if a follow-up nav
+                // cancelled it (e.g. an immediate Back, which `reverse()`s this
+                // same controller and fires `on_finish(false)`). The old top is
                 // logically gone the moment the replace starts, so it must
                 // never linger and cover the revealed screen.
                 let old_wrapper = old.wrapper;
                 let old_owner = old.owner;
+                let old_content = old.content_owner;
+                let old_covered = old.covered;
+                let retirement = retirement.clone();
                 let done = Rc::new(RefCell::new(false));
-                drive.on_finish(move |_finished| {
+                drive.on_finish(move |finished| {
                     if *done.borrow() {
                         return;
                     }
                     *done.borrow_mut() = true;
-                    remove_child(slot, old_wrapper);
-                    old_owner.dispose();
+                    if finished {
+                        retirement.retire(old_wrapper, old_owner, old_content, old_covered);
+                    } else {
+                        remove_child(slot, old_wrapper);
+                        old_owner.dispose();
+                    }
                 });
                 drive.forward();
             }
@@ -558,6 +687,7 @@ fn reconcile_stack(
             let pose_animating = preparing_push || w.pose_ctrl.get_untracked().is_animating();
             if i == top {
                 w.content_owner.resume();
+                w.covered.set(false);
                 if !pose_animating {
                     // Steady top: own controller, fully present (0%).
                     w.ctrl.set_value(1.0);
@@ -568,6 +698,7 @@ fn reconcile_stack(
                 if !pose_animating {
                     // A buried entry not part of an in-flight transition:
                     // freeze its presentation fully covered.
+                    w.covered.set(true);
                     w.ctrl.set_value(1.0);
                     set_pose(w, &w.ctrl.clone(), Role::Under, Direction::Push);
                 }
@@ -604,6 +735,7 @@ fn reconcile_stack(
         ctrl: w.pose_ctrl,
         role: w.pose_role,
         mode: w.pose_mode,
+        covered: w.covered,
     };
     let bridge = crate::render::handle::StackBridge {
         owner: Owner::current().expect("stack reconcile owner"),
@@ -614,21 +746,39 @@ fn reconcile_stack(
         under_pose: under_w.map(pose_of),
         #[cfg(test)]
         under_content_owner: under_w.map(|w| w.content_owner),
+        #[cfg(test)]
+        top_wrapper: top_w.map(|w| w.wrapper),
+        #[cfg(test)]
+        under_wrapper: under_w.map(|w| w.wrapper),
         dim_drive: Some(dim_drive),
         can_back: l.len() > 1,
     };
     handle.set_stack_bridge(path.clone(), bridge);
 }
 
+/// Whether two states are the same stack entry, ignoring nested container
+/// state so a tab switch inside a stacked layout is not treated as a `replace`.
+fn same_entry(a: &RouteState, b: &RouteState) -> bool {
+    match (a, b) {
+        (RouteState::Route(a), RouteState::Route(b)) => {
+            a.path == b.path && a.params == b.params && a.location == b.location
+        }
+        (RouteState::Stack(a), RouteState::Stack(b)) => a.path == b.path,
+        (RouteState::Switch(a), RouteState::Switch(b)) => a.path == b.path,
+        _ => false,
+    }
+}
+
 /// Drive a pop: reverse the popped top's controller `1 → 0`, with the
 /// newly-revealed survivor pointed at the **same** controller as
 /// `Role::Under` so it slides back from covered to rest in lockstep. On
-/// finish, unmount the popped entry and settle the survivor to its own
+/// finish, retire the popped entry and settle the survivor to its own
 /// resting controller.
 fn run_pop(
     slot: Element,
     dim: Element,
     live: &Rc<RefCell<Vec<StackWrapper>>>,
+    retirement: &Retirement,
     popped: StackWrapper,
 ) {
     let drive = popped.ctrl.clone();
@@ -648,6 +798,7 @@ fn run_pop(
             // Navigation state already points at this entry when reconcile
             // runs, so its content can safely become reactive again.
             w.content_owner.resume();
+            w.covered.set(false);
             set_pose(w, &drive, Role::Under, Direction::Pop);
             SurvivorHandle {
                 wrapper: w.wrapper,
@@ -674,15 +825,23 @@ fn run_pop(
 
     let popped_wrapper = popped.wrapper;
     let popped_owner = popped.owner;
+    let popped_content = popped.content_owner;
+    let popped_covered = popped.covered;
+    // A card popped before its push began was never on screen, so no transition precedes its teardown.
+    let slides_out = drive.value().get_untracked() > 0.0;
+    let retirement = retirement.clone();
     let done = Rc::new(RefCell::new(false));
     drive.on_finish(move |finished| {
         if !finished || *done.borrow() {
             return;
         }
         *done.borrow_mut() = true;
-        // Unmount the popped entry (ONLY here — never mid-animation).
-        remove_child(slot, popped_wrapper);
-        popped_owner.dispose();
+        if slides_out {
+            retirement.retire(popped_wrapper, popped_owner, popped_content, popped_covered);
+        } else {
+            remove_child(slot, popped_wrapper);
+            popped_owner.dispose();
+        }
         // Re-settle the revealed survivor onto its own controller at the
         // active (Role::Top / 1.0 = translateX 0%) pose so no parallax
         // residue remains.
@@ -745,6 +904,7 @@ fn mount_wrapper(
     // owner by `create_element`), the style effect, the child subtree,
     // and deregisters the controller.
     let owner = Owner::new(None);
+    let covered = owner.with(|| whisker::RwSignal::new(false));
     let (wrapper, content_owner, ctrl, pose_ctrl, pose_role, pose_mode) = owner.with(|| {
         // A real `view` (not a phantom): the wrapper carries the
         // transition `transform` / `opacity` and `position: absolute`
@@ -782,9 +942,10 @@ fn mount_wrapper(
         // transform/opacity AND the clip view's animated corner radius.
         effect(move || {
             let pose = style.get();
-            apply_style(wrapper, wrapper_style(&pose));
+            apply_style(wrapper, wrapper_style(&pose, covered.get()));
             apply_style(clip, clip_view_style(pose.radius_px));
         });
+        effect(move || set_accessibility(wrapper, Accessibility::new().hidden(covered.get())));
 
         let content_owner = Owner::new(Some(owner));
         let child = content_owner.with(|| mount_node(handle, child_path));
@@ -813,6 +974,7 @@ fn mount_wrapper(
         pose_ctrl,
         pose_role,
         pose_mode,
+        covered,
         transition,
     }
 }
@@ -837,6 +999,19 @@ fn start_push_after_frame(w: &StackWrapper) {
         w.pending_push.set(false);
         w.ctrl.forward();
     }
+}
+
+/// Cover `under` on `drive`'s first completion unless a pop interrupted the push.
+fn cover_on_push_finish(under: &StackWrapper, drive: &AnimationController) {
+    let covered = under.covered;
+    let done = Rc::new(Cell::new(false));
+    under.owner.with(|| {
+        drive.on_finish(move |finished| {
+            if !done.replace(true) && finished {
+                covered.set(true);
+            }
+        });
+    });
 }
 
 /// Point `w`'s pose at controller `c` playing `role` in `direction`, in the
@@ -865,8 +1040,8 @@ fn stack_container_style() -> Css {
 /// the inner [`clip_view_style`], NOT here — see `mount_wrapper`. The
 /// transform origin is centred so the predictive-back scale shrinks the
 /// card around its middle.
-fn wrapper_style(pose: &Pose) -> Css {
-    Css::new()
+fn wrapper_style(pose: &Pose, covered: bool) -> Css {
+    let style = Css::new()
         .position(PositionKind::Absolute)
         .left(px(0))
         .top(px(0))
@@ -875,8 +1050,12 @@ fn wrapper_style(pose: &Pose) -> Css {
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .transform_origin(Position::Coords(percent(50).into(), percent(50).into()))
-        .transform(pose.transform.clone())
-        .opacity(pose.opacity)
+        .transform(pose.transform.clone());
+    if covered {
+        style.visibility(Visibility::Hidden).opacity(0.0)
+    } else {
+        style.visibility(Visibility::Visible).opacity(pose.opacity)
+    }
 }
 
 /// Style for the per-screen **clip view** — the direct parent of the

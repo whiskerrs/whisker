@@ -276,6 +276,33 @@ fn staged_inputs_affect_fingerprint_and_invalid_output_preserves_existing_projec
     std::fs::remove_dir_all(root).unwrap();
 }
 #[test]
+fn application_adopts_single_scene_lifecycle_through_scene_delegate() {
+    let files = render_project(&base()).unwrap();
+    let plist = plist::Value::from_reader_xml(text(&files, "Info.plist").as_bytes()).unwrap();
+    let manifest = plist.as_dictionary().unwrap()["UIApplicationSceneManifest"]
+        .as_dictionary()
+        .unwrap();
+    assert_eq!(
+        manifest["UIApplicationSupportsMultipleScenes"].as_boolean(),
+        Some(false)
+    );
+    let roles = manifest["UISceneConfigurations"].as_dictionary().unwrap();
+    let configs = roles["UIWindowSceneSessionRoleApplication"]
+        .as_array()
+        .unwrap();
+    assert_eq!(configs.len(), 1);
+    let config = configs[0].as_dictionary().unwrap();
+    assert_eq!(
+        config["UISceneDelegateClassName"].as_string(),
+        Some("$(PRODUCT_MODULE_NAME).SceneDelegate")
+    );
+    assert!(text(&files, "Sources/SceneDelegate.swift").contains("UIWindow(windowScene:"));
+    assert!(
+        text(&files, "NativeFixture.xcodeproj/project.pbxproj")
+            .contains("SceneDelegate.swift in Sources")
+    );
+}
+#[test]
 fn configuration_and_plist_values_are_serialized_without_loss() {
     let mut input = base();
     let app = input.project.apple.targets.get_mut("app").unwrap();
@@ -450,6 +477,10 @@ fn xcode_builds_app_and_embedded_share_extension() {
         (
             "Sources/AppDelegate.swift",
             "import UIKit\n@main final class AppDelegate: UIResponder, UIApplicationDelegate {}\n",
+        ),
+        (
+            "Sources/SceneDelegate.swift",
+            "import UIKit\nfinal class SceneDelegate: UIResponder, UIWindowSceneDelegate {}\n",
         ),
         (
             "Share/ShareViewController.swift",

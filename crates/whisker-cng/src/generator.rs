@@ -175,7 +175,7 @@ fn sync_with_graph(
 /// runtime ABI change or a Kotlin API consumed by applications/modules.
 // 0.1.21 is the first published Android SDK release that ships WhiskerView in
 // the standalone whisker-runtime-android AAR. 0.1.20 failed before publishing.
-const WHISKER_SDK_VERSION: &str = "0.1.26";
+const WHISKER_SDK_VERSION: &str = "0.1.27";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
@@ -208,7 +208,7 @@ fn sync_android(
         "discovered Android plugins must not reuse a built-in plugin name"
     );
 
-    let binaries = build_discovered_plugins(workspace_root, discovered)?;
+    let binaries = build_discovered_plugins(workspace_root, package, selection, discovered)?;
     let has_legacy = discovered
         .iter()
         .any(|p| p.protocol == crate::discovery::PluginProtocol::Legacy);
@@ -249,7 +249,7 @@ fn sync_android(
     project_config
         .plugins
         .retain(|name, _| !has_legacy || project_names.contains(name.as_str()));
-    let inputs = crate::android::inputs_from_with_engine(
+    let mut inputs = crate::android::inputs_from_with_engine(
         &legacy,
         &legacy_config,
         package.replace('-', "_"),
@@ -259,6 +259,7 @@ fn sync_android(
         WHISKER_GRADLE_PLUGIN_VERSION.to_string(),
         WHISKER_MAVEN_URL.to_string(),
     )?;
+    inputs.whisker_host_sdk_path = graph.host_sdk.clone();
     let template_version = inputs.template_version;
     let mut projects = if has_legacy {
         // Built-in and legacy changes are already in inputs. The application
@@ -341,10 +342,12 @@ fn sync_ios(
     }
     .with_app_crate_dir(crate_dir);
     let mut project_binaries = Vec::new();
-    for (plugin, binary) in discovered
-        .iter()
-        .zip(build_discovered_plugins(workspace_root, discovered)?)
-    {
+    for (plugin, binary) in discovered.iter().zip(build_discovered_plugins(
+        workspace_root,
+        package,
+        selection,
+        discovered,
+    )?) {
         match plugin.protocol {
             crate::discovery::PluginProtocol::Legacy => {
                 legacy.register_subprocess(
@@ -381,6 +384,7 @@ fn sync_ios(
     )?;
     inputs.cargo_selection = selection.clone();
     inputs.modules = graph.modules.clone();
+    inputs.host_sdk = swift_host_sdk(crate_dir, graph)?;
     let project_name = inputs.scheme.clone();
     let template_version = inputs.template_version;
     let mut projects = if has_legacy {
@@ -430,6 +434,15 @@ fn sync_ios(
     })
 }
 
+/// Swift package root for the Host SDK resolved with the Rust crates.
+fn swift_host_sdk(crate_dir: &Path, graph: &ProjectDependencyGraph) -> Result<Option<PathBuf>> {
+    graph
+        .host_sdk
+        .as_deref()
+        .map(|root| crate::host_sdk::swift_package_root(&crate_dir.join("gen"), root))
+        .transpose()
+}
+
 fn sync_macos(
     app_config: &Config,
     crate_dir: &Path,
@@ -447,6 +460,7 @@ fn sync_macos(
     )?;
     inputs.cargo_selection = selection.clone();
     inputs.modules = graph.modules.clone();
+    inputs.host_sdk = swift_host_sdk(crate_dir, graph)?;
     let template_version = inputs.template_version;
     let project_name = inputs.app_name.clone();
     let discovered: Vec<_> = graph
@@ -471,10 +485,12 @@ fn sync_macos(
     }
     let mut engine =
         crate::ProjectEngine::with_macos_application(inputs).with_app_crate_dir(crate_dir);
-    for (plugin, binary) in discovered
-        .iter()
-        .zip(build_discovered_plugins(workspace_root, &discovered)?)
-    {
+    for (plugin, binary) in discovered.iter().zip(build_discovered_plugins(
+        workspace_root,
+        package,
+        selection,
+        &discovered,
+    )?) {
         engine.register_subprocess(&plugin.name, binary);
     }
     let result = engine
@@ -513,6 +529,62 @@ fn sync_macos(
     })
 }
 
+/// Cargo dependency on the Rust Host crate in `platforms/<platform>`, from
+/// the source the application resolved `whisker` from.
+fn rust_host_dependency(
+    workspace_root: &Path,
+    graph: &ProjectDependencyGraph,
+    platform: &str,
+) -> String {
+    let in_tree_host = workspace_root.join("platforms").join(platform);
+    let source_host = graph
+        .host_sdk
+        .as_ref()
+        .map(|root| root.join("platforms").join(platform));
+    if in_tree_host.join("Cargo.toml").is_file() {
+        format!("{{ path = {:?} }}", in_tree_host.display().to_string())
+    } else if let Some(git) = &graph.whisker_git {
+        format!("{{ {} }}", git.dependency_fields())
+    } else if let Some(host) = source_host.filter(|host| host.join("Cargo.toml").is_file()) {
+        format!("{{ path = {:?} }}", host.display().to_string())
+    } else {
+        format!("{:?}", env!("CARGO_PKG_VERSION"))
+    }
+}
+
+/// Element modules with a Rust Host for `platform`, each named from the
+/// source its package resolved from.
+fn rust_element_modules(
+    graph: &ProjectDependencyGraph,
+    platform: crate::modules::ModulePlatform,
+) -> Vec<crate::RustElementModuleInput> {
+    graph
+        .modules
+        .iter()
+        .filter_map(|module| {
+            let contribution = module.rust_host(platform)?.clone();
+            let host_dependency = match (contribution.source, &module.git) {
+                (crate::modules::ResolvedRustHostSource::Path(_), Some(git)) => {
+                    crate::RustHostDependency::Git(git.clone())
+                }
+                (crate::modules::ResolvedRustHostSource::Path(path), None) => {
+                    crate::RustHostDependency::Path(path)
+                }
+                (crate::modules::ResolvedRustHostSource::Registry { version }, _) => {
+                    crate::RustHostDependency::Registry { version }
+                }
+            };
+            Some(crate::RustElementModuleInput {
+                package: module.package.clone(),
+                crate_path: module.manifest_dir.clone(),
+                git: module.git.clone(),
+                host_package: contribution.package,
+                host_dependency,
+            })
+        })
+        .collect()
+}
+
 fn sync_desktop(
     target: Target,
     app_config: &Config,
@@ -523,15 +595,7 @@ fn sync_desktop(
     selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen").join(target.as_str());
-    // Inside the Whisker monorepo, point at the in-tree Host so examples
-    // exercise the current checkout. Installed projects use the published
-    // crate at the generator's matching version.
-    let in_tree_host = workspace_root.join("platforms").join(target.as_str());
-    let dependency = if in_tree_host.join("Cargo.toml").is_file() {
-        format!("{{ path = {:?} }}", in_tree_host.display().to_string())
-    } else {
-        format!("{:?}", env!("CARGO_PKG_VERSION"))
-    };
+    let dependency = rust_host_dependency(workspace_root, graph, target.as_str());
     let mut inputs = crate::desktop::inputs_from(
         app_config,
         target,
@@ -539,39 +603,20 @@ fn sync_desktop(
         crate_dir.to_path_buf(),
         dependency,
     )?;
-    let in_tree_desktop = workspace_root.join("platforms/desktop");
-    if in_tree_desktop.join("Cargo.toml").is_file() {
-        inputs.desktop_dependency =
-            format!("{{ path = {:?} }}", in_tree_desktop.display().to_string());
-    }
     inputs.cargo_selection = selection.clone();
     let module_platform = if target == Target::Windows {
         crate::modules::ModulePlatform::Windows
     } else {
         crate::modules::ModulePlatform::Linux
     };
-    inputs.element_modules = graph
-        .modules
-        .iter()
-        .cloned()
-        .filter_map(|module| {
-            let contribution = module.rust_host(module_platform)?.clone();
-            let host_dependency = match contribution.source {
-                crate::modules::ResolvedRustHostSource::Path(path) => {
-                    crate::RustHostDependency::Path(path)
-                }
-                crate::modules::ResolvedRustHostSource::Registry { version } => {
-                    crate::RustHostDependency::Registry { version }
-                }
-            };
-            Some(crate::RustElementModuleInput {
-                package: module.package,
-                crate_path: module.manifest_dir,
-                host_package: contribution.package,
-                host_dependency,
-            })
-        })
-        .collect();
+    inputs.element_modules = rust_element_modules(graph, module_platform);
+    if target == Target::Windows {
+        inputs.windows_sources = graph
+            .modules
+            .iter()
+            .filter_map(|module| module.windows_sources().map(Path::to_path_buf))
+            .collect();
+    }
     let application_name = if target == Target::Windows {
         crate::desktop::application::WindowsApplicationPlugin::NAME
     } else {
@@ -605,10 +650,12 @@ fn sync_desktop(
         crate::ProjectEngine::with_linux_application(inputs)
     }
     .with_app_crate_dir(crate_dir);
-    for (plugin, binary) in discovered
-        .iter()
-        .zip(build_discovered_plugins(workspace_root, &discovered)?)
-    {
+    for (plugin, binary) in discovered.iter().zip(build_discovered_plugins(
+        workspace_root,
+        package,
+        selection,
+        &discovered,
+    )?) {
         engine.register_subprocess(&plugin.name, binary);
     }
     let result = engine
@@ -638,12 +685,7 @@ fn sync_web(
     selection: &crate::CargoSelection,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/web");
-    let in_tree_host = workspace_root.join("platforms/web");
-    let dependency = if in_tree_host.join("Cargo.toml").is_file() {
-        format!("{{ path = {:?} }}", in_tree_host.display().to_string())
-    } else {
-        format!("{:?}", env!("CARGO_PKG_VERSION"))
-    };
+    let dependency = rust_host_dependency(workspace_root, graph, "web");
     let mut inputs = crate::web::inputs_from(
         app_config,
         package.to_string(),
@@ -651,30 +693,7 @@ fn sync_web(
         dependency,
     )?;
     inputs.cargo_selection = selection.clone();
-    inputs.element_modules = graph
-        .modules
-        .iter()
-        .cloned()
-        .filter_map(|module| {
-            let contribution = module
-                .rust_host(crate::modules::ModulePlatform::Web)?
-                .clone();
-            let host_dependency = match contribution.source {
-                crate::modules::ResolvedRustHostSource::Path(path) => {
-                    crate::RustHostDependency::Path(path)
-                }
-                crate::modules::ResolvedRustHostSource::Registry { version } => {
-                    crate::RustHostDependency::Registry { version }
-                }
-            };
-            Some(crate::RustElementModuleInput {
-                package: module.package,
-                crate_path: module.manifest_dir,
-                host_package: contribution.package,
-                host_dependency,
-            })
-        })
-        .collect();
+    inputs.element_modules = rust_element_modules(graph, crate::modules::ModulePlatform::Web);
     let template_version = inputs.template_version;
     let base_path = inputs.base_path.clone();
     let generated_package = inputs.generated_package.clone();
@@ -702,10 +721,12 @@ fn sync_web(
     }
     let mut engine =
         crate::ProjectEngine::with_web_application(inputs).with_app_crate_dir(crate_dir);
-    for (plugin, binary) in discovered
-        .iter()
-        .zip(build_discovered_plugins(workspace_root, &discovered)?)
-    {
+    for (plugin, binary) in discovered.iter().zip(build_discovered_plugins(
+        workspace_root,
+        package,
+        selection,
+        &discovered,
+    )?) {
         engine.register_subprocess(&plugin.name, binary);
     }
     let result = engine
@@ -746,20 +767,38 @@ fn sync_web(
 }
 
 /// Compile plugin executables into the workspace target directory.
+///
+/// Plugins are discovered from the application's selected Cargo graph, so a
+/// plugin crate may be reachable only through an application feature (an
+/// optional dependency). Cargo cannot address such a package unless the build
+/// enables that feature, so the plugin is built with the application's feature
+/// selection. Plugins always run on the host, so `selection.target` is unused.
 fn build_discovered_plugins(
     workspace_root: &Path,
+    app_package: &str,
+    selection: &crate::CargoSelection,
     discovered: &[DiscoveredPlugin],
 ) -> Result<Vec<PathBuf>> {
+    if discovered.is_empty() {
+        return Ok(Vec::new());
+    }
     let host = host_target()?;
+    let members = workspace_member_dirs(workspace_root)?;
     let mut binaries = Vec::new();
     for plugin in discovered {
+        let is_member = std::fs::canonicalize(&plugin.source_manifest_dir)
+            .is_ok_and(|dir| members.contains(&dir));
         let output = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
             .arg("build")
             .arg("--quiet")
             .arg("--manifest-path")
             .arg(workspace_root.join("Cargo.toml"))
-            .arg("--package")
-            .arg(&plugin.source_crate)
+            .args(plugin_package_args(
+                app_package,
+                selection,
+                plugin,
+                is_member,
+            ))
             .arg("--bin")
             .arg(&plugin.bin_target_name)
             .arg("--target")
@@ -791,6 +830,66 @@ fn build_discovered_plugins(
         binaries.push(binary.into_std_path_buf());
     }
     Ok(binaries)
+}
+
+/// Canonical directories of the workspace members.
+fn workspace_member_dirs(workspace_root: &Path) -> Result<std::collections::HashSet<PathBuf>> {
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(workspace_root.join("Cargo.toml"))
+        .no_deps()
+        .exec()
+        .context("resolve workspace members for CNG plugins")?;
+    Ok(metadata
+        .workspace_packages()
+        .into_iter()
+        .filter_map(|package| package.manifest_path.parent())
+        .filter_map(|dir| std::fs::canonicalize(dir).ok())
+        .collect())
+}
+
+/// Package selection for one plugin build.
+///
+/// A workspace member is always addressable, and Cargo applies feature flags
+/// to every selected member, so it is built alone to keep its own default
+/// features. Any other package exists in the resolve only through the
+/// application's selected features: select the application too and qualify
+/// its feature names (`--features` on a non-member alone is rejected).
+/// `--no-default-features` then reaches only the application, because Cargo
+/// never applies command-line features to packages outside the workspace.
+fn plugin_package_args(
+    app_package: &str,
+    selection: &crate::CargoSelection,
+    plugin: &DiscoveredPlugin,
+    is_member: bool,
+) -> Vec<String> {
+    if is_member {
+        return vec!["--package".into(), plugin.source_crate.clone()];
+    }
+    let mut args = vec![
+        "--package".into(),
+        app_package.into(),
+        "--package".into(),
+        plugin.source_crate.clone(),
+    ];
+    if selection.no_default_features {
+        args.push("--no-default-features".into());
+    }
+    for feature in selection
+        .features
+        .iter()
+        .flat_map(|s| s.split(|c: char| c == ',' || c.is_whitespace()))
+        .filter(|s| !s.is_empty())
+    {
+        args.push("--features".into());
+        // `dep/feature` already names its package; a bare name belongs to
+        // the application and would be ambiguous with two selected packages.
+        args.push(if feature.contains('/') {
+            feature.to_owned()
+        } else {
+            format!("{app_package}/{feature}")
+        });
+    }
+    args
 }
 
 pub(crate) fn host_target() -> Result<String> {
@@ -883,5 +982,201 @@ mod tests {
         assert!(registrar.contains("_whiskerRegisterModules_CngTestWidget()"));
         assert!(!registrar.contains("CngTestService"));
         std::fs::remove_dir_all(crate_dir).ok();
+    }
+
+    fn git_graph(modules: Vec<crate::ResolvedModule>) -> ProjectDependencyGraph {
+        ProjectDependencyGraph {
+            modules,
+            cng_plugins: Vec::new(),
+            host_sdk: Some(PathBuf::from("/cargo/git/checkouts/whisker-1/1dc9ebc")),
+            whisker_git: crate::GitSource::parse(
+                "git+https://github.com/whiskerrs/whisker?branch=next#1dc9ebcdbaba82ec",
+            ),
+        }
+    }
+
+    #[test]
+    fn rust_hosts_share_the_git_source_of_whisker() {
+        let dependency = rust_host_dependency(&tempdir(), &git_graph(Vec::new()), "web");
+        assert_eq!(
+            dependency,
+            r#"{ git = "https://github.com/whiskerrs/whisker", branch = "next" }"#
+        );
+    }
+
+    #[test]
+    fn git_modules_link_their_crate_and_host_from_git() {
+        let module = crate::ResolvedModule {
+            package: "whisker-svg".into(),
+            manifest_dir: PathBuf::from(
+                "/cargo/git/checkouts/whisker-1/1dc9ebc/packages/whisker-svg",
+            ),
+            ios_swift_sources: Vec::new(),
+            android_kotlin_sources: Vec::new(),
+            android_jni_sources: Vec::new(),
+            platforms: crate::modules::ResolvedModulePlatforms {
+                web: Some(crate::ResolvedPlatformImplementation::RustHost(
+                    crate::ResolvedRustModuleContribution {
+                        package: "whisker-svg-web".into(),
+                        source: crate::ResolvedRustHostSource::Path(PathBuf::from(
+                            "/cargo/git/checkouts/whisker-1/1dc9ebc/packages/whisker-svg/web",
+                        )),
+                    },
+                )),
+                ..Default::default()
+            },
+            git: crate::GitSource::parse(
+                "git+https://github.com/whiskerrs/whisker?branch=next#1dc9ebcdbaba82ec",
+            ),
+        };
+        let dependencies = crate::rust_element_module_dependencies(&rust_element_modules(
+            &git_graph(vec![module]),
+            crate::modules::ModulePlatform::Web,
+        ));
+        let git = r#"git = "https://github.com/whiskerrs/whisker", branch = "next""#;
+        assert!(dependencies.contains(&format!(
+            r#"whisker-svg = {{ package = "whisker-svg", {git}, default-features = false }}"#
+        )));
+        assert!(dependencies.contains(&format!(
+            r#"whisker-svg-web = {{ package = "whisker-svg-web", {git} }}"#
+        )));
+        assert!(!dependencies.contains("/cargo/git/checkouts"));
+    }
+
+    /// Write a library package with a plugin `[[bin]]` that fails to compile
+    /// unless its own default feature is enabled.
+    fn plugin_package(dir: &Path) {
+        std::fs::create_dir_all(dir.join("src/bin")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+        std::fs::write(
+            dir.join("src/bin/plug_cng.rs"),
+            "#[cfg(not(feature = \"own\"))]\ncompile_error!(\"default feature disabled\");\nfn main() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = 'plug'\nversion = '0.1.0'\nedition = '2021'\n\
+             [features]\ndefault = ['own']\nown = []\n\
+             [[bin]]\nname = 'plug-cng'\npath = 'src/bin/plug_cng.rs'\n\
+             [package.metadata.whisker.plugins.plug-cng]\nbin = 'plug-cng'\n",
+        )
+        .unwrap();
+    }
+
+    fn app_package(dir: &Path, manifest: &str) {
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = 'app'\nversion = '0.1.0'\nedition = '2021'\n{manifest}"),
+        )
+        .unwrap();
+    }
+
+    fn build_selected_plugins(
+        workspace_root: &Path,
+        manifest: &Path,
+        selection: &crate::CargoSelection,
+    ) -> Result<Vec<PathBuf>> {
+        let graph = ProjectDependencyGraph::resolve_with_selection(manifest, "app", selection)?;
+        assert_eq!(
+            graph
+                .cng_plugins
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["plug-cng"]
+        );
+        build_discovered_plugins(workspace_root, "app", selection, &graph.cng_plugins)
+    }
+
+    #[test]
+    fn plugins_behind_application_features_build_with_that_selection() {
+        // A standalone app workspace, as `whisker new` generates, where the
+        // plugin crate is reachable only through the `voice` feature.
+        let root = tempdir();
+        plugin_package(&root.join("plug"));
+        app_package(
+            &root.join("app"),
+            "[workspace]\n[features]\ndefault = []\nvoice = ['dep:plug']\n\
+             [dependencies]\nplug = { path = '../plug', optional = true }\n",
+        );
+        let workspace = root.join("app");
+        let selection = crate::CargoSelection {
+            features: vec!["voice".into()],
+            no_default_features: true,
+            target: None,
+        }
+        .for_platform(Target::Ios);
+        let binaries =
+            build_selected_plugins(&workspace, &workspace.join("Cargo.toml"), &selection).unwrap();
+        assert_eq!(binaries.len(), 1);
+        assert!(binaries[0].is_file(), "{}", binaries[0].display());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn workspace_member_plugins_keep_their_own_default_features() {
+        // `--no-default-features` applies to every selected member, so a
+        // member plugin must not be built alongside the application.
+        let root = tempdir();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nresolver = '2'\nmembers = ['app', 'plug']\n",
+        )
+        .unwrap();
+        plugin_package(&root.join("plug"));
+        app_package(
+            &root.join("app"),
+            "[features]\nvoice = ['dep:plug']\n\
+             [dependencies]\nplug = { path = '../plug', optional = true, default-features = false }\n",
+        );
+        let selection = crate::CargoSelection {
+            features: vec!["voice".into()],
+            no_default_features: true,
+            target: None,
+        }
+        .for_platform(Target::Ios);
+        let binaries = build_selected_plugins(&root, &root.join("Cargo.toml"), &selection).unwrap();
+        assert!(binaries[0].is_file(), "{}", binaries[0].display());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn plugin_package_args_select_the_application_for_external_plugins() {
+        let plugin = DiscoveredPlugin {
+            name: "plug-cng".into(),
+            source_crate: "plug".into(),
+            source_manifest_dir: PathBuf::from("/plug"),
+            bin_target_name: "plug-cng".into(),
+            protocol: crate::discovery::PluginProtocol::Project,
+            after: Vec::new(),
+            before: Vec::new(),
+        };
+        let selection = crate::CargoSelection {
+            features: vec!["voice,runtime/dev".into(), "extra".into()],
+            no_default_features: true,
+            target: Some("aarch64-apple-ios".into()),
+        };
+        assert_eq!(
+            plugin_package_args("app", &selection, &plugin, false),
+            [
+                "--package",
+                "app",
+                "--package",
+                "plug",
+                "--no-default-features",
+                "--features",
+                "app/voice",
+                "--features",
+                "runtime/dev",
+                "--features",
+                "app/extra",
+            ]
+        );
+        assert_eq!(
+            plugin_package_args("app", &selection, &plugin, true),
+            ["--package", "plug"]
+        );
     }
 }

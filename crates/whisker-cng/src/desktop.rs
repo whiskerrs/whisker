@@ -25,8 +25,9 @@ pub struct DesktopInputs {
     pub user_package: String,
     pub user_crate_path: PathBuf,
     pub host_dependency: String,
-    pub desktop_dependency: String,
     pub element_modules: Vec<crate::RustElementModuleInput>,
+    /// Directories of Windows C++ module sources compiled into the application.
+    pub windows_sources: Vec<PathBuf>,
     pub cargo_selection: crate::CargoSelection,
     pub app_icon_png: Option<Vec<u8>>,
 }
@@ -79,8 +80,8 @@ pub fn inputs_from(
         user_package: package,
         user_crate_path: root,
         host_dependency,
-        desktop_dependency: format!("{:?}", env!("CARGO_PKG_VERSION")),
         element_modules: vec![],
+        windows_sources: vec![],
         cargo_selection: crate::CargoSelection::default().for_platform(platform),
         app_icon_png,
     })

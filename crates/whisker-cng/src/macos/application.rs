@@ -155,7 +155,7 @@ fn declarations(inputs: &MacosInputs) -> Result<MacosProjectIr> {
     }
     for (path, entry) in crate::ios_modules::module_files(
         &inputs.modules,
-        &inputs.workspace_root,
+        inputs.host_sdk.as_deref().unwrap_or(&inputs.workspace_root),
         crate::modules::ModulePlatform::Macos,
     ) {
         files.insert(path, ProjectFile::Generated { entry });

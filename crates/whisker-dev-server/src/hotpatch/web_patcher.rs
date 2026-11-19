@@ -68,7 +68,7 @@ impl WebPatcher {
         })?;
         let mut object_plan = thin_build::build_obj_plan(captured, &self.patch_out_dir);
         set_pic(&mut object_plan.args);
-        let object = run_obj_plan(&object_plan, &self.rustc_path, &self.cwd)
+        let objects = run_obj_plan(&object_plan, &self.rustc_path, &self.cwd)
             .await
             .context("compile Web Hot Reload object")?;
 
@@ -78,7 +78,7 @@ impl WebPatcher {
             .values()
             .max_by_key(|invocation| invocation.timestamp_micros)
             .context("no captured wasm linker invocation")?;
-        let args = side_module_args(&linker_args.args, &object, &patch);
+        let args = side_module_args(&linker_args.args, &objects, &patch);
         std::fs::create_dir_all(&self.patch_out_dir)
             .with_context(|| format!("create {}", self.patch_out_dir.display()))?;
         let mut link = tokio::process::Command::new(&self.linker_path);
@@ -113,7 +113,7 @@ fn set_pic(args: &mut Vec<String>) {
     args.push("-Crelocation-model=pic".into());
 }
 
-fn side_module_args(original: &[String], object: &Path, output: &Path) -> Vec<String> {
+fn side_module_args(original: &[String], objects: &[PathBuf], output: &Path) -> Vec<String> {
     let mut args = vec![
         "-flavor".into(),
         "wasm".into(),
@@ -139,7 +139,7 @@ fn side_module_args(original: &[String], object: &Path, output: &Path) -> Vec<St
             args.extend([pair[0].clone(), pair[1].clone()]);
         }
     }
-    args.push(object.display().to_string());
+    args.extend(objects.iter().map(|object| object.display().to_string()));
     args.push("-o".into());
     args.push(output.display().to_string());
     args
@@ -182,7 +182,7 @@ mod tests {
     fn side_module_plan_drops_fat_inputs_and_keeps_output_explicit() {
         let args = side_module_args(
             &["old.o".into(), "--export".into(), "start".into()],
-            Path::new("new.o"),
+            &[PathBuf::from("new.o")],
             Path::new("patch.wasm"),
         );
         assert!(!args.iter().any(|arg| arg == "old.o"));

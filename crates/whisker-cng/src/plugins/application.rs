@@ -50,7 +50,11 @@ pub(crate) fn initial_context(app_config: &Config, enabled: EnabledTargets) -> G
         bundle_id: app_meta.ios_bundle_id.clone(),
         scheme: app_config.ios.scheme.clone(),
         deployment_target: app_config.ios.deployment_target.clone(),
-        info_plist: seed_orientation_plist(&app_config.ios.orientations),
+        info_plist: seed_orientation_plist(if app_config.ios.orientations.is_empty() {
+            &app_config.orientations
+        } else {
+            &app_config.ios.orientations
+        }),
         ..Default::default()
     });
     let android = enabled.android.then(|| AndroidProjectIr {
@@ -62,6 +66,9 @@ pub(crate) fn initial_context(app_config: &Config, enabled: EnabledTargets) -> G
         target_sdk: app_config.android.target_sdk,
         manifest: AndroidManifest {
             main_activity_url_schemes: app_config.url_schemes.clone(),
+            main_activity_screen_orientation:
+                whisker_config::Orientation::android_screen_orientation(&app_config.orientations)
+                    .map(str::to_owned),
             ..Default::default()
         },
         ..Default::default()

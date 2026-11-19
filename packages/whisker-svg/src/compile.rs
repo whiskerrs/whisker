@@ -11,7 +11,8 @@
 //!   `width` / `height` are ignored (the host view's size is the
 //!   render target).
 //! * `<g>` — `transform`, `opacity`, and the paint-inheritance
-//!   attributes (`fill`, `stroke`, `stroke-width`) are honoured.
+//!   attributes (`fill`, `stroke`, `stroke-width`, `stroke-linecap`,
+//!   `stroke-linejoin`) are honoured.
 //!   Group itself emits `SAVE` … `RESTORE` around its children.
 //! * `<path d>` — the d attribute is parsed by [`path_parse`] and
 //!   each command becomes the corresponding `PATH_*` opcode.
@@ -38,7 +39,7 @@
 //! compilation — partial display lists with one bad element
 //! skipped are usually better than rendering nothing.
 
-use crate::builder::{Color, DisplayListBuilder, Transform};
+use crate::builder::{Color, DisplayListBuilder, LineCap, LineJoin, Transform};
 use crate::path_parse::{self, PathCommand};
 
 /// Output of [`compile`].
@@ -152,6 +153,8 @@ struct PaintState {
     fill: Paint,
     stroke: Paint,
     stroke_width: f32,
+    stroke_cap: LineCap,
+    stroke_join: LineJoin,
     opacity: f32,
 }
 
@@ -162,6 +165,8 @@ impl Default for PaintState {
             fill: Paint::Color(Color::BLACK),
             stroke: Paint::None,
             stroke_width: 1.0,
+            stroke_cap: LineCap::Butt,
+            stroke_join: LineJoin::Miter,
             opacity: 1.0,
         }
     }
@@ -259,6 +264,9 @@ fn emit_paint(b: &mut DisplayListBuilder, s: &PaintState) {
     }
     if !matches!(s.stroke, Paint::None) {
         b.stroke_width(s.stroke_width);
+        // Emitted unconditionally: replayer paint state persists across sibling shapes.
+        b.stroke_cap(s.stroke_cap);
+        b.stroke_join(s.stroke_join);
     }
 }
 
@@ -276,6 +284,26 @@ fn update_paint(node: &roxmltree::Node, s: &mut PaintState, ctx: &mut Ctx) {
     if let Some(v) = attr_or_style(node, "stroke-width") {
         if let Ok(n) = v.trim().parse::<f32>() {
             s.stroke_width = n;
+        }
+    }
+    if let Some(v) = attr_or_style(node, "stroke-linecap") {
+        match v.trim() {
+            "butt" => s.stroke_cap = LineCap::Butt,
+            "round" => s.stroke_cap = LineCap::Round,
+            "square" => s.stroke_cap = LineCap::Square,
+            other => ctx
+                .warnings
+                .push(format!("unknown stroke-linecap `{other}`")),
+        }
+    }
+    if let Some(v) = attr_or_style(node, "stroke-linejoin") {
+        match v.trim() {
+            "miter" => s.stroke_join = LineJoin::Miter,
+            "round" => s.stroke_join = LineJoin::Round,
+            "bevel" => s.stroke_join = LineJoin::Bevel,
+            other => ctx
+                .warnings
+                .push(format!("unknown stroke-linejoin `{other}`")),
         }
     }
     if let Some(v) = attr_or_style(node, "opacity") {

@@ -1,7 +1,7 @@
 //! Web Host implementation for `whisker-svg`.
 
 use base64::Engine;
-use whisker_svg::{Color, Transform, Visitor, replay};
+use whisker_svg::{Color, LineCap, LineJoin, Transform, Visitor, replay};
 use whisker_web::{
     ModuleDefinition, WebViewDefinition, WhiskerModule, WhiskerValue, wasm_bindgen, web_sys,
 };
@@ -109,6 +109,8 @@ struct State {
     fill: Option<Paint>,
     stroke: Option<Paint>,
     stroke_width: f32,
+    stroke_cap: LineCap,
+    stroke_join: LineJoin,
     opacity: f32,
 }
 
@@ -119,6 +121,8 @@ impl Default for State {
             fill: Some(Paint::Literal(Color::BLACK)),
             stroke: None,
             stroke_width: 1.0,
+            stroke_cap: LineCap::Butt,
+            stroke_join: LineJoin::Miter,
             opacity: 1.0,
         }
     }
@@ -168,9 +172,19 @@ impl SvgMarkupVisitor {
         }
         if stroke {
             write_paint(&mut self.body, "stroke", self.state.stroke);
+            let cap = match self.state.stroke_cap {
+                LineCap::Butt => "butt",
+                LineCap::Round => "round",
+                LineCap::Square => "square",
+            };
+            let join = match self.state.stroke_join {
+                LineJoin::Miter => "miter",
+                LineJoin::Round => "round",
+                LineJoin::Bevel => "bevel",
+            };
             let _ = write!(
                 self.body,
-                " stroke-width=\"{}\" stroke-linecap=\"butt\" stroke-linejoin=\"miter\"",
+                " stroke-width=\"{}\" stroke-linecap=\"{cap}\" stroke-linejoin=\"{join}\"",
                 self.state.stroke_width
             );
         } else {
@@ -220,6 +234,14 @@ impl Visitor for SvgMarkupVisitor {
 
     fn stroke_width(&mut self, width: f32) {
         self.state.stroke_width = width;
+    }
+
+    fn stroke_cap(&mut self, cap: LineCap) {
+        self.state.stroke_cap = cap;
+    }
+
+    fn stroke_join(&mut self, join: LineJoin) {
+        self.state.stroke_join = join;
     }
 
     fn opacity(&mut self, alpha: f32) {

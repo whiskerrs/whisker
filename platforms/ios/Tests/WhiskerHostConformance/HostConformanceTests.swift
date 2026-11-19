@@ -189,6 +189,68 @@ final class HostConformanceTests: XCTestCase {
 
 #endif
 #if canImport(UIKit)
+    func testViewHostsChildrenItselfUntilItClips() throws {
+        let root = UIView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let scene = HostScene(root: root, resources: HostResourceStore(),
+            logicalBounds: { root.bounds }, emitElementEvent: { _, _, _ in },
+            updateScrollOffset: { _, _ in }, removeScrollOffset: { _ in })
+        XCTAssertTrue(WhiskerElementRegistry.bind([WhiskerElementRegistration(
+            elementType: 1, name: WhiskerBuiltInElements.viewName,
+            childPolicy: .elements, measurement: .none)]))
+        func present(_ operations: [WhiskerMobileOperation], revision: UInt64) {
+            operations.withUnsafeBufferPointer { buffer in
+                var frame = WhiskerMobileFrame()
+                frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                frame.protocol_major = 1
+                frame.mode = UInt8(revision == 1 ? WHISKER_FRAME_SNAPSHOT : WHISKER_FRAME_DELTA)
+                frame.scene_epoch = 1
+                frame.base_revision = revision - 1
+                frame.target_revision = revision
+                frame.operations = buffer.baseAddress
+                frame.operation_count = buffer.count
+                var response = WhiskerMobileApplyResponse()
+                XCTAssertTrue(scene.applyFrame(frame, response: &response))
+                XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
+            }
+        }
+        present([
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 2, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 3, member: 1),
+            operation(tag: UInt32(WHISKER_OP_INSERT), parent: 1, child: 2),
+            operation(tag: UInt32(WHISKER_OP_INSERT), parent: 1, child: 3, index: 1),
+        ], revision: 1)
+        let parent = try XCTUnwrap(root.subviews.first as? WhiskerNodeView)
+        XCTAssertTrue(parent.sceneChildrenHost() === parent)
+        let children = parent.subviews
+        XCTAssertEqual(children.count, 2)
+        XCTAssertTrue(children.allSatisfy { $0 is WhiskerNodeView })
+
+        present([operation(tag: UInt32(WHISKER_OP_CLIP), node: 1, flags: 3)], revision: 2)
+        let clipHost = parent.sceneChildrenHost()
+        XCTAssertFalse(clipHost === parent)
+        XCTAssertTrue(clipHost.superview === parent)
+        XCTAssertTrue(clipHost.layer.masksToBounds)
+        XCTAssertEqual(clipHost.subviews, children)
+
+        present([
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 4, member: 1),
+            operation(tag: UInt32(WHISKER_OP_INSERT), parent: 1, child: 4, index: 1),
+        ], revision: 3)
+        XCTAssertEqual(clipHost.subviews.count, 3)
+        XCTAssertTrue(clipHost.subviews.first === children.first)
+        XCTAssertTrue(clipHost.subviews.last === children.last)
+
+        present([operation(tag: UInt32(WHISKER_OP_CLIP), node: 1, flags: 0)], revision: 4)
+        XCTAssertTrue(parent.sceneChildrenHost() === parent)
+        XCTAssertNil(clipHost.superview)
+        XCTAssertEqual(parent.subviews.count, 3)
+        XCTAssertTrue(parent.subviews.first === children.first)
+        XCTAssertTrue(parent.subviews.last === children.last)
+    }
+
+#endif
+#if canImport(UIKit)
     func testPaintOnlyFrameDoesNotReprojectRootZOrder() {
         let root = ZOrderCountingView()
         let scene = HostScene(
@@ -480,6 +542,51 @@ final class HostConformanceTests: XCTestCase {
             XCTAssertTrue(view.applyFrame(frame, response: &response))
             XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
         }
+    }
+
+    func testSceneReportsACapturedPointerAndNotItsRelease() {
+        let registration = WhiskerElementRegistration(
+            elementType: 1,
+            name: WhiskerBuiltInElements.viewName,
+            childPolicy: .elements,
+            measurement: .none
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+        var captured = [UInt64]()
+        let root = UIView()
+        let scene = HostScene(
+            root: root,
+            resources: HostResourceStore(),
+            logicalBounds: { .zero },
+            emitElementEvent: { _, _, _ in },
+            updateScrollOffset: { _, _ in },
+            removeScrollOffset: { _ in },
+            capturePointer: { captured.append($0) }
+        )
+        var operations = [
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CAPTURE), node: 1, wide: 7),
+            operation(tag: UInt32(WHISKER_OP_RELEASE_CAPTURE), node: 1, wide: 7),
+        ]
+        operations.withUnsafeMutableBufferPointer { buffer in
+            var frame = WhiskerMobileFrame()
+            frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+            frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
+            frame.protocol_major = 1
+            frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
+            frame.surface = 1
+            frame.scene_epoch = 1
+            frame.viewport_epoch = 1
+            frame.frame_id = 1
+            frame.target_revision = 1
+            frame.operations = UnsafePointer(buffer.baseAddress!)
+            frame.operation_count = buffer.count
+            var response = WhiskerMobileApplyResponse()
+            XCTAssertTrue(scene.applyFrame(frame, response: &response))
+            XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
+        }
+
+        XCTAssertEqual(captured, [7])
     }
 
     func testEllipsisMeasurementKeepsMultilineWrapping() {
@@ -866,8 +973,14 @@ final class HostConformanceTests: XCTestCase {
                 WhiskerPropertyBinding(id: 2, name: "item-snap", value: .map),
                 WhiskerPropertyBinding(id: 3, name: "scroll-snap-stop", value: .string),
                 WhiskerPropertyBinding(id: 4, name: "enable-scroll", value: .bool),
+                WhiskerPropertyBinding(id: 5, name: "show-scroll-indicator", value: .bool),
+                WhiskerPropertyBinding(id: 6, name: "enable-refresh", value: .bool),
+                WhiskerPropertyBinding(id: 7, name: "refreshing", value: .bool),
             ],
-            events: [WhiskerEventBinding(id: 1, name: "scroll", detail: .map)],
+            events: [
+                WhiskerEventBinding(id: 1, name: "scroll", detail: .map),
+                WhiskerEventBinding(id: 2, name: "refresh", detail: .map),
+            ],
             commands: [
                 WhiskerCommandBinding(id: 1, name: "scrollTo", arguments: .map),
                 WhiskerCommandBinding(id: 2, name: "scrollBy", arguments: .map),
@@ -887,6 +1000,22 @@ final class HostConformanceTests: XCTestCase {
 
         scrollView.setScrollOrientation("horizontal")
         node.setWhiskerVisibility(true)
+        XCTAssertTrue(scrollView.showsHorizontalScrollIndicator)
+        XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
+    }
+
+    func testScrollIndicatorCanBeDisabledIndependentlyOfVisibility() {
+        let scrollView = WhiskerScrollContainerView(frame: .zero)
+        scrollView.setScrollOrientation("horizontal")
+
+        scrollView.setScrollIndicatorVisible(false)
+        XCTAssertFalse(scrollView.showsHorizontalScrollIndicator)
+        XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
+
+        scrollView.setWhiskerChromeVisible(true)
+        XCTAssertFalse(scrollView.showsHorizontalScrollIndicator)
+
+        scrollView.setScrollIndicatorVisible(true)
         XCTAssertTrue(scrollView.showsHorizontalScrollIndicator)
         XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
     }
@@ -932,8 +1061,14 @@ final class HostConformanceTests: XCTestCase {
                 WhiskerPropertyBinding(id: 2, name: "item-snap", value: .map),
                 WhiskerPropertyBinding(id: 3, name: "scroll-snap-stop", value: .string),
                 WhiskerPropertyBinding(id: 4, name: "enable-scroll", value: .bool),
+                WhiskerPropertyBinding(id: 5, name: "show-scroll-indicator", value: .bool),
+                WhiskerPropertyBinding(id: 6, name: "enable-refresh", value: .bool),
+                WhiskerPropertyBinding(id: 7, name: "refreshing", value: .bool),
             ],
-            events: [WhiskerEventBinding(id: 1, name: "scroll", detail: .map)],
+            events: [
+                WhiskerEventBinding(id: 1, name: "scroll", detail: .map),
+                WhiskerEventBinding(id: 2, name: "refresh", detail: .map),
+            ],
             commands: [
                 WhiskerCommandBinding(id: 1, name: "scrollTo", arguments: .map),
                 WhiskerCommandBinding(id: 2, name: "scrollBy", arguments: .map),
@@ -944,8 +1079,7 @@ final class HostConformanceTests: XCTestCase {
         let scrollView = try XCTUnwrap(mounted.view as? WhiskerScrollContainerView)
         let node = WhiskerNodeView(element: registration.name)
         node.mountedElement = mounted
-        node.addSubview(scrollView)
-        node.mountedContentDidInstall()
+        node.installMountedContent()
         node.contentFrame = CGRect(x: 0, y: 0, width: 100, height: 100)
         node.setLayoutFrame(CGRect(x: 0, y: 0, width: 100, height: 100))
         node.layoutIfNeeded()
@@ -955,6 +1089,21 @@ final class HostConformanceTests: XCTestCase {
         scrollView.setNeedsLayout()
         scrollView.layoutIfNeeded()
         node.setOverflowClip(horizontal: true, vertical: true)
+
+        // A square viewport clips through the scroll view's own bounds.
+        XCTAssertNil(scrollView.layer.mask)
+        XCTAssertTrue(scrollView.layer.masksToBounds)
+        XCTAssertFalse(scrollView.contentView.layer.masksToBounds)
+
+        var raw = WhiskerMobileBoxPaint()
+        let round = WhiskerMobileLengthPercentage(length: 20, fraction: 0)
+        let square = WhiskerMobileLengthPercentage(length: 0, fraction: 0)
+        raw.radii_horizontal = (round, square, square, square)
+        raw.radii_vertical = (round, square, square, square)
+        let paint = HostBoxPaint(raw)
+        node.paint = paint
+        node.boxPainter.update(paint, bounds: node.bounds)
+        node.boxPaintDidChange()
 
         XCTAssertTrue(scrollView.layer.mask != nil)
         XCTAssertNil(scrollView.contentView.layer.mask)
