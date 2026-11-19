@@ -1127,6 +1127,7 @@ impl RuntimeInstance {
         let (owner, root) = self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
                 surface.begin_mutation_batch();
+                crate::viewport::publish(surface.environment());
                 crate::drain_runtime_dispatches();
                 let owner = Owner::new(None);
                 let root = owner.with(application);
@@ -1521,6 +1522,7 @@ impl RuntimeInstance {
                 surface
                     .update_environment(environment)
                     .map_err(RuntimeDriveError::Environment)?;
+                crate::viewport::publish(environment);
                 crate::drain_runtime_dispatches();
                 self.drain_pending_host_events()
                     .map_err(RuntimeDriveError::HostEvent)?;

@@ -300,6 +300,11 @@ fn manifest(i: &AndroidInputs) -> XmlElement {
             ("android:name", ".MainActivity"),
             ("android:exported", "true"),
             ("android:windowSoftInputMode", "adjustResize"),
+            // A recreated Activity would start a fresh Rust runtime and drop all app state.
+            (
+                "android:configChanges",
+                "orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation",
+            ),
         ],
         vec![element(
             "intent-filter",
@@ -318,6 +323,11 @@ fn manifest(i: &AndroidInputs) -> XmlElement {
             ],
         )],
     );
+    if let Some(orientation) = &i.main_activity_screen_orientation {
+        activity
+            .attributes
+            .insert("android:screenOrientation".into(), orientation.clone());
+    }
     if !i.main_activity_url_schemes.is_empty() {
         activity
             .attributes
