@@ -11,6 +11,7 @@ import android.util.Log
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 import androidx.core.view.ViewCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -62,6 +63,7 @@ class WhiskerView(context: Context) :
         }
     }
     private var frameScheduled = false
+    private var initialFrameGate = InitialFrameGate()
     private var windowVisible = true
     private val mainHandler = Handler(Looper.getMainLooper())
     private val elements = WhiskerElementRegistry.newBindings()
@@ -206,6 +208,12 @@ class WhiskerView(context: Context) :
         requestFrameFromNative()
     }
 
+    override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
+        val applied = super.onApplyWindowInsets(insets)
+        requestFrameFromNative()
+        return applied
+    }
+
     private fun mountWhenSized() {
         if (
             !permanentlyDestroyed && nativeHandle == 0L &&
@@ -243,6 +251,7 @@ class WhiskerView(context: Context) :
 
     override fun onDetachedFromWindow() {
         pauseRuntime()
+        initialFrameGate = InitialFrameGate()
         frameScheduled = false
         continuousEventFlushPending = false
         choreographer.removeFrameCallback(this)
@@ -298,6 +307,7 @@ class WhiskerView(context: Context) :
         WhiskerModuleEventCenter.installEventSink(this, null)
         val handle = nativeHandle
         nativeHandle = 0L
+        initialFrameGate = InitialFrameGate()
         runtimePaused = false
         if (handle != 0L) nativeDestroy(handle)
         frameScheduled = false
@@ -409,16 +419,22 @@ class WhiskerView(context: Context) :
             mountWhenSized()
             return
         }
-        val density = resources.displayMetrics.density
-        val idle = nativeTick(
-            handle,
-            frameTimeNanos / 1_000_000.0,
-            width / density,
-            height / density,
-            density,
-        )
-        measurements.endFrame()
-        if (!idle) requestFrameFromNative()
+        val presented = initialFrameGate.run(
+            ViewCompat.getRootWindowInsets(this) != null,
+            { moduleEventFlush.run() },
+        ) {
+            val density = resources.displayMetrics.density
+            val idle = nativeTick(
+                handle,
+                frameTimeNanos / 1_000_000.0,
+                width / density,
+                height / density,
+                density,
+            )
+            measurements.endFrame()
+            if (!idle) requestFrameFromNative()
+        }
+        if (!presented) ViewCompat.requestApplyInsets(this)
     }
 
     fun beginBootstrapFromNative() = bootstrap.begin()
