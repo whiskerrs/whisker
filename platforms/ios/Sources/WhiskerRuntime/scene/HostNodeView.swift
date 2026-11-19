@@ -865,6 +865,9 @@ private final class WhiskerChildrenHostView: UIView {
 /// the element, which most elements never need.
 private final class HostBoxPresentation {
     let layer = HostPaintLayer()
+    private var gradientLayer: HostPaintLayer?
+    private var gradientStripLayer: HostPaintLayer?
+    private var gradientStrip: (colors: [WhiskerPlatformColor], locations: [CGFloat], texels: Int)?
     private var drawView: HostNodeDrawView?
     private unowned let painter: HostBoxPainter
     var drawsInView: Bool { drawView != nil }
@@ -877,6 +880,7 @@ private final class HostBoxPresentation {
 
     func setFrame(_ frame: CGRect) {
         layer.frame = frame
+        gradientLayer?.frame = layer.bounds
         drawView?.frame = frame
     }
 
@@ -911,6 +915,52 @@ private final class HostBoxPresentation {
         layer.cornerRadius = paint.cornerRadius
         layer.borderWidth = paint.borderWidth
         layer.borderColor = paint.borderColor?.cgColor
+        applyGradient(paint.gradient, cornerRadius: paint.cornerRadius)
+    }
+
+    /// Presents a linear gradient as a strip along its line, rotated and stretched across the box.
+    private func applyGradient(_ gradient: HostLinearGradientAxis?, cornerRadius: CGFloat) {
+        guard let gradient, gradient.length > 0 else {
+            gradientLayer?.removeFromSuperlayer()
+            gradientLayer = nil
+            gradientStripLayer = nil
+            gradientStrip = nil
+            return
+        }
+        if gradientLayer == nil {
+            let container = HostPaintLayer()
+            container.masksToBounds = true
+            let strip = HostPaintLayer()
+            strip.contentsGravity = .resize
+            container.addSublayer(strip)
+            layer.insertSublayer(container, at: 0)
+            gradientLayer = container
+            gradientStripLayer = strip
+        }
+        guard let container = gradientLayer, let strip = gradientStripLayer else { return }
+        container.frame = layer.bounds
+        container.cornerRadius = cornerRadius
+        strip.bounds = CGRect(
+            x: 0,
+            y: 0,
+            width: gradient.length,
+            height: hypot(layer.bounds.width, layer.bounds.height)
+        )
+        strip.position = CGPoint(
+            x: (gradient.start.x + gradient.end.x) / 2,
+            y: (gradient.start.y + gradient.end.y) / 2
+        )
+        strip.setAffineTransform(CGAffineTransform(rotationAngle: atan2(
+            gradient.end.y - gradient.start.y,
+            gradient.end.x - gradient.start.x
+        )))
+        // Three texels per point match the densest screens; the cap stays within GPU texture limits.
+        let texels = min(4096, Int((gradient.length * 3).rounded(.up)))
+        guard gradientStrip.map({
+            $0.colors != gradient.colors || $0.locations != gradient.locations || $0.texels != texels
+        }) ?? true else { return }
+        strip.contents = gradient.makeStripImage(texels: texels)
+        gradientStrip = (gradient.colors, gradient.locations, texels)
     }
 }
 
