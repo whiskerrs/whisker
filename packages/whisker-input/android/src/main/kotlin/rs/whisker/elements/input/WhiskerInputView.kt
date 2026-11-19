@@ -22,6 +22,7 @@ import android.os.Build
 import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
+import android.text.SpannableString
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.autofill.AutofillValue
@@ -100,6 +101,11 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     private var noSuggestionsFlag: Int = 0
     private var multilineEnabled: Boolean = false
 
+    /// Line box of the current CSS `line-height`, or null for `normal`.
+    /// Applied to the text, the hint, and the padding (see [InputLineBox]).
+    private var lineBox: InputLineBox? = null
+    private var placeholderText: String = ""
+
     // -------------------------------------------------------------------------
     // View creation
     // -------------------------------------------------------------------------
@@ -146,6 +152,9 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
+                // Every text the EditText holds, including a fresh `setText`
+                // Editable, has to carry the line-height span.
+                s?.let { applyInputLineBox(it, lineBox) }
                 // Consume the tag unconditionally: one tagged entry point
                 // authorizes exactly one text change, so a tag left over
                 // from a key that edited nothing can't authorize a later
@@ -203,6 +212,18 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             return UserEditInputConnection(base) { userEdit = true }
         }
 
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            super.onSizeChanged(w, h, oldw, oldh)
+            // An auto-sized field grows only after the Rust side re-measures
+            // the new text, by which time the EditText has already scrolled
+            // the caret into view inside its old, shorter bounds. Drop the
+            // offset the new bounds no longer need, or the top of the first
+            // line stays scrolled out of view.
+            val layout = layout ?: return
+            val maxScroll = (layout.height + totalPaddingTop + totalPaddingBottom - h).coerceAtLeast(0)
+            if (scrollY > maxScroll) scrollTo(scrollX, maxScroll)
+        }
+
         override fun onTextContextMenuItem(id: Int): Boolean {
             userEdit = true
             return super.onTextContextMenuItem(id)
@@ -232,7 +253,8 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     }
 
     fun setPlaceholder(text: String) {
-        view().hint = text
+        placeholderText = text
+        applyHint()
     }
 
     fun setPlaceholderColor(color: String) {
@@ -451,6 +473,11 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         val et = view()
         et.setTextColor(style.color)
         InputTypography.apply(et, style)
+        val box = InputLineBox.of(et.paint, style.lineHeight?.times(et.resources.displayMetrics.density))
+        lineBox = box
+        et.setPadding(0, box?.paddingTop ?: 0, 0, box?.paddingBottom ?: 0)
+        et.text?.let { applyInputLineBox(it, box) }
+        applyHint()
         val horizontal = when (style.alignment) {
             WhiskerTextAlignment.CENTER -> Gravity.CENTER_HORIZONTAL
             WhiskerTextAlignment.END, WhiskerTextAlignment.RIGHT -> Gravity.END
@@ -462,6 +489,16 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
+
+    /** Hint text carrying the same line box as the edited text. */
+    private fun applyHint() {
+        val box = lineBox
+        view().hint = if (box == null || placeholderText.isEmpty()) {
+            placeholderText
+        } else {
+            SpannableString(placeholderText).also { applyInputLineBox(it, box) }
+        }
+    }
 
     /**
      * Set the EditText text to [incoming] only when it differs from what is

@@ -13,7 +13,7 @@ plugins {
 
 android {
     namespace = "rs.whisker.modules.input"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         // `textCursorDrawable` tint (API 29) is used best-effort for
