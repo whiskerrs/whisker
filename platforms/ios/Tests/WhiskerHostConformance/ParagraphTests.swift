@@ -170,6 +170,7 @@ extension ParagraphTests {
             let blue = label(.blue)
             XCTAssertEqual(try inkColor(red), .red, "rich: \(rich)")
             XCTAssertEqual(try inkColor(blue), .blue, "rich: \(rich)")
+            XCTAssertEqual(try inkColor(red), .red, "rich: \(rich)")
         }
     }
 
@@ -236,7 +237,9 @@ final class ParagraphPaintTests: XCTestCase {
         let observer = StorageEdits()
         layout.storage.delegate = observer
 
-        layout.applyPaint(paint(.red))
+        let splitRun = NSMutableAttributedString(attributedString: paint(.red))
+        splitRun.addAttribute(.kern, value: 1, range: NSRange(location: 1, length: 1))
+        layout.applyPaint(splitRun)
         XCTAssertEqual(observer.count, 0)
 
         layout.applyPaint(NSAttributedString(string: red.string, attributes: [.foregroundColor: WhiskerPlatformColor.blue]))
