@@ -11,9 +11,12 @@ use whisker_plugin::{FileEntry, project::*};
 fn application_inputs() -> AndroidInputs {
     let mut config = Config::default();
     config.name("IR & App").bundle_id("test.ir.app");
+    inputs_for(&config)
+}
+fn inputs_for(config: &Config) -> AndroidInputs {
     inputs_from_with_engine(
         &whisker_cng::Engine::new(),
-        &config,
+        config,
         "ir_app".into(),
         PathBuf::from("../.."),
         "ir-app".into(),
@@ -51,6 +54,32 @@ fn temp() -> PathBuf {
     ));
     std::fs::create_dir_all(&p).unwrap();
     p
+}
+fn manifest_for(config: &Config) -> String {
+    let result = ProjectEngine::with_android_application(inputs_for(config))
+        .compose(&Config::default(), &ProjectIr::Android(Box::default()))
+        .unwrap();
+    let ProjectIr::Android(project) = result.project else {
+        panic!()
+    };
+    let mut input = base();
+    input.project = *project;
+    text(
+        &render_project(&input).unwrap(),
+        "app/src/main/AndroidManifest.xml",
+    )
+}
+#[test]
+fn main_activity_survives_rotation_and_honours_orientations() {
+    let mut config = Config::default();
+    config.name("App").bundle_id("test.app");
+    let manifest = manifest_for(&config);
+    assert!(manifest.contains("android:configChanges=\"orientation|screenSize|"));
+    assert!(!manifest.contains("android:screenOrientation"));
+
+    config.orientations([whisker_cng::Orientation::Portrait]);
+    let manifest = manifest_for(&config);
+    assert!(manifest.contains("android:screenOrientation=\"portrait\""));
 }
 #[test]
 fn builtins_compose_against_the_new_manifest_and_gradle_scopes() {

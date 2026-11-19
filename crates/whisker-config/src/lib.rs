@@ -37,6 +37,11 @@ pub struct Config {
     /// app's own.
     #[serde(default)]
     pub url_schemes: Vec<String>,
+    /// Orientations the app supports on iOS and Android. Empty (the
+    /// default) means every orientation the platform allows — see
+    /// [`Config::orientations`].
+    #[serde(default)]
+    pub orientations: Vec<Orientation>,
     pub ios: IosConfig,
     pub android: AndroidConfig,
     #[serde(default)]
@@ -111,6 +116,17 @@ impl Config {
         if !self.url_schemes.contains(&scheme) {
             self.url_schemes.push(scheme);
         }
+        self
+    }
+
+    /// Restrict the orientations the app supports on iOS and Android.
+    ///
+    /// On iOS a restricted set also declares `UIRequiresFullScreen`, the
+    /// only way Apple accepts fewer than four orientations from an
+    /// iPad-capable app. On Android it sets `android:screenOrientation`,
+    /// which Android 16 ignores on displays 600dp or wider.
+    pub fn orientations(&mut self, o: impl IntoIterator<Item = Orientation>) -> &mut Self {
+        self.orientations = o.into_iter().collect();
         self
     }
 
@@ -200,8 +216,10 @@ impl Config {
     }
 }
 
-/// A screen orientation an iOS app declares support for
-/// (`UISupportedInterfaceOrientations`).
+/// A screen orientation the app declares support for.
+///
+/// Landscape sides follow UIKit's `UIInterfaceOrientation`: `LandscapeLeft`
+/// has the bottom of the device on the left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Orientation {
     Portrait,
@@ -219,6 +237,27 @@ impl Orientation {
             Orientation::LandscapeLeft => "UIInterfaceOrientationLandscapeLeft",
             Orientation::LandscapeRight => "UIInterfaceOrientationLandscapeRight",
         }
+    }
+
+    /// The `android:screenOrientation` value for a supported set, or `None`
+    /// for an empty set. Android has no value for an arbitrary mix of a
+    /// portrait and a landscape side, so those become `user`.
+    pub fn android_screen_orientation(set: &[Orientation]) -> Option<&'static str> {
+        use Orientation::*;
+        let has = |o| set.contains(&o);
+        let portrait = (has(Portrait), has(PortraitUpsideDown));
+        let landscape = (has(LandscapeLeft), has(LandscapeRight));
+        Some(match (portrait, landscape) {
+            ((false, false), (false, false)) => return None,
+            ((true, false), (false, false)) => "portrait",
+            ((false, true), (false, false)) => "reversePortrait",
+            ((true, true), (false, false)) => "userPortrait",
+            ((false, false), (false, true)) => "landscape",
+            ((false, false), (true, false)) => "reverseLandscape",
+            ((false, false), (true, true)) => "userLandscape",
+            ((true, true), (true, true)) => "fullUser",
+            _ => "user",
+        })
     }
 
     /// Every orientation — the default, and the only set App Store
@@ -247,8 +286,7 @@ pub struct IosConfig {
     /// match the project name.
     pub scheme: Option<String>,
     pub deployment_target: Option<String>,
-    /// Orientations the app supports. Empty (the default) means all
-    /// four — see [`IosConfig::orientations`].
+    /// iOS-only override of [`Config::orientations`]; non-empty wins.
     #[serde(default)]
     pub orientations: Vec<Orientation>,
 }
@@ -269,11 +307,7 @@ impl IosConfig {
         self
     }
 
-    /// Restrict the orientations the app supports. All four by default,
-    /// which is what App Store validation demands from an iPad-capable
-    /// app — restricting them makes the generated project declare
-    /// `UIRequiresFullScreen` as well, since an app that opts out of
-    /// iPad multitasking is the only kind Apple lets support fewer.
+    #[deprecated(note = "use `Config::orientations`, which covers iOS and Android")]
     pub fn orientations(&mut self, o: impl IntoIterator<Item = Orientation>) -> &mut Self {
         self.orientations = o.into_iter().collect();
         self
@@ -621,6 +655,24 @@ mod tests {
         let back: Config = serde_json::from_str(json).unwrap();
         assert_eq!(back.name.as_deref(), Some("OldApp"));
         assert!(back.plugins.is_empty());
+    }
+
+    #[test]
+    fn android_screen_orientation_covers_each_set() {
+        use Orientation::*;
+        let map = Orientation::android_screen_orientation;
+        assert_eq!(map(&[]), None);
+        assert_eq!(map(&[Portrait]), Some("portrait"));
+        assert_eq!(map(&[PortraitUpsideDown]), Some("reversePortrait"));
+        assert_eq!(map(&[Portrait, PortraitUpsideDown]), Some("userPortrait"));
+        assert_eq!(map(&[LandscapeRight]), Some("landscape"));
+        assert_eq!(map(&[LandscapeLeft]), Some("reverseLandscape"));
+        assert_eq!(map(&[LandscapeLeft, LandscapeRight]), Some("userLandscape"));
+        assert_eq!(map(&Orientation::all()), Some("fullUser"));
+        assert_eq!(
+            map(&[Portrait, LandscapeLeft, LandscapeRight]),
+            Some("user")
+        );
     }
 
     #[test]

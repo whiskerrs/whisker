@@ -178,6 +178,7 @@ pub mod error {
 }
 pub use whisker_runtime::tasks::{run_blocking, spawn_local};
 pub use whisker_runtime::{RuntimeDispatcher, runtime_dispatcher};
+pub use whisker_runtime::{Viewport, viewport};
 // Frame-driving internal used by the host tick loop, not app code.
 #[doc(hidden)]
 pub use whisker_runtime::tasks::run_until_stalled;
