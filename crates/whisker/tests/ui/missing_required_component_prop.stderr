@@ -7,4 +7,5 @@ error[E0599]: no method named `build` found for struct `GreetingPropsBuilder<fal
 9 |     let _ = Greeting::builder().build();
   |                                 ^^^^^ method not found in `GreetingPropsBuilder<false>`
   |
-  = note: the method was found for `GreetingPropsBuilder<true>`
+  = note: the method was found for
+          - `GreetingPropsBuilder<true>`
