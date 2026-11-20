@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use whisker_layout::{LayoutParticipation, LayoutSnapshot};
 use whisker_protocol::{Accessibility, NodeId, Visibility};
@@ -13,7 +13,7 @@ struct Presentation {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ParagraphVisibility {
-    suppressed: HashMap<NodeId, Presentation>,
+    suppressed: FxHashMap<NodeId, Presentation>,
 }
 
 impl ParagraphVisibility {

@@ -1,5 +1,6 @@
 //! Runtime ownership of one retained semantic surface.
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::error::Error;
@@ -413,27 +414,27 @@ impl SurfaceRuntime {
                 environment,
                 registry,
                 next_element: 0,
-                elements: HashMap::new(),
-                node_elements: HashMap::new(),
-                text_layout_observed: HashSet::new(),
-                frame_applied_callbacks: HashMap::new(),
-                module_measurements: HashMap::new(),
+                elements: FxHashMap::default(),
+                node_elements: FxHashMap::default(),
+                text_layout_observed: FxHashSet::default(),
+                frame_applied_callbacks: FxHashMap::default(),
+                module_measurements: FxHashMap::default(),
                 #[cfg(debug_assertions)]
                 text_style_diagnostics: RefCell::new(HashSet::new()),
-                presented_paragraphs: HashMap::new(),
+                presented_paragraphs: FxHashMap::default(),
                 text_queries: Rc::new(RefCell::new(crate::text_query::Queries::default())),
                 root: None,
                 error: None,
                 resource_commands: VecDeque::new(),
-                resource_generations: HashMap::new(),
-                known_resource_generations: HashSet::new(),
-                released_resource_generations: HashSet::new(),
-                resource_events: HashMap::new(),
+                resource_generations: FxHashMap::default(),
+                known_resource_generations: FxHashSet::default(),
+                released_resource_generations: FxHashSet::default(),
+                resource_events: FxHashMap::default(),
                 background_resources: BackgroundResourceManager::default(),
                 mutation_batch: None,
                 list_layout_requested: false,
                 active_pointers: Vec::new(),
-                base_resolutions: HashMap::new(),
+                base_resolutions: FxHashMap::default(),
                 initial_inherited: RefCell::new(None),
                 #[cfg(test)]
                 surface_snapshot_count: 0,
@@ -1340,12 +1341,12 @@ struct BindingState {
     environment: StyleEnvironment,
     registry: ElementRegistry,
     next_element: u32,
-    elements: HashMap<Element, BoundElement>,
-    node_elements: HashMap<NodeId, Element>,
+    elements: FxHashMap<Element, BoundElement>,
+    node_elements: FxHashMap<NodeId, Element>,
     text_queries: Rc<RefCell<crate::text_query::Queries>>,
-    text_layout_observed: HashSet<Element>,
-    frame_applied_callbacks: HashMap<Element, Vec<FrameAppliedCallback>>,
-    module_measurements: HashMap<Element, module_measurement::Binding>,
+    text_layout_observed: FxHashSet<Element>,
+    frame_applied_callbacks: FxHashMap<Element, Vec<FrameAppliedCallback>>,
+    module_measurements: FxHashMap<Element, module_measurement::Binding>,
     #[cfg(debug_assertions)]
     text_style_diagnostics: RefCell<
         HashSet<(
@@ -1353,21 +1354,21 @@ struct BindingState {
             Option<whisker_engine::whisker_style::StyleProperty>,
         )>,
     >,
-    presented_paragraphs: HashMap<NodeId, paragraph_presentation::PresentedParagraph>,
+    presented_paragraphs: FxHashMap<NodeId, paragraph_presentation::PresentedParagraph>,
     root: Option<NodeId>,
     error: Option<RuntimeBindingError>,
     resource_commands: VecDeque<ResourceCommand>,
-    resource_generations: HashMap<ResourceId, u64>,
-    known_resource_generations: HashSet<(ResourceId, u64)>,
-    released_resource_generations: HashSet<(ResourceId, u64)>,
-    resource_events: HashMap<(ResourceId, u64), ResourceEvent>,
+    resource_generations: FxHashMap<ResourceId, u64>,
+    known_resource_generations: FxHashSet<(ResourceId, u64)>,
+    released_resource_generations: FxHashSet<(ResourceId, u64)>,
+    resource_events: FxHashMap<(ResourceId, u64), ResourceEvent>,
     background_resources: BackgroundResourceManager,
     mutation_batch: Option<MutationBatch>,
     list_layout_requested: bool,
     // Down order is what `touches` exposes, so a hash map would reshuffle
     // fingers between the events of one gesture.
     active_pointers: Vec<PointerInput>,
-    base_resolutions: HashMap<ElementTypeId, (StyleEnvironment, ResolvedNodeStyle)>,
+    base_resolutions: FxHashMap<ElementTypeId, (StyleEnvironment, ResolvedNodeStyle)>,
     initial_inherited: RefCell<Option<(StyleEnvironment, InheritedStyle)>>,
     #[cfg(test)]
     surface_snapshot_count: usize,
@@ -1483,7 +1484,7 @@ impl BindingState {
     }
 
     fn restore_style_changes(
-        elements: &mut HashMap<Element, BoundElement>,
+        elements: &mut FxHashMap<Element, BoundElement>,
         changes: Vec<(Element, PendingStyleChange)>,
     ) {
         for (element, change) in changes {
@@ -1603,7 +1604,7 @@ impl BindingState {
         }
     }
 
-    fn externally_used_resource_ids(&self) -> HashSet<ResourceId> {
+    fn externally_used_resource_ids(&self) -> FxHashSet<ResourceId> {
         self.resource_generations.keys().copied().collect()
     }
 
@@ -1967,7 +1968,7 @@ impl BindingState {
         }
         // Keep paths to explicitly changed descendants even when an ancestor
         // is also dirty but its inherited style is unchanged.
-        let mut dirty_paths = HashSet::new();
+        let mut dirty_paths = FxHashSet::default();
         for element in elements {
             let mut current = Some(*element);
             while let Some(element) = current {
@@ -2024,10 +2025,10 @@ impl BindingState {
         parent_style: Option<&InheritedStyle>,
         surface: &mut SurfaceEngine,
         background_resources: &mut BackgroundResourceManager,
-        externally_used: &HashSet<ResourceId>,
+        externally_used: &FxHashSet<ResourceId>,
         updates: &mut Vec<(Element, ResolvedNodeStyle)>,
         resource_commands: &mut Vec<ResourceCommand>,
-        dirty_paths: &HashSet<Element>,
+        dirty_paths: &FxHashSet<Element>,
     ) -> Result<(), RuntimeBindingError> {
         let entry = self.element(element)?;
         if entry.kind.is_raw_text() {
@@ -2221,12 +2222,12 @@ impl BindingState {
                         element,
                         resolved: resolved.clone(),
                         initialized: false,
-                        layout_targets: HashMap::new(),
-                        layout_current: HashMap::new(),
+                        layout_targets: FxHashMap::default(),
+                        layout_current: FxHashMap::default(),
                         opacity_target: 0.0,
                         opacity_current: 0.0,
                         box_paint: BoxPaint::default(),
-                        current_colors: HashMap::new(),
+                        current_colors: FxHashMap::default(),
                         transform_target: computed.paint().transform.clone(),
                         transform_current: computed.paint().transform.clone(),
                         text_color_target: None,
