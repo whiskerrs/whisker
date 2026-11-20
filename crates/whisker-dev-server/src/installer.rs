@@ -101,6 +101,10 @@ impl Installer {
     }
 
     pub async fn install_and_launch(&self) -> Result<()> {
+        // iOS opens this section itself, after the xcodebuild that runs here.
+        if !matches!(self.target, Target::IosSimulator | Target::Web) {
+            whisker_build::ui::section("Launch");
+        }
         match self.target {
             Target::Android => {
                 let p = self.android.as_ref().context(
@@ -181,17 +185,30 @@ impl Installer {
             let _ = previous.process.kill().await;
             let _ = previous.process.wait().await;
         }
+        let launch_step = whisker_build::ui::step(
+            whisker_build::ui::OperationKind::Launch,
+            executable
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        );
         let mut command = Command::new(executable);
         command
             .current_dir(executable.parent().expect("executable has a parent"))
+            .stdin(std::process::Stdio::null())
             .env("WHISKER_DEV_ADDR", format!("127.0.0.1:{}", self.dev_port))
             .kill_on_drop(true);
         if let Some(token) = &self.dev_token {
             command.env("WHISKER_DEV_TOKEN", token);
         }
-        let process = command
-            .spawn()
-            .with_context(|| format!("launch app {}", executable.display()))?;
+        let process = match command.spawn() {
+            Ok(process) => process,
+            Err(error) => {
+                launch_step.fail(error.to_string());
+                return Err(error).with_context(|| format!("launch app {}", executable.display()));
+            }
+        };
+        launch_step.done("");
         *slot = Some(HostChild {
             _exit_guard: process.id().map(whisker_build::child_guard::track),
             process,
@@ -229,8 +246,10 @@ impl Installer {
 /// ~70 % noise.
 async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::process::ExitStatus> {
     use tokio::io::AsyncReadExt;
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .env(whisker_build::ui::NESTED_ENV, "1");
     let mut child = cmd.spawn().context("spawn child")?;
     // Track the PID so workflow cancellation can SIGTERM an in-flight
     // xcodebuild / simctl instead of orphaning it. The guard unregisters
@@ -281,77 +300,6 @@ async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::proces
     Ok(status)
 }
 
-/// `xcodebuild`'s `-quiet` flag silences progress chatter but the
-/// underlying compiler still emits diagnostics. Framework deprecation
-/// cascades can produce hundreds of non-actionable lines on every build, so
-/// the concise UI filters warning chains while verbose mode preserves them.
-///
-/// Approach: drop anything that looks like a clang / xcodebuild
-/// warning chain — the `warning:` line, the `note:` follow-ups,
-/// the source-line listings (`  217 |`, `      |   ^`), the
-/// "in file included from" / "N warnings generated." summaries,
-/// and the `[MT] IDERunDestination` IDE chatter.
-///
-/// Real errors are preserved: lines containing `error:` /
-/// `fatal error:` / `** BUILD FAILED **` always fall through.
-fn is_benign_xcodebuild_line(raw: &str) -> bool {
-    // `--verbose` means "show me the full tool output", deprecation
-    // chain included.
-    if whisker_build::ui::is_verbose() {
-        return false;
-    }
-
-    let line = raw.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '·');
-
-    // First, so a `warning:`-prefixed error isn't suppressed below.
-    if line.starts_with("error:")
-        || line.contains(" error:")
-        || line.starts_with("fatal error:")
-        || line.starts_with("** BUILD FAILED")
-        || line.starts_with("** BUILD INTERRUPTED")
-    {
-        return false;
-    }
-
-    // `2026-05-21 18:21:52.770 xcodebuild[54160:34595363] [MT] IDERunDestination …`
-    if raw.starts_with("20") && raw.contains("xcodebuild[") && raw.contains("] [MT] ") {
-        return true;
-    }
-
-    // The xcframework command's success line.
-    if line.starts_with("xcframework successfully written out to:") {
-        return true;
-    }
-
-    // Diagnostic chain: warnings, notes, source listings, summary.
-    if line.starts_with("warning:")
-        || line.contains(" warning:")
-        || line.starts_with("note:")
-        || line.contains(" note:")
-        || line.starts_with("In file included from")
-        || line.ends_with(" warnings generated.")
-        || line.ends_with(" warning generated.")
-    {
-        return true;
-    }
-
-    // Source-line listings rendered alongside the warning chain:
-    //   `217 | #import "FrameworkHeader.h"`
-    //   `    | ^`
-    //   `56 |`        (empty source line for context)
-    // After trimming leading whitespace and ALL leading digits, the
-    // remainder always starts with `|` — trimming a single character
-    // would miss multi-digit line numbers.
-    let after_digits = line
-        .trim_start()
-        .trim_start_matches(|c: char| c.is_ascii_digit() || c.is_ascii_whitespace());
-    if after_digits.starts_with('|') {
-        return true;
-    }
-
-    false
-}
-
 /// Classifies which sub-command produced the stderr — we tune the
 /// "benign noise" set per tool because the false-positive shape
 /// differs (simctl emits NSPOSIX error preambles, xcodebuild emits
@@ -398,7 +346,7 @@ impl SimctlNoise {
                     || line.starts_with("(code=405)")
             }
             SimctlNoise::Other => false,
-            SimctlNoise::Xcodebuild => is_benign_xcodebuild_line(line),
+            SimctlNoise::Xcodebuild => whisker_build::ios::is_xcodebuild_noise(line),
             SimctlNoise::AdbInstall | SimctlNoise::AdbAmStart => false,
         }
     }
@@ -406,7 +354,8 @@ impl SimctlNoise {
     fn is_benign_stdout(&self, line: &str) -> bool {
         // `-quiet` does not fully silence xcodebuild, so its stdout needs the
         // benign filter too.
-        if matches!(self, SimctlNoise::Xcodebuild) && is_benign_xcodebuild_line(line) {
+        if matches!(self, SimctlNoise::Xcodebuild) && whisker_build::ios::is_xcodebuild_noise(line)
+        {
             return true;
         }
         match self {
@@ -635,6 +584,7 @@ async fn ios_install_and_launch(
         anyhow::bail!("xcodebuild build failed ({xc_status})");
     }
     xc_step.done("");
+    whisker_build::ui::section("Launch");
 
     let app_path = derived
         .join("Build/Products/Debug-iphonesimulator")
