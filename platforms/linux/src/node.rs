@@ -208,6 +208,31 @@ impl NodeWidget {
         self.allocate(width, height, -1, Some(transform));
     }
 
+    /// The topmost node under `(x, y)` in this widget's coordinates, honoring paint order and clipping.
+    // GTK's pick can't be used: it descends into children before the parent's clip is checked.
+    pub(crate) fn hit_test(&self, x: f32, y: f32) -> Option<NodeWidget> {
+        let state = self.state();
+        let inside_x = x >= 0.0 && x < self.width() as f32;
+        let inside_y = y >= 0.0 && y < self.height() as f32;
+        let scrolls = state.scroll.is_some();
+        let descend = (inside_x || !(scrolls || state.clip.horizontal == OverflowClip::Hidden))
+            && (inside_y || !(scrolls || state.clip.vertical == OverflowClip::Hidden));
+        let visible = state.visibility == Visibility::Visible;
+        drop(state);
+        if descend {
+            let point = graphene::Point::new(x, y);
+            for child in self.paint_order().iter().rev() {
+                let hit = self
+                    .compute_point(child, &point)
+                    .and_then(|local| child.hit_test(local.x(), local.y()));
+                if hit.is_some() {
+                    return hit;
+                }
+            }
+        }
+        (visible && inside_x && inside_y).then(|| self.clone())
+    }
+
     /// Children in paint order: ascending z-order, then document order.
     fn paint_order(&self) -> Vec<NodeWidget> {
         let mut children = self.state().children.clone();
@@ -345,4 +370,43 @@ fn clip_rect(state: &NodeState, bounds: &graphene::Rect) -> Option<gsk::RoundedR
         graphene::Rect::new(x, y, width, height),
         0.0,
     ))
+}
+
+#[cfg(all(test, feature = "host-conformance"))]
+mod tests {
+    use super::*;
+    use whisker_protocol::LayoutRect;
+
+    fn child(parent: &NodeWidget, x: f32, y: f32, width: f32, height: f32) -> NodeWidget {
+        let node = NodeWidget::new();
+        node.state_mut().geometry.border_box = LayoutRect {
+            x,
+            y,
+            width,
+            height,
+        };
+        node.set_parent(parent);
+        parent.state_mut().children.push(node.clone());
+        node
+    }
+
+    #[test]
+    fn hit_test_finds_scroll_content_and_skips_what_the_scroll_view_clips() {
+        // GTK may only be initialized from one thread, and libtest runs each test on its own.
+        gtk::test_synced(|| {
+            let surface = NodeWidget::new();
+            let header = child(&surface, 0.0, 0.0, 200.0, 60.0);
+            let scroll = child(&surface, 0.0, 60.0, 200.0, 100.0);
+            scroll.state_mut().scroll = Some(ScrollState {
+                offset: [0.0, 100.0],
+                ..ScrollState::default()
+            });
+            let content = child(&scroll, 0.0, 0.0, 200.0, 400.0);
+            surface.allocate(200, 200, -1, None);
+
+            assert_eq!(surface.hit_test(10.0, 30.0), Some(header));
+            assert_eq!(surface.hit_test(10.0, 100.0), Some(content));
+            assert_eq!(surface.hit_test(10.0, 180.0), Some(surface.clone()));
+        });
+    }
 }
