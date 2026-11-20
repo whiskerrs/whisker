@@ -25,7 +25,13 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
         &args.cargo.selection(),
     )?;
     let workspace_root = manifest.workspace_root.clone();
-    let build_ui = super::BuildUi::start(no_tui, "Web", &manifest.package);
+    let build_ui = super::BuildUi::start(
+        no_tui,
+        &manifest,
+        whisker_cng::GenerationTarget::Web,
+        &manifest.package,
+        "release",
+    );
     let sync = manifest.project(Target::Web)?;
     let dist = sync.gen_dir.join("dist");
     let artifacts = whisker_build::web::build(&whisker_build::web::WebBuild {

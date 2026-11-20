@@ -33,3 +33,15 @@ pub fn sync_for_target(
         package,
     )
 }
+
+/// Platform name shown in the live region header and the `Setup` section.
+pub fn label(platform: whisker_cng::GenerationTarget) -> &'static str {
+    match platform {
+        whisker_cng::GenerationTarget::Android => "Android",
+        whisker_cng::GenerationTarget::Ios => "iOS",
+        whisker_cng::GenerationTarget::Macos => "macOS",
+        whisker_cng::GenerationTarget::Linux => "Linux",
+        whisker_cng::GenerationTarget::Windows => "Windows",
+        whisker_cng::GenerationTarget::Web => "Web",
+    }
+}

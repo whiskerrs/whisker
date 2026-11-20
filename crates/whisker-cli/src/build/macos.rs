@@ -42,10 +42,14 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
         .name
         .as_deref()
         .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required for macOS"))?;
-    let build_ui = super::BuildUi::start(no_tui, "Desktop (macOS)", app_name);
+    let build_ui = super::BuildUi::start(
+        no_tui,
+        &manifest,
+        whisker_cng::GenerationTarget::Macos,
+        app_name,
+        "release app",
+    );
     let sync = manifest.project(Target::Macos)?;
-    whisker_build::ui::section("Build");
-    whisker_build::ui::info(format!("building {app_name} — release macOS .app"));
     let bundle = whisker_build::macos::build_app(&whisker_build::macos::MacosBuild {
         project_dir: &sync.gen_dir,
         project_name: app_name,

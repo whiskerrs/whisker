@@ -244,3 +244,25 @@ fn swift_call_sites_are_all_exported() {
              so the dylib won't export them and the app won't link: {missing:?}",
     );
 }
+
+#[test]
+fn xcodebuild_noise_drops_successful_diagnostic_framing() {
+    for line in [
+        "error: the following command failed with exit code 0 but produced no further output",
+        "SwiftCompile normal arm64 /ws/platforms/ios/Sources/WhiskerRuntime/paint/BoxPaint.swift",
+        "[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>",
+        "--- xcodebuild: WARNING: Using the first of multiple matching destinations:",
+        "{ platform:macOS, arch:arm64, id:00008132-000221500EA3801C, name:My Mac }",
+        "note: Run script build phase 'Whisker Build Rust App' will be run during every build",
+        "/ws/BoxPaint.swift:759:34: warning: variable 'alpha' was never mutated",
+    ] {
+        assert!(super::is_xcodebuild_noise(line), "{line}");
+    }
+    for line in [
+        "/ws/BoxPaint.swift:759:34: error: cannot find 'x' in scope",
+        "error: the following command failed with exit code 65",
+        "** BUILD FAILED **",
+    ] {
+        assert!(!super::is_xcodebuild_noise(line), "{line}");
+    }
+}

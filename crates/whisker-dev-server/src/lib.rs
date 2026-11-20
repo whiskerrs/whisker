@@ -425,11 +425,7 @@ impl DevServer {
     /// restarts the app automatically: changes a patch can't express
     /// prompt for an explicit Full Reload (`DevCommand::FullReload`).
     pub async fn run(mut self) -> Result<()> {
-        whisker_build::ui::section("whisker run");
-        whisker_build::ui::info(format!(
-            "{} · {:?}",
-            self.config.package, self.config.target,
-        ));
+        let started_at = std::time::Instant::now();
         whisker_build::ui::debug(format!("mode={:?}", self.config.hot_patch_mode));
 
         // Builder + Installer are wired before the socket so no
@@ -502,7 +498,7 @@ impl DevServer {
         // there is nothing to patch and nothing a later save could
         // recover.
         //
-        whisker_build::ui::section("Initial build");
+        whisker_build::ui::section("Build");
         emit(&self.on_event, Event::BuildingFull);
         if let Err(e) = builder.build().await {
             let msg = format!("{e:#}");
@@ -534,10 +530,9 @@ impl DevServer {
         whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));
         whisker_build::ui::debug(format!("ws://{bound}/whisker-dev"));
         if let Some(web) = &self.config.web {
-            whisker_build::ui::info(format!(
-                "Local: http://127.0.0.1:{}{}",
-                bound.port(),
-                web.base_path
+            whisker_build::ui::info(whisker_build::ui::labeled(
+                "open",
+                format!("http://127.0.0.1:{}{}", bound.port(), web.base_path),
             ));
         }
 
@@ -608,10 +603,11 @@ impl DevServer {
             anyhow::bail!("initial install failed: {e:#}");
         }
         emit(&self.on_event, Event::HostLaunched);
-        whisker_build::ui::info(format!(
-            "initial done · {} client(s) connected",
-            sender.client_count()
-        ));
+        whisker_build::ui::completed(
+            whisker_build::ui::OperationKind::Ready,
+            "",
+            started_at.elapsed(),
+        );
 
         // Only now, after the fat build, are the capture caches
         // populated for `Patcher::initialize`. A failure is non-fatal:

@@ -138,6 +138,45 @@ impl ResolvedManifest {
             .cloned()
             .ok_or_else(|| anyhow!("generator did not produce the requested project"))
     }
+
+    /// Open the `Setup` section every `run` and `build` workflow starts with:
+    /// the generated project, then the identity being built.
+    pub fn announce(&self, platform: GenerationTarget, identity: &str, label: &str, flavor: &str) {
+        use whisker_build::ui;
+        ui::section("Setup");
+        if let Some(project) = self.projects.get(&platform) {
+            let state = if project.regenerated {
+                "generated"
+            } else {
+                "reused"
+            };
+            let template = project
+                .template_version
+                .map(|version| format!(", template {version}"))
+                .unwrap_or_default();
+            ui::info(ui::labeled(
+                "project",
+                format!(
+                    "{} ({state}{template})",
+                    self.display_path(&project.gen_dir)
+                ),
+            ));
+        }
+        let version = self.config.version.as_deref().unwrap_or("0.1.0");
+        let build_number = self.config.build_number.unwrap_or(1);
+        ui::info(ui::labeled(
+            "target",
+            format!("{identity} {version} ({build_number}) · {label} · {flavor}"),
+        ));
+    }
+
+    /// `path` relative to the application directory when it lies inside it.
+    pub fn display_path(&self, path: &Path) -> String {
+        path.strip_prefix(&self.crate_dir)
+            .unwrap_or(path)
+            .display()
+            .to_string()
+    }
 }
 
 fn application_manifest(cargo_toml_override: Option<&Path>) -> Result<PathBuf> {

@@ -149,6 +149,12 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
         None
     };
     let tui_handle = tui_session.as_ref().map(crate::tui::TuiSession::handle);
+    m.announce(
+        crate::platforms::generation_target(target),
+        &bundle,
+        target_label,
+        "debug",
+    );
 
     // Run the rest of the cli pipeline. Each phase pushes its progress
     // through `tui_handle`. If the TUI isn't running, every step is
@@ -178,24 +184,6 @@ fn run_inner(
     // are plain platform applications backed by the Whisker Host SDK.
 
     let sync = m.project(target)?;
-    // Always say which path was taken: a template edit that didn't bump
-    // cng's `template_version` leaves the old gen/ tree on disk, and a
-    // silent "reused" makes that undiagnosable.
-    let tv = sync
-        .template_version
-        .map(|v| format!(" (template_version {v})"))
-        .unwrap_or_default();
-    if sync.regenerated {
-        whisker_build::ui::info(format!(
-            "regenerated gen/ at {}{tv}",
-            sync.gen_dir.display(),
-        ));
-    } else {
-        whisker_build::ui::info(format!(
-            "reused cached gen/ at {}{tv}",
-            sync.gen_dir.display(),
-        ));
-    }
 
     if target == Target::Macos {
         return run_macos(

@@ -279,7 +279,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         .pipe(&mut cmd)
         .with_context(|| format!("spawn cargo for {triple}"))?;
     if !status.success() {
-        cargo_step.done("failed");
+        cargo_step.fail(status.to_string());
         return Err(anyhow!("cargo build failed ({status}) for {triple}"));
     }
     cargo_step.done(match (before, so_mtime(&so_path)) {
@@ -358,7 +358,10 @@ pub fn stage_so_files(abi_dir: &Path, so: &Path, _tc: &AndroidToolchain, _abi: &
     }
     warn_if_not_16k_aligned(&dst_so);
 
-    crate::ui::info(format!("stage jniLibs ({})", so_name.to_string_lossy()));
+    crate::ui::info(crate::ui::labeled(
+        "stage",
+        format!("jniLibs ({})", so_name.to_string_lossy()),
+    ));
     Ok(())
 }
 
@@ -567,6 +570,7 @@ fn gradle_command(gen_android: &Path, task: &str) -> Result<Command> {
     if crate::ui::is_verbose() {
         cmd.env("WHISKER_VERBOSE", "1");
     }
+    crate::ui::mark_nested(&mut cmd);
     Ok(cmd)
 }
 
