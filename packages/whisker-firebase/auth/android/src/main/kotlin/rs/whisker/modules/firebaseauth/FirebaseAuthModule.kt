@@ -4,6 +4,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import com.google.android.gms.tasks.Task
+import com.google.firebase.FirebaseException
 import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.FirebaseTooManyRequestsException
 import com.google.firebase.auth.AuthCredential
@@ -14,18 +15,26 @@ import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.OAuthProvider
+import com.google.firebase.auth.PhoneAuthCredential
+import com.google.firebase.auth.PhoneAuthOptions
+import com.google.firebase.auth.PhoneAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.WhiskerPromise
 import rs.whisker.runtime.WhiskerValue
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 @WhiskerModule
 class FirebaseAuthModule : Module() {
     private val authListeners = ConcurrentHashMap<Long, FirebaseAuth.AuthStateListener>()
     private val tokenListeners = ConcurrentHashMap<Long, FirebaseAuth.IdTokenListener>()
+    private val verifiedPhones = ConcurrentHashMap<String, PhoneAuthCredential>()
+    private val resendTokens = ConcurrentHashMap<String, PhoneAuthProvider.ForceResendingToken>()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val auth get() = FirebaseAuth.getInstance()
@@ -55,6 +64,65 @@ class FirebaseAuthModule : Module() {
         }
         AsyncFunction("signInWithCredential") { args, promise ->
             resolveCredential(promise) { auth.signInWithCredential(credential(args.getOrNull(0))) }
+        }
+        AsyncFunction("verifyPhoneNumber") { args, promise ->
+            val settled = AtomicBoolean(false)
+            fun settle(value: WhiskerValue) = settled.compareAndSet(false, true).also { if (it) promise.resolve(value) }
+            try {
+                val phoneNumber = string(args, 0)
+                val resendHandle = args.getOrNull(1)?.asString()
+                val activity = appContext.currentActivity
+                // Take the token only once the call can run, so a missing activity keeps it usable.
+                val resendToken = if (activity == null) null else resendHandle?.let { resendTokens.remove(it) }
+                if (activity == null) {
+                    settle(failure("missing-activity", "Phone verification needs a visible activity"))
+                } else if (resendHandle != null && resendToken == null) {
+                    settle(failure("invalid-resend-token", "The resend token is unknown or already used"))
+                } else {
+                    val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
+                        override fun onCodeSent(verificationId: String, token: PhoneAuthProvider.ForceResendingToken) {
+                            val handle = UUID.randomUUID().toString()
+                            resendTokens[handle] = token
+                            val sent = settle(
+                                success(
+                                    WhiskerValue.Map(
+                                        mapOf(
+                                            "verification_id" to WhiskerValue.Str(verificationId),
+                                            "resend" to WhiskerValue.Str(handle),
+                                        ),
+                                    ),
+                                ),
+                            )
+                            if (!sent) resendTokens.remove(handle)
+                        }
+
+                        override fun onVerificationCompleted(credential: PhoneAuthCredential) {
+                            val handle = UUID.randomUUID().toString()
+                            verifiedPhones[handle] = credential
+                            if (!settle(success(WhiskerValue.Map(mapOf("credential" to WhiskerValue.Str(handle)))))) {
+                                verifiedPhones.remove(handle)
+                            }
+                        }
+
+                        override fun onVerificationFailed(error: FirebaseException) {
+                            settle(failure(error))
+                        }
+                    }
+                    val options = PhoneAuthOptions.newBuilder(auth)
+                        .setPhoneNumber(phoneNumber)
+                        .setTimeout(60L, TimeUnit.SECONDS)
+                        .setActivity(activity)
+                        .setCallbacks(callbacks)
+                    resendToken?.let(options::setForceResendingToken)
+                    PhoneAuthProvider.verifyPhoneNumber(options.build())
+                }
+            } catch (error: Exception) { settle(failure(error)) }
+        }
+        Function("setAppVerificationDisabledForTesting") { args ->
+            try {
+                auth.firebaseAuthSettings.setAppVerificationDisabledForTesting(requireNotNull(args.getOrNull(0)?.asBool()))
+                success(WhiskerValue.Null)
+            } catch (error: Exception) { failure(error) }
         }
         AsyncFunction("sendPasswordResetEmail") { args, promise ->
             resolveUnit(promise) { auth.sendPasswordResetEmail(string(args, 0)) }
@@ -169,6 +237,11 @@ class FirebaseAuthModule : Module() {
                 requireNotNull(fields["email"]?.asString()), requireNotNull(fields["password"]?.asString()),
             )
             "google.com" -> GoogleAuthProvider.getCredential(idToken, accessToken)
+            "phone" -> fields["handle"]?.asString()?.let { handle ->
+                requireNotNull(verifiedPhones[handle]) { "Unknown phone credential" }
+            } ?: PhoneAuthProvider.getCredential(
+                requireNotNull(fields["verification_id"]?.asString()), requireNotNull(fields["sms_code"]?.asString()),
+            )
             else -> OAuthProvider.newCredentialBuilder(provider).apply {
                 val rawNonce = fields["raw_nonce"]?.asString()
                 if (idToken != null && rawNonce != null) setIdTokenWithRawNonce(idToken, rawNonce)
@@ -246,7 +319,9 @@ class FirebaseAuthModule : Module() {
         "provider_data" to WhiskerValue.Array(user.providerData.map { info ->
             WhiskerValue.Map(mapOf(
                 "provider_id" to WhiskerValue.Str(info.providerId),
-                "uid" to WhiskerValue.Str(info.uid),
+                // The phone provider's UserInfo has a null uid on Android, although the SDK
+                // annotates it as non-null; iOS and the web use the phone number there.
+                "uid" to WhiskerValue.Str((info.uid as String?) ?: info.phoneNumber.orEmpty()),
                 "email" to optional(info.email),
                 "display_name" to optional(info.displayName),
                 "photo_url" to optional(info.photoUrl?.toString()),
