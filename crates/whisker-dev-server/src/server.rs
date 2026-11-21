@@ -20,9 +20,12 @@
 //! No base64 — the dylib lands on the device with its original byte
 //! count.
 //!
-//! **Hello** — *text* frame, `{"kind":"hello","aslr_reference":<u64>}`.
-//! The device sends this on connect; the server stores the value
-//! and the patcher uses it to compute the ASLR slide.
+//! **Hello** — *text* frame,
+//! `{"kind":"hello","aslr_reference":<u64>,"token":<string>}`.
+//! The device sends this on connect; once the token matches, the server
+//! stores the value and the patcher uses it to compute the ASLR slide.
+//! A token-less (browser-only) server records a fixed `0` instead, since
+//! the web patcher needs only the handshake.
 //!
 //! ## Architecture
 //!
@@ -341,8 +344,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     whisker_build::ui::set_status(format!("{} client(s) connected", state.tx.receiver_count(),));
     // A client starts unauthenticated when a token is required, and is
     // promoted on a valid `hello`. While unauthenticated we never
-    // forward a patch (the security gate). A token-less server (`None`)
-    // is open by default — local loopback / tests.
+    // forward a patch (the security gate). A token-less server is
+    // browser-only: `validate_request` admitted only a same-origin page.
     let mut authed = state.expected_token.is_none();
 
     // Announce only clients past the token gate: a stale app from a
@@ -437,7 +440,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     }
                                 }
                             }
-                            let aslr = hello.aslr_reference;
+                            // Only a token-authenticated native client
+                            // may set the slide native patches are built
+                            // against. The web patcher ignores the value
+                            // and needs only a handshake, so a browser
+                            // peer cannot choose what is stored.
+                            let aslr = if state.expected_token.is_some() {
+                                hello.aslr_reference
+                            } else {
+                                BROWSER_ASLR_REFERENCE
+                            };
                             whisker_build::ui::debug(format!(
                                 "client hello · aslr_reference={aslr:#x}"
                             ));
@@ -532,6 +544,10 @@ fn parse_client_hello(text: &str) -> Option<ClientHello> {
         None
     }
 }
+
+/// `aslr_reference` recorded for a browser-mode `hello`; the generated
+/// browser bootstrap also sends `0`.
+const BROWSER_ASLR_REFERENCE: u64 = 0;
 
 const TRACE_ON: &str = r#"{"kind":"trace","enabled":true}"#;
 
@@ -1442,6 +1458,81 @@ mod tests {
             .expect("open socket")
             .expect("frame");
         assert_eq!(reply, TMsg::Text(TRACE_ON.into()));
+    }
+
+    #[tokio::test]
+    async fn browser_mode_hello_cannot_choose_the_aslr_reference() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+
+        let (sender, addr) = spawn_test_server(None).await;
+        let mut client = connect(addr).await;
+        client
+            .send(TMsg::Text(
+                r#"{"kind":"hello","aslr_reference":3735928559}"#.into(),
+            ))
+            .await
+            .expect("send hello");
+        for _ in 0..200 {
+            if sender.latest_aslr_reference().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(sender.latest_aslr_reference(), Some(BROWSER_ASLR_REFERENCE));
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_log_and_trace_frames_close_the_socket() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+
+        let events = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&events);
+        let on_event: Arc<dyn Fn(Event) + Send + Sync> = Arc::new(move |event| {
+            if matches!(event, Event::DeviceLog { .. } | Event::DeviceTrace { .. }) {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let (sender, addr, _handle) = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            Some(on_event),
+            Some("s3kret".into()),
+            Vec::new(),
+            false,
+            None,
+        )
+        .await
+        .expect("serve");
+
+        for frame in [
+            r#"{"kind":"log","stream":"stdout","line":"spoofed"}"#,
+            r#"{"kind":"trace","frames":[[1,1,1,1,1,1,1]]}"#,
+        ] {
+            let (mut client, _) =
+                tokio_tungstenite::connect_async(native_request(addr, &addr.to_string()))
+                    .await
+                    .expect("connect");
+            client.send(TMsg::Text(frame.into())).await.expect("send");
+            let closed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    match client.next().await {
+                        None | Some(Ok(TMsg::Close(_))) | Some(Err(_)) => return true,
+                        Some(Ok(TMsg::Binary(_))) => return false,
+                        _ => continue,
+                    }
+                }
+            })
+            .await
+            .expect("socket stayed open");
+            assert!(closed, "{frame} must close an unauthenticated socket");
+        }
+        for _ in 0..200 {
+            if sender.client_count() == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(sender.client_count(), 0);
+        assert_eq!(events.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
