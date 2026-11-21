@@ -609,18 +609,33 @@ fn parse_client_log(text: &str) -> Option<ClientLog> {
         .and_then(|s| s.parse::<u128>().ok())
         .unwrap_or(0);
     Some(ClientLog {
-        stream: h
-            .stream
-            .chars()
-            .filter(|character| !character.is_control())
-            .collect(),
-        line: h
-            .line
-            .chars()
-            .filter(|character| !character.is_control() || *character == '\t')
-            .collect(),
+        stream: strip_controls(&h.stream, false),
+        line: strip_controls(&h.line, true),
         ts_micros,
     })
+}
+
+/// Removes characters that let a device steer the host terminal.
+///
+/// `char::is_control` covers C0, DEL and C1 (which includes the 8-bit CSI
+/// `U+009B` and `NEL` `U+0085`). Bidirectional formatting characters are
+/// not controls in that sense but can reorder what the terminal shows, so
+/// they go too. `keep_tab` preserves `\t` for log lines.
+fn strip_controls(text: &str, keep_tab: bool) -> String {
+    text.chars()
+        .filter(|&character| {
+            (keep_tab && character == '\t')
+                || !(character.is_control() || is_bidi_format(character))
+        })
+        .collect()
+}
+
+/// Bidirectional marks, embeddings, overrides and isolates.
+fn is_bidi_format(character: char) -> bool {
+    matches!(
+        character,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 #[cfg(test)]
@@ -1201,6 +1216,19 @@ mod tests {
         let text = serde_json::json!({"kind":"log", "stream":"stdout", "line":"\u{1b}]52;c;payload\u{7}\rline"}).to_string();
         let log = parse_client_log(&text).unwrap();
         assert!(!log.line.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn device_logs_drop_c1_and_bidi_controls_but_keep_tabs_in_the_line() {
+        let text = serde_json::json!({
+            "kind": "log",
+            "stream": "std\u{9b}out\t\u{85}\u{202e}",
+            "line": "a\tb\u{9b}31m\u{85}c\u{202e}d\u{2066}e\u{2069}\u{200e}\u{200f}\u{61c}f\u{7f}",
+        })
+        .to_string();
+        let log = parse_client_log(&text).unwrap();
+        assert_eq!(log.stream, "stdout");
+        assert_eq!(log.line, "a\tb31mcdef");
     }
 
     #[test]
