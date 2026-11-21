@@ -344,16 +344,38 @@ consumers).
 
 The patch channel `dlopen`s whatever bytes it receives, so on a
 LAN-exposed bind an unauthenticated peer could push arbitrary native
-code. Two defenses:
+code, and a web page the developer visits could try to reach the local
+server. Three defenses:
 
 - **Loopback bind by default.** `whisker run --bind` defaults to
   `127.0.0.1:9876`. On Android the device reaches the host through
   `adb reverse tcp:9876 tcp:<dev_port>` (set up by the installer); the
   app reads `WHISKER_DEV_ADDR` or falls back to `127.0.0.1:9876`.
+- **Request origin policy.** `server.rs::validate_request` runs before
+  the static files and the WebSocket handler and answers `403` unless:
+  - `Host` names the bound IP and port, or `localhost` with the bound
+    port for a loopback or wildcard bind. DNS names, including mDNS names
+    such as `mac.local`, are refused so DNS rebinding cannot reach the
+    server; a portless `Host` means port 80.
+  - `Origin`, when present, is exactly `http://<Host>`. Pages served over
+    `https` (and so `wss` sockets), opaque `null` origins and every other
+    origin are refused.
+  - A WebSocket upgrade without `Origin` comes from a native client, which
+    is allowed only when the session has a token.
+
+  Android requests arrive with the device-side `Host` `127.0.0.1:9876`
+  whatever `--bind` says, because the app always dials that address
+  through `adb reverse`. For the Android target `whisker run` sets
+  `Config::forwarded_authorities` to `127.0.0.1:9876` and
+  `localhost:9876` (`ANDROID_DEVICE_PORT`), which the server accepts in
+  addition to the bound authority when bound to a loopback or wildcard
+  address. They are an IP literal and `localhost`, so they do not let an
+  attacker-controlled name through. A LAN-IP bind gets no forwarded
+  authority; `adb reverse` cannot reach it anyway.
 - **Per-session token.** `whisker run` generates a random 32-hex-char
-  token per session (`generate_dev_token` in `whisker-cli/src/run.rs`,
-  16 bytes from `/dev/urandom`). It's delivered to the device
-  out-of-band:
+  token per session for every native target (`generate_dev_token` in
+  `whisker-cli/src/run.rs`, 16 bytes from `/dev/urandom`). It's
+  delivered to the device out-of-band:
   - **iOS Simulator / host:** the `WHISKER_DEV_TOKEN` env var, set via
     `SIMCTL_CHILD_WHISKER_DEV_TOKEN` (the `SIMCTL_CHILD_<NAME>`
     convention surfaces `<NAME>` inside the launched app).
@@ -366,10 +388,23 @@ The device echoes the token in its `hello`. The server validates it
 (`server.rs::handle_socket`): a client starts *unauthenticated* when a
 token is required and is promoted only on a matching `hello`; a missing
 or mismatched token closes the connection without ever arming the patch
-path. A token-less server (`dev_token == None`, e.g. tests) runs open by
-default. While unauthenticated, broadcast patches are dropped (not
-buffered) for that client — the device re-receives the full JumpTable on
-the next save anyway.
+path. Any other text frame sent before authentication, including log and
+trace envelopes, also closes the connection. While unauthenticated,
+broadcast patches are dropped (not buffered) for that client — the
+device re-receives the full JumpTable on the next save anyway.
+
+A token-less server (`Config::dev_token == None`) is not open: it runs
+in browser-only, same-origin mode, which `whisker run web` uses. Only a
+page served by the dev server itself can open the socket, and native
+clients, which send no `Origin`, are refused, so native targets must
+always use a token. In this mode a `hello` cannot set the stored
+`aslr_reference`; the server records `0`, since the web patcher needs
+the handshake but not a slide.
+
+Device log lines and stream names pass through `strip_controls` before
+reaching the TUI or plain terminal output: C0, DEL and C1 controls and
+bidirectional formatting characters are removed, and tabs are kept in
+the line.
 
 ## Known boundaries
 
@@ -403,13 +438,3 @@ Thin rebuild capture persists only Cargo package metadata, crate and binary name
 manifest paths, the Cargo executable, and OUT_DIR. Registry configuration,
 authentication tokens, arbitrary CARGO_* variables, and jobserver descriptors
 are excluded. Do not use secret environment variables as compile-time app data.
-
-## Browser development request boundary
-
-The dev server accepts only its bound address and port (plus localhost for a
-loopback or wildcard bind) in Host. Explicit Origin headers must match the same
-HTTP authority. Browser WebSocket upgrades require that Origin; originless native
-clients require a configured session secret. Remote DNS names and cross-origin
-requests are rejected before static files or WebSocket handlers run. Native log
-and trace envelopes are ignored until authentication succeeds. Device log control
-characters are removed before either TUI or plain terminal output.
