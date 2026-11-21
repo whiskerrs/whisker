@@ -248,6 +248,9 @@ pub async fn serve(
     Ok((PatchSender { tx, aslr_reference }, bound, handle))
 }
 
+/// Port implied by an `http`/`ws` authority that omits one.
+const DEFAULT_HTTP_PORT: u16 = 80;
+
 fn valid_authority(value: &str, bound: SocketAddr, forwarded: &[String]) -> bool {
     use std::str::FromStr;
     let Ok(authority) = axum::http::uri::Authority::from_str(value) else {
@@ -267,7 +270,9 @@ fn valid_authority(value: &str, bound: SocketAddr, forwarded: &[String]) -> bool
     {
         return true;
     }
-    if authority.port_u16().unwrap_or(80) != bound.port() {
+    // URL serialization drops the port only when it is the scheme default,
+    // so a portless Host means port 80 rather than a malformed request.
+    if authority.port_u16().unwrap_or(DEFAULT_HTTP_PORT) != bound.port() {
         return false;
     }
     let host = authority.host().trim_matches(['[', ']']);
@@ -276,6 +281,20 @@ fn valid_authority(value: &str, bound: SocketAddr, forwarded: &[String]) -> bool
     }
     host.parse::<std::net::IpAddr>()
         .is_ok_and(|ip| bound.ip().is_unspecified() || ip == bound.ip())
+}
+
+/// Accepts an `Origin` only when it is the `http` origin of `host`, the
+/// already-validated `Host` header. `https`/`wss` pages, opaque `null`
+/// origins and any other authority are refused.
+fn valid_origin(value: &str, host: &str) -> bool {
+    value.parse::<axum::http::Uri>().is_ok_and(|uri| {
+        uri.scheme_str() == Some("http")
+            && uri.path() == "/"
+            && uri.query().is_none()
+            && uri
+                .authority()
+                .is_some_and(|authority| authority.as_str() == host)
+    })
 }
 
 async fn validate_request(
@@ -292,27 +311,17 @@ async fn validate_request(
     let valid_host = host
         .is_some_and(|host| valid_authority(host, state.bound_addr, &state.forwarded_authorities));
     let origin = request.headers().get(ORIGIN);
-    let valid_origin = match origin {
-        None => true,
-        Some(value) => value
-            .to_str()
-            .ok()
-            .and_then(|value| value.parse::<axum::http::Uri>().ok())
-            .is_some_and(|uri| {
-                uri.scheme_str() == Some("http")
-                    && uri.path() == "/"
-                    && uri.query().is_none()
-                    && uri
-                        .authority()
-                        .is_some_and(|authority| Some(authority.as_str()) == host)
-            }),
+    let origin_allowed = match (origin, host) {
+        (None, _) => true,
+        (Some(value), Some(host)) => value.to_str().is_ok_and(|value| valid_origin(value, host)),
+        (Some(_), None) => false,
     };
     let websocket = request
         .headers()
         .get(UPGRADE)
         .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
     if !valid_host
-        || !valid_origin
+        || !origin_allowed
         || (websocket && state.expected_token.is_none() && origin.is_none())
     {
         return axum::http::StatusCode::FORBIDDEN.into_response();
@@ -1200,6 +1209,7 @@ mod tests {
         assert!(valid_authority("127.0.0.1:9876", bound, &[]));
         assert!(valid_authority("localhost:9876", bound, &[]));
         assert!(!valid_authority("evil.test:9876", bound, &[]));
+        assert!(!valid_authority("mac.local:9876", bound, &[]));
         assert!(!valid_authority("127.0.0.1:9877", bound, &[]));
         assert!(!valid_authority("user@127.0.0.1:9876", bound, &[]));
 
@@ -1209,6 +1219,98 @@ mod tests {
         assert!(valid_authority("LOCALHOST:9876", tunnelled, &forwarded));
         assert!(!valid_authority("127.0.0.1:9876", tunnelled, &[]));
         assert!(!valid_authority("evil.test:9876", tunnelled, &forwarded));
+    }
+
+    #[test]
+    fn portless_host_means_the_default_http_port() {
+        let bound = "127.0.0.1:80".parse().unwrap();
+        assert!(valid_authority("127.0.0.1", bound, &[]));
+        assert!(!valid_authority(
+            "127.0.0.1",
+            "127.0.0.1:9876".parse().unwrap(),
+            &[]
+        ));
+    }
+
+    #[test]
+    fn origin_policy_accepts_only_the_http_origin_of_the_host() {
+        let host = "127.0.0.1:9876";
+        assert!(valid_origin("http://127.0.0.1:9876", host));
+        assert!(!valid_origin("https://127.0.0.1:9876", host));
+        assert!(!valid_origin("ws://127.0.0.1:9876", host));
+        assert!(!valid_origin("http://localhost:9876", host));
+        assert!(!valid_origin("http://127.0.0.1:9877", host));
+        assert!(!valid_origin("http://127.0.0.1:9876/app", host));
+        assert!(!valid_origin("http://127.0.0.1:9876/?q", host));
+        assert!(!valid_origin("null", host));
+        assert!(!valid_origin("", host));
+    }
+
+    #[tokio::test]
+    async fn requests_with_a_foreign_host_are_refused_before_any_handler() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let root = std::env::temp_dir().join(format!(
+            "whisker-web-host-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("index.html"), b"INDEX").unwrap();
+        let (_sender, addr, handle) = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            None,
+            Some("s3kret".into()),
+            Vec::new(),
+            false,
+            Some(StaticFiles {
+                root: root.clone(),
+                base_path: "/".into(),
+            }),
+        )
+        .await
+        .expect("serve");
+
+        async fn status_line(addr: SocketAddr, host: &str) -> String {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            stream
+                .write_all(
+                    format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")
+                        .as_bytes(),
+                )
+                .await
+                .unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).await.unwrap();
+            let response = String::from_utf8(response).unwrap();
+            response.lines().next().unwrap_or_default().to_owned()
+        }
+
+        assert_eq!(
+            status_line(addr, &addr.to_string()).await,
+            "HTTP/1.1 200 OK"
+        );
+        let rebinding_host = format!("evil.test:{}", addr.port());
+        let mdns_host = format!("mac.local:{}", addr.port());
+        for host in [rebinding_host.as_str(), mdns_host.as_str(), "127.0.0.1:1"] {
+            assert_eq!(status_line(addr, host).await, "HTTP/1.1 403 Forbidden");
+        }
+
+        // Same policy on the WebSocket upgrade, for browsers and natives.
+        let mut browser = browser_request(&format!("ws://{addr}/whisker-dev"));
+        browser
+            .headers_mut()
+            .insert("Host", rebinding_host.parse().unwrap());
+        assert_forbidden(tokio_tungstenite::connect_async(browser).await);
+        assert_forbidden(
+            tokio_tungstenite::connect_async(native_request(addr, &rebinding_host)).await,
+        );
+
+        handle.abort();
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[tokio::test]
@@ -1225,7 +1327,13 @@ mod tests {
         .await
         .unwrap();
         let url = format!("ws://{addr}/whisker-dev");
-        for origin in [None, Some("http://evil.test"), Some("null")] {
+        let secure_origin = format!("https://{addr}");
+        for origin in [
+            None,
+            Some("http://evil.test"),
+            Some("null"),
+            Some(secure_origin.as_str()),
+        ] {
             let mut request = url.clone().into_client_request().unwrap();
             if let Some(origin) = origin {
                 request
