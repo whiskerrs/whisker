@@ -392,6 +392,7 @@ mod tests {
             package: "whisker-example".into(),
             crate_path: PathBuf::from("/modules/whisker-example"),
             git: None,
+            registry_version: None,
             host_package: "whisker-example-web".into(),
             host_dependency: crate::RustHostDependency::Path(PathBuf::from(
                 "/modules/whisker-example/web",

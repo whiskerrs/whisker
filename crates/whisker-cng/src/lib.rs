@@ -96,6 +96,8 @@ pub struct RustElementModuleInput {
     pub crate_path: std::path::PathBuf,
     /// Git source of the element crate, which is otherwise linked by path.
     pub git: Option<GitSource>,
+    /// Registry version of the element crate, which is otherwise linked by path.
+    pub registry_version: Option<String>,
     /// Cargo package name of the target Host library.
     pub host_package: String,
     /// Cargo source of the target Host library.
@@ -128,9 +130,12 @@ fn rust_element_module_dependencies(modules: &[RustElementModuleInput]) -> Strin
                 }
                 RustHostDependency::Git(git) => git.dependency_fields(),
             };
-            let crate_dependency = match &module.git {
-                Some(git) => git.dependency_fields(),
-                None => format!("path = {:?}", module.crate_path.display().to_string()),
+            // A path into the registry cache is a different source than the application's
+            // registry requirement, so the element would be registered twice.
+            let crate_dependency = match (&module.git, &module.registry_version) {
+                (Some(git), _) => git.dependency_fields(),
+                (None, Some(version)) => format!("version = {:?}", format!("={version}")),
+                (None, None) => format!("path = {:?}", module.crate_path.display().to_string()),
             };
             format!(
                 "{} = {{ package = {:?}, {}, default-features = false }}\n{} = {{ package = {:?}, {} }}",
@@ -184,6 +189,7 @@ mod rust_host_dependency_tests {
             package: "whisker-example".into(),
             crate_path: "/cargo/registry/whisker-example-1.2.3".into(),
             git: None,
+            registry_version: Some("1.2.3".into()),
             host_package: "whisker-example-web".into(),
             host_dependency: RustHostDependency::Registry {
                 version: "1.2.3".into(),
@@ -197,6 +203,10 @@ mod rust_host_dependency_tests {
             !dependencies
                 .contains("whisker-example-web = { package = \"whisker-example-web\", path =")
         );
+        assert!(dependencies.contains(
+            "whisker-example = { package = \"whisker-example\", version = \"=1.2.3\", default-features = false }"
+        ));
+        assert!(!dependencies.contains("/cargo/registry"));
     }
 }
 
