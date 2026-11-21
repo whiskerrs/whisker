@@ -160,6 +160,10 @@ struct AppState {
     expected_token: Option<Arc<str>>,
     trace: bool,
     bound_addr: SocketAddr,
+    /// `Host` authorities accepted besides `bound_addr`; see
+    /// [`crate::Config::forwarded_authorities`]. Already emptied by
+    /// [`serve`] when the bind is not loopback or unspecified.
+    forwarded_authorities: Arc<[String]>,
 }
 
 #[derive(Debug, Clone)]
@@ -181,10 +185,15 @@ pub struct StaticFiles {
 ///
 /// `on_event` is an optional observer hook — `whisker-cli` uses it to
 /// render terminal UI on connect/disconnect events.
+///
+/// `forwarded_authorities` lists extra `Host` values to accept, as
+/// described on [`crate::Config::forwarded_authorities`]; they are
+/// ignored unless `addr` is a loopback or unspecified address.
 pub async fn serve(
     addr: SocketAddr,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     expected_token: Option<String>,
+    forwarded_authorities: Vec<String>,
     trace: bool,
     static_files: Option<StaticFiles>,
 ) -> Result<(PatchSender, SocketAddr, tokio::task::JoinHandle<()>)> {
@@ -192,6 +201,13 @@ pub async fn serve(
     let bound = listener.local_addr()?;
     let (tx, _rx) = broadcast::channel::<ServerUpdate>(16);
     let aslr_reference: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
+    // A loopback port forward (`adb reverse`) can only land on a loopback
+    // or wildcard listener, so a LAN-IP bind gains nothing from the list.
+    let forwarded_authorities = if bound.ip().is_loopback() || bound.ip().is_unspecified() {
+        forwarded_authorities
+    } else {
+        Vec::new()
+    };
     let state = AppState {
         tx: tx.clone(),
         on_event,
@@ -199,6 +215,7 @@ pub async fn serve(
         expected_token: expected_token.map(Arc::from),
         trace,
         bound_addr: bound,
+        forwarded_authorities: forwarded_authorities.into(),
     };
 
     let mut app = Router::new()
@@ -231,12 +248,26 @@ pub async fn serve(
     Ok((PatchSender { tx, aslr_reference }, bound, handle))
 }
 
-fn valid_authority(value: &str, bound: SocketAddr) -> bool {
+fn valid_authority(value: &str, bound: SocketAddr, forwarded: &[String]) -> bool {
     use std::str::FromStr;
     let Ok(authority) = axum::http::uri::Authority::from_str(value) else {
         return false;
     };
-    if value.contains('@') || authority.port_u16().unwrap_or(80) != bound.port() {
+    if value.contains('@') {
+        return false;
+    }
+    // DNS rebinding works by getting a browser to send an attacker-owned
+    // name in `Host`. Forwarded authorities are IP literals or
+    // `localhost`, which no attacker can point at another address, and a
+    // page can only be same-origin with them by being served from that
+    // exact authority — which `valid_origin` still enforces.
+    if forwarded
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(value))
+    {
+        return true;
+    }
+    if authority.port_u16().unwrap_or(80) != bound.port() {
         return false;
     }
     let host = authority.host().trim_matches(['[', ']']);
@@ -258,7 +289,8 @@ async fn validate_request(
         .headers()
         .get(HOST)
         .and_then(|value| value.to_str().ok());
-    let valid_host = host.is_some_and(|host| valid_authority(host, state.bound_addr));
+    let valid_host = host
+        .is_some_and(|host| valid_authority(host, state.bound_addr, &state.forwarded_authorities));
     let origin = request.headers().get(ORIGIN);
     let valid_origin = match origin {
         None => true,
@@ -608,7 +640,7 @@ mod tests {
         on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     ) -> (PatchSender, SocketAddr) {
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (sender, addr, _handle) = serve(any, on_event, None, false, None)
+        let (sender, addr, _handle) = serve(any, on_event, None, Vec::new(), false, None)
             .await
             .expect("serve");
         (sender, addr)
@@ -731,6 +763,7 @@ mod tests {
             any,
             None,
             None,
+            Vec::new(),
             false,
             Some(StaticFiles {
                 root: root.clone(),
@@ -761,6 +794,7 @@ mod tests {
             any,
             None,
             None,
+            Vec::new(),
             false,
             Some(StaticFiles {
                 root: root.clone(),
@@ -867,8 +901,109 @@ mod tests {
 
     async fn spawn_test_server_with_token(token: Option<String>) -> (PatchSender, SocketAddr) {
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (sender, addr, _handle) = serve(any, None, token, false, None).await.expect("serve");
+        let (sender, addr, _handle) = serve(any, None, token, Vec::new(), false, None)
+            .await
+            .expect("serve");
         (sender, addr)
+    }
+
+    /// A native client's handshake: no `Origin`, and the `Host` the
+    /// device dialled, which differs from `addr` behind `adb reverse`.
+    fn native_request(
+        addr: SocketAddr,
+        host: &str,
+    ) -> tokio_tungstenite::tungstenite::http::Request<()> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut request = format!("ws://{addr}/whisker-dev")
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert("Host", host.parse().unwrap());
+        request
+    }
+
+    fn assert_forbidden<T: std::fmt::Debug>(
+        result: Result<T, tokio_tungstenite::tungstenite::Error>,
+    ) {
+        match result {
+            Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                assert_eq!(response.status().as_u16(), 403);
+            }
+            other => panic!("expected 403, got {other:?}"),
+        }
+    }
+
+    /// Sends a token `hello` and waits until the server has armed the
+    /// socket (it stores `aslr_reference` only after the token check).
+    async fn authenticate<S>(client: &mut S, sender: &PatchSender, token: &str)
+    where
+        S: futures_util::Sink<tokio_tungstenite::tungstenite::Message> + Unpin,
+        S::Error: std::fmt::Debug,
+    {
+        client
+            .send(tokio_tungstenite::tungstenite::Message::Text(format!(
+                r#"{{"kind":"hello","aslr_reference":4294967296,"token":"{token}"}}"#
+            )))
+            .await
+            .expect("send hello");
+        for _ in 0..200 {
+            if sender.latest_aslr_reference().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(sender.latest_aslr_reference(), Some(0x1_0000_0000));
+    }
+
+    #[tokio::test]
+    async fn android_client_behind_adb_reverse_is_accepted_with_its_forwarded_host() {
+        let (sender, addr, _handle) = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            None,
+            Some("s3kret".into()),
+            crate::android_forwarded_authorities(),
+            false,
+            None,
+        )
+        .await
+        .expect("serve");
+        let device_host = format!("127.0.0.1:{}", crate::ANDROID_DEVICE_PORT);
+        let (mut client, _) = tokio_tungstenite::connect_async(native_request(addr, &device_host))
+            .await
+            .expect("forwarded authority accepted");
+        authenticate(&mut client, &sender, "s3kret").await;
+
+        assert_eq!(
+            sender.send(Patch {
+                table: make_dummy_jump_table(),
+                dylib_bytes: Arc::new(b"OK".to_vec()),
+            }),
+            1
+        );
+        let message = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+            .await
+            .expect("recv timed out")
+            .expect("stream ended")
+            .expect("ws error");
+        assert!(matches!(
+            message,
+            tokio_tungstenite::tungstenite::Message::Binary(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_client_needs_a_forwarded_authority_for_a_foreign_host() {
+        let (sender, addr) = spawn_test_server_with_token(Some("s3kret".into())).await;
+        let device_host = format!("127.0.0.1:{}", crate::ANDROID_DEVICE_PORT);
+        assert_forbidden(
+            tokio_tungstenite::connect_async(native_request(addr, &device_host)).await,
+        );
+
+        // The same originless client is accepted under the bound authority.
+        let (mut client, _) =
+            tokio_tungstenite::connect_async(native_request(addr, &addr.to_string()))
+                .await
+                .expect("bound authority accepted");
+        authenticate(&mut client, &sender, "s3kret").await;
     }
 
     #[tokio::test]
@@ -1062,20 +1197,33 @@ mod tests {
     #[test]
     fn host_policy_rejects_rebinding_names_and_wrong_ports() {
         let bound = "127.0.0.1:9876".parse().unwrap();
-        assert!(valid_authority("127.0.0.1:9876", bound));
-        assert!(valid_authority("localhost:9876", bound));
-        assert!(!valid_authority("evil.test:9876", bound));
-        assert!(!valid_authority("127.0.0.1:9877", bound));
-        assert!(!valid_authority("user@127.0.0.1:9876", bound));
+        assert!(valid_authority("127.0.0.1:9876", bound, &[]));
+        assert!(valid_authority("localhost:9876", bound, &[]));
+        assert!(!valid_authority("evil.test:9876", bound, &[]));
+        assert!(!valid_authority("127.0.0.1:9877", bound, &[]));
+        assert!(!valid_authority("user@127.0.0.1:9876", bound, &[]));
+
+        let forwarded = crate::android_forwarded_authorities();
+        let tunnelled = "127.0.0.1:1234".parse().unwrap();
+        assert!(valid_authority("127.0.0.1:9876", tunnelled, &forwarded));
+        assert!(valid_authority("LOCALHOST:9876", tunnelled, &forwarded));
+        assert!(!valid_authority("127.0.0.1:9876", tunnelled, &[]));
+        assert!(!valid_authority("evil.test:9876", tunnelled, &forwarded));
     }
 
     #[tokio::test]
     async fn websocket_upgrade_rejects_cross_origin_and_originless_browser_requests() {
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-        let (_sender, addr, _handle) =
-            serve("127.0.0.1:0".parse().unwrap(), None, None, false, None)
-                .await
-                .unwrap();
+        let (_sender, addr, _handle) = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            None,
+            None,
+            Vec::new(),
+            false,
+            None,
+        )
+        .await
+        .unwrap();
         let url = format!("ws://{addr}/whisker-dev");
         for origin in [None, Some("http://evil.test"), Some("null")] {
             let mut request = url.clone().into_client_request().unwrap();
@@ -1141,9 +1289,10 @@ mod tests {
         use tokio_tungstenite::tungstenite::Message as TMsg;
 
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (_sender, addr, _handle) = serve(any, None, Some("s3kret".into()), true, None)
-            .await
-            .expect("serve");
+        let (_sender, addr, _handle) =
+            serve(any, None, Some("s3kret".into()), Vec::new(), true, None)
+                .await
+                .expect("serve");
         let mut client = connect(addr).await;
         client
             .send(TMsg::Text(
