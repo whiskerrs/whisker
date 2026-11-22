@@ -63,7 +63,7 @@ class FirebaseAuthModule : Module() {
             resolveCredential(promise) { auth.signInWithCustomToken(string(args, 0)) }
         }
         AsyncFunction("signInWithCredential") { args, promise ->
-            resolveCredential(promise) { auth.signInWithCredential(credential(args.getOrNull(0))) }
+            resolveCredential(promise, args.getOrNull(0)) { auth.signInWithCredential(credential(args.getOrNull(0))) }
         }
         AsyncFunction("verifyPhoneNumber") { args, promise ->
             val settled = AtomicBoolean(false)
@@ -194,11 +194,11 @@ class FirebaseAuthModule : Module() {
             withUser(args, promise) { user -> resolveUnit(promise) { user.delete() } }
         }
         AsyncFunction("linkWithCredential") { args, promise ->
-            withUser(args, promise) { user -> resolveCredential(promise) { user.linkWithCredential(credential(args.getOrNull(1))) } }
+            withUser(args, promise) { user -> resolveCredential(promise, args.getOrNull(1)) { user.linkWithCredential(credential(args.getOrNull(1))) } }
         }
         AsyncFunction("reauthenticateWithCredential") { args, promise ->
             withUser(args, promise) { user ->
-                resolveCredential(promise) { user.reauthenticateAndRetrieveData(credential(args.getOrNull(1))) }
+                resolveCredential(promise, args.getOrNull(1)) { user.reauthenticateAndRetrieveData(credential(args.getOrNull(1))) }
             }
         }
     }
@@ -242,7 +242,7 @@ class FirebaseAuthModule : Module() {
             )
             "google.com" -> GoogleAuthProvider.getCredential(idToken, accessToken)
             "phone" -> fields["handle"]?.asString()?.let { handle ->
-                requireNotNull(verifiedPhones.remove(handle)) { "Unknown or already used phone credential" }
+                requireNotNull(verifiedPhones[handle]) { "Unknown or already used phone credential" }
             } ?: PhoneAuthProvider.getCredential(
                 requireNotNull(fields["verification_id"]?.asString()), requireNotNull(fields["sms_code"]?.asString()),
             )
@@ -274,10 +274,12 @@ class FirebaseAuthModule : Module() {
         } catch (error: Exception) { promise.resolve(failure(error)) }
     }
 
-    private fun resolveCredential(promise: WhiskerPromise, start: () -> Task<AuthResult>) {
+    /** A verified phone credential in [used] is removed only on success, so a failed attempt can be retried. */
+    private fun resolveCredential(promise: WhiskerPromise, used: WhiskerValue? = null, start: () -> Task<AuthResult>) {
         try {
             start().addOnCompleteListener { task ->
                 if (!task.isSuccessful) { promise.resolve(failure(task.exception)); return@addOnCompleteListener }
+                ((used as? WhiskerValue.Map)?.value?.get("handle")?.asString())?.let(verifiedPhones::remove)
                 val result = task.result
                 val user = result.user ?: return@addOnCompleteListener promise.resolve(failure("internal-error", "Missing user"))
                 val value = mutableMapOf<String, WhiskerValue>("user" to encodeUser(user))

@@ -168,7 +168,7 @@ Use `resend_phone_code` for a "Resend code" button. On Android, `verify_phone_nu
 
 - **Console.** Enable the Phone provider. Android also needs the app's SHA-256 fingerprint in the project settings for Play Integrity.
 - **iOS.** Firebase verifies the app with a silent push when APNs is set up (upload an APNs key, as for Cloud Messaging), and otherwise with a reCAPTCHA in a browser view. Enabling `auth` runs its CNG plugin, which registers the app's encoded app ID (`app-1-…-ios-…`, read from the `GoogleService-Info.plist` that `whisker-firebase`'s `ios_config` names) as a URL scheme for the reCAPTCHA return; set `phone_url_scheme = false` to skip it.
-- **Android.** Verification needs a visible activity and fails with `missing-activity` without one. The SDK can verify a number without a code (`PhoneVerification::Verified`); that credential works once, and only in the current process. An auto-retrieved code that arrives after `CodeSent` is not reported, so keep the manual code entry.
+- **Android.** Verification needs a visible activity and fails with `missing-activity` without one. The SDK can verify a number without a code (`PhoneVerification::Verified`); that credential works until a call with it succeeds, and only in the current process. An auto-retrieved code that arrives after `CodeSent` is not reported, so keep the manual code entry.
 - **Testing.** Add test numbers in the console and call `auth.set_app_verification_disabled_for_testing(true)` to skip APNs, reCAPTCHA and Play Integrity on simulators and emulators. No SMS is sent for test numbers. Never ship it enabled.
 
 ## Cloud Storage

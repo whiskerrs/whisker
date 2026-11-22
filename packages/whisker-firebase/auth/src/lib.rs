@@ -354,14 +354,14 @@ pub enum PhoneVerification {
     },
     /// Android verified the number without a code, by instant verification or by SMS
     /// auto-retrieval before `CodeSent`. A code auto-retrieved after `CodeSent` is dropped, so
-    /// keep the manual code entry. The credential works once, in this app process only.
+    /// keep the manual code entry. The credential works until a call with it succeeds, and only
+    /// in this app process.
     Verified(AuthCredential),
 }
 
 /// Sends a new code with [`Auth::resend_phone_code`]. On Android it holds the SDK's
 /// `ForceResendingToken`, valid until the next `CodeSent` and in this app process only.
-/// iOS has no such token,
-/// so there a resend is a new verification.
+/// iOS has no such token, so there a resend is a new verification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResendToken(Option<String>);
 
