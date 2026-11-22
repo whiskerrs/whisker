@@ -254,6 +254,13 @@ fn run_inner(
         target,
         watch_paths: watch_paths.clone(),
         bind_addr: args.bind,
+        // `adb reverse` makes the device present its own loopback
+        // authority, not `--bind`.
+        forwarded_authorities: if target == Target::Android {
+            whisker_dev_server::android_forwarded_authorities()
+        } else {
+            Vec::new()
+        },
         // The native patch channel `dlopen`s what it receives, so it only
         // runs between peers that prove this per-session secret; that also
         // covers an accidental `--bind 0.0.0.0`. Web clients share this
@@ -358,6 +365,7 @@ fn run_macos(
         target: Target::Macos,
         watch_paths: watch_roots,
         bind_addr,
+        forwarded_authorities: Vec::new(),
         dev_token: Some(generate_dev_token()?),
         trace: false,
         hot_patch_mode: if no_hot_patch {

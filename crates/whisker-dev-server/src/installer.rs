@@ -431,12 +431,17 @@ async fn deliver_android_dev_token(token: &str) -> bool {
 /// stdio can't bypass the TUI's capture pipe.
 async fn android_prepare_dev_channel(dev_port: u16, dev_token: Option<&str>) -> Result<()> {
     let mut reverse_cmd = adb();
-    reverse_cmd.args(["reverse", "tcp:9876", &format!("tcp:{dev_port}")]);
+    let device_port = crate::ANDROID_DEVICE_PORT;
+    reverse_cmd.args([
+        "reverse",
+        &format!("tcp:{device_port}"),
+        &format!("tcp:{dev_port}"),
+    ]);
     let reverse = run_filtered(reverse_cmd, SimctlNoise::Other).await?;
     anyhow::ensure!(
         reverse.success(),
-        "`adb reverse tcp:9876 tcp:{dev_port}` failed ({reverse}); the app could not reach \
-         the hot-reload server"
+        "`adb reverse tcp:{device_port} tcp:{dev_port}` failed ({reverse}); the app could not \
+         reach the hot-reload server"
     );
     if let Some(token) = dev_token {
         anyhow::ensure!(

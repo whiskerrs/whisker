@@ -100,11 +100,12 @@ abstract class WhiskerBuildTask : DefaultTask() {
         // every change falls through to a Tier 2 cold rebuild + relaunch.
         // `./gradlew assembleRelease` runs from CI with the env unset;
         // production builds skip the dev-runtime entirely.
-        val featureArgs = (System.getenv("WHISKER_FEATURES") ?: "")
+        val featureArgs = (if (profile.get() == "release") "" else System.getenv("WHISKER_FEATURES") ?: "")
             .split(Regex("\\s+"))
             .filter { it.isNotEmpty() }
             .flatMap { listOf("--features", it) }
         execOperations.exec {
+            if (profile.get() == "release") environment.remove("WHISKER_FEATURES")
             commandLine(
                 listOf(
                     whiskerCli,

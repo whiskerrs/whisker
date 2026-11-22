@@ -66,6 +66,9 @@ pub struct ResolvedModule {
     /// Git source of the package; its Rust Hosts come from the same repository.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git: Option<crate::GitSource>,
+    /// Version of a package resolved from a registry, which is required by version rather than by its cache path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry_version: Option<String>,
 }
 
 impl ResolvedModule {
@@ -223,13 +226,15 @@ pub(crate) fn discover_from_metadata(
             ));
         }
 
+        let registry_source = pkg
+            .source
+            .as_ref()
+            .is_some_and(|source| source.repr.starts_with("registry+"));
         let platforms = if let Some(module) = manifest.module.as_ref() {
             resolve_platforms(
                 &pkg.name,
                 &package_version,
-                pkg.source
-                    .as_ref()
-                    .is_some_and(|source| source.repr.starts_with("registry+")),
+                registry_source,
                 &manifest_dir,
                 &module.platforms,
             )?
@@ -290,6 +295,7 @@ pub(crate) fn discover_from_metadata(
                 .source
                 .as_ref()
                 .and_then(|source| crate::GitSource::parse(&source.repr)),
+            registry_version: registry_source.then_some(package_version),
         });
     }
 

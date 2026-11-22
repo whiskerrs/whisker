@@ -100,6 +100,22 @@ pub struct Config {
     pub watch_paths: Vec<PathBuf>,
     /// Address the WebSocket server binds.
     pub bind_addr: SocketAddr,
+    /// Extra `Host` authorities accepted besides [`Config::bind_addr`].
+    ///
+    /// A port forward makes the device address the dev server under a
+    /// different authority than the one it is bound to: on Android,
+    /// `adb reverse` bridges the device's `127.0.0.1:`[`ANDROID_DEVICE_PORT`]
+    /// to the host's bound port, so every request carries that device-side
+    /// authority. List such authorities here (as `host:port`, compared
+    /// case-insensitively against the `Host` header).
+    ///
+    /// They are honoured only when `bind_addr` is a loopback or unspecified
+    /// address, which is the only setup a loopback port forward can reach.
+    /// Use IP literals or `localhost` only: a DNS name here would let a
+    /// rebinding attacker's page pass the `Host` check.
+    /// [`Config::defaults_for`] fills in [`android_forwarded_authorities`]
+    /// for [`Target::Android`] and leaves the list empty otherwise.
+    pub forwarded_authorities: Vec<String>,
     /// Per-session secret that gates the native patch channel.
     ///
     /// With `Some(secret)`, every WebSocket client must complete the
@@ -111,10 +127,13 @@ pub struct Config {
     /// [`whisker_dev_protocol::generate_secret`] for every native target.
     ///
     /// With `None`, clients connect without authentication and are treated
-    /// as browsers: they receive reload requests and WebAssembly patches that
-    /// [`PatchSender::send_web`] validated, but never native libraries. Native
-    /// hot patching therefore requires a secret; the Web target runs without
-    /// one because the page and the socket share the dev server's origin.
+    /// as browsers: a WebSocket upgrade must carry an `Origin` naming the dev
+    /// server's own `http` authority, so native clients (which send no
+    /// `Origin`) are refused. Browsers receive reload requests and WebAssembly
+    /// patches that [`PatchSender::send_web`] validated, but never native
+    /// libraries. Native hot patching therefore requires a secret; the Web
+    /// target runs without one because the page and the socket share the dev
+    /// server's origin.
     pub dev_token: Option<String>,
     /// Asks every connected app to stream [`Event::DeviceTrace`] frame timings.
     pub trace: bool,
@@ -138,6 +157,33 @@ pub struct Config {
     pub windows: Option<WindowsParams>,
 }
 
+/// Port the Android app dials on its own loopback interface.
+///
+/// `whisker-dev-runtime` falls back to `127.0.0.1:9876` when
+/// `WHISKER_DEV_ADDR` is unset, which is always the case on Android, and
+/// the installer bridges this port to the host's bound port with
+/// `adb reverse`. The two crates do not depend on each other, so the
+/// runtime repeats the literal; change both together.
+pub const ANDROID_DEVICE_PORT: u16 = 9876;
+
+/// `Host` authorities an Android app presents through `adb reverse`.
+///
+/// Requests tunnelled from the device keep the authority the app dialled
+/// (`127.0.0.1:`[`ANDROID_DEVICE_PORT`]) rather than the host's bound
+/// address, so the dev server must accept it explicitly. Feed the result
+/// into [`Config::forwarded_authorities`] for [`Target::Android`].
+///
+/// ```rust
+/// let authorities = whisker_dev_server::android_forwarded_authorities();
+/// assert!(authorities.contains(&"127.0.0.1:9876".to_string()));
+/// ```
+pub fn android_forwarded_authorities() -> Vec<String> {
+    vec![
+        format!("127.0.0.1:{ANDROID_DEVICE_PORT}"),
+        format!("localhost:{ANDROID_DEVICE_PORT}"),
+    ]
+}
+
 impl Config {
     /// A starting point with sensible defaults; callers override fields.
     pub fn defaults_for(workspace_root: PathBuf, package: String, target: Target) -> Self {
@@ -148,6 +194,11 @@ impl Config {
             target,
             watch_paths: Vec::new(),
             bind_addr: "127.0.0.1:9876".parse().expect("valid default addr"),
+            forwarded_authorities: if target == Target::Android {
+                android_forwarded_authorities()
+            } else {
+                Vec::new()
+            },
             dev_token: None,
             trace: false,
             hot_patch_mode: HotPatchMode::FullReloadOnly,
@@ -530,6 +581,7 @@ impl DevServer {
             self.config.bind_addr,
             self.on_event.clone(),
             self.config.dev_token.clone(),
+            self.config.forwarded_authorities.clone(),
             self.config.trace,
             self.config.web.as_ref().map(|web| server::StaticFiles {
                 root: web.dist_dir.clone(),

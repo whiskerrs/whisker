@@ -354,8 +354,29 @@ server and the runtime own the sockets.
 
 - **Loopback bind by default.** `whisker run --bind` defaults to
   `127.0.0.1:9876`. On Android the device reaches the host through
-  `adb reverse tcp:9876 tcp:<dev_port>`; the app reads `WHISKER_DEV_ADDR`
-  or falls back to `127.0.0.1:9876`.
+  `adb reverse tcp:9876 tcp:<dev_port>` (set up by the installer); the
+  app reads `WHISKER_DEV_ADDR` or falls back to `127.0.0.1:9876`.
+- **Request origin policy.** `server.rs::validate_request` runs before
+  the static files and the WebSocket handler and answers `403` unless:
+  - `Host` names the bound IP and port, or `localhost` with the bound
+    port for a loopback or wildcard bind. DNS names, including mDNS names
+    such as `mac.local`, are refused so DNS rebinding cannot reach the
+    server; a portless `Host` means port 80.
+  - `Origin`, when present, is exactly `http://<Host>`. Pages served over
+    `https` (and so `wss` sockets), opaque `null` origins and every other
+    origin are refused.
+  - A WebSocket upgrade without `Origin` comes from a native client, which
+    is allowed only when the session has a secret.
+
+  Android requests arrive with the device-side `Host` `127.0.0.1:9876`
+  whatever `--bind` says, because the app always dials that address
+  through `adb reverse`. For the Android target `whisker run` sets
+  `Config::forwarded_authorities` to `127.0.0.1:9876` and
+  `localhost:9876` (`ANDROID_DEVICE_PORT`), which the server accepts in
+  addition to the bound authority when bound to a loopback or wildcard
+  address. They are an IP literal and `localhost`, so they do not let an
+  attacker-controlled name through. A LAN-IP bind gets no forwarded
+  authority; `adb reverse` cannot reach it anyway.
 - **Per-session secret.** `whisker run` generates a 32-hex-character
   secret (128 bits from the operating-system CSPRNG,
   `whisker_dev_protocol::generate_secret`) for every native target and
@@ -398,12 +419,14 @@ server and the runtime own the sockets.
   cap is lifted with nothing buffered past it. A patch that doesn't fit
   one envelope is dropped with a warning and needs a Full Reload.
 - **Browsers only get WebAssembly.** The Web target runs without a
-  secret because the page and the socket share the dev server's origin.
-  Clients of a secret-less server are treated as browsers: they receive
-  reload requests and side modules that pass `wasmparser` validation
-  (`PatchSender::send_web`), never native libraries, and their `hello`
-  supplies the Wasm relocation base. Conversely, a native app without a
-  secret never connects, so native hot patching always requires one.
+  secret in browser-only, same-origin mode: only a page served by the
+  dev server itself can open the socket, and native clients, which send
+  no `Origin`, are refused at the upgrade. Clients of a secret-less
+  server receive reload requests and side modules that pass `wasmparser`
+  validation (`PatchSender::send_web`), never native libraries. Their
+  `hello` cannot set the stored `aslr_reference`; the server records `0`,
+  since the web patcher needs the handshake but not a slide. Native hot
+  patching therefore always requires a secret.
 - **Visible failures.** There is no version negotiation: a CLI and a
   runtime built from different protocol versions fail the handshake. The
   runtime writes the reason (stale secret, version mismatch, timeout,
@@ -415,6 +438,11 @@ HMAC authenticates the connection but does not encrypt it. The
 operating system's debug transport and the provisioned secret are
 trusted: anyone who can read the Android debug property can impersonate
 that session's server or app.
+
+Device log lines and stream names pass through `strip_controls` before
+reaching the TUI or plain terminal output: C0, DEL and C1 controls and
+bidirectional formatting characters are removed, and tabs are kept in
+the line.
 
 ## Known boundaries
 
@@ -448,3 +476,12 @@ Thin rebuild capture persists only Cargo package metadata, crate and binary name
 manifest paths, the Cargo executable, and OUT_DIR. Registry configuration,
 authentication tokens, arbitrary CARGO_* variables, and jobserver descriptors
 are excluded. Do not use secret environment variables as compile-time app data.
+
+## Release environment boundary
+
+Release archive and Gradle launch commands remove `WHISKER_FEATURES` from their
+environment. The generated Xcode script and the Gradle Rust build task also ignore
+and remove that variable for Release builds, including IDE builds using a reused
+Gradle daemon. Explicit application Cargo features remain application configuration;
+this boundary prevents the development CLI's environment injection from carrying
+hot-reload into release builds.

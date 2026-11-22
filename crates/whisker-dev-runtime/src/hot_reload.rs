@@ -1242,6 +1242,7 @@ mod tests {
                 "127.0.0.1:0".parse().unwrap(),
                 None,
                 Some(SECRET.into()),
+                Vec::new(),
                 false,
                 None,
             )
@@ -1280,6 +1281,7 @@ mod tests {
                 "127.0.0.1:0".parse().unwrap(),
                 None,
                 Some("current-session".into()),
+                Vec::new(),
                 false,
                 None,
             )
