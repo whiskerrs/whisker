@@ -938,6 +938,12 @@ void HostScene::DrawView(uint64_t id, Node& node) {
     return;
   }
   auto const& content = node.geometry.content;
+  if (node.composition_surface) {
+    node.view_sprite.Offset({content.x, content.y, 0});
+    node.view_sprite.Size({content.width, content.height});
+    frame_views_.insert(id);
+    return;
+  }
   if (content.width <= 0 || content.height <= 0) {
     node.view_sprite.Brush(nullptr);
     return;
@@ -959,6 +965,36 @@ void HostScene::DrawView(uint64_t id, Node& node) {
 void HostScene::NodeViewContext::Emit(std::string_view event, Value detail) {
   scene_.view_events_.push_back({id_, std::string(event), std::move(detail)});
   if (scene_.request_frame_) scene_.request_frame_();
+}
+
+bool HostScene::RunViewFrames(double timestamp) {
+  if (frame_views_.empty()) return false;
+  for (auto id : std::exchange(frame_views_, {})) {
+    auto it = nodes_.find(id);
+    if (it == nodes_.end() || !it->second.view) continue;
+    auto const& content = it->second.geometry.content;
+    it->second.view->OnFrame(timestamp, content.width, content.height, scale_);
+  }
+  return true;
+}
+
+void HostScene::NodeViewContext::SetCompositionSurfaceHandle(HANDLE handle) {
+  auto it = scene_.nodes_.find(id_);
+  if (it == scene_.nodes_.end() || !it->second.view_sprite) return;
+  winrt::com_ptr<::IUnknown> raw;
+  winrt::check_hresult(scene_.compositor_.as<ICompositorSwapChainInterop>()
+                           ->CreateCompositionSurfaceForHandle(handle, raw.put()));
+  auto brush = scene_.compositor_.CreateSurfaceBrush(
+      raw.as<winrt::Microsoft::UI::Composition::ICompositionSurface>());
+  brush.Stretch(winrt::Microsoft::UI::Composition::CompositionStretch::Fill);
+  it->second.view_sprite.Brush(brush);
+  it->second.composition_surface = true;
+  scene_.dirty_views_.insert(id_);
+  if (scene_.request_frame_) scene_.request_frame_();
+}
+
+void HostScene::NodeViewContext::RequestFrame() {
+  scene_.frame_views_.insert(id_);
 }
 
 void HostScene::NodeViewContext::Invalidate() {

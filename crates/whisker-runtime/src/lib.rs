@@ -61,6 +61,8 @@ pub use element_registry::{
 };
 pub use frame_timing::FrameTiming;
 pub use runtime_context::RuntimeContext;
+#[doc(hidden)]
+pub use runtime_context::{WeakRuntimeContext, current_runtime_context};
 pub use runtime_instance::{
     RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeInstance, RuntimeLifecycle,
     RuntimeLifecycleError,

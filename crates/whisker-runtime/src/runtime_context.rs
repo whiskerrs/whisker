@@ -1,6 +1,7 @@
 //! Instance-scoped state entered on a Host-owned UI thread.
 
 use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
 
 use crate::anim_hook::AnimationState;
 use crate::dispatch::RuntimeDispatcher;
@@ -57,48 +58,92 @@ impl ContextState {
 /// for one short event or frame and restores the previous context even if
 /// application code panics.
 pub struct RuntimeContext {
+    inner: Rc<ContextInner>,
+}
+
+struct ContextInner {
     state: RefCell<ContextState>,
     entered: Cell<bool>,
     closed: Cell<bool>,
+}
+
+thread_local! {
+    static ACTIVE_CONTEXT: RefCell<Option<Weak<ContextInner>>> = const { RefCell::new(None) };
+}
+
+/// A [`RuntimeContext`] that may have been dropped, for native callbacks that arrive outside it.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct WeakRuntimeContext(Weak<ContextInner>);
+
+impl WeakRuntimeContext {
+    /// Runs `f` inside the context, or directly when it is already entered. Returns `None` once the
+    /// context is gone or shut down.
+    pub fn enter<R>(&self, f: impl FnOnce() -> R) -> Option<R> {
+        let inner = self.0.upgrade()?;
+        if inner.closed.get() {
+            return None;
+        }
+        if inner.entered.get() {
+            return Some(f());
+        }
+        Some(ContextInner::enter(&inner, f))
+    }
+}
+
+/// The context currently entered on this thread.
+#[doc(hidden)]
+pub fn current_runtime_context() -> Option<WeakRuntimeContext> {
+    ACTIVE_CONTEXT.with_borrow(|active| active.clone().map(WeakRuntimeContext))
+}
+
+impl ContextInner {
+    fn enter<R>(this: &Rc<Self>, f: impl FnOnce() -> R) -> R {
+        assert!(
+            !this.closed.get(),
+            "Whisker RuntimeContext cannot be entered after shutdown"
+        );
+        assert!(
+            !this.entered.replace(true),
+            "Whisker RuntimeContext cannot be entered re-entrantly"
+        );
+        this.state.borrow_mut().swap_active();
+        let previous = ACTIVE_CONTEXT.with_borrow_mut(|active| active.replace(Rc::downgrade(this)));
+
+        struct Restore<'a>(&'a ContextInner, Option<Weak<ContextInner>>);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                ACTIVE_CONTEXT.with_borrow_mut(|active| *active = self.1.take());
+                self.0.state.borrow_mut().swap_active();
+                self.0.entered.set(false);
+            }
+        }
+
+        let _restore = Restore(this, previous);
+        f()
+    }
 }
 
 impl RuntimeContext {
     /// Creates an isolated context connected to one any-thread Host wake-up.
     pub fn new(wake: RuntimeWakeHandle) -> Self {
         Self {
-            state: RefCell::new(ContextState::new(wake)),
-            entered: Cell::new(false),
-            closed: Cell::new(false),
+            inner: Rc::new(ContextInner {
+                state: RefCell::new(ContextState::new(wake)),
+                entered: Cell::new(false),
+                closed: Cell::new(false),
+            }),
         }
     }
 
     /// Runs one non-reentrant unit of UI work in this context.
     pub fn enter<R>(&self, f: impl FnOnce() -> R) -> R {
-        assert!(
-            !self.closed.get(),
-            "Whisker RuntimeContext cannot be entered after shutdown"
-        );
-        assert!(
-            !self.entered.replace(true),
-            "Whisker RuntimeContext cannot be entered re-entrantly"
-        );
-        self.state.borrow_mut().swap_active();
-
-        struct Restore<'a>(&'a RuntimeContext);
-        impl Drop for Restore<'_> {
-            fn drop(&mut self) {
-                self.0.state.borrow_mut().swap_active();
-                self.0.entered.set(false);
-            }
-        }
-
-        let _restore = Restore(self);
-        f()
+        ContextInner::enter(&self.inner, f)
     }
 
     /// Returns whether this context is already executing on the current UI lane.
     pub fn is_entered(&self) -> bool {
-        self.entered.get()
+        self.inner.entered.get()
     }
 
     /// Drops all instance-owned work and closes externally retained dispatchers.
@@ -107,10 +152,10 @@ impl RuntimeContext {
     /// permanent unmount. The context cannot be entered again afterwards.
     pub fn shutdown(&self) {
         assert!(
-            !self.entered.get(),
+            !self.inner.entered.get(),
             "Whisker RuntimeContext cannot shut down while entered"
         );
-        if self.closed.get() {
+        if self.inner.closed.get() {
             return;
         }
         self.enter(|| {
@@ -139,8 +184,8 @@ impl RuntimeContext {
             anim_hook::swap_state(&mut animation);
             drop(animation);
         });
-        self.closed.set(true);
-        let mut state = self.state.borrow_mut();
+        self.inner.closed.set(true);
+        let mut state = self.inner.state.borrow_mut();
         state.view = ViewRuntimeState::new();
         state.animation = AnimationState::new();
         state.runtime_local = RuntimeLocalState::new();
