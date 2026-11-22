@@ -483,6 +483,7 @@ pub fn run_gradle_assemble(
     };
     let gradle_step = crate::ui::step(crate::ui::OperationKind::Gradle, task.to_string());
     let mut cmd = gradle_command(gen_android, task)?;
+    cmd.env_remove("WHISKER_FEATURES");
     if !features.is_empty() {
         cmd.env("WHISKER_FEATURES", features.join(" "));
     }
@@ -621,6 +622,7 @@ pub fn run_gradle_release(
     };
     let gradle_step = crate::ui::step(crate::ui::OperationKind::Gradle, task.to_string());
     let mut cmd = gradle_command(gen_android, task)?;
+    cmd.env_remove("WHISKER_FEATURES");
     for (k, v) in signing_env {
         cmd.env(k, v);
     }

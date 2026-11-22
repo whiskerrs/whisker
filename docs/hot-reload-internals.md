@@ -403,3 +403,12 @@ Thin rebuild capture persists only Cargo package metadata, crate and binary name
 manifest paths, the Cargo executable, and OUT_DIR. Registry configuration,
 authentication tokens, arbitrary CARGO_* variables, and jobserver descriptors
 are excluded. Do not use secret environment variables as compile-time app data.
+
+## Release environment boundary
+
+Release archive and Gradle launch commands remove `WHISKER_FEATURES` from their
+environment. The generated Xcode script and the Gradle Rust build task also ignore
+and remove that variable for Release builds, including IDE builds using a reused
+Gradle daemon. Explicit application Cargo features remain application configuration;
+this boundary prevents the development CLI's environment injection from carrying
+hot-reload into release builds.
