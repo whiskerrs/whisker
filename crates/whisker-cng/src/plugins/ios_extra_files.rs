@@ -1,5 +1,5 @@
-//! `whisker-ios-extra-files` — drop arbitrary text files into the
-//! generated `gen/ios/` tree.
+//! `whisker-ios-extra-files` — drop arbitrary text or binary files
+//! into the generated `gen/ios/` tree.
 //!
 //! ## Usage in `whisker.rs`
 //!
@@ -7,7 +7,8 @@
 //! app.plugin::<IosExtraFiles>(|c| c
 //!     .add("Sources/Helper.swift", SWIFT_SRC)
 //!     .add("Resources/Config.json", json_str)
-//!     .add_with_mode("Scripts/run.sh", SCRIPT, 0o755));
+//!     .add_with_mode("Scripts/run.sh", SCRIPT, 0o755)
+//!     .add_bytes("Resources/Sound.caf", SOUND));
 //! ```
 //!
 //! Each `(relative_path, contents)` pair goes into
@@ -58,6 +59,13 @@ impl IosExtraFilesConfig {
                 mode: Some(mode),
             },
         );
+        self
+    }
+    /// Add (or replace) one binary file (an image, a font, audio)
+    /// with default `0o644` permissions. The bytes are written
+    /// verbatim.
+    pub fn add_bytes(&mut self, path: impl Into<PathBuf>, bytes: &[u8]) -> &mut Self {
+        self.files.insert(path.into(), FileEntry::binary(bytes));
         self
     }
 }
