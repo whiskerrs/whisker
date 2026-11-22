@@ -28,8 +28,11 @@
 //! };
 //! auth.sign_in_with_credential(&credential).await?;
 //! ```
+// The CNG plugin runs on the host only, so the on-device library does not link `plist`.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod plugin;
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use plugin::{WhiskerFirebaseAuth, WhiskerFirebaseAuthConfig};
 
 use std::collections::BTreeMap;
