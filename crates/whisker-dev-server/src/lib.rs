@@ -122,6 +122,10 @@ pub struct Config {
     /// Generated browser composition project. Required iff
     /// `target == Target::Web`.
     pub web: Option<WebParams>,
+    /// Generated Linux Cargo Host. Required iff `target == Target::Linux`.
+    pub linux: Option<LinuxParams>,
+    /// Generated Windows Cargo Host. Required iff `target == Target::Windows`.
+    pub windows: Option<WindowsParams>,
 }
 
 impl Config {
@@ -141,6 +145,8 @@ impl Config {
             ios: None,
             macos: None,
             web: None,
+            linux: None,
+            windows: None,
         }
     }
 }
@@ -203,6 +209,28 @@ pub struct MacosParams {
     pub derived_data: PathBuf,
 }
 
+/// Flat parameters for the generated Linux Cargo Host.
+#[derive(Debug, Clone)]
+pub struct LinuxParams {
+    /// Generated `gen/linux` Cargo project.
+    pub project_dir: PathBuf,
+    /// Dedicated Cargo output directory, shared with `whisker build linux`.
+    pub target_dir: PathBuf,
+    /// Generated package and executable name.
+    pub generated_package: String,
+}
+
+/// Flat parameters for the generated Windows Cargo Host.
+#[derive(Debug, Clone)]
+pub struct WindowsParams {
+    /// Generated `gen/windows` Cargo project.
+    pub project_dir: PathBuf,
+    /// Dedicated Cargo output directory, shared with `whisker build windows`.
+    pub target_dir: PathBuf,
+    /// Generated package and executable name.
+    pub generated_package: String,
+}
+
 /// Flat parameters for Whisker's generated browser Host.
 #[derive(Debug, Clone)]
 pub struct WebParams {
@@ -226,8 +254,12 @@ pub enum Target {
     /// iOS Simulator app + xcrun simctl install + launch.
     IosSimulator,
     /// Native macOS app. The dev server builds and launches the generated
-    /// Cargo Host, and applies subsecond patches without restarting it.
+    /// Xcode project, and applies subsecond patches without restarting it.
     Macos,
+    /// Native Linux app: the generated Cargo Host executable, run locally.
+    Linux,
+    /// Native Windows app: the generated Cargo Host executable, run locally.
+    Windows,
     /// Browser WASM application built and served by Whisker.
     Web,
 }
@@ -393,11 +425,7 @@ impl DevServer {
     /// restarts the app automatically: changes a patch can't express
     /// prompt for an explicit Full Reload (`DevCommand::FullReload`).
     pub async fn run(mut self) -> Result<()> {
-        whisker_build::ui::section("whisker run");
-        whisker_build::ui::info(format!(
-            "{} · {:?}",
-            self.config.package, self.config.target,
-        ));
+        let started_at = std::time::Instant::now();
         whisker_build::ui::debug(format!("mode={:?}", self.config.hot_patch_mode));
 
         // Builder + Installer are wired before the socket so no
@@ -417,12 +445,16 @@ impl DevServer {
             self.config.target,
         )
         .with_macos(self.config.macos.clone())
-        .with_web(self.config.web.clone());
+        .with_web(self.config.web.clone())
+        .with_linux(self.config.linux.clone())
+        .with_windows(self.config.windows.clone());
 
         let hot_reload_init = if self.config.hot_patch_mode == HotPatchMode::HotReload {
             let feature = match self.config.target {
                 Target::Web => "hot-reload",
                 Target::Android | Target::IosSimulator | Target::Macos => "whisker/hot-reload",
+                Target::Linux => "whisker-linux/hot-reload",
+                Target::Windows => "whisker-windows/hot-reload",
             };
             builder = builder.with_features(vec![feature.into()]);
             match prepare_hot_reload_capture(&self.config) {
@@ -447,6 +479,8 @@ impl DevServer {
             self.config.android.clone(),
             self.config.ios.clone(),
             self.config.macos.clone(),
+            self.config.linux.clone(),
+            self.config.windows.clone(),
             self.config.workspace_root.clone(),
             self.config.package.clone(),
             hot_reload_init.as_ref().map(|p| p.capture.clone()),
@@ -464,7 +498,7 @@ impl DevServer {
         // there is nothing to patch and nothing a later save could
         // recover.
         //
-        whisker_build::ui::section("Initial build");
+        whisker_build::ui::section("Build");
         emit(&self.on_event, Event::BuildingFull);
         if let Err(e) = builder.build().await {
             let msg = format!("{e:#}");
@@ -496,10 +530,9 @@ impl DevServer {
         whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));
         whisker_build::ui::debug(format!("ws://{bound}/whisker-dev"));
         if let Some(web) = &self.config.web {
-            whisker_build::ui::info(format!(
-                "Local: http://127.0.0.1:{}{}",
-                bound.port(),
-                web.base_path
+            whisker_build::ui::info(whisker_build::ui::labeled(
+                "open",
+                format!("http://127.0.0.1:{}{}", bound.port(), web.base_path),
             ));
         }
 
@@ -570,10 +603,11 @@ impl DevServer {
             anyhow::bail!("initial install failed: {e:#}");
         }
         emit(&self.on_event, Event::HostLaunched);
-        whisker_build::ui::info(format!(
-            "initial done · {} client(s) connected",
-            sender.client_count()
-        ));
+        whisker_build::ui::completed(
+            whisker_build::ui::OperationKind::Ready,
+            "",
+            started_at.elapsed(),
+        );
 
         // Only now, after the fat build, are the capture caches
         // populated for `Patcher::initialize`. A failure is non-fatal:
@@ -703,6 +737,10 @@ impl DevServer {
                     whisker_build::ui::section("Full Reload");
                     run_build_cycle(&builder, &installer, &self.on_event, &sender, "full reload")
                         .await;
+                    // The rebuilt binary has new symbol addresses; a patcher
+                    // kept from before would aim patches at the old ones.
+                    patcher = None;
+                    ensure_patcher(&self.config, &hot_reload_init, &mut patcher);
                 }
                 Input::Command(DevCommand::Relaunch) => {
                     emit(&self.on_event, Event::HostLaunching);

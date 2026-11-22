@@ -1,9 +1,13 @@
 #if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 @testable import WhiskerModule
 @testable import WhiskerRuntime
 import XCTest
 
+#if canImport(UIKit)
 @MainActor
 final class ParagraphTests: XCTestCase {
     func testTopAndBottomAttachmentsShareOneLineHeight() throws {
@@ -151,6 +155,49 @@ extension ParagraphTests {
         XCTAssertEqual(label.accessibilityLabel, "")
     }
 
+    func testLabelsSharingPreparedLayoutKeepTheirOwnPaint() throws {
+        let font = UIFont.systemFont(ofSize: 36, weight: .black)
+        let layout = WhiskerParagraphLayout(text: NSAttributedString(string: "B", attributes: [.font: font]), width: 100, maxLines: 0, overflow: .clip)
+        for rich in [false, true] {
+            func label(_ color: UIColor) -> WhiskerTextLabel {
+                let label = WhiskerTextLabel(frame: CGRect(x: 0, y: 0, width: 100, height: 60))
+                let text = NSAttributedString(string: "B", attributes: [.font: font, .foregroundColor: color])
+                if rich { label.richContent = text } else { label.attributedText = text }
+                label.installPreparedParagraph(layout)
+                return label
+            }
+            let red = label(.red)
+            let blue = label(.blue)
+            XCTAssertEqual(try inkColor(red), .red, "rich: \(rich)")
+            XCTAssertEqual(try inkColor(blue), .blue, "rich: \(rich)")
+            XCTAssertEqual(try inkColor(red), .red, "rich: \(rich)")
+        }
+    }
+
+    private enum Ink { case red, blue }
+
+    private func inkColor(_ label: WhiskerTextLabel) throws -> Ink? {
+        let size = label.bounds.size
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { _ in label.drawText(in: label.bounds) }
+        let cgImage = try XCTUnwrap(image.cgImage)
+        let width = Int(size.width), height = Int(size.height)
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        pixels.withUnsafeMutableBytes { bytes in
+            let context = CGContext(data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        var reds = 0, blues = 0
+        for index in stride(from: 0, to: pixels.count, by: 4) where pixels[index + 3] > 200 {
+            if pixels[index] > 200 && pixels[index + 2] < 30 { reds += 1 }
+            if pixels[index + 2] > 200 && pixels[index] < 30 { blues += 1 }
+        }
+        if reds > 0 && blues == 0 { return .red }
+        if blues > 0 && reds == 0 { return .blue }
+        return nil
+    }
+
     func testFixedLineHeightCentersTheContentAreaLikeCSS() {
         let font = UIFont.systemFont(ofSize: 15)
         for lineHeight: CGFloat in [12, 16, 30] {
@@ -181,3 +228,46 @@ extension ParagraphTests {
     }
 }
 #endif
+
+@MainActor
+final class ParagraphPaintTests: XCTestCase {
+    func testApplyingIdenticalPaintSkipsStorageEdits() {
+        let red = paint(.red)
+        let layout = WhiskerParagraphLayout(text: red, width: 100, maxLines: 0, overflow: .clip)
+        let observer = StorageEdits()
+        layout.storage.delegate = observer
+
+        let splitRun = NSMutableAttributedString(attributedString: paint(.red))
+        splitRun.addAttribute(.kern, value: 1, range: NSRange(location: 1, length: 1))
+        layout.applyPaint(splitRun)
+        XCTAssertEqual(observer.count, 0)
+
+        layout.applyPaint(NSAttributedString(string: red.string, attributes: [.foregroundColor: WhiskerPlatformColor.blue]))
+        XCTAssertEqual(observer.count, 1)
+        XCTAssertEqual(layout.storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? WhiskerPlatformColor, .blue)
+        XCTAssertNil(layout.storage.attribute(.whiskerInlineWave, at: 0, effectiveRange: nil))
+
+        layout.applyPaint(red)
+        XCTAssertEqual(observer.count, 2)
+        XCTAssertEqual(layout.storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? WhiskerPlatformColor, .red)
+        XCTAssertNotNil(layout.storage.attribute(.whiskerInlineWave, at: 0, effectiveRange: nil))
+        layout.applyPaint(paint(.red))
+        XCTAssertEqual(observer.count, 2)
+    }
+
+    private func paint(_ color: WhiskerPlatformColor) -> NSAttributedString {
+        NSAttributedString(string: "paint", attributes: [
+            .foregroundColor: color,
+            .whiskerInlineWave: WhiskerInlineWave(color: color, underline: true, strike: false),
+        ])
+    }
+
+    private final class StorageEdits: NSObject, NSTextStorageDelegate {
+        private(set) var count = 0
+
+        func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: WhiskerTextEditActions,
+                         range editedRange: NSRange, changeInLength delta: Int) {
+            count += 1
+        }
+    }
+}

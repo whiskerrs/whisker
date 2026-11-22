@@ -25,7 +25,7 @@ Run the `release` workflow on **main** with these inputs:
 Core means publishable crates in `crates/` and `platforms/`, except
 `whisker-subsecond`. Core releases update the group together and pin
 core-to-core dependencies to the exact version. Each `packages/<directory>`
-is a separate version group, including nested web/desktop crates. Override
+is a separate version group, including nested web/linux crates. Override
 keys use directory names. Every crate within a group must share its version.
 
 Preparation compares packaged files and resolved manifest metadata with the
@@ -87,7 +87,10 @@ The release-plan merge triggers the same workflow's publishing jobs:
    The Windows Host builds x64 and ARM64 libraries, tags `windows-host-v<version>`,
    and pushes `Whisker.WindowsHost` to nuget.org through Trusted Publishing
    (`NuGet/login` with the `NUGET_USER` secret; no long-lived API key).
-3. After all selected native jobs succeed, verify reused SDKs too, then use
+   The push is not awaited: nuget.org validation can take minutes to hours
+   (longer for a new package), and `-SkipDuplicate` makes re-runs safe. Check
+   that the version appears on nuget.org; the owner is emailed if it is rejected.
+3. After all selected native jobs succeed, verify reused Maven SDKs too, then use
    Cargo workspace publishing for the unpublished Rust versions. Publishing
    uses Cargo 1.98.1; the framework's consumer MSRV is unchanged.
 4. Verify every selected crate version in the registry, then create **one**
@@ -117,7 +120,7 @@ the unified workflow through `workflow_call`.
 The source pins are `WHISKER_SDK_VERSION` and
 `WHISKER_GRADLE_PLUGIN_VERSION` in `crates/whisker-cng/src/generator.rs`, and
 `WHISKER_IOS_SPM_VERSION` in `crates/whisker-cng/src/ios_modules.rs` plus
-`packages/*/Package.swift`, and `WHISKER_WINDOWS_HOST_VERSION` in
+`packages/**/Package.swift`, and `WHISKER_WINDOWS_HOST_VERSION` in
 `platforms/windows/build.rs` (`0.0.0` until the first package is published, which
 makes `windows_version` required). The preparation command keeps these consistent.
 
@@ -130,6 +133,9 @@ gh run rerun <run-id> --failed
 ```
 
 The checkout must remain the same commit. Native tags reject another commit.
+A re-run keeps the failed run's job definitions; when the Rust publish job
+itself needs a workflow fix, merge the fix and dispatch `release-resume` with
+the release-plan merge commit.
 Changes to packaged Rust content or Cargo.lock after preparation are rejected
 before publishing. Re-prepare the release if main acquired those changes.
 Maven publication receipts prevent overwriting a successful upload when

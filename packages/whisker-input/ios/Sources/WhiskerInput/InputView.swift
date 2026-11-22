@@ -22,6 +22,7 @@
 // unconditionally would jump the insertion point to the end on every
 // keystroke.
 
+#if canImport(UIKit)
 import Foundation
 import UIKit
 import WhiskerModule
@@ -731,3 +732,4 @@ private final class PaddedTextField: UITextField {
         return bounds.inset(by: textInsets)
     }
 }
+#endif

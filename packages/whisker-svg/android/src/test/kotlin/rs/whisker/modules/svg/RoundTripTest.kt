@@ -60,6 +60,13 @@ class RoundTripTest {
         // STROKE_WIDTH 2.5
         out += DLFormat.OP_PAINT_STROKE_WIDTH
         out += leBytes(2.5f).toList()
+        // STROKE_CAP ROUND, STROKE_JOIN BEVEL, STROKE_CAP 0x7F (unknown → BUTT)
+        out += DLFormat.OP_PAINT_STROKE_CAP
+        out += DLFormat.CAP_ROUND.toByte()
+        out += DLFormat.OP_PAINT_STROKE_JOIN
+        out += DLFormat.JOIN_BEVEL.toByte()
+        out += DLFormat.OP_PAINT_STROKE_CAP
+        out += 0x7F.toByte()
         // FILL_TINT, STROKE_TINT
         out += DLFormat.OP_PAINT_FILL_TINT
         out += DLFormat.OP_PAINT_STROKE_TINT
@@ -97,6 +104,9 @@ class RoundTripTest {
             FILL_COLOR #102030C0
             STROKE_COLOR #AABBCCDD
             STROKE_WIDTH 2.5
+            STROKE_CAP ROUND
+            STROKE_JOIN BEVEL
+            STROKE_CAP BUTT
             FILL_TINT
             STROKE_TINT
             PATH_BEGIN

@@ -111,15 +111,61 @@ private func inlineWave(from left: CGFloat, to right: CGFloat, y: CGFloat, strok
 }
 
 
+private let paragraphPaintKeys: Set<NSAttributedString.Key> = [
+    .foregroundColor, .backgroundColor, .underlineStyle, .underlineColor,
+    .strikethroughStyle, .strikethroughColor, .shadow, .whiskerInlineBackground, .whiskerInlineWave,
+]
+
 extension WhiskerParagraphLayout {
     func applyPaint(_ text: NSAttributedString) {
-        let keys: Set<NSAttributedString.Key> = [.foregroundColor, .backgroundColor, .underlineStyle, .underlineColor,
-            .strikethroughStyle, .strikethroughColor, .shadow, .whiskerInlineBackground, .whiskerInlineWave]
+        guard !hasSamePaint(as: text) else { return }
+        let paragraphManager = manager as? WhiskerParagraphLayoutManager
+        paragraphManager?.editingPaintOnly = true
+        defer { paragraphManager?.editingPaintOnly = false }
         storage.beginEditing()
-        for key in keys { storage.removeAttribute(key, range: NSRange(location: 0, length: storage.length)) }
+        for key in paragraphPaintKeys { storage.removeAttribute(key, range: NSRange(location: 0, length: storage.length)) }
         text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, range, _ in
-            storage.addAttributes(attributes.filter { keys.contains($0.key) }, range: range)
+            storage.addAttributes(attributes.filter { paragraphPaintKeys.contains($0.key) }, range: range)
         }
         storage.endEditing()
+    }
+
+    private func hasSamePaint(as text: NSAttributedString) -> Bool {
+        let length = storage.length
+        guard length == text.length else { return false }
+        var index = 0
+        while index < length {
+            var storedRange = NSRange()
+            var incomingRange = NSRange()
+            let stored = storage.attributes(at: index, effectiveRange: &storedRange)
+            let incoming = text.attributes(at: index, effectiveRange: &incomingRange)
+            for key in paragraphPaintKeys {
+                guard paintValuesEqual(stored[key], incoming[key]) else { return false }
+            }
+            // Layout attributes can split otherwise identical paint into different runs.
+            index = min(NSMaxRange(storedRange), NSMaxRange(incomingRange))
+        }
+        return true
+    }
+}
+
+private func paintValuesEqual(_ lhs: Any?, _ rhs: Any?) -> Bool {
+    switch (lhs, rhs) {
+    case (nil, nil):
+        return true
+    case let (lhs as WhiskerInlineBackground, rhs as WhiskerInlineBackground):
+        return lhs.color == rhs.color && lhs.radii == rhs.radii
+    case let (lhs as WhiskerInlineWave, rhs as WhiskerInlineWave):
+        return lhs.color == rhs.color && lhs.underline == rhs.underline && lhs.strike == rhs.strike
+    case let (lhs as NSShadow, rhs as NSShadow):
+        let lhsColor: Any? = lhs.shadowColor
+        let rhsColor: Any? = rhs.shadowColor
+        return lhs.shadowOffset == rhs.shadowOffset
+            && lhs.shadowBlurRadius == rhs.shadowBlurRadius
+            && (lhsColor as? NSObject) == (rhsColor as? NSObject)
+    case let (lhs as NSObject, rhs as NSObject):
+        return lhs.isEqual(rhs)
+    default:
+        return false
     }
 }

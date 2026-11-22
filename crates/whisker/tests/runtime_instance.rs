@@ -2545,3 +2545,49 @@ fn frame_timing_counts_host_measurement_only_while_enabled() {
     runtime.set_frame_timing(false);
     assert_eq!(drive(&runtime, 2.0).timing, None);
 }
+
+#[test]
+fn viewport_signal_follows_host_resizes() {
+    let surface = surface(32);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let record = Rc::clone(&seen);
+    runtime
+        .mount(move || {
+            let viewport = whisker::viewport();
+            effect(move || {
+                let whisker::Viewport {
+                    width,
+                    height,
+                    scale,
+                } = viewport.get();
+                record.borrow_mut().push((width, height, scale));
+            });
+            render! { View() }
+        })
+        .unwrap();
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    for (timestamp, width, height) in [(1.0, 200.0, 100.0), (2.0, 100.0, 200.0)] {
+        runtime
+            .drive_frame(
+                timestamp,
+                StyleEnvironment::new(width, height, 3.0, 14.0),
+                timestamp as u64,
+                timestamp as u32,
+                &mut measurements,
+                &mut sink,
+                LayoutOptions::default(),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        *seen.borrow(),
+        [
+            (200.0, 100.0, 1.0),
+            (200.0, 100.0, 3.0),
+            (100.0, 200.0, 3.0)
+        ]
+    );
+}

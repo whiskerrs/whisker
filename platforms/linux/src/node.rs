@@ -55,6 +55,10 @@ pub(crate) struct NodeState {
     pub(crate) background: Option<gdk::RGBA>,
     pub(crate) cursor: CursorKeyword,
     pub(crate) children: Vec<NodeWidget>,
+    /// Module widget filling the content box beneath the node children.
+    pub(crate) native: Option<gtk::Widget>,
+    /// Only the surface is a pointer target; other nodes stay pickable so module widgets inside them are reachable.
+    pub(crate) hit_target: bool,
     on_resize: Option<fn()>,
     allocated: (i32, i32),
 }
@@ -80,6 +84,8 @@ impl Default for NodeState {
             background: None,
             cursor: CursorKeyword::Auto,
             children: Vec::new(),
+            native: None,
+            hit_target: false,
             on_resize: None,
             allocated: (0, 0),
         }
@@ -130,6 +136,17 @@ mod imp {
                 on_resize();
             }
             let state = self.state.borrow();
+            if let Some(native) = &state.native {
+                let content = state.geometry.content_box;
+                let transform =
+                    gsk::Transform::new().translate(&graphene::Point::new(content.x, content.y));
+                native.allocate(
+                    content.width.ceil() as i32,
+                    content.height.ceil() as i32,
+                    -1,
+                    Some(transform),
+                );
+            }
             let offset = state.scroll.map_or([0.0, 0.0], |scroll| scroll.offset);
             for child in &state.children {
                 child.allocate_in_parent(offset);
@@ -138,6 +155,10 @@ mod imp {
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             self.obj().paint(snapshot);
+        }
+
+        fn contains(&self, _x: f64, _y: f64) -> bool {
+            self.state.borrow().hit_target
         }
     }
 }
@@ -156,9 +177,7 @@ impl Default for NodeWidget {
 
 impl NodeWidget {
     pub(crate) fn new() -> Self {
-        let widget = Self::default();
-        widget.set_can_target(false);
-        widget
+        Self::default()
     }
 
     /// Calls `callback` whenever GTK allocates this widget a new size.
@@ -187,6 +206,31 @@ impl NodeWidget {
         let (width, height) = (rect.width.ceil() as i32, rect.height.ceil() as i32);
         drop(state);
         self.allocate(width, height, -1, Some(transform));
+    }
+
+    /// The topmost node under `(x, y)` in this widget's coordinates, honoring paint order and clipping.
+    // GTK's pick can't be used: it descends into children before the parent's clip is checked.
+    pub(crate) fn hit_test(&self, x: f32, y: f32) -> Option<NodeWidget> {
+        let state = self.state();
+        let inside_x = x >= 0.0 && x < self.width() as f32;
+        let inside_y = y >= 0.0 && y < self.height() as f32;
+        let scrolls = state.scroll.is_some();
+        let descend = (inside_x || !(scrolls || state.clip.horizontal == OverflowClip::Hidden))
+            && (inside_y || !(scrolls || state.clip.vertical == OverflowClip::Hidden));
+        let visible = state.visibility == Visibility::Visible;
+        drop(state);
+        if descend {
+            let point = graphene::Point::new(x, y);
+            for child in self.paint_order().iter().rev() {
+                let hit = self
+                    .compute_point(child, &point)
+                    .and_then(|local| child.hit_test(local.x(), local.y()));
+                if hit.is_some() {
+                    return hit;
+                }
+            }
+        }
+        (visible && inside_x && inside_y).then(|| self.clone())
     }
 
     /// Children in paint order: ascending z-order, then document order.
@@ -229,6 +273,7 @@ impl NodeWidget {
             }
         }
         let clip = clip_rect(&state, &bounds);
+        let native = visible.then(|| state.native.clone()).flatten();
         let outline = visible
             .then(|| state.effects.outline.clone())
             .flatten()
@@ -236,6 +281,9 @@ impl NodeWidget {
         drop(state);
         if let Some(clip) = &clip {
             snapshot.push_rounded_clip(clip);
+        }
+        if let Some(native) = &native {
+            self.snapshot_child(native, snapshot);
         }
         for child in self.paint_order() {
             self.snapshot_child(&child, snapshot);
@@ -322,4 +370,43 @@ fn clip_rect(state: &NodeState, bounds: &graphene::Rect) -> Option<gsk::RoundedR
         graphene::Rect::new(x, y, width, height),
         0.0,
     ))
+}
+
+#[cfg(all(test, feature = "host-conformance"))]
+mod tests {
+    use super::*;
+    use whisker_protocol::LayoutRect;
+
+    fn child(parent: &NodeWidget, x: f32, y: f32, width: f32, height: f32) -> NodeWidget {
+        let node = NodeWidget::new();
+        node.state_mut().geometry.border_box = LayoutRect {
+            x,
+            y,
+            width,
+            height,
+        };
+        node.set_parent(parent);
+        parent.state_mut().children.push(node.clone());
+        node
+    }
+
+    #[test]
+    fn hit_test_finds_scroll_content_and_skips_what_the_scroll_view_clips() {
+        // GTK may only be initialized from one thread, and libtest runs each test on its own.
+        gtk::test_synced(|| {
+            let surface = NodeWidget::new();
+            let header = child(&surface, 0.0, 0.0, 200.0, 60.0);
+            let scroll = child(&surface, 0.0, 60.0, 200.0, 100.0);
+            scroll.state_mut().scroll = Some(ScrollState {
+                offset: [0.0, 100.0],
+                ..ScrollState::default()
+            });
+            let content = child(&scroll, 0.0, 0.0, 200.0, 400.0);
+            surface.allocate(200, 200, -1, None);
+
+            assert_eq!(surface.hit_test(10.0, 30.0), Some(header));
+            assert_eq!(surface.hit_test(10.0, 100.0), Some(content));
+            assert_eq!(surface.hit_test(10.0, 180.0), Some(surface.clone()));
+        });
+    }
 }

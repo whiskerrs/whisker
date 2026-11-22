@@ -10,13 +10,27 @@
 use std::error::Error;
 use std::fmt;
 
-use whisker::Element;
+use whisker::runtime::module::{RustModuleDefinition, link_rust_modules};
+use whisker::{Element, ElementModuleDefinition};
 
 /// Configuration for one standalone Windows window.
 #[derive(Clone, Debug)]
 pub struct WindowsAppConfig {
     title: String,
     background_rgb: [u8; 3],
+    modules: Vec<WindowsModuleDefinition>,
+}
+
+/// Windows implementation of one module, as returned by its Host crate.
+#[derive(Clone, Debug, Default)]
+pub struct WindowsModuleDefinition {
+    service: RustModuleDefinition,
+}
+
+impl From<RustModuleDefinition> for WindowsModuleDefinition {
+    fn from(service: RustModuleDefinition) -> Self {
+        Self { service }
+    }
 }
 
 impl WindowsAppConfig {
@@ -25,12 +39,23 @@ impl WindowsAppConfig {
         Self {
             title: title.into(),
             background_rgb: [255, 255, 255],
+            modules: Vec::new(),
         }
     }
 
     /// Sets the window background shown behind Whisker content.
     pub fn with_background_rgb(mut self, red: u8, green: u8, blue: u8) -> Self {
         self.background_rgb = [red, green, blue];
+        self
+    }
+
+    /// Installs one module's element schema and Host implementation.
+    pub fn with_module(
+        mut self,
+        _elements: ElementModuleDefinition,
+        host: impl Into<WindowsModuleDefinition>,
+    ) -> Self {
+        self.modules.push(host.into());
         self
     }
 }
@@ -72,6 +97,7 @@ pub fn run_with_application_hash(
     _application: fn() -> Element,
     _application_hash: fn() -> u64,
 ) -> Result<(), WindowsError> {
+    link_rust_modules(config.modules.into_iter().map(|module| module.service));
     let options = WhiskerWindowsAppOptions {
         title: config.title.as_ptr(),
         title_len: config.title.len(),

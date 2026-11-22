@@ -363,10 +363,9 @@ pub fn build_framework_for_xcode_run_script(
             .with_context(|| format!("rm -rf {}", published_fw.display()))?;
     }
     copy_dir_recursive(&staged_fw, &published_fw)?;
-    crate::ui::info(format!(
-        "publish {}.framework → {}",
-        FRAMEWORK_NAME,
-        published_fw.display(),
+    crate::ui::info(crate::ui::labeled(
+        "stage",
+        format!("Frameworks ({FRAMEWORK_NAME}.framework)"),
     ));
     Ok(published_fw)
 }
@@ -390,7 +389,10 @@ fn publish_macos_library(dylib: &Path, built_products_dir: &Path) -> Result<Path
             published.display()
         ));
     }
-    crate::ui::info(format!("publish {}", published.display()));
+    crate::ui::info(crate::ui::labeled(
+        "stage",
+        whisker_cng::macos::DRIVER_LIBRARY,
+    ));
     Ok(published)
 }
 
@@ -543,7 +545,10 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
     if let Some(p) = args.whisker_ios_macros_path {
         cmd.env("WHISKER_IOS_MACROS", p);
     }
-    let status = xc_step.pipe(&mut cmd).context("spawn xcodebuild")?;
+    crate::ui::mark_nested(&mut cmd);
+    let status = xc_step
+        .pipe_filtered(&mut cmd, is_xcodebuild_noise)
+        .context("spawn xcodebuild")?;
     if !status.success() {
         xc_step.fail(status.to_string());
         return Err(anyhow!("xcodebuild failed ({status})"));
@@ -701,8 +706,9 @@ pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
         .arg("CODE_SIGN_STYLE=Automatic")
         .arg("CODE_SIGN_IDENTITY=Apple Development")
         .current_dir(gen_dir);
+    crate::ui::mark_nested(&mut cmd);
     let status = archive_step
-        .pipe(&mut cmd)
+        .pipe_filtered(&mut cmd, is_xcodebuild_noise)
         .context("spawn xcodebuild archive")?;
     if !status.success() {
         archive_step.fail(format!("{status}"));
@@ -736,8 +742,9 @@ pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
         .arg(signing.key_path)
         .args(["-authenticationKeyID", signing.key_id])
         .args(["-authenticationKeyIssuerID", signing.issuer_id]);
+    crate::ui::mark_nested(&mut cmd);
     let status = export_step
-        .pipe(&mut cmd)
+        .pipe_filtered(&mut cmd, is_xcodebuild_noise)
         .context("spawn xcodebuild -exportArchive")?;
     if !status.success() {
         export_step.fail(format!("{status}"));
@@ -780,6 +787,99 @@ fn export_options_plist(method: ExportMethod, team_id: &str) -> String {
         method.plist_value(),
         team_id,
     )
+}
+
+/// `xcodebuild`'s `-quiet` flag silences progress chatter but the
+/// underlying compiler still emits diagnostics. Framework deprecation
+/// cascades can produce hundreds of non-actionable lines on every build, so
+/// the concise UI filters warning chains while verbose mode preserves them.
+///
+/// Approach: drop anything that looks like a clang / xcodebuild
+/// warning chain — the `warning:` line, the `note:` follow-ups,
+/// the source-line listings (`  217 |`, `      |   ^`), the
+/// "in file included from" / "N warnings generated." summaries,
+/// and the `[MT] IDERunDestination` IDE chatter.
+///
+/// Real errors are preserved: lines containing `error:` /
+/// `fatal error:` / `** BUILD FAILED **` always fall through.
+pub fn is_xcodebuild_noise(raw: &str) -> bool {
+    // `--verbose` means "show me the full tool output", deprecation
+    // chain included.
+    if crate::ui::is_verbose() {
+        return false;
+    }
+
+    let line = raw.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '·');
+
+    // Xcode's header for a step that printed diagnostics and still succeeded.
+    if line.starts_with("error: the following command failed with exit code 0") {
+        return true;
+    }
+
+    // First, so a `warning:`-prefixed error isn't suppressed below.
+    if line.starts_with("error:")
+        || line.contains(" error:")
+        || line.starts_with("fatal error:")
+        || line.starts_with("** BUILD FAILED")
+        || line.starts_with("** BUILD INTERRUPTED")
+    {
+        return false;
+    }
+
+    // `2026-05-21 18:21:52.770 xcodebuild[54160:34595363] [MT] IDERunDestination …`
+    if raw.starts_with("20") && raw.contains("xcodebuild[") && raw.contains("] [MT] ") {
+        return true;
+    }
+
+    // Headers and trailers framing a Swift diagnostic.
+    if line.starts_with("SwiftCompile ")
+        || line.starts_with("SwiftEmitModule ")
+        || line.starts_with("CompileC ")
+        || (line.starts_with("[#") && line.contains("]: <https://"))
+    {
+        return true;
+    }
+
+    // A destination warning followed by one `{ platform:… }` line per match.
+    if line
+        .starts_with("--- xcodebuild: WARNING: Using the first of multiple matching destinations")
+        || line.starts_with("{ platform:")
+    {
+        return true;
+    }
+
+    // The xcframework command's success line.
+    if line.starts_with("xcframework successfully written out to:") {
+        return true;
+    }
+
+    // Diagnostic chain: warnings, notes, source listings, summary.
+    if line.starts_with("warning:")
+        || line.contains(" warning:")
+        || line.starts_with("note:")
+        || line.contains(" note:")
+        || line.starts_with("In file included from")
+        || line.ends_with(" warnings generated.")
+        || line.ends_with(" warning generated.")
+    {
+        return true;
+    }
+
+    // Source-line listings rendered alongside the warning chain:
+    //   `217 | #import "FrameworkHeader.h"`
+    //   `    | ^`
+    //   `56 |`        (empty source line for context)
+    // After trimming leading whitespace and ALL leading digits, the
+    // remainder always starts with `|` — trimming a single character
+    // would miss multi-digit line numbers.
+    let after_digits = line
+        .trim_start()
+        .trim_start_matches(|c: char| c.is_ascii_digit() || c.is_ascii_whitespace());
+    if after_digits.starts_with('|') {
+        return true;
+    }
+
+    false
 }
 
 #[cfg(test)]

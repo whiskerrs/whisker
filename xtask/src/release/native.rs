@@ -64,14 +64,29 @@ fn replace_once(path: &Path, from: &str, to: &str) -> Result<()> {
 
 fn swift_manifests(root: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
-    for entry in fs::read_dir(root.join("packages"))? {
-        let path = entry?.path().join("Package.swift");
-        if path.is_file() && fs::read_to_string(&path)?.contains("whiskerrs/whisker.git") {
+    collect_swift_manifests(&root.join("packages"), &mut paths)?;
+    ensure!(!paths.is_empty(), "no Swift module manifests found");
+    Ok(paths)
+}
+
+fn collect_swift_manifests(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if entry.file_type()?.is_dir() {
+            // Build caches and CNG output hold untracked manifests that must not be bumped.
+            if !name.starts_with('.') && name != "target" && name != "gen" {
+                collect_swift_manifests(&path, paths)?;
+            }
+        } else if name == "Package.swift"
+            && fs::read_to_string(&path)?.contains("whiskerrs/whisker.git")
+        {
             paths.push(path);
         }
     }
-    ensure!(!paths.is_empty(), "no Swift module manifests found");
-    Ok(paths)
+    Ok(())
 }
 
 pub(super) fn check_swift_pins(root: &Path, expected: &str) -> Result<()> {

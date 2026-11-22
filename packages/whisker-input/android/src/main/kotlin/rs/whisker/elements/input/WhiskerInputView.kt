@@ -24,12 +24,9 @@ import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
-import android.view.KeyEvent
 import android.view.autofill.AutofillValue
-import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
-import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerCustomEvent
@@ -203,42 +200,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     private inner class WhiskerEditText(context: Context) : android.widget.EditText(context) {
         override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
             val base = super.onCreateInputConnection(outAttrs) ?: return null
-            return object : InputConnectionWrapper(base, false) {
-                override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
-                    userEdit = true
-                    return super.commitText(text, newCursorPosition)
-                }
-
-                override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
-                    userEdit = true
-                    return super.setComposingText(text, newCursorPosition)
-                }
-
-                override fun finishComposingText(): Boolean {
-                    userEdit = true
-                    return super.finishComposingText()
-                }
-
-                override fun commitCorrection(correctionInfo: CorrectionInfo?): Boolean {
-                    userEdit = true
-                    return super.commitCorrection(correctionInfo)
-                }
-
-                override fun deleteSurroundingText(before: Int, after: Int): Boolean {
-                    userEdit = true
-                    return super.deleteSurroundingText(before, after)
-                }
-
-                override fun deleteSurroundingTextInCodePoints(before: Int, after: Int): Boolean {
-                    userEdit = true
-                    return super.deleteSurroundingTextInCodePoints(before, after)
-                }
-
-                override fun sendKeyEvent(event: KeyEvent?): Boolean {
-                    userEdit = true
-                    return super.sendKeyEvent(event)
-                }
-            }
+            return UserEditInputConnection(base) { userEdit = true }
         }
 
         override fun onTextContextMenuItem(id: Int): Boolean {

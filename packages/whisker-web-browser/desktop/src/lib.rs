@@ -1,17 +1,19 @@
 //! Desktop system-browser Host for `whisker-web-browser`.
 
-use whisker_desktop::{ModuleDefinition, WhiskerModule, WhiskerValue};
+use whisker::WhiskerModule;
+use whisker::platform_module::WhiskerValue;
+use whisker::runtime::module::RustModuleDefinition as ModuleDefinition;
 
 const MODULE_NAME: &str = "whisker-web-browser:WebBrowser";
 
 struct WebBrowserModule;
 
-#[whisker_desktop::WhiskerModule]
+#[whisker::WhiskerModule]
 impl WhiskerModule for WebBrowserModule {
     type Definition = ModuleDefinition;
 
     fn definition() -> Self::Definition {
-        ModuleDefinition::new()
+        ModuleDefinition::default()
             .name(MODULE_NAME)
             .function("openAuthSession", |_args, emitter| {
                 emitter.emit(
@@ -57,7 +59,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn definition_is_service_only() {
-        assert!(__whisker_module_definition().factories().is_empty());
+    fn definition_names_the_module() {
+        assert_eq!(
+            __whisker_module_definition().module_name(),
+            Some(MODULE_NAME)
+        );
     }
 }

@@ -1,8 +1,14 @@
+#if canImport(UIKit)
 import UIKit
+typealias InputFont = UIFont
+#else
+import AppKit
+typealias InputFont = NSFont
+#endif
 import WhiskerModule
 
 internal struct InputTypography {
-  let font: UIFont
+  let font: InputFont
   let lineHeight: CGFloat?
   let letterSpacing: CGFloat
 
@@ -11,10 +17,14 @@ internal struct InputTypography {
     letterSpacing: CGFloat
   ) {
     let base =
-      family.flatMap { UIFont(name: $0, size: size) }
-      ?? UIFont.systemFont(ofSize: size, weight: Self.weight(weight))
+      family.flatMap { InputFont(name: $0, size: size) }
+      ?? InputFont.systemFont(ofSize: size, weight: Self.weight(weight))
+    #if canImport(UIKit)
     let descriptor = italic ? base.fontDescriptor.withSymbolicTraits(.traitItalic) : nil
-    self.font = descriptor.map { UIFont(descriptor: $0, size: size) } ?? base
+    #else
+    let descriptor = italic ? base.fontDescriptor.withSymbolicTraits(.italic) : nil
+    #endif
+    self.font = descriptor.flatMap { InputFont(descriptor: $0, size: size) } ?? base
     self.lineHeight = lineHeight
     self.letterSpacing = letterSpacing
   }
@@ -24,6 +34,14 @@ internal struct InputTypography {
       family: style.fontFamilies.first.flatMap { $0 == "system" ? nil : $0 }, size: style.fontSize,
       weight: style.fontWeight, italic: style.fontStyle != .normal, lineHeight: style.lineHeight,
       letterSpacing: style.letterSpacing)
+  }
+
+  var naturalLineHeight: CGFloat {
+    #if canImport(UIKit)
+    font.lineHeight
+    #else
+    NSLayoutManager().defaultLineHeight(for: font)
+    #endif
   }
 
   func attributes(alignment: NSTextAlignment = .natural) -> [NSAttributedString.Key: Any] {
@@ -37,7 +55,7 @@ internal struct InputTypography {
     return [.font: font, .kern: letterSpacing, .paragraphStyle: paragraph]
   }
 
-  private static func weight(_ value: Int) -> UIFont.Weight {
+  private static func weight(_ value: Int) -> InputFont.Weight {
     switch value {
     case ...150: .ultraLight
     case ...250: .thin
@@ -111,7 +129,7 @@ internal func measureInput(_ request: WhiskerMeasureRequest) -> WhiskerMeasuredS
   layout.ensureLayout(for: container)
   let used = layout.usedRect(for: container)
   let height = max(
-    typography.lineHeight ?? typography.font.lineHeight,
+    typography.lineHeight ?? typography.naturalLineHeight,
     max(used.maxY, layout.extraLineFragmentRect.maxY))
   return WhiskerMeasuredSize(
     width: request.knownWidth ?? used.width, height: request.knownHeight ?? height)

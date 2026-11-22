@@ -21,6 +21,107 @@ struct HostLinearGradient {
     let stops: [HostLinearGradientStop]
 }
 
+/// A linear gradient's CSS gradient line over a box, with its stops normalized onto that line.
+struct HostLinearGradientAxis: Equatable {
+    let colors: [WhiskerPlatformColor]
+    let locations: [CGFloat]
+    let start: CGPoint
+    let end: CGPoint
+
+    init?(_ linearGradient: HostLinearGradient, in bounds: CGRect) {
+        let radians = linearGradient.angleDegrees * .pi / 180
+        let direction = CGVector(dx: sin(radians), dy: -cos(radians))
+        let lineLength = abs(bounds.width * direction.dx) + abs(bounds.height * direction.dy)
+        guard lineLength > 0 else { return nil }
+
+        var resolved = linearGradient.stops.map { stop in
+            (
+                color: stop.color,
+                position: CGFloat(stop.position.length) / lineLength +
+                    CGFloat(stop.position.fraction)
+            )
+        }
+        guard resolved.count >= 2 else { return nil }
+        let domainStart = min(0, resolved[0].position)
+        let domainEnd = max(1, resolved[resolved.count - 1].position)
+        let domainLength = domainEnd - domainStart
+        guard domainLength > 0 else { return nil }
+        if resolved[0].position > domainStart {
+            resolved.insert((resolved[0].color, domainStart), at: 0)
+        }
+        if resolved[resolved.count - 1].position < domainEnd {
+            resolved.append((resolved[resolved.count - 1].color, domainEnd))
+        }
+
+        colors = resolved.map(\.color)
+        locations = resolved.map { ($0.position - domainStart) / domainLength }
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        start = CGPoint(
+            x: center.x + direction.dx * lineLength * (domainStart - 0.5),
+            y: center.y + direction.dy * lineLength * (domainStart - 0.5)
+        )
+        end = CGPoint(
+            x: center.x + direction.dx * lineLength * (domainEnd - 0.5),
+            y: center.y + direction.dy * lineLength * (domainEnd - 0.5)
+        )
+    }
+
+    init(colors: [WhiskerPlatformColor], locations: [CGFloat], start: CGPoint, end: CGPoint) {
+        self.colors = colors
+        self.locations = locations
+        self.start = start
+        self.end = end
+    }
+
+    var length: CGFloat { hypot(end.x - start.x, end.y - start.y) }
+
+    func offsetBy(dx: CGFloat, dy: CGFloat) -> HostLinearGradientAxis {
+        HostLinearGradientAxis(
+            colors: colors,
+            locations: locations,
+            start: CGPoint(x: start.x + dx, y: start.y + dy),
+            end: CGPoint(x: end.x + dx, y: end.y + dy)
+        )
+    }
+
+    /// The gradient line as a one-pixel-high strip; colors are constant across the line,
+    /// so stretching the strip perpendicular to it reproduces the full gradient.
+    func makeStripImage(texels: Int) -> CGImage? {
+        guard texels > 0, let context = CGContext(
+            data: nil,
+            width: texels,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        HostLinearGradientAxis(
+            colors: colors,
+            locations: locations,
+            start: CGPoint(x: 0, y: 0.5),
+            end: CGPoint(x: CGFloat(texels), y: 0.5)
+        ).draw(in: context)
+        return context.makeImage()
+    }
+
+    func draw(in context: CGContext) {
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let gradient = CGGradient(
+            colorSpace: colorSpace,
+            colorComponents: colors.flatMap(rgbaComponents),
+            locations: locations,
+            count: colors.count
+        ) else { return }
+        context.drawLinearGradient(
+            gradient,
+            start: start,
+            end: end,
+            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+        )
+    }
+}
+
 struct HostRadialGradient {
     let centerX: WhiskerMobileLengthPercentage
     let centerY: WhiskerMobileLengthPercentage
@@ -352,59 +453,24 @@ final class HostBackgroundPainter {
         context.restoreGState()
     }
 
+    /// The only layer when it is a linear gradient filling exactly the border box,
+    /// which a gradient layer presents without rasterizing.
+    func borderBoxLinearGradient(borderBox: CGRect, paddingBox: CGRect) -> HostLinearGradientAxis? {
+        guard layers.count == 1, case let .linear(gradient) = layers[0].image,
+              paddingBox == borderBox else { return nil }
+        let geometry = layers[0].geometry
+        guard geometry.origin != .content, geometry.clip != .content,
+              geometry.clip != .borderArea,
+              geometry.imageBounds(in: borderBox) == borderBox else { return nil }
+        return HostLinearGradientAxis(gradient, in: borderBox)
+    }
+
     private func drawLinear(
         _ linearGradient: HostLinearGradient,
         in bounds: CGRect,
         context: CGContext
     ) {
-        let radians = linearGradient.angleDegrees * .pi / 180
-        let direction = CGVector(dx: sin(radians), dy: -cos(radians))
-        let lineLength = abs(bounds.width * direction.dx) + abs(bounds.height * direction.dy)
-        guard lineLength > 0 else { return }
-
-        var resolved = linearGradient.stops.map { stop in
-            (
-                color: stop.color,
-                position: CGFloat(stop.position.length) / lineLength +
-                    CGFloat(stop.position.fraction)
-            )
-        }
-        guard resolved.count >= 2 else { return }
-        let domainStart = min(0, resolved[0].position)
-        let domainEnd = max(1, resolved[resolved.count - 1].position)
-        let domainLength = domainEnd - domainStart
-        guard domainLength > 0 else { return }
-        if resolved[0].position > domainStart {
-            resolved.insert((resolved[0].color, domainStart), at: 0)
-        }
-        if resolved[resolved.count - 1].position < domainEnd {
-            resolved.append((resolved[resolved.count - 1].color, domainEnd))
-        }
-
-        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-        let components = resolved.flatMap { rgbaComponents($0.color) }
-        let locations = resolved.map { ($0.position - domainStart) / domainLength }
-        guard let gradient = CGGradient(
-            colorSpace: colorSpace,
-            colorComponents: components,
-            locations: locations,
-            count: resolved.count
-        ) else { return }
-        let center = CGPoint(x: bounds.midX, y: bounds.midY)
-        let start = CGPoint(
-            x: center.x + direction.dx * lineLength * (domainStart - 0.5),
-            y: center.y + direction.dy * lineLength * (domainStart - 0.5)
-        )
-        let end = CGPoint(
-            x: center.x + direction.dx * lineLength * (domainEnd - 0.5),
-            y: center.y + direction.dy * lineLength * (domainEnd - 0.5)
-        )
-        context.drawLinearGradient(
-            gradient,
-            start: start,
-            end: end,
-            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-        )
+        HostLinearGradientAxis(linearGradient, in: bounds)?.draw(in: context)
     }
 
     private func drawRadial(

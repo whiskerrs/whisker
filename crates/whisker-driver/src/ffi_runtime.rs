@@ -23,7 +23,9 @@ use whisker_engine::whisker_protocol::{
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
-use whisker_runtime::module::{ModuleHost, with_module_host};
+use whisker_runtime::module::{
+    ModuleHost, RustModuleRuntime, linked_rust_modules, with_module_host,
+};
 use whisker_runtime::view::Element;
 use whisker_runtime::{ElementRegistry, RuntimeInstance, RuntimeWakeHandle, SurfaceRuntime};
 
@@ -75,6 +77,7 @@ struct MobileRuntime {
     runtime: RuntimeInstance,
     hot_reload: MobileHotReload,
     modules: std::rc::Rc<ModuleHost>,
+    rust_modules: RustModuleRuntime,
     measurement: MobileMeasurementHost,
     sink: MobileFrameSink,
     resources: MobileResourceHost,
@@ -244,7 +247,20 @@ pub unsafe fn create(
         capabilities.protocol(),
     );
     let mut runtime = RuntimeInstance::new(surface, wake.clone());
-    let modules = module_host(module_data, invoke_module, observe_module);
+    let rust_modules = match RustModuleRuntime::with_fallback(
+        linked_rust_modules(),
+        move || request_frame(wake_data as *mut c_void),
+        module_host(module_data, invoke_module, observe_module),
+    ) {
+        Ok(modules) => modules,
+        Err(error) => {
+            mobile_error(format_args!(
+                "Whisker mobile module bootstrap failed: {error}"
+            ));
+            return std::ptr::null_mut();
+        }
+    };
+    let modules = std::rc::Rc::clone(rust_modules.host());
     if let Err(error) = with_module_host(&modules, || runtime.mount(application)) {
         mobile_error(format_args!("Whisker mobile mount failed: {error}"));
         return std::ptr::null_mut();
@@ -259,6 +275,7 @@ pub unsafe fn create(
         runtime,
         hot_reload: MobileHotReload::new(wake, application, application_hash),
         modules,
+        rust_modules,
         measurement: MobileMeasurementHost {
             prepared: std::collections::HashMap::new(),
             callback: measure,
@@ -307,6 +324,9 @@ pub unsafe fn tick(
     if let Err(error) = with_module_host(&modules, || mobile.hot_reload.apply(&mut mobile.runtime))
     {
         mobile_error(format_args!("Whisker mobile hot reload failed: {error}"));
+    }
+    if let Err(error) = mobile.rust_modules.dispatch_pending_events(&mobile.runtime) {
+        mobile_error(format_args!("Whisker mobile module event failed: {error}"));
     }
     let frame_result = with_module_host(&modules, || {
         mobile.runtime.drive_frame(

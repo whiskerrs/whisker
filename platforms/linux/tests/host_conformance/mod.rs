@@ -594,6 +594,7 @@ impl Driver {
             crate::app::host_capabilities(),
             self.text.prepared(),
             self.text.context().clone(),
+            Vec::new(),
         ));
         self.surface = Some(surface);
         self.root = Some(root);
@@ -1513,10 +1514,11 @@ fn run_case(LoadedCase { manifest, scenario }: &LoadedCase) {
 
 #[test]
 fn every_manifest_case_required_by_linux_executes() {
-    gtk::init().expect("GTK needs a display; run under xvfb-run");
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/host-conformance");
-    let (_, cases) = load_required(&root, Host::Linux).expect("load shared Linux fixtures");
-    assert!(!cases.is_empty());
-    cases.iter().for_each(run_case);
+    gtk::test_synced(|| {
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/host-conformance");
+        let (_, cases) = load_required(&root, Host::Linux).expect("load shared Linux fixtures");
+        assert!(!cases.is_empty());
+        cases.iter().for_each(run_case);
+    });
 }

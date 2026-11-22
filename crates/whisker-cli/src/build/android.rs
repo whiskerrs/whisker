@@ -36,15 +36,9 @@ pub fn run(artifact: ReleaseArtifact, args: Args, no_tui: bool) -> Result<()> {
     })?;
     let workspace_root = m.workspace_root.clone();
 
-    // Announce the fully resolved identity FIRST. `configure()` is
-    // arbitrary Rust and may branch on ambient env (WHISKER_ENV-
-    // style flavors) — silently building the wrong flavor is the
-    // failure mode this line exists to catch.
-    let version = m.config.version.clone().unwrap_or_else(|| "0.1.0".into());
-    let build_number = m.config.build_number.unwrap_or(1);
-    let label = match artifact {
-        ReleaseArtifact::AppBundle => "appbundle (.aab)",
-        ReleaseArtifact::Apk => "apk",
+    let flavor = match artifact {
+        ReleaseArtifact::AppBundle => "release appbundle",
+        ReleaseArtifact::Apk => "release apk",
     };
     // Credential pre-step BEFORE native application compilation: the decryption-key
     // prompt (if any) happens now, and key problems fail before, not
@@ -52,11 +46,13 @@ pub fn run(artifact: ReleaseArtifact, args: Args, no_tui: bool) -> Result<()> {
     // until gradle exits — the signing paths point into it.
     let (_staging, signing) = credential::require_android_signing(&m.crate_dir, &application_id)?;
 
-    let build_ui = super::BuildUi::start(no_tui, "Android", &application_id);
-    ui::section("Build");
-    ui::info(format!(
-        "building {application_id} {version} ({build_number}) — release {label}",
-    ));
+    let build_ui = super::BuildUi::start(
+        no_tui,
+        &m,
+        whisker_cng::GenerationTarget::Android,
+        &application_id,
+        flavor,
+    );
 
     let sync = m.project(Target::Android)?;
 

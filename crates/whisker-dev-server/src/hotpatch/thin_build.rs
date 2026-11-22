@@ -14,8 +14,8 @@
 //!   - `--crate-type` is forced to `rlib` so rustc emits an object
 //!     file containing every `pub fn`'s mangled symbol, which a
 //!     cdylib would strip.
-//!   - `--emit` is forced to `obj` so we get a single `.o` we can
-//!     hand to the linker ourselves.
+//!   - `--emit` is forced to `obj` so we get object files we can
+//!     hand to the linker ourselves, one per codegen unit.
 //!   - `--out-dir` is redirected to a session-local cache so the
 //!     patch artifact doesn't clobber the original `target/`
 //!     output.
@@ -26,9 +26,9 @@
 //! already know how to make the linker happy on this OS / SDK
 //! combo, and we lean on that.
 //!
-//! After rustc emits the `.o`, [`super::link_plan::build_link_plan`] takes the
+//! After rustc emits the objects, [`super::link_plan::build_link_plan`] takes the
 //! captured **linker** invocation, drops its object inputs (we have
-//! a fresh one), substitutes our `.o` and `-o`, and adds
+//! fresh ones), substitutes our objects and `-o`, and adds
 //! `-undefined dynamic_lookup` (macOS) /
 //! `--unresolved-symbols=ignore-all` (Linux) so unresolved symbols
 //! are deferred to the host process at `dlopen` time. The result is
@@ -41,13 +41,8 @@ use std::path::{Path, PathBuf};
 use super::wrapper::CapturedRustcInvocation;
 
 /// What [`build_obj_plan`] returns — captured rustc args, edited so
-/// that running `rustc` with them produces a single `.o` containing
+/// that running `rustc` with them produces object files containing
 /// every `pub fn`'s mangled symbol.
-///
-/// `output_dir` is the directory rustc will write the object into;
-/// the actual filename rustc emits is `<crate_name>.o` (with the
-/// usual hyphen → underscore translation). `expected_object` is the
-/// absolute path the runner should expect to see after the call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjBuildPlan {
     pub args: Vec<String>,
@@ -56,24 +51,20 @@ pub struct ObjBuildPlan {
     /// invocations in the user's code still resolve under the raw
     /// (cargo-less) thin rebuild.
     pub envs: std::collections::BTreeMap<String, String>,
-    pub output_dir: PathBuf,
-    pub expected_object: PathBuf,
+    /// Directory rustc writes this crate's codegen-unit objects into.
+    /// The runner empties it before every build.
+    pub object_dir: PathBuf,
 }
 
-/// Object filename rustc emits for `--emit=obj --crate-type=rlib`:
-/// `<crate>.o` with hyphens converted to underscores. (Notably no
-/// `lib` prefix and no extension other than `.o` — cdylib's
-/// `lib<crate>.dylib` rules don't apply here.)
-pub fn object_filename(crate_name: &str) -> String {
-    let stem = crate_name.replace('-', "_");
-    format!("{stem}.o")
-}
+/// Codegen-unit count for thin rebuilds — rustc's own default for
+/// incremental builds.
+const CODEGEN_UNITS: &str = "256";
 
-/// Edit a captured rustc invocation so that running it produces an
-/// object file containing every `pub fn`'s mangled symbol — the
+/// Edit a captured rustc invocation so that running it produces
+/// object files containing every `pub fn`'s mangled symbol — the
 /// input to the linker step in [`super::link_plan::build_link_plan`].
 ///
-/// Three changes only:
+/// The changes that shape the output:
 ///
 ///   - **`--crate-type`** is forced to `rlib`. Object files emitted
 ///     for an `rlib` crate-type retain mangled `pub fn` symbols
@@ -82,14 +73,14 @@ pub fn object_filename(crate_name: &str) -> String {
 ///     `rlib` is what cargo itself uses for normal dependency
 ///     compilation, so we stay closer to the rustc call shape that
 ///     gets the most testing.
-///   - **`--emit`** is forced to a single `obj=<output_dir>/<crate>.o`
-///     directive. This skips the link step (no `lib<crate>.rlib`
-///     metadata bundle, no `.rmeta`, no codegen-units fan-out into
-///     deps) and writes one consolidated object file we can hand
-///     directly to the linker.
-///   - **`--out-dir`** is redirected so the host's `target/` isn't
-///     touched (it's still the rustc-default location for any
-///     auxiliary file rustc decides to emit).
+///   - **`--emit`** is forced to a bare `obj`. This skips the link
+///     step (no `lib<crate>.rlib` metadata bundle, no `.rmeta`) and
+///     leaves one object per codegen unit in `--out-dir`.
+///   - **`--out-dir`** is redirected to
+///     `<output_dir>/objects/<crate>` so the host's `target/` isn't
+///     touched and each crate's objects stay apart.
+///   - **`-C codegen-units`** is forced, so an edit re-runs LLVM only
+///     for the units it touches.
 ///
 /// Everything else is preserved verbatim — same target triple,
 /// sysroot, sysroot suffix, `-C` flags, `-L`/`-l` directives, cfg
@@ -100,17 +91,23 @@ pub fn object_filename(crate_name: &str) -> String {
 pub fn build_obj_plan(captured: &CapturedRustcInvocation, output_dir: &Path) -> ObjBuildPlan {
     let mut args = captured.args.clone();
     set_crate_type(&mut args, "rlib");
-    set_out_dir(&mut args, output_dir);
-    let object_path = output_dir.join(object_filename(&captured.crate_name));
-    set_emit_obj(&mut args, &object_path);
+    let object_dir = output_dir
+        .join("objects")
+        .join(captured.crate_name.replace('-', "_"));
+    set_out_dir(&mut args, &object_dir);
+    set_emit_obj(&mut args);
+    // Without an explicit count rustc collapses `--emit obj` to one
+    // unit, and any edit then re-runs LLVM over the whole crate.
+    set_codegen_units(&mut args, CODEGEN_UNITS);
+    // The fat build needs `-Csave-temps` to keep its link inputs; here
+    // it would only write two bitcode files beside every object.
+    strip_save_temps(&mut args);
     // cargo's captured args carry `--json=artifacts,…` /
     // `--error-format=json` for its own parsing. Nothing reads them
     // here, and left in they print a `{"$message_type":"artifact",…}`
     // line into the dev terminal per patch.
     strip_json_flags(&mut args);
-    // Reuse rustc's incremental cache across thin rebuilds; it lives
-    // under the patch dir so a fresh `whisker run` wipes it along with
-    // the thin object.
+    // Reuse rustc's incremental cache across thin rebuilds.
     set_incremental(&mut args, &output_dir.join("incremental"));
     // The fat build captured `-Copt-level=3`, where LLVM passes are
     // ~88% of rustc's wall time. Patched code only has to run, not run
@@ -122,8 +119,48 @@ pub fn build_obj_plan(captured: &CapturedRustcInvocation, output_dir: &Path) -> 
     ObjBuildPlan {
         args,
         envs: captured.envs.clone(),
-        output_dir: output_dir.to_path_buf(),
-        expected_object: object_path,
+        object_dir,
+    }
+}
+
+/// Force `-C codegen-units=<count>`, stripping any existing directive
+/// in either the split or the combined form.
+fn set_codegen_units(args: &mut Vec<String>, count: &str) {
+    strip_codegen_option(args, "codegen-units");
+    args.push("-C".into());
+    args.push(format!("codegen-units={count}"));
+}
+
+/// Remove every `-C save-temps[=…]` directive.
+fn strip_save_temps(args: &mut Vec<String>) {
+    strip_codegen_option(args, "save-temps");
+}
+
+/// Remove every `-C <name>` / `-C <name>=…` directive, in the split
+/// (`-C x`), combined (`-Cx`) and long (`--codegen=x`) forms.
+fn strip_codegen_option(args: &mut Vec<String>, name: &str) {
+    let is_option = |value: &str| {
+        value
+            .strip_prefix(name)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('='))
+    };
+    let mut i = 0;
+    while i < args.len() {
+        if (args[i] == "-C" || args[i] == "--codegen")
+            && i + 1 < args.len()
+            && is_option(&args[i + 1])
+        {
+            args.drain(i..i + 2);
+            continue;
+        }
+        let combined = args[i]
+            .strip_prefix("--codegen=")
+            .or_else(|| args[i].strip_prefix("-C"));
+        if combined.is_some_and(is_option) {
+            args.remove(i);
+            continue;
+        }
+        i += 1;
     }
 }
 
@@ -202,17 +239,14 @@ fn strip_json_flags(args: &mut Vec<String>) {
     }
 }
 
-/// Force `--emit` to exactly one directive: `obj=<path>`. Strips
-/// every existing `--emit` (separated, `=`, comma-separated mix)
-/// and appends one fresh pair. Same fold-and-add semantics as
+/// Force `--emit` to exactly one directive: `obj`. Strips every
+/// existing `--emit` (separated, `=`, comma-separated mix) and
+/// appends one fresh pair. Same fold-and-add semantics as
 /// [`set_crate_type`].
 ///
-/// rustc accepts `--emit obj=<path>` as a single output kind with
-/// an explicit destination, which avoids ambiguity when other
-/// `--emit` directives would otherwise have asked for `link` or
-/// `dep-info` etc. (cargo always passes a comma-separated set:
-/// `dep-info,metadata,link`. We collapse the lot to just `obj`.)
-pub fn set_emit_obj(args: &mut Vec<String>, object_path: &Path) {
+/// The directive carries no `=<path>`: rustc ignores an explicit
+/// path once the crate has more than one codegen unit.
+pub fn set_emit_obj(args: &mut Vec<String>) {
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -227,7 +261,7 @@ pub fn set_emit_obj(args: &mut Vec<String>, object_path: &Path) {
         i += 1;
     }
     args.push("--emit".into());
-    args.push(format!("obj={}", object_path.to_string_lossy()));
+    args.push("obj".into());
 }
 
 /// Force every `--crate-type` arg to a single value (`new_kind`).
@@ -292,7 +326,7 @@ pub fn library_filename_for_os(crate_name: &str, os: super::link_plan::LinkerOs)
     match os {
         LinkerOs::Macos => format!("lib{stem}.dylib"),
         LinkerOs::Linux => format!("lib{stem}.so"),
-        LinkerOs::Other => format!("{stem}.dll"),
+        LinkerOs::Windows | LinkerOs::Other => format!("{stem}.dll"),
     }
 }
 
@@ -429,17 +463,17 @@ mod tests {
     #[test]
     fn set_emit_obj_replaces_separated_form() {
         let mut args = s(&["--emit", "link", "src/lib.rs"]);
-        set_emit_obj(&mut args, Path::new("/p/demo.o"));
-        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj=/p/demo.o"]));
+        set_emit_obj(&mut args);
+        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj"]));
     }
 
     #[test]
     fn set_emit_obj_replaces_equals_form_including_comma_lists() {
         // cargo always passes `--emit=dep-info,metadata,link`; the
-        // whole comma-separated lot collapses to a single `obj=…`.
+        // whole comma-separated lot collapses to a single `obj`.
         let mut args = s(&["--emit=dep-info,metadata,link", "src/lib.rs"]);
-        set_emit_obj(&mut args, Path::new("/p/demo.o"));
-        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj=/p/demo.o"]));
+        set_emit_obj(&mut args);
+        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj"]));
     }
 
     #[test]
@@ -452,24 +486,15 @@ mod tests {
             "metadata",
             "src/lib.rs",
         ]);
-        set_emit_obj(&mut args, Path::new("/p/demo.o"));
-        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj=/p/demo.o"]));
+        set_emit_obj(&mut args);
+        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj"]));
     }
 
     #[test]
     fn set_emit_obj_appends_when_no_existing() {
         let mut args = s(&["src/lib.rs"]);
-        set_emit_obj(&mut args, Path::new("/p/demo.o"));
-        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj=/p/demo.o"]));
-    }
-
-    // ----- object_filename ---------------------------------------------
-
-    #[test]
-    fn object_filename_is_crate_dot_o_with_underscores() {
-        assert_eq!(object_filename("demo"), "demo.o");
-        assert_eq!(object_filename("hello-world"), "hello_world.o");
-        assert_eq!(object_filename("a-b-c"), "a_b_c.o");
+        set_emit_obj(&mut args);
+        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj"]));
     }
 
     // ----- build_obj_plan ----------------------------------------------
@@ -500,21 +525,22 @@ mod tests {
                 "--crate-type",
                 "rlib",
                 "--out-dir",
-                "/whisker/objs/x",
+                "/whisker/objs/x/objects/demo",
                 "--emit",
-                "obj=/whisker/objs/x/demo.o",
+                "obj",
+                "-C",
+                "codegen-units=256",
                 "-C",
                 "incremental=/whisker/objs/x/incremental",
                 "-C",
                 "opt-level=0",
             ]),
         );
-        assert_eq!(plan.output_dir, Path::new("/whisker/objs/x"));
-        assert_eq!(plan.expected_object, Path::new("/whisker/objs/x/demo.o"));
+        assert_eq!(plan.object_dir, Path::new("/whisker/objs/x/objects/demo"));
     }
 
     #[test]
-    fn obj_plan_picks_object_filename_from_captured_crate_name() {
+    fn obj_plan_picks_object_dir_from_captured_crate_name() {
         // crate_name comes from CapturedRustcInvocation.crate_name,
         // *not* from the --crate-name arg — they're typically equal,
         // but the captured field is what we use, so test that.
@@ -525,12 +551,42 @@ mod tests {
             timestamp_micros: 0,
         };
         let plan = build_obj_plan(&captured, Path::new("/o"));
-        assert_eq!(plan.expected_object, Path::new("/o/thin_build_fixture.o"));
+        assert_eq!(plan.object_dir, Path::new("/o/objects/thin_build_fixture"));
+    }
+
+    #[test]
+    fn obj_plan_overrides_captured_codegen_units() {
+        for captured_form in [
+            s(&["-C", "codegen-units=1", "src/lib.rs"]),
+            s(&["-Ccodegen-units=1", "src/lib.rs"]),
+            s(&["--codegen=codegen-units=16", "src/lib.rs"]),
+        ] {
+            let plan = build_obj_plan(&captured_with(captured_form), Path::new("/o"));
+            let units: Vec<&String> = plan
+                .args
+                .iter()
+                .filter(|a| a.contains("codegen-units"))
+                .collect();
+            assert_eq!(units, ["codegen-units=256"], "args: {:?}", plan.args);
+        }
+    }
+
+    #[test]
+    fn obj_plan_drops_save_temps_but_keeps_other_codegen_flags() {
+        let captured = captured_with(s(&[
+            "-Csave-temps=y",
+            "-C",
+            "save-temps",
+            "-Cdebug-assertions=on",
+            "src/lib.rs",
+        ]));
+        let plan = build_obj_plan(&captured, Path::new("/o"));
         assert!(
-            plan.args.contains(&"obj=/o/thin_build_fixture.o".into()),
+            !plan.args.iter().any(|a| a.contains("save-temps")),
             "args: {:?}",
             plan.args,
         );
+        assert!(plan.args.contains(&"-Cdebug-assertions=on".to_string()));
     }
 
     #[test]

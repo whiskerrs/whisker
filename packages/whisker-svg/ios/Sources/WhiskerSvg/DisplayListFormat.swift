@@ -36,6 +36,16 @@ enum DLFormat {
     static let opPaintOpacity: UInt8 = 0x13
     static let opPaintFillTint: UInt8 = 0x14
     static let opPaintStrokeTint: UInt8 = 0x15
+    static let opPaintStrokeCap: UInt8 = 0x16
+    static let opPaintStrokeJoin: UInt8 = 0x17
+
+    // Operands of opPaintStrokeCap / opPaintStrokeJoin; unknown values fall back to 0.
+    static let capButt: UInt8 = 0
+    static let capRound: UInt8 = 1
+    static let capSquare: UInt8 = 2
+    static let joinMiter: UInt8 = 0
+    static let joinRound: UInt8 = 1
+    static let joinBevel: UInt8 = 2
 
     // ---- path commands (0x20 – 0x2F) -------------------------------------
 

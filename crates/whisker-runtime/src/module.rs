@@ -501,6 +501,20 @@ impl RustModuleDefinition {
     }
 }
 
+thread_local! {
+    static LINKED_RUST_MODULES: RefCell<Vec<RustModuleDefinition>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Installs Rust service modules for native Hosts created later on this thread.
+pub fn link_rust_modules(definitions: impl IntoIterator<Item = RustModuleDefinition>) {
+    LINKED_RUST_MODULES.with(|linked| linked.borrow_mut().extend(definitions));
+}
+
+/// Rust service modules installed with [`link_rust_modules`] on this thread.
+pub fn linked_rust_modules() -> Vec<RustModuleDefinition> {
+    LINKED_RUST_MODULES.with(|linked| linked.borrow().clone())
+}
+
 #[derive(Clone)]
 struct PendingModuleEvent {
     module: String,
@@ -526,6 +540,23 @@ impl RustModuleRuntime {
         definitions: impl IntoIterator<Item = RustModuleDefinition>,
         wake: impl Fn() + 'static,
     ) -> Result<Self, String> {
+        Self::build(definitions, wake, None)
+    }
+
+    /// Like [`Self::new`], but forwards modules it does not define to `fallback`.
+    pub fn with_fallback(
+        definitions: impl IntoIterator<Item = RustModuleDefinition>,
+        wake: impl Fn() + 'static,
+        fallback: Rc<ModuleHost>,
+    ) -> Result<Self, String> {
+        Self::build(definitions, wake, Some(fallback))
+    }
+
+    fn build(
+        definitions: impl IntoIterator<Item = RustModuleDefinition>,
+        wake: impl Fn() + 'static,
+        fallback: Option<Rc<ModuleHost>>,
+    ) -> Result<Self, String> {
         let mut by_name = HashMap::new();
         for definition in definitions {
             definition.validate()?;
@@ -544,13 +575,16 @@ impl RustModuleRuntime {
         });
         let invoke_inner = Rc::downgrade(&inner);
         let observe_inner = Rc::downgrade(&inner);
+        let invoke_fallback = fallback.clone();
         let host = ModuleHost::new(
             move |module, method, args, is_async, result| {
                 let Some(inner) = invoke_inner.upgrade() else {
                     return false;
                 };
                 let Some(definition) = inner.definitions.get(module) else {
-                    return false;
+                    return invoke_fallback
+                        .as_ref()
+                        .is_some_and(|host| host.dispatch(module, method, args, is_async, result));
                 };
                 let emitter = inner.emitter(module);
                 if is_async {
@@ -572,6 +606,9 @@ impl RustModuleRuntime {
                     return;
                 };
                 let Some(definition) = inner.definitions.get(module) else {
+                    if let Some(host) = &fallback {
+                        (host.observe)(module, event, observing);
+                    }
                     return;
                 };
                 let hook = if observing {
@@ -590,6 +627,11 @@ impl RustModuleRuntime {
     /// Runs application/runtime work with this registry installed.
     pub fn with_host<T>(&self, work: impl FnOnce() -> T) -> T {
         with_module_host(&self.host, work)
+    }
+
+    /// Host binding that answers this registry's modules.
+    pub fn host(&self) -> &Rc<ModuleHost> {
+        &self.host
     }
 
     /// Delivers queued Host events through the owning runtime's ordinary event
@@ -662,6 +704,47 @@ mod tests {
         });
         assert_eq!(value, WhiskerValue::Int(7));
         assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn unknown_modules_reach_the_fallback_host() {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let fallback = ModuleHost::new(
+            |module, _, _, _, result| {
+                result(WhiskerValue::String(module.into()));
+                true
+            },
+            {
+                let observed = Rc::clone(&observed);
+                move |module, event, observing| {
+                    observed
+                        .borrow_mut()
+                        .push((module.to_owned(), event.to_owned(), observing));
+                }
+            },
+        );
+        let rust = RustModuleDefinition::default()
+            .name("demo:Rust")
+            .function("ping", |_, _| WhiskerValue::Bool(true));
+        let runtime = RustModuleRuntime::with_fallback([rust], || {}, fallback).unwrap();
+        runtime.with_host(|| {
+            assert_eq!(
+                PlatformModule::named("demo:Rust").invoke("ping", vec![]),
+                WhiskerValue::Bool(true)
+            );
+            assert_eq!(
+                PlatformModule::named("demo:Native").invoke("ping", vec![]),
+                WhiskerValue::String("demo:Native".into())
+            );
+            drop(PlatformModule::named("demo:Native").on_event("ready", |_| {}));
+        });
+        assert_eq!(
+            *observed.borrow(),
+            [
+                ("demo:Native".to_owned(), "ready".to_owned(), true),
+                ("demo:Native".to_owned(), "ready".to_owned(), false),
+            ]
+        );
     }
 
     #[test]
