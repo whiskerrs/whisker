@@ -17,8 +17,11 @@ static STAGING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// Remove live plaintext staging directories before a process exits without unwinding
 ///
-/// Call after stopping build children. Only directories registered by this process
-/// are removed; this does not scan shared temporary storage or clean other processes.
+/// Internal to the Whisker CLI's signal path: Ctrl-C, SIGTERM, and TUI cancel call
+/// this after stopping build children and right before `std::process::exit`. Do not
+/// call it while a build may still read staged files.
+/// Only directories registered by this process are removed; this does not scan
+/// shared temporary storage or clean other processes.
 pub fn cleanup_staging() -> Result<()> {
     let mut staging = STAGING.lock().unwrap_or_else(|error| error.into_inner());
     let mut failure = None;
