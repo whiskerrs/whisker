@@ -116,19 +116,24 @@ pub struct Config {
     /// [`Config::defaults_for`] fills in [`android_forwarded_authorities`]
     /// for [`Target::Android`] and leaves the list empty otherwise.
     pub forwarded_authorities: Vec<String>,
-    /// Shared dev-session token; selects which clients may connect.
+    /// Per-session secret that gates the native patch channel.
     ///
-    /// When `Some`, the WebSocket server only arms the patch channel for
-    /// a client whose `hello` carries the matching token, and the cli
-    /// delivers it to the device (iOS env / Android system property).
-    /// `whisker run` generates a random one per session for every native
-    /// target.
+    /// With `Some(secret)`, every WebSocket client must complete the
+    /// [`whisker_dev_protocol`] mutual-authentication handshake for this
+    /// secret before it can receive anything; the installer delivers the
+    /// secret to the app out of band (`WHISKER_DEV_TOKEN` in the launch
+    /// environment, or the `debug.whisker_dev_token` system property on
+    /// Android). `whisker run` generates one per session with
+    /// [`whisker_dev_protocol::generate_secret`] for every native target.
     ///
-    /// `None` selects browser-only, same-origin mode, not an open server:
-    /// a WebSocket upgrade must carry an `Origin` that names the dev
+    /// With `None`, clients connect without authentication and are treated
+    /// as browsers: a WebSocket upgrade must carry an `Origin` naming the dev
     /// server's own `http` authority, so native clients (which send no
-    /// `Origin`) are refused. Native targets must always use a token.
-    /// `whisker run web` is the only caller that leaves this unset.
+    /// `Origin`) are refused. Browsers receive reload requests and WebAssembly
+    /// patches that [`PatchSender::send_web`] validated, but never native
+    /// libraries. Native hot patching therefore requires a secret; the Web
+    /// target runs without one because the page and the socket share the dev
+    /// server's origin.
     pub dev_token: Option<String>,
     /// Asks every connected app to stream [`Event::DeviceTrace`] frame timings.
     pub trace: bool,

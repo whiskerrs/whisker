@@ -10,6 +10,7 @@ members = [
     "crates/whisker-cng",
     "crates/whisker-credentials",
     "crates/whisker-submit",
+    "crates/whisker-dev-protocol",
     "crates/whisker-dev-runtime",
     "crates/whisker-dev-server",
     "crates/whisker-driver",
@@ -123,6 +124,7 @@ whisker-cli = { path = "crates/whisker-cli", version = "=0.18.1" }
 whisker-cng = { path = "crates/whisker-cng", version = "=0.18.1" }
 whisker-credentials = { path = "crates/whisker-credentials", version = "=0.18.1" }
 whisker-submit = { path = "crates/whisker-submit", version = "=0.18.1" }
+whisker-dev-protocol = { path = "crates/whisker-dev-protocol", version = "=0.18.1" }
 whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "=0.18.1" }
 whisker-dev-server = { path = "crates/whisker-dev-server", version = "=0.18.1" }
 whisker-driver = { path = "crates/whisker-driver", version = "=0.18.1" }

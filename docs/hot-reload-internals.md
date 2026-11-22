@@ -152,9 +152,11 @@ Sub-crate patches (`crate_key != user crate`) additionally rebuild the
 
 The patch is broadcast over the WebSocket at `ws://<bind>/whisker-dev`.
 Connection direction is **device → host**: the on-device
-`whisker-dev-runtime` dials the host's `whisker run`.
+`whisker-dev-runtime` dials the host's `whisker run`. The connection is
+first authenticated (see [Dev-session security model](#dev-session-security-model));
+every message after that travels in an authenticated envelope.
 
-Patches are **binary** frames:
+A patch envelope's payload is:
 
 ```text
 [8 bytes: u64 BE — JSON header length]
@@ -168,10 +170,10 @@ can only be strings, which round-trips badly through the custom
 `u64`-keyed `AddressMap`); both sides share that adapter
 (`server::wire_jump_table` ↔ `hot_reload::deserialize_jump_table`).
 
-On connect, the device sends a **text** `hello` frame:
+Once authenticated, the device sends a `hello` message:
 
 ```json
-{ "kind": "hello", "aslr_reference": <u64>, "token": "<hex>" }
+{ "kind": "hello", "aslr_reference": <u64> }
 ```
 
 The `aslr_reference` is the device's `subsecond::aslr_reference()` —
@@ -194,9 +196,11 @@ crash the device.
 
 `whisker-dev-runtime/src/hot_reload.rs::handle_patch_frame`:
 
-1. Parse the frame, write the dylib bytes to a writable, dlopen-able
-   dir (`/data/data/<pkg>/cache/whisker-patches/` on Android, `$TMPDIR`
-   elsewhere), and rewrite `table.lib` to that local path.
+1. Parse the frame, write the dylib bytes to a fresh owner-only
+   `whisker-patch-<random hex>/` directory under a writable, dlopen-able
+   base (`/data/data/<pkg>/cache/` on Android, `$TMPDIR` elsewhere), and
+   rewrite `table.lib` to that local path. The file is created
+   exclusively, so another process cannot pre-place or swap it.
 2. Publish the JumpTable as a monotonically numbered generation in the
    process-wide coordinator. A bounded history ensures multiple
    `WhiskerView` instances can each observe every patch.
@@ -342,10 +346,11 @@ consumers).
 
 ## Dev-session security model
 
-The patch channel `dlopen`s whatever bytes it receives, so on a
-LAN-exposed bind an unauthenticated peer could push arbitrary native
-code, and a web page the developer visits could try to reach the local
-server. Three defenses:
+The patch channel `dlopen`s whatever bytes it receives, so only the app
+launched by the current `whisker run` session may receive patches, and
+only from that session's server. The shared protocol lives in
+[`whisker-dev-protocol`](../crates/whisker-dev-protocol/src/lib.rs); the
+server and the runtime own the sockets.
 
 - **Loopback bind by default.** `whisker run --bind` defaults to
   `127.0.0.1:9876`. On Android the device reaches the host through
@@ -361,7 +366,7 @@ server. Three defenses:
     `https` (and so `wss` sockets), opaque `null` origins and every other
     origin are refused.
   - A WebSocket upgrade without `Origin` comes from a native client, which
-    is allowed only when the session has a token.
+    is allowed only when the session has a secret.
 
   Android requests arrive with the device-side `Host` `127.0.0.1:9876`
   whatever `--bind` says, because the app always dials that address
@@ -372,34 +377,67 @@ server. Three defenses:
   address. They are an IP literal and `localhost`, so they do not let an
   attacker-controlled name through. A LAN-IP bind gets no forwarded
   authority; `adb reverse` cannot reach it anyway.
-- **Per-session token.** `whisker run` generates a random 32-hex-char
-  token per session for every native target (`generate_dev_token` in
-  `whisker-cli/src/run.rs`, 16 bytes from `/dev/urandom`). It's
-  delivered to the device out-of-band:
+- **Per-session secret.** `whisker run` generates a 32-hex-character
+  secret (128 bits from the operating-system CSPRNG,
+  `whisker_dev_protocol::generate_secret`) for every native target and
+  delivers it out of band:
   - **iOS Simulator / host:** the `WHISKER_DEV_TOKEN` env var, set via
     `SIMCTL_CHILD_WHISKER_DEV_TOKEN` (the `SIMCTL_CHILD_<NAME>`
     convention surfaces `<NAME>` inside the launched app).
   - **Android:** the `debug.whisker_dev_token` system property, set
-    with `adb shell setprop` (the app process doesn't inherit
-    adb-set env vars). `whisker-dev-runtime` reads it via
+    with `adb shell setprop` and verified with `getprop` (the app process
+    doesn't inherit adb-set env vars). `whisker-dev-runtime` reads it via
     `__system_property_get`.
 
-The device echoes the token in its `hello`. The server validates it
-(`server.rs::handle_socket`): a client starts *unauthenticated* when a
-token is required and is promoted only on a matching `hello`; a missing
-or mismatched token closes the connection without ever arming the patch
-path. Any other text frame sent before authentication, including log and
-trace envelopes, also closes the connection. While unauthenticated,
-broadcast patches are dropped (not buffered) for that client — the
-device re-receives the full JumpTable on the next save anyway.
+  On Android, both the `adb reverse` and the property must succeed
+  before every launch, including relaunches without a reinstall;
+  otherwise the launch fails. Without randomness the CLI refuses to start
+  instead of using a guessable secret.
+- **Mutual authentication.** The secret never crosses the wire. The app
+  sends a challenge with a fresh 256-bit nonce; the server answers with
+  its own nonce and an HMAC-SHA256 proof over both nonces; the app checks
+  that proof before sending its own. Proofs use separate server and
+  client domains, so neither can be reflected. A substituted server
+  therefore learns nothing about the app: no ASLR reference, logs, or
+  traces are sent before the server is verified. Handshake messages are
+  at most 4 KiB and skip WebSocket ping/pong frames, and either side
+  drops a connection that hasn't authenticated within five seconds.
+- **Authenticated envelopes.** Every later message is
+  `[version:1][kind:1][sequence:u64 BE][payload][HMAC:32]`. Kind 1 carries
+  a patch, kind 2 UTF-8 JSON (hello, logs, traces, control). The tag
+  covers the direction, both nonces, and every preceding byte, and each
+  direction must use the next sequence number without wrapping.
+  Modified, replayed, reordered, reflected, and cross-session envelopes
+  close the connection before patch metadata is parsed or a library is
+  written.
+- **Bounded reads.** An envelope is at most 256 MiB; text payloads and
+  patch metadata at most 1 MiB. The server caps every client message at
+  1 MiB plus the envelope overhead, because clients never send patches.
+  The runtime reads at most 8 KiB, enough for the HTTP upgrade response
+  and the server proof, until the server is authenticated; the server
+  sends nothing between its proof and accepting the client's, so that
+  cap is lifted with nothing buffered past it. A patch that doesn't fit
+  one envelope is dropped with a warning and needs a Full Reload.
+- **Browsers only get WebAssembly.** The Web target runs without a
+  secret in browser-only, same-origin mode: only a page served by the
+  dev server itself can open the socket, and native clients, which send
+  no `Origin`, are refused at the upgrade. Clients of a secret-less
+  server receive reload requests and side modules that pass `wasmparser`
+  validation (`PatchSender::send_web`), never native libraries. Their
+  `hello` cannot set the stored `aslr_reference`; the server records `0`,
+  since the web patcher needs the handshake but not a slide. Native hot
+  patching therefore always requires a secret.
+- **Visible failures.** There is no version negotiation: a CLI and a
+  runtime built from different protocol versions fail the handshake. The
+  runtime writes the reason (stale secret, version mismatch, timeout,
+  protocol violation) to stderr, once per distinct reason, which reaches
+  logcat or the system log; an unreachable server is not reported. The
+  server shows rejected handshakes as warnings, also once per reason.
 
-A token-less server (`Config::dev_token == None`) is not open: it runs
-in browser-only, same-origin mode, which `whisker run web` uses. Only a
-page served by the dev server itself can open the socket, and native
-clients, which send no `Origin`, are refused, so native targets must
-always use a token. In this mode a `hello` cannot set the stored
-`aslr_reference`; the server records `0`, since the web patcher needs
-the handshake but not a slide.
+HMAC authenticates the connection but does not encrypt it. The
+operating system's debug transport and the provisioned secret are
+trusted: anyone who can read the Android debug property can impersonate
+that session's server or app.
 
 Device log lines and stream names pass through `strip_controls` before
 reaching the TUI or plain terminal output: C0, DEL and C1 controls and

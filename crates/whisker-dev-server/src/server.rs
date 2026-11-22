@@ -7,25 +7,16 @@
 //!
 //! ## Wire format
 //!
-//! Two frame types:
+//! With a session secret, every client first completes the
+//! [`whisker_dev_protocol`] handshake and then exchanges only authenticated
+//! envelopes. After the handshake the device sends a `hello` with its
+//! `aslr_reference`, then logs and traces; the server sends patches and
+//! control messages. A patch envelope carries
+//! `[u64 BE header length][JSON jump table][library bytes]`.
 //!
-//! **Patches** — *binary* frames laid out as:
-//!
-//! ```text
-//! [8 bytes: u64 BE — JSON header length]
-//! [N bytes:        JSON header { "kind": "patch", "table": {...} } ]
-//! [rest:           raw patch dylib bytes (no encoding) ]
-//! ```
-//!
-//! No base64 — the dylib lands on the device with its original byte
-//! count.
-//!
-//! **Hello** — *text* frame,
-//! `{"kind":"hello","aslr_reference":<u64>,"token":<string>}`.
-//! The device sends this on connect; once the token matches, the server
-//! stores the value and the patcher uses it to compute the ASLR slide.
-//! A token-less (browser-only) server records a fixed `0` instead, since
-//! the web patcher needs only the handshake.
+//! Without a secret, clients are browsers: they exchange plain messages and
+//! receive reload requests and validated WebAssembly patches, never native
+//! libraries.
 //!
 //! ## Architecture
 //!
@@ -48,6 +39,7 @@ use tokio::sync::broadcast;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::Event;
+use whisker_dev_protocol::{self as protocol, FrameKind, ServerHandshake, Session};
 
 /// Cheap-to-clone broadcast payload. The dylib bytes are held by
 /// `Arc` so cloning into each subscribed client's receive queue is
@@ -57,9 +49,9 @@ pub struct Patch {
     /// The address-map metadata. Serialized as JSON in the binary
     /// frame's prefix.
     pub table: subsecond_types::JumpTable,
-    /// Raw patch dylib bytes. Streamed verbatim after the JSON
-    /// prefix; the device writes them to disk and `dlopen`s the
-    /// resulting file.
+    /// Raw native library or WebAssembly module bytes following the JSON
+    /// prefix. Native clients stage and load a library; browser clients apply
+    /// a separately validated WebAssembly side module.
     pub dylib_bytes: Arc<Vec<u8>>,
 }
 
@@ -82,10 +74,12 @@ enum PatchHeader<'a> {
     },
 }
 
-/// Shared serde adapter used by `whisker-dev-runtime::hot_reload` too —
-/// both sides must agree on the JSON shape. Kept inline (not a
-/// shared crate) because the type is tiny and the duplication
-/// burden is one ~30-line module.
+/// Serializer for the patch header's jump table.
+///
+/// Its JSON shape must match `deserialize_jump_table` in
+/// `whisker-dev-runtime`'s `hot_reload` module. It stays next to its
+/// `subsecond_types` users instead of moving into `whisker-dev-protocol`,
+/// which carries opaque payloads and has no subsecond dependency.
 pub mod wire_jump_table {
     use serde::Serializer;
     use serde::ser::SerializeStruct;
@@ -109,8 +103,8 @@ pub mod wire_jump_table {
 #[derive(Clone)]
 pub struct PatchSender {
     tx: broadcast::Sender<ServerUpdate>,
-    /// Latest `aslr_reference` reported by a connected client via the
-    /// `hello` handshake. Single-slot, last-write-wins: we don't yet
+    /// Latest `aslr_reference` reported in a connected client's `hello`
+    /// message. Single-slot, last-write-wins: we don't yet
     /// support targeted-per-client patches, so all connected clients
     /// must share an ASLR base. For typical single-emulator dev
     /// sessions that's fine; for multi-device this becomes the
@@ -119,11 +113,35 @@ pub struct PatchSender {
 }
 
 impl PatchSender {
-    /// Broadcast `patch` to every currently-connected client.
-    /// Returns the number of clients the message was queued for —
-    /// `0` is fine (no client connected yet) and not an error.
+    /// Queue a native patch for delivery to authenticated native clients.
+    ///
+    /// Browser clients never receive it. Returns the number of
+    /// subscribed clients — `0` is fine (no client connected yet) and
+    /// not an error. A patch too large for one envelope is dropped with a
+    /// warning when it is encoded; the developer then needs a Full Reload.
     pub fn send(&self, patch: Patch) -> usize {
         self.tx.send(ServerUpdate::Patch(patch)).unwrap_or(0)
+    }
+
+    /// Queue a WebAssembly side module for browser clients only.
+    ///
+    /// The Web target's dev server runs without a session secret (see
+    /// [`crate::Config::dev_token`]), so its clients are unauthenticated.
+    /// To keep that channel from carrying anything but WebAssembly, the
+    /// payload must start with the Wasm magic and version and pass
+    /// `wasmparser` validation; anything else, including native libraries,
+    /// is not queued and `0` is returned. Authenticated native clients
+    /// never receive these patches. Otherwise returns the number of
+    /// subscribed clients, like [`Self::send`].
+    pub fn send_web(&self, patch: Patch) -> usize {
+        if !patch.dylib_bytes.starts_with(b"\0asm\x01\0\0\0")
+            || wasmparser::Validator::new()
+                .validate_all(&patch.dylib_bytes)
+                .is_err()
+        {
+            return 0;
+        }
+        self.tx.send(ServerUpdate::WebPatch(patch)).unwrap_or(0)
     }
 
     /// Ask connected browser clients to load the freshly-built WASM bundle.
@@ -139,7 +157,7 @@ impl PatchSender {
 
     /// The runtime address of `whisker_aslr_anchor`
     /// (= `subsecond::aslr_reference()`) most recently reported by a
-    /// connected client. `None` when no
+    /// connected client in its `hello` message. `None` when no
     /// client has connected or sent its `hello` yet — the patcher
     /// should withhold hot-reload patches in that case (fall back to
     /// full reload).
@@ -153,15 +171,13 @@ struct AppState {
     tx: broadcast::Sender<ServerUpdate>,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     aslr_reference: Arc<Mutex<Option<u64>>>,
-    /// Expected shared dev-session token. When `Some`, a client must
-    /// present a matching `token` in its `hello` before any patch is
-    /// forwarded to it; a missing/mismatched token closes the
-    /// connection. The patch channel `dlopen`s whatever it ships, so on
-    /// a LAN-exposed bind this gate is what stops an unauthenticated
-    /// peer from pushing arbitrary native code. `None` = unauthenticated
-    /// (token-less local setup / tests).
+    /// Session secret every client must prove; `None` treats clients as
+    /// browsers (see [`crate::Config::dev_token`]).
     expected_token: Option<Arc<str>>,
     trace: bool,
+    handshake_timeout: std::time::Duration,
+    /// Last handshake rejection reported, so retries don't repeat it.
+    last_rejection: Arc<Mutex<Option<String>>>,
     bound_addr: SocketAddr,
     /// `Host` authorities accepted besides `bound_addr`; see
     /// [`crate::Config::forwarded_authorities`]. Already emptied by
@@ -172,6 +188,7 @@ struct AppState {
 #[derive(Debug, Clone)]
 enum ServerUpdate {
     Patch(Patch),
+    WebPatch(Patch),
     Reload,
 }
 
@@ -200,6 +217,27 @@ pub async fn serve(
     trace: bool,
     static_files: Option<StaticFiles>,
 ) -> Result<(PatchSender, SocketAddr, tokio::task::JoinHandle<()>)> {
+    serve_with_handshake_timeout(
+        addr,
+        on_event,
+        expected_token,
+        forwarded_authorities,
+        trace,
+        static_files,
+        protocol::HANDSHAKE_TIMEOUT,
+    )
+    .await
+}
+
+async fn serve_with_handshake_timeout(
+    addr: SocketAddr,
+    on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
+    expected_token: Option<String>,
+    forwarded_authorities: Vec<String>,
+    trace: bool,
+    static_files: Option<StaticFiles>,
+    handshake_timeout: std::time::Duration,
+) -> Result<(PatchSender, SocketAddr, tokio::task::JoinHandle<()>)> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
     let (tx, _rx) = broadcast::channel::<ServerUpdate>(16);
@@ -217,6 +255,8 @@ pub async fn serve(
         aslr_reference: Arc::clone(&aslr_reference),
         expected_token: expected_token.map(Arc::from),
         trace,
+        handshake_timeout,
+        last_rejection: Arc::new(Mutex::new(None)),
         bound_addr: bound,
         forwarded_authorities: forwarded_authorities.into(),
     };
@@ -333,212 +373,239 @@ async fn validate_request(
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    // Clients never send patches, so one control message plus its envelope
+    // bounds every read, before and after authentication.
+    let limit = protocol::MAX_CONTROL + protocol::ENVELOPE_OVERHEAD;
+    ws.max_frame_size(limit)
+        .max_message_size(limit)
+        .on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState) {
-    use futures_util::{SinkExt, StreamExt};
-
-    let (mut tx_ws, mut rx_ws) = socket.split();
-    let mut bcast_rx = state.tx.subscribe();
-    whisker_build::ui::set_status(format!("{} client(s) connected", state.tx.receiver_count(),));
-    // A client starts unauthenticated when a token is required, and is
-    // promoted on a valid `hello`. While unauthenticated we never
-    // forward a patch (the security gate). A token-less server is
-    // browser-only: `validate_request` admitted only a same-origin page.
-    let mut authed = state.expected_token.is_none();
-
-    // Announce only clients past the token gate: a stale app from a
-    // previous session retries every few seconds, which would flap the
-    // TUI's client count 0↔1 for the whole build.
-    let mut announced = false;
-    if authed {
-        if let Some(cb) = &state.on_event {
-            cb(Event::ClientConnected);
-        }
-        announced = true;
-        if state.trace && tx_ws.send(Message::Text(TRACE_ON.into())).await.is_err() {
-            return;
+/// Next text message during the handshake, skipping control frames.
+async fn next_text(socket: &mut WebSocket) -> Result<String> {
+    use futures_util::StreamExt;
+    loop {
+        match socket.next().await {
+            Some(Ok(Message::Text(text))) => return Ok(text.to_string()),
+            Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+            Some(Ok(Message::Binary(_))) => {
+                anyhow::bail!("the client sent a binary message during authentication")
+            }
+            Some(Ok(Message::Close(_))) | None => anyhow::bail!(
+                "the client closed the connection during authentication (usually an app \
+                 launched by a previous `whisker run` session; it reconnects after the next \
+                 launch or Full Reload (R))"
+            ),
+            Some(Err(error)) => return Err(error.into()),
         }
     }
+}
 
+async fn authenticate(socket: &mut WebSocket, secret: &str) -> Result<Session> {
+    let challenge = next_text(socket).await?;
+    let (handshake, proof) = ServerHandshake::respond(secret, &challenge)?;
+    socket.send(Message::Text(proof.into())).await?;
+    // Send nothing else until the client proof verifies: the runtime caps
+    // its pre-authentication reads and lifts the cap without expecting
+    // any server bytes buffered past this proof.
+    Ok(handshake.finish(&next_text(socket).await?)?)
+}
+
+/// Connected client, decided once by the handshake.
+enum Peer {
+    /// Authenticated app: every message is an envelope, native patches allowed.
+    Native(Session),
+    /// Unauthenticated browser on a secret-less server: plain messages,
+    /// validated WebAssembly patches only.
+    Browser,
+}
+
+async fn send_frame(socket: &mut WebSocket, peer: &mut Peer, message: Message) -> Result<()> {
+    let message = match (peer, message) {
+        (Peer::Native(session), Message::Text(text)) => {
+            Message::Binary(session.seal(FrameKind::Text, text.as_bytes())?.into())
+        }
+        (Peer::Native(session), Message::Binary(bytes)) => {
+            Message::Binary(session.seal(FrameKind::Patch, &bytes)?.into())
+        }
+        (_, message) => message,
+    };
+    socket.send(message).await?;
+    Ok(())
+}
+
+/// Warns about rejected handshakes without repeating the same reason.
+///
+/// An app from a previous session retries every 2 s for as long as it
+/// runs; one warning per distinct reason keeps the TUI readable.
+fn report_rejection(state: &AppState, reason: String) {
+    let mut last = state
+        .last_rejection
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if last.as_deref() != Some(reason.as_str()) {
+        whisker_build::ui::warn(format!("hot-reload client rejected: {reason}"));
+        *last = Some(reason);
+    }
+}
+
+async fn handle_socket(mut socket: WebSocket, state: AppState) {
+    use futures_util::StreamExt;
+    let mut peer = match &state.expected_token {
+        Some(secret) => {
+            match tokio::time::timeout(state.handshake_timeout, authenticate(&mut socket, secret))
+                .await
+            {
+                Ok(Ok(session)) => {
+                    if let Ok(mut last) = state.last_rejection.lock() {
+                        *last = None;
+                    }
+                    Peer::Native(session)
+                }
+                Ok(Err(error)) => return report_rejection(&state, format!("{error:#}")),
+                Err(_) => {
+                    return report_rejection(
+                        &state,
+                        format!(
+                            "authentication did not finish within {:?}",
+                            state.handshake_timeout
+                        ),
+                    );
+                }
+            }
+        }
+        None => Peer::Browser,
+    };
+    let native = matches!(peer, Peer::Native(_));
+    let mut receiver = state.tx.subscribe();
+    if let Some(callback) = &state.on_event {
+        callback(Event::ClientConnected);
+    }
+    if state.trace
+        && native
+        && send_frame(&mut socket, &mut peer, Message::Text(TRACE_ON.into()))
+            .await
+            .is_err()
+    {
+        return;
+    }
     loop {
         tokio::select! {
-            // server → client: forward broadcast patches as binary frames.
-            recv = bcast_rx.recv() => {
-                let update = match recv {
-                    Ok(p) => p,
+            update = receiver.recv() => {
+                let update = match update {
+                    Ok(update) => update,
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
-                // Never ship native-code patches to an unauthenticated
-                // peer. Drop (not buffer) — the device re-receives the
-                // full JumpTable on the next save anyway.
-                if !authed {
-                    continue;
-                }
-                match update {
-                    ServerUpdate::Patch(patch) => {
-                        let frame = match encode_patch_frame(&patch) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                whisker_build::ui::warn(format!("encode patch frame: {e}"));
+                let message = match (update, native) {
+                    (ServerUpdate::Patch(patch), true) | (ServerUpdate::WebPatch(patch), false) => {
+                        match encode_patch_frame(&patch) {
+                            Ok(frame) => Message::Binary(frame.into()),
+                            Err(error) => {
+                                whisker_build::ui::warn(format!("{error:#}; use Full Reload (R)"));
                                 continue;
                             }
-                        };
-                        if tx_ws.send(Message::Binary(frame.into())).await.is_err() {
-                            break;
                         }
                     }
-                    ServerUpdate::Reload => {
-                        if tx_ws.send(Message::Text(r#"{"kind":"reload"}"#.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                }
+                    (ServerUpdate::Patch(_) | ServerUpdate::WebPatch(_), _) => continue,
+                    (ServerUpdate::Reload, _) => Message::Text(r#"{"kind":"reload"}"#.into()),
+                };
+                if send_frame(&mut socket, &mut peer, message).await.is_err() { break; }
             }
-            // client → server: drain so Pings/Pongs are honoured and
-            // `hello` envelopes (aslr_reference + session token) are
-            // parsed.
-            msg = rx_ws.next() => {
-                match msg {
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Err(_)) => break,
-                    Some(Ok(Message::Text(t))) => {
-                        if let Some(hello) = parse_client_hello(&t) {
-                            // Token gate. If a token is required, the
-                            // hello must carry the matching one or we
-                            // drop the connection without ever arming
-                            // the patch path for it.
-                            if let Some(expected) = &state.expected_token {
-                                if hello.token.as_deref() != Some(expected.as_ref()) {
-                                    // Debug-only: an app from a
-                                    // previous dev session retrying
-                                    // with its stale token is the
-                                    // usual cause, and it isn't
-                                    // actionable. A rejected *current*
-                                    // app instead shows up as
-                                    // `0 connected`.
-                                    whisker_build::ui::debug(
-                                        "rejected a hot-reload client (missing/invalid dev \
-                                         token) — usually an app left over from a previous \
-                                         dev session; it connects with the fresh token after \
-                                         the next launch / Full Reload (R)",
-                                    );
+            message = socket.next() => {
+                let text = match (message, &mut peer) {
+                    (Some(Ok(Message::Close(_)) | Err(_)) | None, _) => break,
+                    (Some(Ok(Message::Ping(_) | Message::Pong(_))), _) => continue,
+                    (Some(Ok(Message::Binary(frame))), Peer::Native(session)) => {
+                        match session.open(&frame) {
+                            Ok((FrameKind::Text, payload)) => match std::str::from_utf8(payload) {
+                                Ok(text) => text.to_owned(),
+                                Err(_) => {
+                                    whisker_build::ui::warn("closing hot-reload client: control message is not UTF-8");
                                     break;
                                 }
-                                authed = true;
-                                if !announced {
-                                    if let Some(cb) = &state.on_event {
-                                        cb(Event::ClientConnected);
-                                    }
-                                    announced = true;
-                                    if state.trace
-                                        && tx_ws.send(Message::Text(TRACE_ON.into())).await.is_err()
-                                    {
-                                        break;
-                                    }
-                                }
+                            },
+                            Ok((FrameKind::Patch, _)) => {
+                                whisker_build::ui::warn("closing hot-reload client: clients may not send patches");
+                                break;
                             }
-                            // Only a token-authenticated native client
-                            // may set the slide native patches are built
-                            // against. The web patcher ignores the value
-                            // and needs only a handshake, so a browser
-                            // peer cannot choose what is stored.
-                            let aslr = if state.expected_token.is_some() {
-                                hello.aslr_reference
-                            } else {
-                                BROWSER_ASLR_REFERENCE
-                            };
-                            whisker_build::ui::debug(format!(
-                                "client hello · aslr_reference={aslr:#x}"
-                            ));
-                            if let Ok(mut g) = state.aslr_reference.lock() {
-                                *g = Some(aslr);
-                            }
-                        } else if !authed {
-                            break;
-                        } else if let Some(log) = parse_client_log(&t) {
-                            if let Some(cb) = &state.on_event {
-                                cb(Event::DeviceLog {
-                                    stream: log.stream,
-                                    line: log.line,
-                                    ts_micros: log.ts_micros,
-                                });
-                            }
-                        } else if let Some(frames) = parse_client_trace(&t) {
-                            if let Some(cb) = &state.on_event {
-                                cb(Event::DeviceTrace { frames });
+                            Err(error) => {
+                                whisker_build::ui::warn(format!("closing hot-reload client: {error}"));
+                                break;
                             }
                         }
                     }
-                    _ => {}
+                    (Some(Ok(Message::Text(text))), Peer::Browser) => text.to_string(),
+                    (Some(Ok(_)), _) => break,
+                };
+                if let Some(hello) = parse_client_hello(&text) {
+                    // A browser peer must not choose the slide native patches are built against.
+                    let aslr = if native { hello.aslr_reference } else { BROWSER_ASLR_REFERENCE };
+                    if let Ok(mut reference) = state.aslr_reference.lock() { *reference = Some(aslr); }
+                } else if let Some(log) = parse_client_log(&text) {
+                    if let Some(callback) = &state.on_event { callback(Event::DeviceLog { stream: log.stream, line: log.line, ts_micros: log.ts_micros }); }
+                } else if native {
+                    if let Some(frames) = parse_client_trace(&text) {
+                        if let Some(callback) = &state.on_event { callback(Event::DeviceTrace { frames }); }
+                    }
                 }
             }
         }
     }
-
-    // The stored slide belongs to the now-dead process; stamping jump
-    // stubs with it for the replacement would crash the device. Clear
-    // it and let the new process send its own `hello`.
-    //
-    // Authed sockets only: a rejected client never stored a slide, so
-    // clearing on its disconnect would wipe the *live* app's reference
-    // every time a stale-token app bounced off the gate.
-    if authed {
-        if let Ok(mut g) = state.aslr_reference.lock() {
-            *g = None;
+    // The stored slide belongs to the now-dead native process; stamping
+    // jump stubs with it for the replacement would crash the device.
+    if native {
+        if let Ok(mut reference) = state.aslr_reference.lock() {
+            *reference = None;
         }
     }
-
-    // Symmetric with the announce above: only sockets that were
-    // announced as connected report a disconnect.
-    if announced {
-        if let Some(cb) = &state.on_event {
-            cb(Event::ClientDisconnected);
-        }
+    if let Some(callback) = &state.on_event {
+        callback(Event::ClientDisconnected);
     }
 }
 
 /// Build the on-the-wire binary frame:
 ///   `[u64 BE json_len][json header][raw dylib bytes]`
+///
+/// Fails when the frame cannot fit one envelope; such a patch needs a Full
+/// Reload instead.
 fn encode_patch_frame(patch: &Patch) -> Result<Vec<u8>> {
     let header = PatchHeader::Patch {
         table: &patch.table,
     };
     let json = serde_json::to_vec(&header)?;
-    let json_len = json.len() as u64;
     let dylib = patch.dylib_bytes.as_slice();
-    let mut frame = Vec::with_capacity(8 + json.len() + dylib.len());
+    let len = 8 + json.len() + dylib.len();
+    anyhow::ensure!(
+        json.len() <= protocol::MAX_CONTROL && len <= protocol::MAX_PAYLOAD,
+        "hot-reload patch is {len} bytes, over the {} byte transport limit",
+        protocol::MAX_PAYLOAD
+    );
+    let json_len = json.len() as u64;
+    let mut frame = Vec::with_capacity(len);
     frame.extend_from_slice(&json_len.to_be_bytes());
     frame.extend_from_slice(&json);
     frame.extend_from_slice(dylib);
     Ok(frame)
 }
 
-/// A decoded `{"kind":"hello",…}` handshake from the device.
+/// A decoded `{"kind":"hello",…}` message, sent once after the handshake.
 struct ClientHello {
     aslr_reference: u64,
-    /// The shared dev-session token, if the device was provisioned one.
-    token: Option<String>,
 }
 
-/// Parse a client hello envelope. Returns `None` for non-hello text
-/// frames (or malformed payloads) — the only things we listen for
-/// client→server today are the initial handshake and log frames.
+/// Parse a client hello. Returns `None` for other client messages
+/// (logs, traces) or malformed payloads.
 fn parse_client_hello(text: &str) -> Option<ClientHello> {
     #[derive(serde::Deserialize)]
     struct Hello {
         kind: String,
         aslr_reference: u64,
-        #[serde(default)]
-        token: Option<String>,
     }
     let h: Hello = serde_json::from_str(text).ok()?;
     if h.kind == "hello" {
         Some(ClientHello {
             aslr_reference: h.aslr_reference,
-            token: h.token,
         })
     } else {
         None
@@ -596,9 +663,8 @@ struct ClientLog {
     ts_micros: u128,
 }
 
-/// Parse a client log envelope. Returns `None` for any other text
-/// frame so the caller can fall through to other handlers (the hello
-/// envelope is the only other text frame today).
+/// Parse a client log message. Returns `None` for any other message
+/// so the caller can fall through to the hello and trace handlers.
 ///
 /// `ts_micros` arrives as a string on the wire because `u128` doesn't
 /// round-trip through JSON's number type cleanly (>2^53 is lossy in
@@ -659,6 +725,7 @@ mod tests {
     use super::*;
     use futures_util::{SinkExt, StreamExt};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use whisker_dev_protocol::ClientHandshake;
 
     fn make_dummy_jump_table() -> subsecond_types::JumpTable {
         // Construct via JSON to avoid pinning ourselves to private
@@ -680,10 +747,94 @@ mod tests {
         on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     ) -> (PatchSender, SocketAddr) {
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (sender, addr, _handle) = serve(any, on_event, None, Vec::new(), false, None)
-            .await
-            .expect("serve");
+        let (sender, addr, _handle) = serve(
+            any,
+            on_event,
+            Some("s3kret".into()),
+            Vec::new(),
+            false,
+            None,
+        )
+        .await
+        .expect("serve");
         (sender, addr)
+    }
+
+    type TestSocket = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+    struct TestClient {
+        socket: TestSocket,
+        session: Session,
+    }
+
+    /// Next text message during the handshake, skipping control frames.
+    async fn next_handshake_text(socket: &mut TestSocket) -> Option<String> {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+        loop {
+            match socket.next().await? {
+                Ok(TMsg::Text(text)) => return Some(text),
+                Ok(TMsg::Ping(_) | TMsg::Pong(_)) => {}
+                _ => return None,
+            }
+        }
+    }
+
+    impl TestClient {
+        async fn authenticate(mut socket: TestSocket) -> Self {
+            use tokio_tungstenite::tungstenite::Message as TMsg;
+            let (handshake, challenge) = ClientHandshake::start("s3kret").unwrap();
+            socket.send(TMsg::Text(challenge)).await.unwrap();
+            let server_proof = next_handshake_text(&mut socket)
+                .await
+                .expect("server proof");
+            let (session, client_proof) = handshake.finish(&server_proof).unwrap();
+            socket.send(TMsg::Text(client_proof)).await.unwrap();
+            Self { socket, session }
+        }
+
+        async fn send(
+            &mut self,
+            message: tokio_tungstenite::tungstenite::Message,
+        ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
+            use tokio_tungstenite::tungstenite::Message as TMsg;
+            let message = match message {
+                TMsg::Text(text) => {
+                    TMsg::Binary(self.session.seal(FrameKind::Text, text.as_bytes()).unwrap())
+                }
+                message => message,
+            };
+            self.socket.send(message).await
+        }
+
+        async fn next(
+            &mut self,
+        ) -> Option<
+            Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>,
+        > {
+            use tokio_tungstenite::tungstenite::{Error, Message as TMsg};
+            let message = match self.socket.next().await? {
+                Ok(message) => message,
+                Err(error) => return Some(Err(error)),
+            };
+            Some(match message {
+                TMsg::Binary(bytes) => match self.session.open(&bytes) {
+                    Ok((FrameKind::Patch, bytes)) => Ok(TMsg::Binary(bytes.to_vec())),
+                    Ok((FrameKind::Text, bytes)) => {
+                        Ok(TMsg::Text(String::from_utf8(bytes.to_vec()).unwrap()))
+                    }
+                    Err(error) => Err(Error::Io(std::io::Error::other(error))),
+                },
+                message => Ok(message),
+            })
+        }
+    }
+
+    async fn raw_connect(addr: SocketAddr) -> TestSocket {
+        let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/whisker-dev"))
+            .await
+            .unwrap();
+        socket
     }
 
     fn browser_request(url: &str) -> tokio_tungstenite::tungstenite::http::Request<()> {
@@ -699,15 +850,16 @@ mod tests {
         request
     }
 
-    async fn connect(
-        addr: SocketAddr,
-    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
-    {
+    async fn browser_connect(addr: SocketAddr) -> TestSocket {
         let url = format!("ws://{addr}/whisker-dev");
-        let (ws, _) = tokio_tungstenite::connect_async(browser_request(&url))
+        let (socket, _) = tokio_tungstenite::connect_async(browser_request(&url))
             .await
-            .expect("connect");
-        ws
+            .unwrap();
+        socket
+    }
+
+    async fn connect(addr: SocketAddr) -> TestClient {
+        TestClient::authenticate(raw_connect(addr).await).await
     }
 
     /// Decode a wire frame back into (header JSON value, dylib bytes)
@@ -869,25 +1021,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_patch_larger_than_the_default_frame_limit_reaches_an_unlimited_client() {
+    async fn a_large_patch_reaches_a_client_with_explicit_finite_limits() {
         use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
         let (sender, addr) = spawn_test_server(None).await;
-        // Mirror the device receiver's lifted read limits
-        // (whisker-dev-runtime::hot_reload::client_loop).
+        // Mirror the device receiver's post-authentication read limits
+        // (`connect_and_serve` in whisker-dev-runtime's `hot_reload`).
         let config = WebSocketConfig {
-            max_frame_size: None,
-            max_message_size: None,
+            max_frame_size: Some(protocol::MAX_MESSAGE),
+            max_message_size: Some(protocol::MAX_MESSAGE),
             ..Default::default()
         };
         let url = format!("ws://{addr}/whisker-dev");
-        let (mut unlimited, _) = tokio_tungstenite::connect_async_with_config(
-            browser_request(&url),
-            Some(config),
-            false,
-        )
-        .await
-        .expect("connect");
+        let (unlimited_socket, _) =
+            tokio_tungstenite::connect_async_with_config(&url, Some(config), false)
+                .await
+                .expect("connect");
+        let mut unlimited = TestClient::authenticate(unlimited_socket).await;
         let mut default_limits = connect(addr).await;
 
         for _ in 0..100 {
@@ -907,7 +1057,7 @@ mod tests {
         });
         assert_eq!(n, 2);
 
-        let msg = tokio::time::timeout(std::time::Duration::from_secs(10), unlimited.next())
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(45), unlimited.next())
             .await
             .expect("recv timed out")
             .expect("stream ended")
@@ -922,7 +1072,7 @@ mod tests {
 
         // A client with tungstenite's default read limits (the old
         // device behavior) rejects the same frame as too long.
-        let rejected = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let rejected = tokio::time::timeout(std::time::Duration::from_secs(45), async {
             loop {
                 match default_limits.next().await {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(_))) => return false,
@@ -972,17 +1122,12 @@ mod tests {
         }
     }
 
-    /// Sends a token `hello` and waits until the server has armed the
-    /// socket (it stores `aslr_reference` only after the token check).
-    async fn authenticate<S>(client: &mut S, sender: &PatchSender, token: &str)
-    where
-        S: futures_util::Sink<tokio_tungstenite::tungstenite::Message> + Unpin,
-        S::Error: std::fmt::Debug,
-    {
+    /// Sends an authenticated `hello` and waits until the server records its `aslr_reference`.
+    async fn send_hello(client: &mut TestClient, sender: &PatchSender) {
         client
-            .send(tokio_tungstenite::tungstenite::Message::Text(format!(
-                r#"{{"kind":"hello","aslr_reference":4294967296,"token":"{token}"}}"#
-            )))
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","aslr_reference":4294967296}"#.into(),
+            ))
             .await
             .expect("send hello");
         for _ in 0..200 {
@@ -1007,10 +1152,11 @@ mod tests {
         .await
         .expect("serve");
         let device_host = format!("127.0.0.1:{}", crate::ANDROID_DEVICE_PORT);
-        let (mut client, _) = tokio_tungstenite::connect_async(native_request(addr, &device_host))
+        let (socket, _) = tokio_tungstenite::connect_async(native_request(addr, &device_host))
             .await
             .expect("forwarded authority accepted");
-        authenticate(&mut client, &sender, "s3kret").await;
+        let mut client = TestClient::authenticate(socket).await;
+        send_hello(&mut client, &sender).await;
 
         assert_eq!(
             sender.send(Patch {
@@ -1039,31 +1185,28 @@ mod tests {
         );
 
         // The same originless client is accepted under the bound authority.
-        let (mut client, _) =
-            tokio_tungstenite::connect_async(native_request(addr, &addr.to_string()))
-                .await
-                .expect("bound authority accepted");
-        authenticate(&mut client, &sender, "s3kret").await;
+        let (socket, _) = tokio_tungstenite::connect_async(native_request(addr, &addr.to_string()))
+            .await
+            .expect("bound authority accepted");
+        send_hello(&mut TestClient::authenticate(socket).await, &sender).await;
     }
 
     #[tokio::test]
-    async fn client_with_valid_token_is_armed_and_receives_patches() {
-        use futures_util::SinkExt;
+    async fn client_with_valid_secret_is_armed_and_receives_patches() {
         use tokio_tungstenite::tungstenite::Message as TMsg;
 
         let (sender, addr) = spawn_test_server_with_token(Some("s3kret".into())).await;
         let mut client = connect(addr).await;
 
-        // Authenticate via the hello handshake.
         client
             .send(TMsg::Text(
-                r#"{"kind":"hello","aslr_reference":4294967296,"token":"s3kret"}"#.into(),
+                r#"{"kind":"hello","aslr_reference":4294967296}"#.into(),
             ))
             .await
             .expect("send hello");
 
-        // The server only records the aslr_reference *after* the token
-        // check passes, so its presence is a proxy for "authed".
+        // The hello is only accepted inside an authenticated envelope, so
+        // the recorded aslr_reference proves the session is armed.
         for _ in 0..200 {
             if sender.latest_aslr_reference().is_some() {
                 break;
@@ -1089,49 +1232,182 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn client_with_invalid_token_is_disconnected_and_gets_no_patch() {
-        use futures_util::SinkExt;
+    /// Wait for the server to drop `socket`, failing if any binary
+    /// (patch-carrying) message reaches it first.
+    async fn expect_disconnect(socket: &mut TestSocket) {
         use tokio_tungstenite::tungstenite::Message as TMsg;
-
-        let (sender, addr) = spawn_test_server_with_token(Some("s3kret".into())).await;
-        let mut client = connect(addr).await;
-
-        // Wrong token → the server closes the connection without ever
-        // arming the patch path.
-        client
-            .send(TMsg::Text(
-                r#"{"kind":"hello","aslr_reference":1,"token":"WRONG"}"#.into(),
-            ))
-            .await
-            .expect("send hello");
-
-        // The connection should end (Close frame or stream end) and the
-        // client count drop back to zero.
-        let ended = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
-                match client.next().await {
-                    Some(Ok(TMsg::Binary(_))) => return false, // a patch leaked through — fail
-                    None | Some(Ok(TMsg::Close(_))) | Some(Err(_)) => return true,
+                match socket.next().await {
+                    Some(Ok(TMsg::Binary(_))) => panic!("server sent data to a rejected client"),
+                    None | Some(Ok(TMsg::Close(_))) | Some(Err(_)) => return,
                     _ => continue,
                 }
             }
         })
         .await
         .expect("disconnect timed out");
-        assert!(
-            ended,
-            "unauthenticated client must be disconnected, not fed patches"
-        );
+    }
 
-        // A patch broadcast now reaches zero armed clients.
+    #[tokio::test]
+    async fn legacy_token_hello_is_disconnected_and_gets_no_patch() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+
+        let (sender, addr) = spawn_test_server_with_token(Some("s3kret".into())).await;
+        let mut client = raw_connect(addr).await;
+
+        // The pre-handshake protocol sent the secret in a plain hello. It
+        // is not a challenge, so the server closes without arming the
+        // patch path.
+        client
+            .send(TMsg::Text(
+                r#"{"kind":"hello","aslr_reference":1,"token":"s3kret"}"#.into(),
+            ))
+            .await
+            .expect("send hello");
+        expect_disconnect(&mut client).await;
+        assert_eq!(sender.client_count(), 0);
+        assert_eq!(sender.latest_aslr_reference(), None);
+    }
+
+    #[tokio::test]
+    async fn forged_client_proof_is_disconnected() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+
+        let (sender, addr) = spawn_test_server_with_token(Some("s3kret".into())).await;
+        let mut client = raw_connect(addr).await;
+        let (_, challenge) = ClientHandshake::start("other secret").unwrap();
+        client.send(TMsg::Text(challenge)).await.unwrap();
+        next_handshake_text(&mut client)
+            .await
+            .expect("server proof");
+        let forged = format!(r#"{{"mac":{:?}}}"#, [0u8; 32]);
+        client.send(TMsg::Text(forged)).await.unwrap();
+        expect_disconnect(&mut client).await;
+        assert_eq!(sender.client_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn ping_during_the_handshake_is_skipped() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+
+        let (sender, addr) = spawn_test_server_with_token(Some("s3kret".into())).await;
+        let mut socket = raw_connect(addr).await;
+        socket.send(TMsg::Ping(vec![1])).await.unwrap();
+        let mut client = TestClient::authenticate(socket).await;
+        client
+            .send(TMsg::Text(r#"{"kind":"hello","aslr_reference":7}"#.into()))
+            .await
+            .unwrap();
         for _ in 0..200 {
-            if sender.client_count() == 0 {
+            if sender.latest_aslr_reference().is_some() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
+        assert_eq!(sender.latest_aslr_reference(), Some(7));
+    }
+
+    #[tokio::test]
+    async fn silent_client_times_out_the_handshake() {
+        let (sender, addr, _handle) = serve_with_handshake_timeout(
+            "127.0.0.1:0".parse().unwrap(),
+            None,
+            Some("s3kret".into()),
+            Vec::new(),
+            false,
+            None,
+            std::time::Duration::from_millis(50),
+        )
+        .await
+        .unwrap();
+        let mut client = raw_connect(addr).await;
+        expect_disconnect(&mut client).await;
         assert_eq!(sender.client_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn modified_client_frame_closes_the_connection() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+
+        let (sender, addr) = spawn_test_server_with_token(Some("s3kret".into())).await;
+        let mut client = connect(addr).await;
+        let mut frame = client
+            .session
+            .seal(FrameKind::Text, br#"{"kind":"hello","aslr_reference":1}"#)
+            .unwrap();
+        *frame.last_mut().unwrap() ^= 1;
+        client.socket.send(TMsg::Binary(frame)).await.unwrap();
+        expect_disconnect(&mut client.socket).await;
+        assert_eq!(sender.latest_aslr_reference(), None);
+    }
+
+    #[tokio::test]
+    async fn replayed_client_frame_closes_the_connection() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+
+        let logs = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&logs);
+        let on_event: Arc<dyn Fn(Event) + Send + Sync> = Arc::new(move |event| {
+            if matches!(event, Event::DeviceLog { .. }) {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let (_sender, addr) = spawn_test_server(Some(on_event)).await;
+        let mut client = connect(addr).await;
+        let frame = client
+            .session
+            .seal(
+                FrameKind::Text,
+                br#"{"kind":"log","stream":"stdout","line":"once"}"#,
+            )
+            .unwrap();
+        client
+            .socket
+            .send(TMsg::Binary(frame.clone()))
+            .await
+            .unwrap();
+        client.socket.send(TMsg::Binary(frame)).await.unwrap();
+        expect_disconnect(&mut client.socket).await;
+        assert_eq!(logs.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn oversized_client_frame_closes_the_connection() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+
+        let (_sender, addr) = spawn_test_server(None).await;
+        let mut client = connect(addr).await;
+        let oversized = vec![0; protocol::MAX_CONTROL + protocol::ENVELOPE_OVERHEAD + 1];
+        // The server may hang up mid-write once it sees the length.
+        let _ = client.socket.send(TMsg::Binary(oversized)).await;
+        expect_disconnect(&mut client.socket).await;
+    }
+
+    #[tokio::test]
+    async fn browser_only_sessions_never_receive_native_patch_bytes() {
+        let (sender, addr) = spawn_test_server_with_token(None).await;
+        let mut client = browser_connect(addr).await;
+        for _ in 0..100 {
+            if sender.client_count() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        sender.send(Patch {
+            table: make_dummy_jump_table(),
+            dylib_bytes: Arc::new(b"secret library".to_vec()),
+        });
+        sender.reload_browser();
+        let message = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            message,
+            tokio_tungstenite::tungstenite::Message::Text(r#"{"kind":"reload"}"#.into())
+        );
     }
 
     #[tokio::test]
@@ -1225,6 +1501,83 @@ mod tests {
 
         // sender stays usable across the whole flow.
         assert_eq!(sender.client_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn browser_hello_registers_wasm_relocation_base() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+        let (sender, addr) = spawn_test_server_with_token(None).await;
+        let mut browser = browser_connect(addr).await;
+        browser
+            .send(TMsg::Text(r#"{"kind":"hello","aslr_reference":0}"#.into()))
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            if sender.latest_aslr_reference().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(sender.latest_aslr_reference(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn browser_receives_only_validated_wasm_patches() {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+        let (sender, addr) = spawn_test_server_with_token(None).await;
+        let mut browser = browser_connect(addr).await;
+        for _ in 0..100 {
+            if sender.client_count() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let patch = |bytes: Vec<u8>| Patch {
+            table: make_dummy_jump_table(),
+            dylib_bytes: Arc::new(bytes),
+        };
+        let wasm = b"\0asm\x01\0\0\0".to_vec();
+        sender.send(patch(b"native library".to_vec()));
+        assert_eq!(sender.send_web(patch(b"native library".to_vec())), 0);
+        assert_eq!(sender.send_web(patch(wasm.clone())), 1);
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), browser.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let TMsg::Binary(bytes) = frame else {
+            panic!("missing Wasm patch")
+        };
+        assert_eq!(decode_patch_frame(&bytes).1, wasm);
+    }
+
+    #[tokio::test]
+    async fn native_sessions_never_receive_browser_wasm_modules() {
+        let (sender, addr) = spawn_test_server(None).await;
+        let mut native = connect(addr).await;
+        for _ in 0..100 {
+            if sender.client_count() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        sender.send_web(Patch {
+            table: make_dummy_jump_table(),
+            dylib_bytes: Arc::new(b"\0asm\x01\0\0\0".to_vec()),
+        });
+        sender.send(Patch {
+            table: make_dummy_jump_table(),
+            dylib_bytes: Arc::new(b"native library".to_vec()),
+        });
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), native.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame else {
+            panic!("missing native patch")
+        };
+        assert_eq!(decode_patch_frame(&bytes).1, b"native library");
     }
 
     #[test]
@@ -1437,7 +1790,6 @@ mod tests {
 
     #[tokio::test]
     async fn trace_server_enables_tracing_on_the_authenticated_client() {
-        use futures_util::{SinkExt, StreamExt};
         use tokio_tungstenite::tungstenite::Message as TMsg;
 
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
@@ -1447,9 +1799,7 @@ mod tests {
                 .expect("serve");
         let mut client = connect(addr).await;
         client
-            .send(TMsg::Text(
-                r#"{"kind":"hello","aslr_reference":1,"token":"s3kret"}"#.into(),
-            ))
+            .send(TMsg::Text(r#"{"kind":"hello","aslr_reference":1}"#.into()))
             .await
             .expect("send hello");
         let reply = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
@@ -1464,8 +1814,8 @@ mod tests {
     async fn browser_mode_hello_cannot_choose_the_aslr_reference() {
         use tokio_tungstenite::tungstenite::Message as TMsg;
 
-        let (sender, addr) = spawn_test_server(None).await;
-        let mut client = connect(addr).await;
+        let (sender, addr) = spawn_test_server_with_token(None).await;
+        let mut client = browser_connect(addr).await;
         client
             .send(TMsg::Text(
                 r#"{"kind":"hello","aslr_reference":3735928559}"#.into(),

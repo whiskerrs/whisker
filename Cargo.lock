@@ -5029,6 +5029,7 @@ dependencies = [
  "whisker-cng",
  "whisker-config",
  "whisker-credentials",
+ "whisker-dev-protocol",
  "whisker-dev-server",
  "whisker-fmt",
  "whisker-submit",
@@ -5080,6 +5081,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-dev-protocol"
+version = "0.18.1"
+dependencies = [
+ "hmac 0.12.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "whisker-dev-runtime"
 version = "0.18.1"
 dependencies = [
@@ -5090,6 +5102,8 @@ dependencies = [
  "subsecond-types",
  "tokio",
  "tokio-tungstenite 0.21.0",
+ "whisker-dev-protocol",
+ "whisker-dev-server",
  "whisker-runtime",
  "whisker-subsecond",
 ]
@@ -5120,6 +5134,7 @@ dependencies = [
  "walrus 0.23.3",
  "wasmparser 0.235.0",
  "whisker-build",
+ "whisker-dev-protocol",
 ]
 
 [[package]]
