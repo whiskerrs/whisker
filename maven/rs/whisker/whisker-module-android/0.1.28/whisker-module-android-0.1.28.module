@@ -1,0 +1,137 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "rs.whisker",
+    "module": "whisker-module-android",
+    "version": "0.1.28",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.10.2"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.core",
+          "module": "core-ktx",
+          "version": {
+            "requires": "1.13.1"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "whisker-module-android-0.1.28.aar",
+          "url": "whisker-module-android-0.1.28.aar",
+          "size": 276153,
+          "sha512": "bdcd992ea4ca1726df9e63102b79baf935fbcb67d1ead34b81873b1b6fcbcac2b1a81985d0d9cbf87ca45286e88f05f63df09c55365ca11984aa495d8e993505",
+          "sha256": "baeef3c38880e63738eefa585b28b9652b9c22c70b5cbca788bd10e67aff69fb",
+          "sha1": "0fba7752fe1d5b9c3fc3ff934ee504bc599d034d",
+          "md5": "1a5bc0ee38a3199f097c50e72a09c8c4"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.swiperefreshlayout",
+          "module": "swiperefreshlayout",
+          "version": {
+            "requires": "1.1.0"
+          }
+        },
+        {
+          "group": "androidx.core",
+          "module": "core-ktx",
+          "version": {
+            "requires": "1.13.1"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "whisker-module-android-0.1.28.aar",
+          "url": "whisker-module-android-0.1.28.aar",
+          "size": 276153,
+          "sha512": "bdcd992ea4ca1726df9e63102b79baf935fbcb67d1ead34b81873b1b6fcbcac2b1a81985d0d9cbf87ca45286e88f05f63df09c55365ca11984aa495d8e993505",
+          "sha256": "baeef3c38880e63738eefa585b28b9652b9c22c70b5cbca788bd10e67aff69fb",
+          "sha1": "0fba7752fe1d5b9c3fc3ff934ee504bc599d034d",
+          "md5": "1a5bc0ee38a3199f097c50e72a09c8c4"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "whisker-module-android-0.1.28-sources.jar",
+          "url": "whisker-module-android-0.1.28-sources.jar",
+          "size": 53542,
+          "sha512": "0615150e47578de49d898b5f486dc1648cd02ae28a4432b1ca3f7a0b73bb770965b4d9274f34b1f0c650ad6e360670e37a8ef4f59d76beda437a29e7d510cab5",
+          "sha256": "82298ef106a67629275563875b12483a8efefe90b9d6e1f68a8b99b96d9e4b72",
+          "sha1": "4017c6ac2a4e1f9c0a239f0097efabcb1b7dac5e",
+          "md5": "9cc11142d8116e704dd4457909eab4c3"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseJavaDocPublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "javadoc",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "whisker-module-android-0.1.28-javadoc.jar",
+          "url": "whisker-module-android-0.1.28-javadoc.jar",
+          "size": 691062,
+          "sha512": "d4ca70504e88a635a0a6a291d784d1bda723d1be163126cc3a09668e3170774431aca596232778bc4214e36a765b1df4eee81c21ecd7b1ed9f115188a41cf1b7",
+          "sha256": "1a8f366189d697b5254cbe7e341c7a76484d7d85ccd69642bb5e4ebdd13de5ee",
+          "sha1": "3f829b464ced70c8cc731b42302a0ed9006910ee",
+          "md5": "02864ecb910ad15e78d7cfa88555ab10"
+        }
+      ]
+    }
+  ]
+}
