@@ -316,6 +316,7 @@ The tooling has a different lifetime from the shipped UI runtime:
 | [`whisker-cng`](../crates/whisker-cng/) and [`whisker-plugin`](../crates/whisker-plugin/) | Discover modules, build and apply plugins, and generate platform projects |
 | [`whisker-build`](../crates/whisker-build/) | Compiles and packages application artifacts with the target toolchain |
 | [`whisker-dev-server`](../crates/whisker-dev-server/) | Coordinates the native development session, watching, patch delivery, and reload commands |
+| [`whisker-dev-protocol`](../crates/whisker-dev-protocol/) | Authenticates the development channel between `whisker-dev-server` and the app's `whisker-dev-runtime` |
 
 `whisker run` generates the target project, builds and launches it, then watches
 for changes. Hot Reload compiles eligible Rust edits into patches and applies
