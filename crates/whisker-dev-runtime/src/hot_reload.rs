@@ -2,8 +2,11 @@
 //!
 //! Connection direction is **device → host**: a Whisker app running on
 //! a device / emulator / simulator opens a WebSocket to the host
-//! running `whisker run`. The host pushes patches as *binary* frames
-//! laid out as:
+//! running `whisker run`. Before anything else, both peers prove they
+//! hold the session secret `whisker run` provisioned for this launch
+//! (see [`whisker_dev_protocol`]); until the server has proven it, the
+//! receiver reads at most a few KiB. Every later message is an
+//! authenticated envelope. Patch envelopes carry:
 //!
 //! ```text
 //! [8 bytes: u64 BE — JSON header length]
@@ -21,10 +24,11 @@
 //!
 //! The receiver retries on disconnect with a small backoff so a
 //! `whisker run` restart on the host doesn't require restarting the
-//! app on the device.
+//! app on the device. Authentication and protocol failures are written
+//! to stderr once per distinct reason; an unreachable server is not.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
@@ -311,22 +315,189 @@ pub fn start_receiver() {
         .expect("spawn whisker-hot-reload thread");
 }
 
-async fn client_loop(addr: String) {
-    use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+/// Bytes the receiver reads before the server has proven the session secret.
+///
+/// Covers the HTTP upgrade response plus one server-proof message. The
+/// WebSocket's own [`whisker_dev_protocol::MAX_MESSAGE`] limit only applies
+/// once the server is authenticated, so an unauthenticated peer can't make
+/// the device buffer a large message.
+const HANDSHAKE_READ_BUDGET: usize = 2 * whisker_dev_protocol::MAX_HANDSHAKE;
 
-    let url = format!("ws://{addr}/whisker-dev");
-    let ws_config = WebSocketConfig {
-        max_frame_size: Some(crate::auth::MAX_MESSAGE),
-        max_message_size: Some(crate::auth::MAX_MESSAGE),
-        ..Default::default()
-    };
+/// How a connection attempt ended, deciding what (if anything) is logged.
+#[derive(Debug)]
+enum SessionEnd {
+    /// Nothing accepted the TCP connection: `whisker run` isn't running.
+    Unreachable,
+    /// An authenticated session ended because the connection closed.
+    Closed,
+    /// The peer failed authentication or broke the protocol.
+    Rejected(String),
+}
+
+/// Turns session outcomes into stderr lines, once per distinct reason.
+///
+/// A stale app retries every 2 s; repeating the same reason would flood
+/// logcat / syslog, which is where stderr ends up via `log_capture`.
+#[derive(Default)]
+struct FailureLog {
+    last: Option<String>,
+}
+
+impl FailureLog {
+    fn observe(&mut self, end: SessionEnd) -> Option<String> {
+        match end {
+            SessionEnd::Unreachable => None,
+            SessionEnd::Closed => {
+                self.last = None;
+                None
+            }
+            SessionEnd::Rejected(reason) => {
+                if self.last.as_deref() == Some(reason.as_str()) {
+                    return None;
+                }
+                let line = format!("whisker hot-reload: {reason}");
+                self.last = Some(reason);
+                Some(line)
+            }
+        }
+    }
+}
+
+async fn client_loop(addr: String) {
+    let mut failures = FailureLog::default();
     loop {
-        if let Ok((ws, _)) =
-            tokio_tungstenite::connect_async_with_config(&url, Some(ws_config), false).await
-        {
-            let _ = handle_session(ws).await;
+        let end = match dev_token() {
+            Some(secret) => connect_and_serve(&addr, &secret, handle_patch_frame).await,
+            None => SessionEnd::Rejected(
+                "no development session secret was provisioned; launch the app with \
+                 `whisker run` to enable native hot reload"
+                    .into(),
+            ),
+        };
+        if let Some(line) = failures.observe(end) {
+            eprintln!("{line}");
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+async fn connect_and_serve(addr: &str, secret: &str, on_patch: impl FnMut(&[u8])) -> SessionEnd {
+    use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+
+    let Ok(stream) = tokio::net::TcpStream::connect(addr).await else {
+        return SessionEnd::Unreachable;
+    };
+    let budget = ReadBudget::new(HANDSHAKE_READ_BUDGET);
+    let config = WebSocketConfig {
+        max_frame_size: Some(whisker_dev_protocol::MAX_MESSAGE),
+        max_message_size: Some(whisker_dev_protocol::MAX_MESSAGE),
+        ..Default::default()
+    };
+    let ws = match tokio_tungstenite::client_async_with_config(
+        format!("ws://{addr}/whisker-dev"),
+        BudgetedStream::new(stream, budget.clone()),
+        Some(config),
+    )
+    .await
+    {
+        Ok((ws, _)) => ws,
+        Err(error) => {
+            return SessionEnd::Rejected(format!(
+                "could not open the development WebSocket at {addr}: {error}"
+            ));
+        }
+    };
+    handle_session(
+        ws,
+        &budget,
+        secret,
+        whisker_dev_protocol::HANDSHAKE_TIMEOUT,
+        on_patch,
+    )
+    .await
+}
+
+/// Shared cap on how many more bytes a [`BudgetedStream`] may read.
+#[derive(Clone)]
+struct ReadBudget(std::sync::Arc<AtomicUsize>);
+
+impl ReadBudget {
+    const UNLIMITED: usize = usize::MAX;
+
+    fn new(limit: usize) -> Self {
+        Self(std::sync::Arc::new(AtomicUsize::new(limit)))
+    }
+
+    fn lift(&self) {
+        self.0.store(Self::UNLIMITED, Ordering::Release);
+    }
+}
+
+/// Transport adapter that fails reads beyond a [`ReadBudget`].
+///
+/// tokio-tungstenite 0.21 fixes its message limits when the WebSocket is
+/// created, so the pre-authentication limit is enforced one layer below it.
+struct BudgetedStream<S> {
+    inner: S,
+    budget: ReadBudget,
+}
+
+impl<S> BudgetedStream<S> {
+    fn new(inner: S, budget: ReadBudget) -> Self {
+        Self { inner, budget }
+    }
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for BudgetedStream<S> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        let remaining = this.budget.0.load(Ordering::Acquire);
+        if remaining == ReadBudget::UNLIMITED {
+            return std::pin::Pin::new(&mut this.inner).poll_read(cx, buf);
+        }
+        if remaining == 0 {
+            return std::task::Poll::Ready(Err(std::io::Error::other(format!(
+                "development server sent more than {HANDSHAKE_READ_BUDGET} bytes before \
+                 authenticating"
+            ))));
+        }
+        let limit = remaining.min(buf.remaining());
+        let read = {
+            let mut limited = tokio::io::ReadBuf::new(buf.initialize_unfilled_to(limit));
+            std::task::ready!(std::pin::Pin::new(&mut this.inner).poll_read(cx, &mut limited))?;
+            limited.filled().len()
+        };
+        buf.advance(read);
+        this.budget.0.store(remaining - read, Ordering::Release);
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for BudgetedStream<S> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
     }
 }
 
@@ -379,66 +550,119 @@ fn android_system_property(name: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-async fn authenticate_socket<S>(
-    ws: &mut tokio_tungstenite::WebSocketStream<S>,
-    token: &str,
-) -> Result<crate::auth::Session, Box<dyn std::error::Error + Send + Sync>>
+/// Next text message during the handshake, skipping control frames.
+async fn next_text<S>(ws: &mut tokio_tungstenite::WebSocketStream<S>) -> Result<String, String>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    use futures_util::{SinkExt, StreamExt};
+    use futures_util::StreamExt;
     use tokio_tungstenite::tungstenite::Message;
-    let client_nonce = crate::auth::nonce()?;
-    let handshake = async {
-        ws.send(Message::Text(serde_json::to_string(
-            &crate::auth::Challenge {
-                version: 1,
-                nonce: client_nonce,
-            },
-        )?))
-        .await?;
-        let Some(Ok(Message::Text(text))) = ws.next().await else {
-            return Err("missing server proof".into());
-        };
-        if text.len() > crate::auth::MAX_HANDSHAKE {
-            return Err("server proof too large".into());
+    loop {
+        match ws.next().await {
+            Some(Ok(Message::Text(text))) => return Ok(text),
+            Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
+            Some(Ok(Message::Binary(_))) => {
+                return Err("the server sent a binary message during authentication".into());
+            }
+            Some(Ok(Message::Close(_))) | None => {
+                return Err("the server closed the connection during authentication".into());
+            }
+            Some(Err(error)) => return Err(error.to_string()),
         }
-        let server: crate::auth::ServerProof = serde_json::from_str(&text)?;
-        if !crate::auth::verify_proof(token, true, &client_nonce, &server.nonce, &server.mac) {
-            return Err("invalid development server proof".into());
-        }
-        let proof = crate::auth::ClientProof {
-            mac: crate::auth::proof(token, false, &client_nonce, &server.nonce),
-        };
-        ws.send(Message::Text(serde_json::to_string(&proof)?))
-            .await?;
-        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(crate::auth::Session::new(
-            token.to_owned(),
-            client_nonce,
-            server.nonce,
-            false,
-        ))
-    };
-    tokio::time::timeout(Duration::from_secs(5), handshake).await?
+    }
+}
+
+async fn authenticate<S>(
+    ws: &mut tokio_tungstenite::WebSocketStream<S>,
+    secret: &str,
+) -> Result<whisker_dev_protocol::Session, String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+    let (handshake, challenge) =
+        whisker_dev_protocol::ClientHandshake::start(secret).map_err(|error| error.to_string())?;
+    ws.send(Message::Text(challenge))
+        .await
+        .map_err(|error| error.to_string())?;
+    let server_proof = next_text(ws).await?;
+    let (session, client_proof) = handshake
+        .finish(&server_proof)
+        .map_err(|error| error.to_string())?;
+    ws.send(Message::Text(client_proof))
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(session)
+}
+
+/// Why an authenticated session stopped.
+enum Failure {
+    /// The connection dropped; expected when `whisker run` exits.
+    Transport,
+    /// The server broke the authenticated protocol.
+    Protocol(String),
+}
+
+impl From<tokio_tungstenite::tungstenite::Error> for Failure {
+    fn from(_: tokio_tungstenite::tungstenite::Error) -> Self {
+        Self::Transport
+    }
+}
+
+impl From<whisker_dev_protocol::Error> for Failure {
+    fn from(error: whisker_dev_protocol::Error) -> Self {
+        Self::Protocol(error.to_string())
+    }
 }
 
 async fn handle_session<S>(
-    mut ws: tokio_tungstenite::WebSocketStream<S>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    mut ws: tokio_tungstenite::WebSocketStream<BudgetedStream<S>>,
+    budget: &ReadBudget,
+    secret: &str,
+    handshake_timeout: Duration,
+    mut on_patch: impl FnMut(&[u8]),
+) -> SessionEnd
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let mut session = match tokio::time::timeout(handshake_timeout, authenticate(&mut ws, secret))
+        .await
+    {
+        Ok(Ok(session)) => session,
+        Ok(Err(reason)) => return SessionEnd::Rejected(format!("authentication failed: {reason}")),
+        Err(_) => {
+            return SessionEnd::Rejected(format!(
+                "authentication did not finish within {handshake_timeout:?}"
+            ));
+        }
+    };
+    // The server sends nothing after its proof until it has verified ours,
+    // so every byte read so far belonged to the handshake and nothing is
+    // buffered past it when the cap is lifted.
+    budget.lift();
+    match serve_session(&mut ws, &mut session, &mut on_patch).await {
+        Ok(()) | Err(Failure::Transport) => SessionEnd::Closed,
+        Err(Failure::Protocol(reason)) => SessionEnd::Rejected(reason),
+    }
+}
+
+async fn serve_session<S>(
+    ws: &mut tokio_tungstenite::WebSocketStream<S>,
+    session: &mut whisker_dev_protocol::Session,
+    on_patch: &mut impl FnMut(&[u8]),
+) -> Result<(), Failure>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
+    use whisker_dev_protocol::FrameKind;
 
-    let token = dev_token()
-        .filter(|token| !token.is_empty())
-        .ok_or("missing development authentication secret")?;
-    let mut session = authenticate_socket(&mut ws, &token).await?;
     let hello = serde_json::json!({ "kind": "hello", "aslr_reference": device_aslr_reference() })
         .to_string();
     ws.send(Message::Binary(
-        session.seal(crate::auth::TEXT, hello.as_bytes())?,
+        session.seal(FrameKind::Text, hello.as_bytes())?,
     ))
     .await?;
 
@@ -448,7 +672,7 @@ where
             _ = trace_flush.tick() => {
                 let frames = crate::trace::take();
                 if !frames.is_empty() {
-                    ws.send(Message::Binary(session.seal(crate::auth::TEXT, crate::trace::encode(&frames).as_bytes())?)).await?;
+                    ws.send(Message::Binary(session.seal(FrameKind::Text, crate::trace::encode(&frames).as_bytes())?)).await?;
                 }
             }
             // device → host: forward captured stdout/stderr lines,
@@ -462,7 +686,7 @@ where
                         "ts_micros": line.ts_micros.to_string(),
                     })
                     .to_string();
-                    ws.send(Message::Binary(session.seal(crate::auth::TEXT, frame.as_bytes())?)).await?;
+                    ws.send(Message::Binary(session.seal(FrameKind::Text, frame.as_bytes())?)).await?;
                 }
             }
             // host → device: patches + close.
@@ -470,13 +694,20 @@ where
                 let Some(msg) = msg else { return Ok(()); };
                 match msg? {
                     Message::Binary(bytes) => match session.open(&bytes)? {
-                        (crate::auth::PATCH, payload) => handle_patch_frame(payload),
-                        (crate::auth::TEXT, payload) => handle_control_frame(std::str::from_utf8(payload)?),
-                        _ => return Err("unsupported development frame type".into()),
+                        (FrameKind::Patch, payload) => on_patch(payload),
+                        (FrameKind::Text, payload) => handle_control_frame(
+                            std::str::from_utf8(payload).map_err(|_| {
+                                Failure::Protocol("development control message is not UTF-8".into())
+                            })?,
+                        ),
                     },
-                    Message::Text(_) => return Err("unauthenticated development frame".into()),
+                    Message::Text(_) => {
+                        return Err(Failure::Protocol(
+                            "the server sent an unauthenticated text message".into(),
+                        ));
+                    }
                     Message::Close(_) => return Ok(()),
-                    _ => {}
+                    Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
                 }
             }
         }
@@ -528,18 +759,18 @@ fn materialise_patch_dylib(
     use std::io::Write;
     let base = patch_cache_dir().ok_or("could not resolve a writable patch cache")?;
     std::fs::create_dir_all(&base)?;
-    let suffix: String = crate::auth::nonce()?
+    let suffix: String = whisker_dev_protocol::random_bytes::<16>()?
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
     let dir = base.join(format!("whisker-patch-{suffix}"));
-    let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
+        std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
     }
-    builder.create(&dir)?;
+    #[cfg(not(unix))]
+    std::fs::DirBuilder::new().create(&dir)?;
     let extension = if cfg!(target_os = "windows") {
         "dll"
     } else if cfg!(any(target_os = "macos", target_os = "ios")) {
@@ -559,9 +790,10 @@ fn materialise_patch_dylib(
     Ok(path)
 }
 
-/// Resolve a writable, dlopen-able directory for patch dylibs: on
-/// Android `/data/data/<package>/cache/` (package
-/// name from `/proc/self/cmdline`), elsewhere `$TMPDIR/whisker-patches/`.
+/// Resolve a writable, dlopen-able base directory for patch dylibs: on
+/// Android `/data/data/<package>/cache/` (package name from
+/// `/proc/self/cmdline`), elsewhere `$TMPDIR`. Each patch gets its own
+/// random `whisker-patch-<hex>/` directory below it.
 fn patch_cache_dir() -> Option<std::path::PathBuf> {
     #[cfg(target_os = "android")]
     {
@@ -634,7 +866,7 @@ fn parse_patch_frame(
     }
     let json_len = usize::try_from(u64::from_be_bytes(bytes[..8].try_into().unwrap()))
         .map_err(|_| "patch header length overflow")?;
-    if json_len > crate::auth::MAX_CONTROL {
+    if json_len > whisker_dev_protocol::MAX_CONTROL {
         return Err("patch metadata exceeds size limit".into());
     }
     let header_end = 8usize.checked_add(json_len).ok_or("json_len overflow")?;
@@ -781,35 +1013,311 @@ mod tests {
         assert!(parse_patch_frame(&frame).is_err());
     }
 
-    #[tokio::test]
-    async fn receiver_rejects_a_substituted_server_without_disclosing_the_secret() {
+    mod session {
+        use super::super::*;
         use futures_util::{SinkExt, StreamExt};
+        use tokio::io::DuplexStream;
+        use tokio_tungstenite::WebSocketStream;
         use tokio_tungstenite::tungstenite::{Message, protocol::Role};
-        let (left, right) = tokio::io::duplex(8192);
-        let mut client =
-            tokio_tungstenite::WebSocketStream::from_raw_socket(left, Role::Client, None).await;
-        let mut server =
-            tokio_tungstenite::WebSocketStream::from_raw_socket(right, Role::Server, None).await;
-        let spoof = async {
-            let Message::Text(challenge) = server.next().await.unwrap().unwrap() else {
-                panic!("missing challenge");
+        use whisker_dev_protocol::{FrameKind, ServerHandshake, Session};
+
+        const SECRET: &str = "test-secret";
+
+        type Client = WebSocketStream<BudgetedStream<DuplexStream>>;
+        type Server = WebSocketStream<DuplexStream>;
+
+        async fn pair() -> (Client, ReadBudget, Server) {
+            let (left, right) = tokio::io::duplex(256 * 1024);
+            let budget = ReadBudget::new(HANDSHAKE_READ_BUDGET);
+            let client = WebSocketStream::from_raw_socket(
+                BudgetedStream::new(left, budget.clone()),
+                Role::Client,
+                None,
+            )
+            .await;
+            let server = WebSocketStream::from_raw_socket(right, Role::Server, None).await;
+            (client, budget, server)
+        }
+
+        async fn text(server: &mut Server) -> String {
+            loop {
+                match server.next().await.unwrap().unwrap() {
+                    Message::Text(text) => return text,
+                    Message::Ping(_) | Message::Pong(_) => {}
+                    other => panic!("expected a text message, got {other:?}"),
+                }
+            }
+        }
+
+        /// Answer the receiver's handshake like the dev server and consume its hello.
+        async fn accept(server: &mut Server, secret: &str) -> Session {
+            let (handshake, proof) = ServerHandshake::respond(secret, &text(server).await).unwrap();
+            server.send(Message::Text(proof)).await.unwrap();
+            let mut session = handshake.finish(&text(server).await).unwrap();
+            let Message::Binary(hello) = server.next().await.unwrap().unwrap() else {
+                panic!("missing hello");
             };
-            assert!(!challenge.contains("test-secret"));
-            let challenge: crate::auth::Challenge = serde_json::from_str(&challenge).unwrap();
-            assert_eq!(challenge.version, 1);
-            server
-                .send(Message::Text(
-                    serde_json::to_string(&crate::auth::ServerProof {
-                        nonce: [0; 32],
-                        mac: [0; 32],
-                    })
-                    .unwrap(),
-                ))
-                .await
-                .unwrap();
-        };
-        let (result, ()) = tokio::join!(authenticate_socket(&mut client, "test-secret"), spoof);
-        assert!(result.is_err());
+            let (kind, payload) = session.open(&hello).unwrap();
+            assert_eq!(kind, FrameKind::Text);
+            assert!(
+                std::str::from_utf8(payload)
+                    .unwrap()
+                    .contains("aslr_reference")
+            );
+            session
+        }
+
+        /// Wait for the receiver to hang up, failing if it sends any data.
+        async fn expect_hangup(server: &mut Server) {
+            while let Some(Ok(message)) = server.next().await {
+                assert!(
+                    matches!(message, Message::Close(_)),
+                    "receiver sent {message:?} after rejecting the server"
+                );
+            }
+        }
+
+        async fn run(
+            client: Client,
+            budget: &ReadBudget,
+            patches: &mut Vec<Vec<u8>>,
+        ) -> SessionEnd {
+            handle_session(client, budget, SECRET, Duration::from_secs(5), |patch| {
+                patches.push(patch.to_vec())
+            })
+            .await
+        }
+
+        fn rejected(end: SessionEnd) -> String {
+            match end {
+                SessionEnd::Rejected(reason) => reason,
+                other => panic!("expected a rejection, got {other:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn substituted_server_learns_nothing() {
+            let (client, budget, mut server) = pair().await;
+            let mut patches = Vec::new();
+            let spoof = async {
+                let challenge = text(&mut server).await;
+                assert!(!challenge.contains(SECRET));
+                let forged = format!(r#"{{"nonce":{:?},"mac":{:?}}}"#, [0u8; 32], [0u8; 32]);
+                server.send(Message::Text(forged)).await.unwrap();
+            };
+            let (end, ()) = tokio::join!(run(client, &budget, &mut patches), spoof);
+            assert!(rejected(end).contains("different `whisker run` session"));
+            expect_hangup(&mut server).await;
+        }
+
+        #[tokio::test]
+        async fn server_with_another_secret_is_rejected() {
+            let (client, budget, mut server) = pair().await;
+            let mut patches = Vec::new();
+            let other = async {
+                let (_, proof) =
+                    ServerHandshake::respond("other-secret", &text(&mut server).await).unwrap();
+                server.send(Message::Text(proof)).await.unwrap();
+            };
+            let (end, ()) = tokio::join!(run(client, &budget, &mut patches), other);
+            assert!(rejected(end).contains("does not hold this app's session secret"));
+            expect_hangup(&mut server).await;
+        }
+
+        #[tokio::test]
+        async fn ping_during_the_handshake_is_skipped_and_large_patches_arrive_after_it() {
+            let (client, budget, mut server) = pair().await;
+            let mut patches = Vec::new();
+            // Larger than the pre-authentication budget, so this also proves
+            // the budget is lifted once the server is authenticated.
+            let patch = vec![0xA5; 4 * HANDSHAKE_READ_BUDGET];
+            let host = async {
+                let challenge = text(&mut server).await;
+                server.send(Message::Ping(vec![1, 2, 3])).await.unwrap();
+                let (handshake, proof) = ServerHandshake::respond(SECRET, &challenge).unwrap();
+                server.send(Message::Text(proof)).await.unwrap();
+                let mut session = handshake.finish(&text(&mut server).await).unwrap();
+                server.next().await.unwrap().unwrap();
+                let frame = session.seal(FrameKind::Patch, &patch).unwrap();
+                server.send(Message::Binary(frame)).await.unwrap();
+                server.close(None).await.unwrap();
+            };
+            let (end, ()) = tokio::join!(run(client, &budget, &mut patches), host);
+            assert!(matches!(end, SessionEnd::Closed), "{end:?}");
+            assert_eq!(patches, [patch]);
+        }
+
+        #[tokio::test]
+        async fn modified_frame_is_rejected_before_it_reaches_the_patch_handler() {
+            let (client, budget, mut server) = pair().await;
+            let mut patches = Vec::new();
+            let host = async {
+                let mut session = accept(&mut server, SECRET).await;
+                let mut frame = session.seal(FrameKind::Patch, b"library").unwrap();
+                *frame.last_mut().unwrap() ^= 1;
+                server.send(Message::Binary(frame)).await.unwrap();
+                expect_hangup(&mut server).await;
+            };
+            let (end, ()) = tokio::join!(run(client, &budget, &mut patches), host);
+            assert_eq!(rejected(end), "development frame failed authentication");
+            assert!(patches.is_empty());
+        }
+
+        #[tokio::test]
+        async fn replayed_frame_is_rejected() {
+            let (client, budget, mut server) = pair().await;
+            let mut patches = Vec::new();
+            let host = async {
+                let mut session = accept(&mut server, SECRET).await;
+                let frame = session.seal(FrameKind::Patch, b"library").unwrap();
+                server.send(Message::Binary(frame.clone())).await.unwrap();
+                server.send(Message::Binary(frame)).await.unwrap();
+                expect_hangup(&mut server).await;
+            };
+            let (end, ()) = tokio::join!(run(client, &budget, &mut patches), host);
+            assert_eq!(rejected(end), "replayed or out-of-order development frame");
+            assert_eq!(patches, [b"library".to_vec()]);
+        }
+
+        #[tokio::test]
+        async fn unauthenticated_text_after_the_handshake_is_rejected() {
+            let (client, budget, mut server) = pair().await;
+            let mut patches = Vec::new();
+            let host = async {
+                accept(&mut server, SECRET).await;
+                server
+                    .send(Message::Text(r#"{"kind":"trace","enabled":true}"#.into()))
+                    .await
+                    .unwrap();
+                expect_hangup(&mut server).await;
+            };
+            let (end, ()) = tokio::join!(run(client, &budget, &mut patches), host);
+            assert!(rejected(end).contains("unauthenticated text message"));
+        }
+
+        #[tokio::test]
+        async fn silent_server_times_out_the_handshake() {
+            let (client, budget, mut server) = pair().await;
+            let silent = tokio::spawn(async move {
+                text(&mut server).await;
+                std::future::pending::<()>().await;
+            });
+            let end = handle_session(client, &budget, SECRET, Duration::from_millis(50), |_| {
+                panic!("no patch expected")
+            })
+            .await;
+            silent.abort();
+            assert!(rejected(end).contains("did not finish within"));
+        }
+
+        #[tokio::test]
+        async fn oversized_pre_authentication_message_exhausts_the_read_budget() {
+            let (client, budget, mut server) = pair().await;
+            let flood = tokio::spawn(async move {
+                text(&mut server).await;
+                let _ = server
+                    .send(Message::Text("x".repeat(HANDSHAKE_READ_BUDGET + 1)))
+                    .await;
+                std::future::pending::<()>().await;
+            });
+            let mut patches = Vec::new();
+            let end = run(client, &budget, &mut patches).await;
+            flood.abort();
+            assert!(rejected(end).contains("bytes before authenticating"));
+        }
+
+        fn dummy_patch(dylib: &[u8]) -> whisker_dev_server::Patch {
+            whisker_dev_server::Patch {
+                table: serde_json::from_str(
+                    r#"{"lib":"/tmp/p.so","map":{},"aslr_reference":0,"new_base_address":0,"ifunc_count":0}"#,
+                )
+                .unwrap(),
+                dylib_bytes: std::sync::Arc::new(dylib.to_vec()),
+            }
+        }
+
+        #[tokio::test]
+        async fn receiver_authenticates_against_the_dev_server_and_receives_its_patch() {
+            let (sender, addr, _handle) = whisker_dev_server::server::serve(
+                "127.0.0.1:0".parse().unwrap(),
+                None,
+                Some(SECRET.into()),
+                false,
+                None,
+            )
+            .await
+            .unwrap();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let addr = addr.to_string();
+            let receiver = connect_and_serve(&addr, SECRET, move |patch| {
+                tx.send(patch.to_vec()).unwrap();
+            });
+            let host = async {
+                for _ in 0..400 {
+                    if sender.latest_aslr_reference().is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                assert_eq!(sender.send(dummy_patch(b"library")), 1);
+                let frame = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let (table, dylib) = parse_patch_frame(&frame).unwrap();
+                assert_eq!(table.lib, std::path::Path::new("/tmp/p.so"));
+                assert_eq!(dylib, b"library");
+            };
+            tokio::select! {
+                end = receiver => panic!("session ended early: {end:?}"),
+                () = host => {}
+            }
+        }
+
+        #[tokio::test]
+        async fn receiver_launched_by_another_session_reports_the_stale_secret() {
+            let (sender, addr, _handle) = whisker_dev_server::server::serve(
+                "127.0.0.1:0".parse().unwrap(),
+                None,
+                Some("current-session".into()),
+                false,
+                None,
+            )
+            .await
+            .unwrap();
+            let end = connect_and_serve(&addr.to_string(), "previous-session", |_| {
+                panic!("no patch expected")
+            })
+            .await;
+            assert!(rejected(end).contains("different `whisker run` session"));
+            assert_eq!(sender.latest_aslr_reference(), None);
+        }
+
+        #[tokio::test]
+        async fn missing_server_is_unreachable_and_never_logged() {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            drop(listener);
+            let end = connect_and_serve(&addr, SECRET, |_| {}).await;
+            assert!(matches!(end, SessionEnd::Unreachable), "{end:?}");
+            assert_eq!(FailureLog::default().observe(end), None);
+        }
+
+        #[test]
+        fn repeated_failures_are_logged_once_per_reason() {
+            let mut log = FailureLog::default();
+            let stale = || SessionEnd::Rejected("stale".into());
+            assert_eq!(
+                log.observe(stale()).as_deref(),
+                Some("whisker hot-reload: stale")
+            );
+            assert_eq!(log.observe(stale()), None);
+            assert_eq!(log.observe(SessionEnd::Unreachable), None);
+            assert_eq!(log.observe(stale()), None);
+            assert!(log.observe(SessionEnd::Rejected("other".into())).is_some());
+            assert_eq!(log.observe(SessionEnd::Closed), None);
+            assert!(log.observe(stale()).is_some());
+        }
     }
 
     #[test]

@@ -5096,14 +5096,14 @@ name = "whisker-dev-runtime"
 version = "0.18.1"
 dependencies = [
  "futures-util",
- "hmac 0.12.1",
  "libc",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "subsecond-types",
  "tokio",
  "tokio-tungstenite 0.21.0",
+ "whisker-dev-protocol",
+ "whisker-dev-server",
  "whisker-runtime",
  "whisker-subsecond",
 ]

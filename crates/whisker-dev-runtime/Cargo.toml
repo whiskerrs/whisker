@@ -13,12 +13,11 @@ description = "Development-only runtime: WebSocket client + hot-reload patch rec
 
 [features]
 default = []
-auth = ["dep:hmac", "dep:sha2", "dep:serde", "dep:serde_json"]
 # Pulls in the WebSocket client + subsecond bindings. Mobile enables it
 # through `whisker-driver`; Desktop enables it directly. Release builds get
 # an empty crate.
 hot-reload = [
-    "auth",
+    "dep:whisker-dev-protocol",
     "dep:tokio",
     "dep:tokio-tungstenite",
     "dep:futures-util",
@@ -33,6 +32,7 @@ hot-reload = [
 whisker-runtime = { workspace = true }
 
 # Hot-reload-only — every dep below disappears from release builds.
+whisker-dev-protocol = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["rt", "macros", "net", "io-util", "sync", "time"] }
 tokio-tungstenite = { workspace = true, optional = true, features = ["connect"] }
 futures-util = { workspace = true, optional = true }
@@ -44,5 +44,6 @@ subsecond-types = { workspace = true, optional = true }
 # Windows keeps hot reload enabled but currently leaves log forwarding off.
 libc = { workspace = true, optional = true }
 
-hmac = { version = "=0.12.1", optional = true }
-sha2 = { version = "=0.10.9", optional = true }
+[dev-dependencies]
+# Drives the receiver against the real `whisker run` WebSocket server.
+whisker-dev-server = { workspace = true }
