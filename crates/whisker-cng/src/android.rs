@@ -709,7 +709,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 45,
+        template_version: 46,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -771,7 +771,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 45,
+            template_version: 46,
             cargo_selection: crate::CargoSelection::default(),
         }
     }
@@ -1007,7 +1007,7 @@ mod tests {
         );
         assert!(settings.contains("rs.whisker:ksp"));
         assert!(settings.contains("id(\"rs.whisker\") version \"0.1.0\""));
-        assert!(settings.contains("includeBuild(localGradlePlugin)"));
+        assert!(settings.contains("includeBuild(localGradlePlugin.path)"));
         assert!(settings.contains("userPackage = \"hello-world\""));
 
         let app_gradle = std::fs::read_to_string(out.join("app/build.gradle.kts")).unwrap();
