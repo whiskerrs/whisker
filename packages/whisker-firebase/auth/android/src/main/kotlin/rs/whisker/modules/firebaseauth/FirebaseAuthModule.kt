@@ -72,16 +72,16 @@ class FirebaseAuthModule : Module() {
                 val phoneNumber = string(args, 0)
                 val resendHandle = args.getOrNull(1)?.asString()
                 val activity = appContext.currentActivity
-                // Take the token only once the call can run, so a missing activity keeps it usable.
-                val resendToken = if (activity == null) null else resendHandle?.let { resendTokens.remove(it) }
+                val resendToken = resendHandle?.let { resendTokens[it] }
                 if (activity == null) {
                     settle(failure("missing-activity", "Phone verification needs a visible activity"))
                 } else if (resendHandle != null && resendToken == null) {
-                    settle(failure("invalid-resend-token", "The resend token is unknown or already used"))
+                    settle(failure("invalid-resend-token", "The resend token is unknown or was replaced by a newer code"))
                 } else {
                     val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
                         override fun onCodeSent(verificationId: String, token: PhoneAuthProvider.ForceResendingToken) {
                             val handle = UUID.randomUUID().toString()
+                            val older = resendTokens.keys.toList()
                             resendTokens[handle] = token
                             val sent = settle(
                                 success(
@@ -93,13 +93,17 @@ class FirebaseAuthModule : Module() {
                                     ),
                                 ),
                             )
-                            if (!sent) resendTokens.remove(handle)
+                            // Only the latest token stays usable, so a failed resend keeps its token.
+                            if (sent) older.forEach(resendTokens::remove) else resendTokens.remove(handle)
                         }
 
                         override fun onVerificationCompleted(credential: PhoneAuthCredential) {
                             val handle = UUID.randomUUID().toString()
+                            val older = verifiedPhones.keys.toList()
                             verifiedPhones[handle] = credential
-                            if (!settle(success(WhiskerValue.Map(mapOf("credential" to WhiskerValue.Str(handle)))))) {
+                            if (settle(success(WhiskerValue.Map(mapOf("credential" to WhiskerValue.Str(handle)))))) {
+                                older.forEach(verifiedPhones::remove)
+                            } else {
                                 verifiedPhones.remove(handle)
                             }
                         }
@@ -238,7 +242,7 @@ class FirebaseAuthModule : Module() {
             )
             "google.com" -> GoogleAuthProvider.getCredential(idToken, accessToken)
             "phone" -> fields["handle"]?.asString()?.let { handle ->
-                requireNotNull(verifiedPhones[handle]) { "Unknown phone credential" }
+                requireNotNull(verifiedPhones.remove(handle)) { "Unknown or already used phone credential" }
             } ?: PhoneAuthProvider.getCredential(
                 requireNotNull(fields["verification_id"]?.asString()), requireNotNull(fields["sms_code"]?.asString()),
             )

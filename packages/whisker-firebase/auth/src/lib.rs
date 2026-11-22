@@ -180,7 +180,8 @@ impl Auth {
 
     /// Send a new code to the same number with the token from [`PhoneVerification::CodeSent`].
     /// On Android, calling [`Auth::verify_phone_number`] again before the 60-second timeout
-    /// sends no new SMS; this call forces one. Each token works once.
+    /// sends no new SMS; this call forces one. Only the token from the latest `CodeSent`
+    /// works: a failed resend keeps it, and a new `CodeSent` replaces it.
     pub async fn resend_phone_code(
         &self,
         phone_number: &str,
@@ -351,13 +352,15 @@ pub enum PhoneVerification {
         verification_id: String,
         resend: ResendToken,
     },
-    /// Android verified the number without a code (instant verification or SMS auto-retrieval).
-    /// The credential is valid in this app process only.
+    /// Android verified the number without a code, by instant verification or by SMS
+    /// auto-retrieval before `CodeSent`. A code auto-retrieved after `CodeSent` is dropped, so
+    /// keep the manual code entry. The credential works once, in this app process only.
     Verified(AuthCredential),
 }
 
 /// Sends a new code with [`Auth::resend_phone_code`]. On Android it holds the SDK's
-/// `ForceResendingToken`, valid once and in this app process only. iOS has no such token,
+/// `ForceResendingToken`, valid until the next `CodeSent` and in this app process only.
+/// iOS has no such token,
 /// so there a resend is a new verification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResendToken(Option<String>);

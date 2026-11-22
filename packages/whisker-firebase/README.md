@@ -164,11 +164,11 @@ auth.sign_in_with_credential(&credential).await?;
 
 The same credential works with `link_with_credential` and `reauthenticate_with_credential`. A wrong code reports `invalid-verification-code`; a malformed number reports `invalid-phone-number`.
 
-Use `resend_phone_code` for a "Resend code" button. On Android, `verify_phone_number` for the same number before the 60-second timeout sends no new SMS; the resend token forces one. Each token works once (`invalid-resend-token` after that) and only in the current process. iOS has no resend token, so there `resend_phone_code` is a new verification.
+Use `resend_phone_code` for a "Resend code" button. On Android, `verify_phone_number` for the same number before the 60-second timeout sends no new SMS; the resend token forces one. Only the token from the latest `CodeSent` works (`invalid-resend-token` for an older one), and only in the current process. A failed resend keeps the token, so the user can retry. iOS has no resend token, so there `resend_phone_code` is a new verification.
 
 - **Console.** Enable the Phone provider. Android also needs the app's SHA-256 fingerprint in the project settings for Play Integrity.
 - **iOS.** Firebase verifies the app with a silent push when APNs is set up (upload an APNs key, as for Cloud Messaging), and otherwise with a reCAPTCHA in a browser view. Enabling `auth` runs its CNG plugin, which registers the app's encoded app ID (`app-1-…-ios-…`, read from the `GoogleService-Info.plist` that `whisker-firebase`'s `ios_config` names) as a URL scheme for the reCAPTCHA return; set `phone_url_scheme = false` to skip it.
-- **Android.** Verification needs a visible activity and fails with `missing-activity` without one. The SDK can verify a number without a code (`PhoneVerification::Verified`); that credential lives only in the current process. An auto-retrieved code that arrives after `CodeSent` is not reported, so keep the manual code entry.
+- **Android.** Verification needs a visible activity and fails with `missing-activity` without one. The SDK can verify a number without a code (`PhoneVerification::Verified`); that credential works once, and only in the current process. An auto-retrieved code that arrives after `CodeSent` is not reported, so keep the manual code entry.
 - **Testing.** Add test numbers in the console and call `auth.set_app_verification_disabled_for_testing(true)` to skip APNs, reCAPTCHA and Play Integrity on simulators and emulators. No SMS is sent for test numbers. Never ship it enabled.
 
 ## Cloud Storage
