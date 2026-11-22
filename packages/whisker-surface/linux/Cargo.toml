@@ -1,0 +1,13 @@
+[package]
+name = "whisker-surface-linux"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Linux Host implementation for whisker-surface."
+
+[target.'cfg(target_os = "linux")'.dependencies]
+whisker = { path = "../../../crates/whisker", version = "0.18.1" }
+whisker-linux = { path = "../../../platforms/linux", version = "0.18.1" }
+whisker-surface = { path = "..", version = "0.1.0" }

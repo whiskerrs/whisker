@@ -88,6 +88,11 @@ members = [
     "packages/whisker-audio/example",
     "packages/whisker-webview",
     "packages/whisker-webview/example",
+    "packages/whisker-surface",
+    "packages/whisker-surface/web",
+    "packages/whisker-surface/linux",
+    "packages/whisker-wgpu",
+    "packages/whisker-wgpu/example",
 ]
 exclude = [
     "tests/cng-module-fixture",
