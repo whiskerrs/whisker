@@ -436,7 +436,11 @@ async fn android_install_and_launch(
     // through `run_filtered` so its stdio can't bypass the TUI's
     // capture pipe and overlay the live region.
     let mut reverse_cmd = adb();
-    reverse_cmd.args(["reverse", "tcp:9876", &format!("tcp:{dev_port}")]);
+    reverse_cmd.args([
+        "reverse",
+        &format!("tcp:{}", crate::ANDROID_DEVICE_PORT),
+        &format!("tcp:{dev_port}"),
+    ]);
     let _ = run_filtered(reverse_cmd, SimctlNoise::Other).await;
 
     // Deliver the dev-session token. The app process doesn't inherit
