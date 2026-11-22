@@ -125,26 +125,40 @@ pub async fn run_link_plan(plan: &LinkPlan, linker_path: &Path, cwd: &Path) -> R
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create out dir {}", parent.display()))?;
     }
-    // Capture stderr so a failed link surfaces *why* (e.g. unresolved
-    // symbols, missing libraries) instead of just "exit 1". stdout is
-    // inherited so progress / warnings remain visible.
-    let out = tokio::process::Command::new(linker_path)
-        .args(&plan.args)
+    let mut command = tokio::process::Command::new(linker_path);
+    match &plan.response_file {
+        Some(file) => {
+            super::msvc::write_response_file(file, &plan.args)
+                .with_context(|| format!("write {}", file.display()))?;
+            command.arg(format!("@{}", file.display()));
+        }
+        None => {
+            command.args(&plan.args);
+        }
+    }
+    // Capture both streams so a failed link surfaces *why* (e.g.
+    // unresolved symbols, missing libraries) instead of just "exit 1";
+    // `link.exe` reports on stdout, the Unix drivers on stderr.
+    let out = command
+        .envs(&plan.envs)
         .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output()
         .await
         .with_context(|| format!("spawn {}", linker_path.display()))?;
     if !out.status.success() {
+        let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!(
             "linker `{}` exited {} during patch link (output={})\n\
              argv: {:?}\n\
-             stderr:\n{}",
+             output:\n{}{}",
             linker_path.display(),
             out.status,
             plan.output.display(),
             plan.args,
+            stdout.trim_end(),
             stderr.trim_end(),
         );
     }
@@ -380,6 +394,8 @@ mod tests {
         let plan = LinkPlan {
             args: vec![],
             output: nested_out.clone(),
+            envs: Default::default(),
+            response_file: None,
         };
         let res = run_link_plan(&plan, Path::new("/usr/bin/true"), &dir).await;
         assert!(res.is_err(), "true returns success but writes no file");
@@ -396,6 +412,8 @@ mod tests {
         let plan = LinkPlan {
             args: vec![],
             output: dir.join("libfoo.dylib"),
+            envs: Default::default(),
+            response_file: None,
         };
         let res = run_link_plan(&plan, Path::new("/usr/bin/false"), &dir).await;
         let err = res.unwrap_err();

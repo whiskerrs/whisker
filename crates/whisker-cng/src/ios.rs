@@ -311,7 +311,7 @@ pub fn inputs_from_with_engine(
         // Bump on any template or renderer change: it feeds the sync
         // fingerprint, and without it existing `gen/ios/` trees keep
         // their stale output.
-        template_version: 41,
+        template_version: 44,
         cargo_selection: crate::CargoSelection::default(),
     })
 }

@@ -53,6 +53,10 @@ pub struct CapturedLinkerInvocation {
     pub output: Option<String>,
     pub args: Vec<String>,
     pub timestamp_micros: u128,
+    #[serde(default)]
+    pub linker: Option<String>,
+    #[serde(default)]
+    pub envs: std::collections::BTreeMap<String, String>,
 }
 
 /// Optional linker-shim wiring for [`run_fat_build`]. Provide all
@@ -714,6 +718,8 @@ mod tests {
                 output: Some("/cargo/target/debug/deps/libfoo.dylib".into()),
                 args: s(&["-shared", "-o", "/cargo/target/debug/deps/libfoo.dylib"]),
                 timestamp_micros: 100,
+                linker: None,
+                envs: Default::default(),
             },
         );
         write_linker_inv(
@@ -722,6 +728,8 @@ mod tests {
                 output: Some("/cargo/target/debug/deps/libbar.dylib".into()),
                 args: s(&["-shared", "-o", "/cargo/target/debug/deps/libbar.dylib"]),
                 timestamp_micros: 200,
+                linker: None,
+                envs: Default::default(),
             },
         );
 
@@ -742,6 +750,8 @@ mod tests {
                 output: Some("/path/libfoo.dylib".into()),
                 args: s(&["old"]),
                 timestamp_micros: 100,
+                linker: None,
+                envs: Default::default(),
             },
         );
         write_linker_inv(
@@ -750,6 +760,8 @@ mod tests {
                 output: Some("/path/libfoo.dylib".into()),
                 args: s(&["new"]),
                 timestamp_micros: 200,
+                linker: None,
+                envs: Default::default(),
             },
         );
 
@@ -771,6 +783,8 @@ mod tests {
                 output: Some("/path/lib.dylib".into()),
                 args: vec![],
                 timestamp_micros: 1,
+                linker: None,
+                envs: Default::default(),
             },
         );
 
@@ -792,6 +806,8 @@ mod tests {
                 output: Some("/path/lib.so".into()),
                 args: vec![],
                 timestamp_micros: 1,
+                linker: None,
+                envs: Default::default(),
             },
         );
         assert_eq!(m.len(), 1);
@@ -807,6 +823,8 @@ mod tests {
                 output: Some("/path/lib.so".into()),
                 args: s(&["incumbent"]),
                 timestamp_micros: 10,
+                linker: None,
+                envs: Default::default(),
             },
         );
         keep_newest_linker(
@@ -815,6 +833,8 @@ mod tests {
                 output: Some("/path/lib.so".into()),
                 args: s(&["older"]),
                 timestamp_micros: 5,
+                linker: None,
+                envs: Default::default(),
             },
         );
         assert_eq!(m["lib.so"].args, s(&["incumbent"]));
@@ -829,6 +849,8 @@ mod tests {
                 output: None,
                 args: vec![],
                 timestamp_micros: 1,
+                linker: None,
+                envs: Default::default(),
             },
         );
         assert!(m.contains_key("_unknown"));

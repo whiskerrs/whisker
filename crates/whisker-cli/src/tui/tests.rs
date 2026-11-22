@@ -53,6 +53,7 @@ fn host_lifecycle_tracks_launch_and_connection() {
 #[test]
 fn run_quit_requests_graceful_dev_server_shutdown() {
     let mut st = s();
+    st.phase = AppPhase::Idle;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     st.command_tx = Some(tx);
 
@@ -62,6 +63,20 @@ fn run_quit_requests_graceful_dev_server_shutdown() {
     assert!(matches!(st.phase, AppPhase::Stopping));
     assert!(!st.should_quit);
     assert!(!st.force_exit);
+}
+
+#[test]
+fn run_quit_during_initial_build_cancels() {
+    let mut st = s();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    st.command_tx = Some(tx);
+    drain(&mut st, &Event::BuildingFull);
+
+    request_user_quit(&mut st);
+
+    assert!(rx.try_recv().is_err());
+    assert!(st.should_quit);
+    assert!(st.force_exit);
 }
 
 #[test]
@@ -241,7 +256,7 @@ fn structured_progress_drives_current_operation() {
     });
     assert_eq!(
         handle.snapshot().current_step.as_deref(),
-        Some("install · app-debug.apk")
+        Some("install     app-debug.apk")
     );
 
     handle.apply_progress_event(ProgressEvent::OperationFinished {
@@ -336,4 +351,61 @@ fn build_live_lines_shows_dev_server_when_set() {
         .join("");
     assert!(rendered.contains("iPhone 17 Pro"));
     assert!(rendered.contains("connected (1)"));
+}
+
+#[test]
+fn step_row_matches_the_plain_renderer_layout() {
+    let lines = render_history_item(&HistoryItem::Step {
+        kind: whisker_build::ui::OperationKind::Compile,
+        detail: "whisker-news (aarch64-linux-android)".into(),
+        summary: "up-to-date".into(),
+        status: StepStatus::Done,
+        elapsed: Duration::from_millis(112),
+    });
+    let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(
+        text,
+        format!(
+            "  ✓  compile     {:<36}  up-to-date  112ms",
+            "whisker-news (aarch64-linux-android)"
+        )
+    );
+}
+
+#[test]
+fn ready_row_has_no_detail_and_keeps_the_elapsed_column() {
+    let lines = render_history_item(&HistoryItem::Step {
+        kind: whisker_build::ui::OperationKind::Ready,
+        detail: String::new(),
+        summary: String::new(),
+        status: StepStatus::Done,
+        elapsed: Duration::from_millis(13_200),
+    });
+    let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(text, format!("  ✓  ready       {:<36}  13.2s", ""));
+}
+
+#[test]
+fn messages_share_the_step_glyph_column() {
+    let lines = render_history_item(&HistoryItem::Message {
+        level: MessageLevel::Info,
+        text: whisker_build::ui::labeled("stage", "jniLibs"),
+    });
+    let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(text, "  ·  stage       jniLibs");
+}
+
+#[test]
+fn long_rows_wrap_instead_of_truncating() {
+    let line = Line::from(vec![
+        Span::raw("abcdef"),
+        Span::styled("ghij", Style::default().fg(Color::Red)),
+    ]);
+    let rows = wrap_line_at(&line, 4);
+    let texts: Vec<String> = rows
+        .iter()
+        .map(|row| row.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+    assert_eq!(texts, ["abcd", "efgh", "ij"]);
+    assert_eq!(rows[1].spans[1].style.fg, Some(Color::Red));
 }

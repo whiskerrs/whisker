@@ -17,15 +17,15 @@
 //! ── terminal scrollback (mouse-wheel scrollable) ──────────────────
 //!   …earlier shell output…
 //!   ▶ Setup
-//!   ✓ Sync gen/ios            124ms
-//!   ▶ Initial build
+//!     ·  project     gen/ios (reused, template 41)
+//!   ▶ Build
 //!   warning: unused import: `Foo`   ← captured cargo stderr
-//!   ✓ Initial build           6.2s
-//!   ▶ Install + launch
+//!     ✓  compile     bar (aarch64-apple-ios-sim)          6.2s
+//!   ▶ Launch
 //!   …
 //! ── live region (LIVE_HEIGHT rows, redraws ~10Hz) ─────────────────
-//!    whisker run · iOS Simulator · rs.example.bar · building · 4.1s
-//!    ⠋ xcodebuild …
+//!    BUILDING  iOS Simulator · rs.example.bar · 4.1s
+//!      ⠋  xcodebuild  Bar
 //!
 //!    r  hot reload   R  full reload   o  relaunch   q  quit
 //! ──────────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use whisker_build::ui::{
-    MessageLevel, OperationOutcome, ProgressEvent, ReporterGuard, install_reporter,
+    MessageLevel, OperationKind, OperationOutcome, ProgressEvent, ReporterGuard, install_reporter,
 };
 
 /// Height of the live region in rows. The header, current step,
@@ -242,9 +242,11 @@ pub enum HistoryItem {
         status: StepStatus,
         elapsed: Duration,
     },
-    /// A completed step: "✓ Sync gen/ios       124ms".
+    /// A completed operation row.
     Step {
-        label: String,
+        kind: OperationKind,
+        detail: String,
+        summary: String,
         status: StepStatus,
         elapsed: Duration,
     },
@@ -455,7 +457,7 @@ impl TuiHandle {
         match event {
             ProgressEvent::Section(label) => self.send(HistoryItem::PhaseEnter(label)),
             ProgressEvent::OperationStarted { kind, detail } => {
-                let label = format!("{} · {detail}", kind.label());
+                let label = whisker_build::ui::labeled(kind.label(), &detail);
                 self.with(|state| {
                     if state.workflow == WorkflowKind::Build
                         && !matches!(state.phase, AppPhase::Building { .. })
@@ -470,7 +472,7 @@ impl TuiHandle {
             }
             ProgressEvent::OperationProgress { kind, message } => {
                 self.with(|state| {
-                    state.current_step = Some(format!("{} · {message}", kind.label()));
+                    state.current_step = Some(whisker_build::ui::labeled(kind.label(), message));
                 });
             }
             ProgressEvent::OperationFinished {
@@ -495,7 +497,9 @@ impl TuiHandle {
                     }
                 });
                 self.send(HistoryItem::Step {
-                    label: format!("{} · {detail}", kind.label()),
+                    kind,
+                    detail,
+                    summary,
                     status: match outcome {
                         OperationOutcome::Done => StepStatus::Done,
                         OperationOutcome::Failed => StepStatus::Failed,
@@ -578,7 +582,7 @@ pub struct Tui {
     terminal: Terminal<CrosstermBackend<OriginalStderr>>,
     live: Arc<Mutex<LiveState>>,
     rx: Receiver<HistoryItem>,
-    saved_stderr_fd: c_int,
+    redirect: StdioRedirect,
     spinner_idx: usize,
     _reporter: ReporterGuard,
 }
@@ -635,6 +639,13 @@ pub fn should_start(disabled: bool) -> bool {
 fn run_render_loop(mut tui: Tui) {
     let _ = tui.render_until_quit();
     let force_exit = tui.requires_force_exit();
+    if force_exit {
+        let _ = tui.drain_history_into_scrollback();
+        let _ = tui.insert_history(&HistoryItem::Message {
+            level: MessageLevel::Error,
+            text: "cancelled".into(),
+        });
+    }
     let _ = tui.shutdown();
     if force_exit {
         whisker_build::child_guard::kill_all();
@@ -653,51 +664,48 @@ impl Tui {
         target: String,
         bundle: String,
     ) -> Result<(Self, TuiHandle)> {
-        let (saved_stderr_fd, capture_read_fd) =
-            install_stderr_capture().context("install stderr capture")?;
-        install_terminal_cleanup_once(saved_stderr_fd);
-
-        enable_raw_mode().context("enable raw mode")?;
-        let mut original = OriginalStderr(saved_stderr_fd);
-        original.execute(cursor::Hide).context("hide cursor")?;
-
-        let backend = CrosstermBackend::new(original);
-        let terminal = Terminal::with_options(
-            backend,
-            TerminalOptions {
-                viewport: Viewport::Inline(LIVE_HEIGHT),
-            },
-        )
-        .context("create ratatui terminal (inline viewport)")?;
+        let mut redirect = StdioRedirect::install().context("install stdio capture")?;
+        install_terminal_cleanup_once(redirect.saved_stderr);
+        let capture_read_fd = redirect.capture_read;
 
         let live = Arc::new(Mutex::new(LiveState::new(workflow, target, bundle)));
         let (tx, rx) = channel::<HistoryItem>();
 
-        {
-            // stderr capture → channel. Each captured line becomes
-            // a `HistoryItem::CapturedStderr` once we've stripped
-            // ANSI escape sequences.
-            let tx = tx.clone();
-            std::thread::Builder::new()
-                .name("whisker-tui-stderr-capture".into())
-                .spawn(move || capture_reader_loop(capture_read_fd, tx))
-                .context("spawn stderr capture reader")?;
-        }
-
         let handle = TuiHandle {
             live: Arc::clone(&live),
-            tx,
+            tx: tx.clone(),
         };
         let progress_handle = handle.clone();
-        let reporter = install_reporter(move |event| progress_handle.apply_progress_event(event))
-            .context("install structured progress reporter")?;
+        let reporter = std::thread::Builder::new()
+            .name("whisker-tui-stderr-capture".into())
+            .spawn(move || capture_reader_loop(capture_read_fd, tx))
+            .context("spawn stderr capture reader")
+            .and_then(|_| {
+                install_reporter(move |event| progress_handle.apply_progress_event(event))
+                    .context("install structured progress reporter")
+            });
+        let reporter = match reporter {
+            Ok(reporter) => reporter,
+            Err(error) => {
+                redirect.restore();
+                return Err(error);
+            }
+        };
 
+        let terminal = match open_inline_terminal(redirect.saved_stderr) {
+            Ok(terminal) => terminal,
+            Err(error) => {
+                emergency_terminal_reset(redirect.saved_stderr);
+                redirect.restore();
+                return Err(error);
+            }
+        };
         Ok((
             Self {
                 terminal,
                 live,
                 rx,
-                saved_stderr_fd,
+                redirect,
                 spinner_idx: 0,
                 _reporter: reporter,
             },
@@ -765,23 +773,25 @@ impl Tui {
     fn drain_history_into_scrollback(&mut self) -> Result<()> {
         loop {
             match self.rx.try_recv() {
-                Ok(item) => {
-                    let lines = render_history_item(&item);
-                    let height = lines.len().min(u16::MAX as usize) as u16;
-                    if height == 0 {
-                        continue;
-                    }
-                    self.terminal
-                        .insert_before(height, move |buf| {
-                            write_lines_to_buffer(buf, &lines);
-                        })
-                        .context("insert history line into scrollback")?;
-                }
+                Ok(item) => self.insert_history(&item)?,
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => break,
             }
         }
         Ok(())
+    }
+
+    fn insert_history(&mut self, item: &HistoryItem) -> Result<()> {
+        let lines = render_history_item(item);
+        let height = lines.len().min(u16::MAX as usize) as u16;
+        if height == 0 {
+            return Ok(());
+        }
+        self.terminal
+            .insert_before(height, move |buf| {
+                write_lines_to_buffer(buf, &lines);
+            })
+            .context("insert history line into scrollback")
     }
 
     /// Forward a reload shortcut to the dev loop. Dropped silently
@@ -827,27 +837,20 @@ impl Tui {
         // Hand the terminal back with the cursor at column 0 of a
         // fresh row: when a libc-delivered Ctrl-C beats the `KeyEvent`
         // handler, the shell's PS1 otherwise inherits the in-flight
-        // render's cursor position. Written to the saved stderr fd,
-        // which still reaches the real terminal while STDERR_FILENO
-        // points at the capture pipe.
-        let mut original = OriginalStderr(self.saved_stderr_fd);
+        // render's cursor position.
+        let mut original = OriginalStderr(self.redirect.saved_stderr);
         let _ = original.write_all(b"\r\n");
         let _ = disable_raw_mode();
-        // Restore STDERR_FILENO to the saved fd so callers can
-        // continue to `eprintln!` after the TUI is gone; close the
-        // duplicated saved fd afterward. `Tui`'s drop order then
-        // unwinds the ratatui Terminal cleanly (hidden_cursor is
-        // already false, so Drop is a no-op).
-        unsafe {
-            libc::dup2(self.saved_stderr_fd, STDERR_FD);
-            libc::close(self.saved_stderr_fd);
-        }
+        self.redirect.restore();
         Ok(())
     }
 }
 
+/// Only an idle dev loop drains its command channel, so a quit during a
+/// build or patch cancels the in-flight children instead of waiting for them.
 fn request_user_quit(state: &mut LiveState) {
-    if state.workflow == WorkflowKind::Run {
+    let idle = matches!(state.phase, AppPhase::Idle) && state.current_step.is_none();
+    if state.workflow == WorkflowKind::Run && idle {
         if let Some(tx) = &state.command_tx {
             if tx.send(whisker_dev_server::DevCommand::Shutdown).is_ok() {
                 state.phase = AppPhase::Stopping;
@@ -863,39 +866,99 @@ fn request_user_quit(state: &mut LiveState) {
 // Stderr capture
 // ============================================================================
 
-fn install_stderr_capture() -> Result<(c_int, c_int)> {
-    let mut fds: [c_int; 2] = [-1, -1];
-    #[cfg(unix)]
-    let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
-    #[cfg(windows)]
-    let rc = unsafe { libc::pipe(fds.as_mut_ptr(), 64 * 1024, libc::O_BINARY) };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error()).context("pipe(2)");
-    }
-    let read_fd = fds[0];
-    let write_fd = fds[1];
-    let saved_fd = unsafe { libc::dup(STDERR_FD) };
-    if saved_fd == -1 {
-        let e = std::io::Error::last_os_error();
+/// Stderr redirected into the scrollback pipe while the live region owns the
+/// terminal.
+///
+/// Stdout and stdin stay on the terminal because crossterm's cursor-position
+/// query spins forever on macOS when either is redirected.
+struct StdioRedirect {
+    saved_stderr: c_int,
+    capture_read: c_int,
+}
+
+impl StdioRedirect {
+    fn install() -> Result<Self> {
+        let mut fds: [c_int; 2] = [-1, -1];
+        // SAFETY: `fds` is a writable two-element array as pipe(2) requires.
+        #[cfg(unix)]
+        let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+        // SAFETY: as above; the CRT variant also takes a buffer size and mode.
+        #[cfg(windows)]
+        let rc = unsafe { libc::pipe(fds.as_mut_ptr(), 64 * 1024, libc::O_BINARY) };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error()).context("pipe(2)");
+        }
+        let [capture_read, write_fd] = fds;
+        let mut redirect = Self {
+            saved_stderr: -1,
+            capture_read,
+        };
+        let result = redirect.redirect_all(write_fd);
+        // SAFETY: `write_fd` came from pipe(2) above and is no longer used;
+        // fd 2 holds its own duplicate.
         unsafe {
-            libc::close(read_fd);
             libc::close(write_fd);
         }
-        return Err(e).context("dup STDERR_FILENO");
-    }
-    if unsafe { libc::dup2(write_fd, STDERR_FD) } == -1 {
-        let e = std::io::Error::last_os_error();
-        unsafe {
-            libc::close(read_fd);
-            libc::close(write_fd);
-            libc::close(saved_fd);
+        if let Err(error) = result {
+            redirect.restore();
+            return Err(error);
         }
-        return Err(e).context("dup2 over STDERR_FILENO");
+        Ok(redirect)
     }
+
+    fn redirect_all(&mut self, write_fd: c_int) -> Result<()> {
+        self.saved_stderr = dup(STDERR_FD).context("dup stderr")?;
+        dup2(write_fd, STDERR_FD).context("redirect stderr")?;
+        Ok(())
+    }
+
+    /// Put the original descriptors back. Idempotent.
+    fn restore(&mut self) {
+        if self.saved_stderr >= 0 {
+            let _ = dup2(self.saved_stderr, STDERR_FD);
+            close(self.saved_stderr);
+            self.saved_stderr = -1;
+        }
+    }
+}
+
+fn dup(fd: c_int) -> std::io::Result<c_int> {
+    // SAFETY: dup(2) only reads the descriptor table.
+    let new = unsafe { libc::dup(fd) };
+    if new == -1 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(new)
+    }
+}
+
+fn dup2(from: c_int, to: c_int) -> std::io::Result<()> {
+    // SAFETY: dup2(2) only rewires the descriptor table.
+    if unsafe { libc::dup2(from, to) } == -1 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+fn close(fd: c_int) {
+    // SAFETY: callers pass a descriptor this module owns exactly once.
     unsafe {
-        libc::close(write_fd);
+        libc::close(fd);
     }
-    Ok((saved_fd, read_fd))
+}
+
+fn open_inline_terminal(saved_stderr: c_int) -> Result<Terminal<CrosstermBackend<OriginalStderr>>> {
+    enable_raw_mode().context("enable raw mode")?;
+    let mut original = OriginalStderr(saved_stderr);
+    original.execute(cursor::Hide).context("hide cursor")?;
+    Terminal::with_options(
+        CrosstermBackend::new(original),
+        TerminalOptions {
+            viewport: Viewport::Inline(LIVE_HEIGHT),
+        },
+    )
+    .context("create ratatui terminal (inline viewport)")
 }
 
 fn capture_reader_loop(read_fd: c_int, tx: Sender<HistoryItem>) {

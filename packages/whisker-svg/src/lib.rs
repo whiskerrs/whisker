@@ -80,7 +80,7 @@ pub mod raster;
 pub use compile::{CompileError, Compiled, compile};
 
 #[doc(hidden)]
-pub use builder::{Color, DisplayListBuilder, Transform};
+pub use builder::{Color, DisplayListBuilder, LineCap, LineJoin, Transform};
 #[doc(hidden)]
 pub use replay::{ReplayError, TraceVisitor, Visitor, replay};
 

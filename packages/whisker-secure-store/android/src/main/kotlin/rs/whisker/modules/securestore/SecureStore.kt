@@ -83,6 +83,7 @@ internal object SecureStore {
      * SharedPreferences commit result.
      */
     fun save(key: String, value: String): Boolean {
+        require(key != KEYSET_NAME) { "reserved secure-store key" }
         val ciphertext = aead().encrypt(
             value.toByteArray(Charsets.UTF_8),
             key.toByteArray(Charsets.UTF_8),
@@ -93,6 +94,7 @@ internal object SecureStore {
 
     /** Read + decrypt [key]; `null` on miss (→ `Option::None` in Rust). */
     fun load(key: String): String? {
+        require(key != KEYSET_NAME) { "reserved secure-store key" }
         val encoded = prefs().getString(key, null) ?: return null
         val ciphertext = Base64.decode(encoded, Base64.NO_WRAP)
         val plaintext = aead().decrypt(ciphertext, key.toByteArray(Charsets.UTF_8))
@@ -101,6 +103,7 @@ internal object SecureStore {
 
     /** Drop [key]'s entry. */
     fun remove(key: String) {
+        require(key != KEYSET_NAME) { "reserved secure-store key" }
         prefs().edit().remove(key).apply()
     }
 }

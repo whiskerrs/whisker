@@ -338,14 +338,10 @@ impl LinuxApplication {
 
     /// Scrolls the innermost enabled ScrollView under `point` that can still move.
     fn scroll_at(&mut self, point: InputPoint, delta: [f32; 2]) -> bool {
-        let Some(widget) = self.surface.pick(
-            f64::from(point.x),
-            f64::from(point.y),
-            gtk::PickFlags::NON_TARGETABLE,
-        ) else {
-            return false;
-        };
-        let mut node = self.frames.node_for_widget(&widget);
+        let mut node = self
+            .surface
+            .hit_test(point.x, point.y)
+            .and_then(|widget| widget.state().id);
         while let Some(id) = node {
             let scroll = self.frames.widget(id).and_then(|widget| {
                 widget
@@ -480,13 +476,11 @@ fn translate_pointer(
 }
 
 fn update_cursor(surface: &NodeWidget, point: InputPoint) {
-    let picked = surface.pick(
-        f64::from(point.x),
-        f64::from(point.y),
-        gtk::PickFlags::NON_TARGETABLE,
-    );
-    let name = picked.and_then(|widget| {
-        with_application(|host| Ok(host.frames.cursor_for_widget(&widget)))
+    let node = surface
+        .hit_test(point.x, point.y)
+        .and_then(|widget| widget.state().id);
+    let name = node.and_then(|node| {
+        with_application(|host| Ok(host.frames.cursor_for(node)))
             .ok()
             .flatten()
     });

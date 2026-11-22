@@ -4,15 +4,12 @@
 //! and whisker-cli, which the user sees as:
 //!
 //! ```text
-//! ──── Build ────────────────────────────────────
-//!   ⏵  compile      hello-world             …
-//!   ✓  compile      hello-world             6.7s
-//!   ⏵  stage        xcframework             …
-//!   ✓  stage        xcframework             0.3s
-//!   ⚠  simctl       target already booted
-//!
-//! ──── Patch ───────────────────────────────────
-//!   ✓  patch        hot reload                  730ms
+//! ▶ Build
+//!   ✓  compile     hello-world                           up-to-date  6.7s
+//!   ·  stage       jniLibs (libhello_world.so)
+//!   ⚠  target already booted
+//! ▶ Hot Reload
+//!   ✓  hot reload  hello-world                           730ms
 //! ```
 //!
 //! ## Behaviour modes
@@ -50,6 +47,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 /// terminal output, and future editor integrations. Presentation code must
 /// not infer workflow state by parsing rendered strings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OperationKind {
     Setup,
     Compile,
@@ -62,6 +60,7 @@ pub enum OperationKind {
     Package,
     Open,
     Upload,
+    Ready,
 }
 
 impl OperationKind {
@@ -78,8 +77,45 @@ impl OperationKind {
             Self::Package => "package",
             Self::Open => "open",
             Self::Upload => "upload",
+            Self::Ready => "ready",
         }
     }
+}
+
+/// Width of the label column every renderer pads to, so step rows and
+/// labelled messages line up in one column.
+pub const LABEL_WIDTH: usize = 12;
+
+/// Width the detail column is padded to before a step's summary.
+pub const DETAIL_WIDTH: usize = 36;
+
+/// `label` padded to [`LABEL_WIDTH`], followed by `text`.
+pub fn labeled(label: &str, text: impl AsRef<str>) -> String {
+    format!("{label:<LABEL_WIDTH$}{}", text.as_ref())
+}
+
+/// Text after the glyph on a finished step row: label, detail, then summary.
+pub fn step_row(kind: OperationKind, detail: &str, summary: &str) -> String {
+    if summary.is_empty() {
+        labeled(kind.label(), detail)
+    } else {
+        labeled(kind.label(), format!("{detail:<DETAIL_WIDTH$}  {summary}"))
+    }
+}
+
+/// Environment variable a top-level workflow sets on the build tools it
+/// drives. A Whisker command running under it reports only warnings,
+/// errors and failures, because the outer workflow already shows its steps.
+pub const NESTED_ENV: &str = "WHISKER_NESTED";
+
+fn nested() -> bool {
+    static NESTED: OnceLock<bool> = OnceLock::new();
+    *NESTED.get_or_init(|| std::env::var_os(NESTED_ENV).is_some_and(|v| !v.is_empty()))
+}
+
+/// Mark `cmd` as driven by this workflow; see [`NESTED_ENV`].
+pub fn mark_nested(cmd: &mut std::process::Command) {
+    cmd.env(NESTED_ENV, "1");
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -320,7 +356,7 @@ pub fn set_status(msg: impl Into<String>) {
         }
         *guard = Some(m_for_dedupe);
     }
-    info(format!("dev-server · {m}"));
+    info(labeled("server", m));
 }
 
 /// Emit a final dev-server status line on shutdown. Like `set_status`
@@ -331,7 +367,7 @@ pub fn finish_status(final_msg: impl Into<String>) {
     if report(ProgressEvent::Status(final_msg.clone())) {
         return;
     }
-    info(format!("dev-server · {final_msg}"));
+    info(labeled("server", final_msg));
 }
 
 // ---- Section headers --------------------------------------------------
@@ -347,12 +383,12 @@ pub fn section(name: &str) {
         Mode::Verbose => {
             eprintln!("[whisker] ─── {name} ───");
         }
+        Mode::Curated if nested() => {}
         Mode::Curated => {
-            let bar_chars = "─".repeat(40usize.saturating_sub(name.len()));
             let line = if color() {
-                format!("\n\x1b[1;36m──── {name} {bar_chars}\x1b[0m")
+                format!("\x1b[36m▶\x1b[0m \x1b[1m{name}\x1b[0m")
             } else {
-                format!("\n──── {name} {bar_chars}")
+                format!("▶ {name}")
             };
             emit_above_bars(&line);
         }
@@ -434,7 +470,18 @@ impl Step {
         &self,
         cmd: &mut std::process::Command,
     ) -> std::io::Result<std::process::ExitStatus> {
-        cmd.stdout(std::process::Stdio::piped())
+        self.pipe_filtered(cmd, |_| false)
+    }
+
+    /// [`Step::pipe`] that also drops every output line `noise` accepts,
+    /// unless `WHISKER_VERBOSE` is set.
+    pub fn pipe_filtered(
+        &self,
+        cmd: &mut std::process::Command,
+        noise: fn(&str) -> bool,
+    ) -> std::io::Result<std::process::ExitStatus> {
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         let mut child = cmd.spawn()?;
         // Track the PID so build cancellation can SIGTERM cargo /
@@ -447,10 +494,12 @@ impl Step {
         let bar_stderr = self.bar.clone();
         let reported = self.reported;
         let kind = self.kind;
-        let t_out =
-            std::thread::spawn(move || stream_through_bar(stdout, bar_stdout, reported, kind));
-        let t_err =
-            std::thread::spawn(move || stream_through_bar(stderr, bar_stderr, reported, kind));
+        let t_out = std::thread::spawn(move || {
+            stream_through_bar(stdout, bar_stdout, reported, kind, noise)
+        });
+        let t_err = std::thread::spawn(move || {
+            stream_through_bar(stderr, bar_stderr, reported, kind, noise)
+        });
         let status = child.wait()?;
         let _ = t_out.join();
         let _ = t_err.join();
@@ -478,8 +527,13 @@ impl Step {
         } else {
             format!("{summary}  {elapsed}")
         };
-        let glyph = kind.glyph();
-        let line = render_step_line(glyph, self.kind.label(), &self.detail, &summary, kind);
+        if nested() && matches!(kind, StepKind::Done) && !matches!(mode(), Mode::Verbose) {
+            if let Some(bar) = self.bar {
+                bar.finish_and_clear();
+            }
+            return;
+        }
+        let line = render_step_line(self.kind, &self.detail, &summary, kind);
         if let Some(bar) = self.bar {
             // Plain `{msg}` template so the final line is exactly the
             // text built above; the live template would re-render its
@@ -513,6 +567,7 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
     bar: Option<ProgressBar>,
     reported: bool,
     kind: OperationKind,
+    noise: fn(&str) -> bool,
 ) {
     use std::io::{BufRead, BufReader};
     let Some(s) = stream else { return };
@@ -538,7 +593,7 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
         } else if !line.is_empty() {
             // Verbose keeps everything, so a real diagnostic that gets
             // misclassified as noise is still reachable.
-            if matches!(mode(), Mode::Curated) && is_subprocess_noise(&line) {
+            if matches!(mode(), Mode::Curated) && (is_subprocess_noise(&line) || noise(&line)) {
                 continue;
             }
             if reported {
@@ -659,6 +714,7 @@ fn is_subprocess_noise(line: &str) -> bool {
         "Deprecated Gradle features were used in this build",
         "You can use '--warning-mode all'",
         "For more on this, please refer to",
+        "[Incubating] Problems report is available at:",
     ];
     for prefix in GRADLE_NOISE_PREFIXES {
         if t.starts_with(prefix) {
@@ -749,7 +805,7 @@ pub fn step(kind: OperationKind, detail: impl Into<String>) -> Step {
             // position. The {msg} column already moves on every cargo
             // progress line, which is the real "still working" signal.
             bar.set_style(
-                ProgressStyle::with_template("  {spinner:.cyan} {prefix:<12} {msg:<24} …")
+                ProgressStyle::with_template("  {spinner:.cyan}  {prefix:<12}{msg} …")
                     .expect("template literal is valid"),
             );
             bar.set_prefix(name);
@@ -765,38 +821,34 @@ pub fn step(kind: OperationKind, detail: impl Into<String>) -> Step {
                 reported: false,
             }
         }
-        Mode::Curated => {
-            eprintln!("  ⏵ {name:<12} {detail}");
-            Step {
-                bar: None,
-                started_at,
-                kind,
-                detail,
-                reported: false,
-            }
-        }
+        Mode::Curated => Step {
+            bar: None,
+            started_at,
+            kind,
+            detail,
+            reported: false,
+        },
     }
 }
 
 fn render_step_line(
-    glyph: &str,
-    name: &str,
+    operation: OperationKind,
     detail: &str,
     summary: &str,
     kind: StepKind,
 ) -> String {
-    if color() {
-        let color = match kind {
-            StepKind::Done => "\x1b[32m",
-            StepKind::Fail => "\x1b[31m",
-        };
-        format!("  {color}{glyph}\x1b[0m {name:<12} {detail:<24} {summary}")
-    } else {
-        format!("  {glyph} {name:<12} {detail:<24} {summary}")
-    }
+    let color = match kind {
+        StepKind::Done => "\x1b[32m",
+        StepKind::Fail => "\x1b[31m",
+    };
+    format!(
+        "  {}  {}",
+        paint(color, kind.glyph()),
+        step_row(operation, detail, summary)
+    )
 }
 
-fn format_elapsed(d: Duration) -> String {
+pub fn format_elapsed(d: Duration) -> String {
     let ms = d.as_millis();
     if ms < 1000 {
         format!("{ms}ms")
@@ -813,6 +865,30 @@ fn format_elapsed(d: Duration) -> String {
 /// Informational line. Lower visual weight than [`step`]; use for
 /// state changes that don't have a "started → finished" arc (e.g.
 /// "watching examples/", "client connected", "patch sent").
+/// Report a step that already finished successfully after `elapsed`,
+/// without a live phase.
+pub fn completed(kind: OperationKind, detail: impl Into<String>, elapsed: Duration) {
+    let detail = detail.into();
+    if report(ProgressEvent::OperationFinished {
+        kind,
+        detail: detail.clone(),
+        outcome: OperationOutcome::Done,
+        summary: String::new(),
+        elapsed,
+    }) {
+        return;
+    }
+    if nested() && !matches!(mode(), Mode::Verbose) {
+        return;
+    }
+    emit_above_bars(&render_step_line(
+        kind,
+        &detail,
+        &format_elapsed(elapsed),
+        StepKind::Done,
+    ));
+}
+
 pub fn info(msg: impl AsRef<str>) {
     let m = msg.as_ref();
     if report(ProgressEvent::Message {
@@ -823,13 +899,8 @@ pub fn info(msg: impl AsRef<str>) {
     }
     match mode() {
         Mode::Verbose => eprintln!("[whisker] {m}"),
-        Mode::Curated => {
-            if is_tty() {
-                emit_above_bars(&format!("  {} {m}", paint("\x1b[90m", "·")));
-            } else {
-                eprintln!("  · {m}");
-            }
-        }
+        Mode::Curated if nested() => {}
+        Mode::Curated => emit_above_bars(&format!("  {}  {m}", paint("\x1b[90m", "·"))),
     }
 }
 
@@ -847,13 +918,7 @@ pub fn warn(msg: impl AsRef<str>) {
     }
     match mode() {
         Mode::Verbose => eprintln!("[whisker] warn: {m}"),
-        Mode::Curated => {
-            if is_tty() {
-                emit_above_bars(&format!("  {} {m}", paint("\x1b[33m", "⚠")));
-            } else {
-                eprintln!("  ! {m}");
-            }
-        }
+        Mode::Curated => emit_above_bars(&format!("  {}  {m}", paint("\x1b[33m", "⚠"))),
     }
 }
 
@@ -895,13 +960,7 @@ pub fn error(msg: impl AsRef<str>) {
     }
     match mode() {
         Mode::Verbose => eprintln!("[whisker] error: {m}"),
-        Mode::Curated => {
-            if is_tty() {
-                emit_above_bars(&format!("  {} {m}", paint("\x1b[31m", "✗")));
-            } else {
-                eprintln!("  X {m}");
-            }
-        }
+        Mode::Curated => emit_above_bars(&format!("  {}  {m}", paint("\x1b[31m", "✗"))),
     }
 }
 
@@ -980,12 +1039,17 @@ mod tests {
             // colored branch.
             return;
         } else {
-            render_step_line("✓", "compile", "hello-world", "6.7s", StepKind::Done)
+            render_step_line(
+                OperationKind::Compile,
+                "hello-world",
+                "6.7s",
+                StepKind::Done,
+            )
         };
-        assert!(line.contains("✓"));
-        assert!(line.contains("compile"));
-        assert!(line.contains("hello-world"));
-        assert!(line.contains("6.7s"));
+        assert_eq!(
+            line,
+            format!("  ✓  compile     {:<DETAIL_WIDTH$}  6.7s", "hello-world")
+        );
     }
 
     // ----- subprocess output classifiers ----------------------------

@@ -30,11 +30,9 @@
 //! Mirrors `dioxus-cli-0.7.9::build::patch::create_undefined_symbol_stub`.
 //! Differences:
 //!
-//! - We don't support Windows (`__imp_` prefix handling and PE32+
-//!   stubs are skipped — Whisker targets Android + iOS-sim + the
-//!   macOS / Linux host).
-//! - We only emit Text stubs; no hot-patch has needed a Data symbol
-//!   stub so far.
+//! - Besides Text stubs we only emit the `__imp_` pointers MSVC code
+//!   reads another crate's `static` through; ELF and Mach-O patches
+//!   bind Host data at load time instead.
 
 use anyhow::{Context, Result, bail};
 use object::write::{Object, StandardSection, Symbol, SymbolSection};
@@ -144,6 +142,7 @@ pub fn build_stub_for_needed(
     let (bin_fmt, endian) = match target_os {
         LinkerOs::Linux => (BinaryFormat::Elf, Endianness::Little),
         LinkerOs::Macos => (BinaryFormat::MachO, Endianness::Little),
+        LinkerOs::Windows => (BinaryFormat::Coff, Endianness::Little),
         LinkerOs::Other => bail!(
             "stub object generation: unsupported target_os {:?}",
             target_os
@@ -172,6 +171,25 @@ pub fn build_stub_for_needed(
         }
         let abs_addr = sym.address + aslr_offset;
 
+        // MSVC code reaches another crate's `static` through a pointer
+        // named `__imp_<symbol>`; holding the Host's address in it lets
+        // the patch share that `static` however far away it is loaded.
+        if bin_fmt == BinaryFormat::Coff && name.starts_with("__imp_") {
+            let pointers = obj.section_id(StandardSection::ReadOnlyData);
+            let off = obj.append_section_data(pointers, &abs_addr.to_le_bytes(), 8);
+            obj.add_symbol(Symbol {
+                name: name.as_bytes().to_vec(),
+                value: off,
+                size: 8,
+                scope: SymbolScope::Linkage,
+                kind: SymbolKind::Data,
+                weak: false,
+                section: SymbolSection::Section(pointers),
+                flags: SymbolFlags::None,
+            });
+            continue;
+        }
+
         // Only Text (= code) symbols get stubs right now. Data
         // symbols would need a different shape (pointer-sized Data
         // entry in `.data` rather than executable trampoline), and
@@ -196,7 +214,9 @@ pub fn build_stub_for_needed(
             size: code.len() as u64,
             scope: SymbolScope::Linkage,
             kind: SymbolKind::Text,
-            weak: true,
+            // The COFF writer emits a weak definition as a weak external
+            // without the record naming its target, which `link.exe` rejects.
+            weak: bin_fmt != BinaryFormat::Coff,
             section: SymbolSection::Section(text),
             flags: SymbolFlags::None,
         });
@@ -246,6 +266,60 @@ fn x86_64_jump_stub(addr: u64) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn x86_64_stub_is_an_indirect_jump_over_its_absolute_target() {
+        let code = x86_64_jump_stub(0x1122_3344_5566_7788);
+        assert_eq!(&code[..6], [0xFF, 0x25, 0, 0, 0, 0]);
+        assert_eq!(&code[6..], 0x1122_3344_5566_7788_u64.to_le_bytes());
+    }
+
+    #[test]
+    fn coff_stub_defines_strong_jumps_and_import_pointers() {
+        use crate::hotpatch::symbol_table::{SymbolInfo, SymbolTable};
+        use object::{Object as _, ObjectSection, ObjectSymbol};
+
+        let info = |address, kind| SymbolInfo {
+            address,
+            kind,
+            size: 0,
+            is_undefined: false,
+            is_weak: false,
+        };
+        let mut symbols = SymbolTable::default();
+        symbols
+            .by_name
+            .insert("host_fn".into(), info(0x1000, SymbolKind::Text));
+        symbols
+            .by_name
+            .insert("HOST_STATIC".into(), info(0x2000, SymbolKind::Data));
+        let cache = HotpatchModuleCache {
+            lib: "app.exe".into(),
+            symbols,
+            aslr_reference: 0x500,
+            architecture: Architecture::X86_64,
+            is_elf_executable: false,
+        };
+        // The program is loaded 0x7ff6_0000_0000 above its image-relative addresses.
+        let base = 0x7ff6_0000_0000_u64;
+        let needed = ["host_fn".to_string(), "__imp_HOST_STATIC".to_string()];
+        let bytes =
+            build_stub_for_needed(&needed, &cache, LinkerOs::Windows, base + 0x500).unwrap();
+
+        let file = object::File::parse(&*bytes).unwrap();
+        assert_eq!(file.format(), BinaryFormat::Coff);
+        let jump = file.symbol_by_name("host_fn").unwrap();
+        assert!(jump.is_definition() && !jump.is_weak());
+        let pointer = file.symbol_by_name("__imp_HOST_STATIC").unwrap();
+        let section = file
+            .section_by_index(pointer.section_index().unwrap())
+            .unwrap();
+        let offset = pointer.address() as usize;
+        assert_eq!(
+            section.data().unwrap()[offset..offset + 8],
+            (base + 0x2000).to_le_bytes(),
+        );
+    }
 
     #[test]
     fn arm64_stub_encodes_address_zero_as_clear_zero_movs() {

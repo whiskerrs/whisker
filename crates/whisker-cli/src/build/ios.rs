@@ -81,21 +81,19 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
         })?;
     let workspace_root = m.workspace_root.clone();
 
-    // Resolved-identity banner first — see build/android.rs for why.
-    let version = m.config.version.clone().unwrap_or_else(|| "0.1.0".into());
-    let build_number = m.config.build_number.unwrap_or(1);
     let method: ExportMethod = args.method.into();
     // Credential pre-step before native application compilation (prompt up front,
     // fail fast on key problems). `_staging` holds the decrypted .p8
     // until xcodebuild finishes.
     let (_staging, signing) = credential::require_ios_signing(&m.crate_dir, &bundle_id)?;
 
-    let build_ui = super::BuildUi::start(no_tui, "iOS", &bundle_id);
-    ui::section("Build");
-    ui::info(format!(
-        "building {bundle_id} {version} ({build_number}) — release ipa [{}]",
-        method.plist_value(),
-    ));
+    let build_ui = super::BuildUi::start(
+        no_tui,
+        &m,
+        whisker_cng::GenerationTarget::Ios,
+        &bundle_id,
+        &format!("release ipa ({})", method.plist_value()),
+    );
 
     // `Target::IosSimulator` here only selects which gen tree to
     // render — gen/ios/ is one project for simulator and device;

@@ -1,6 +1,6 @@
 [package]
 name = "whisker-keyboard"
-version = "0.14.6"
+version = "0.14.7"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -36,4 +36,4 @@ windows = { kind = "common" }
 linux = { kind = "common" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.18.0" }
+whisker = { path = "../../crates/whisker", version = "0.18.1" }

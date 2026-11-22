@@ -13,6 +13,7 @@ pub mod android_ndk;
 pub mod cache;
 pub mod jump_table;
 pub mod link_plan;
+pub mod msvc;
 pub mod patcher;
 pub mod runner;
 pub mod shim_paths;

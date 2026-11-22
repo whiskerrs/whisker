@@ -1,3 +1,4 @@
+import CoreText
 #if canImport(UIKit)
 import UIKit
 #else
@@ -58,6 +59,12 @@ final class TextMeasurementCache {
         let overflow: UInt8
         let wordBreak: UInt8
         let environmentEpoch: UInt64
+
+        func differsOnlyInWidth(from other: Input) -> Bool {
+            source == other.source && payload == other.payload && style == other.style
+                && maxLines == other.maxLines && overflow == other.overflow
+                && wordBreak == other.wordBreak && environmentEpoch == other.environmentEpoch
+        }
     }
 
     struct Plain {
@@ -65,6 +72,25 @@ final class TextMeasurementCache {
         let size: CGSize
         let firstBaseline: CGFloat
         let lastBaseline: CGFloat
+
+        /// Whether laying the same text out at `width` would break it into these same lines.
+        func holds(at width: CGFloat) -> Bool {
+            guard let layout else { return false }
+            let manager = layout.manager
+            if width <= layout.container.size.width {
+                return manager.usedRect(for: layout.container).maxX <= width
+            }
+            let glyphs = manager.glyphRange(for: layout.container)
+            guard glyphs.length > 0 else { return false }
+            var lines = 0
+            manager.enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, _, stop in
+                lines += 1
+                if lines > 1 { stop.pointee = true }
+            }
+            let shown = manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+            return lines == 1 && shown.length == layout.storage.length
+                && manager.truncatedGlyphRange(inLineFragmentForGlyphAt: NSMaxRange(glyphs) - 1).location == NSNotFound
+        }
     }
 
     struct Paragraph {
@@ -101,8 +127,39 @@ final class TextMeasurementCache {
 
     // WhiskerView empties this every frame, so a cap would only evict a large frame's own constraint passes.
     private var entries: [Key: Entry] = [:]
+    private var plainWidths: [UInt64: [CGFloat]] = [:]
 
-    func removeAll() { entries.removeAll(keepingCapacity: true) }
+    private struct ProbeKey: Hashable {
+        let input: Input
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(input.source)
+            hasher.combine(input.style.size)
+            hasher.combine(input.style.weight)
+        }
+    }
+
+    /// Min-content sizes by text and style: no node draws that layout, so one answer serves every node and frame.
+    private var probes: [ProbeKey: Plain] = [:]
+    private static let probeCapacity = 4_096
+    private var registeredFontsObserver: NSObjectProtocol?
+
+    init() {
+        // A family name registered later resolves to another font than the one a probe was measured with.
+        registeredFontsObserver = NotificationCenter.default.addObserver(
+            forName: kCTFontManagerRegisteredFontsChangedNotification as NSNotification.Name,
+            object: nil, queue: .main
+        ) { [weak self] _ in self?.probes.removeAll() }
+    }
+
+    deinit {
+        if let registeredFontsObserver { NotificationCenter.default.removeObserver(registeredFontsObserver) }
+    }
+
+    func removeAll() {
+        entries.removeAll(keepingCapacity: true)
+        plainWidths.removeAll(keepingCapacity: true)
+    }
 
     func paragraph(node: UInt64, input: Input, build: () throws -> Paragraph) rethrows -> Paragraph {
         let key = Key(node: node, width: input.width)
@@ -114,13 +171,29 @@ final class TextMeasurementCache {
         return value
     }
 
-    func plain(node: UInt64, input: Input, build: () -> Plain) -> Plain {
+    func plain(node: UInt64, input: Input, probe: Bool, build: () -> Plain) -> Plain {
         let key = Key(node: node, width: input.width)
         if let entry = entries[key], entry.input == input, case .plain(let value) = entry.value {
             return value
         }
+        if probe {
+            let probeKey = ProbeKey(input: input)
+            if let value = probes[probeKey] { return value }
+            let built = build()
+            let value = Plain(layout: nil, size: built.size, firstBaseline: built.firstBaseline, lastBaseline: built.lastBaseline)
+            if probes.count >= Self.probeCapacity { probes.removeAll(keepingCapacity: true) }
+            probes[probeKey] = value
+            return value
+        }
+        for width in plainWidths[node] ?? [] {
+            if let entry = entries[Key(node: node, width: width)], case .plain(let value) = entry.value,
+               entry.input.differsOnlyInWidth(from: input), value.holds(at: input.width) {
+                return value
+            }
+        }
         let value = build()
         insert(.plain(value), key: key, input: input)
+        plainWidths[node, default: []].append(input.width)
         return value
     }
 

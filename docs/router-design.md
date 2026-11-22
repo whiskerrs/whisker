@@ -61,7 +61,7 @@ kinds:
 | --- | --- | --- |
 | `Route` | A screen (leaf) or a layout (with children) | optional |
 | `Stack` | **Ordered** container: push/pop, has history | `Route` (+ `..spread`) |
-| `Switch` | **Parallel** container: keeps all children alive, selects one, no history | containers (one per branch) |
+| `Switch` | **Parallel** container: mounts a child when it is first selected and keeps it alive, selects one, no history | containers (one per branch) |
 
 A `Route` with both a `component` and children is a **layout route**
 (the Expo `_layout.tsx` equivalent): its component renders with an
@@ -166,6 +166,9 @@ into each tab's stack. There is no special "shared route" construct —
 spreading the same group into N stacks creates N instances of
 `/post/:id` that **share a route id** (`"post"`). Relative resolution
 (see below) picks the right instance at navigate time.
+
+Fragments may precede layout routes or appear inside them; layout chrome wraps
+the same container regardless of the number of roots each fragment contributes.
 
 ### Per-screen animation
 
