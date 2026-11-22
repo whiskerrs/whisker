@@ -709,7 +709,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 44,
+        template_version: 45,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -771,7 +771,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 44,
+            template_version: 45,
             cargo_selection: crate::CargoSelection::default(),
         }
     }
