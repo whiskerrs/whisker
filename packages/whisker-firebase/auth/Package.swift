@@ -8,7 +8,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.22"),
         .package(url: "https://github.com/firebase/firebase-ios-sdk.git", exact: "12.19.2"),
-        // Any 8.x: SwiftPM picks the one firebase-ios-sdk pins.
+        // Any 8.x, so SwiftPM resolves one copy that also meets firebase-ios-sdk's range.
         .package(url: "https://github.com/google/GoogleUtilities.git", from: "8.0.0"),
     ],
     targets: [

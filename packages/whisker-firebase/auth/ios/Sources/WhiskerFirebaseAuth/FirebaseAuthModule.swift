@@ -18,7 +18,7 @@ public final class FirebaseAuthModule: Module {
     public override func definition() -> ModuleDefinition {
         #if os(iOS)
         // Auth proxies only scenes that connect after it exists, and this runs from
-        // didFinishLaunching, before the scene connects (the reCAPTCHA returns through it).
+        // didFinishLaunching, before the scene connects.
         GULSceneDelegateSwizzler.proxyOriginalSceneDelegate()
         #endif
         return ModuleDefinition {
@@ -65,7 +65,8 @@ public final class FirebaseAuthModule: Module {
                 guard let phoneNumber = args.first?.asString else {
                     promise.resolve(Self.failure("invalid-argument", "Expected a phone number")); return
                 }
-                // Waits for Auth's phone setup on its work queue; verifying earlier fails with notification-not-forwarded.
+                // Waits for Auth's phone setup on its work queue; verifying earlier fails with
+                // notification-not-forwarded.
                 _ = Auth.auth().currentUser
                 // The reCAPTCHA fallback presents from the key window.
                 DispatchQueue.main.async {
