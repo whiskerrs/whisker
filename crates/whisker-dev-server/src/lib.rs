@@ -100,9 +100,21 @@ pub struct Config {
     pub watch_paths: Vec<PathBuf>,
     /// Address the WebSocket server binds.
     pub bind_addr: SocketAddr,
-    /// Shared secret for native mutual authentication, provisioned through the
-    /// device environment or Android system property. `None` permits browser
-    /// reloads and validated WebAssembly patches, never native libraries.
+    /// Per-session secret that gates the native patch channel.
+    ///
+    /// With `Some(secret)`, every WebSocket client must complete the
+    /// [`whisker_dev_protocol`] mutual-authentication handshake for this
+    /// secret before it can receive anything; the installer delivers the
+    /// secret to the app out of band (`WHISKER_DEV_TOKEN` in the launch
+    /// environment, or the `debug.whisker_dev_token` system property on
+    /// Android). `whisker run` generates one per session with
+    /// [`whisker_dev_protocol::generate_secret`] for every native target.
+    ///
+    /// With `None`, clients connect without authentication and are treated
+    /// as browsers: they receive reload requests and WebAssembly patches that
+    /// [`PatchSender::send_web`] validated, but never native libraries. Native
+    /// hot patching therefore requires a secret; the Web target runs without
+    /// one because the page and the socket share the dev server's origin.
     pub dev_token: Option<String>,
     /// Asks every connected app to stream [`Event::DeviceTrace`] frame timings.
     pub trace: bool,
@@ -824,6 +836,3 @@ fn prompt_full_reload(on_event: &Option<Arc<dyn Fn(Event) + Send + Sync>>, reaso
 #[cfg(test)]
 #[path = "lib/tests.rs"]
 mod tests;
-
-/// Shared authenticated development transport primitives
-pub use whisker_dev_runtime::auth;

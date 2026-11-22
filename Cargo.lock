@@ -5029,6 +5029,7 @@ dependencies = [
  "whisker-cng",
  "whisker-config",
  "whisker-credentials",
+ "whisker-dev-protocol",
  "whisker-dev-server",
  "whisker-fmt",
  "whisker-submit",
@@ -5133,7 +5134,7 @@ dependencies = [
  "walrus 0.23.3",
  "wasmparser 0.235.0",
  "whisker-build",
- "whisker-dev-runtime",
+ "whisker-dev-protocol",
 ]
 
 [[package]]
