@@ -648,7 +648,6 @@ fn run_render_loop(mut tui: Tui) {
     }
     let _ = tui.shutdown();
     if force_exit {
-        whisker_build::child_guard::kill_all();
         crate::shutdown::exit(130);
     }
 }
