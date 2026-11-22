@@ -17,6 +17,7 @@ default = []
 # through `whisker-driver`; Desktop enables it directly. Release builds get
 # an empty crate.
 hot-reload = [
+    "dep:whisker-dev-protocol",
     "dep:tokio",
     "dep:tokio-tungstenite",
     "dep:futures-util",
@@ -31,6 +32,7 @@ hot-reload = [
 whisker-runtime = { workspace = true }
 
 # Hot-reload-only — every dep below disappears from release builds.
+whisker-dev-protocol = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["rt", "macros", "net", "io-util", "sync", "time"] }
 tokio-tungstenite = { workspace = true, optional = true, features = ["connect"] }
 futures-util = { workspace = true, optional = true }
@@ -41,3 +43,7 @@ subsecond-types = { workspace = true, optional = true }
 # `pipe(2)` / `dup2` / `read` / `STDOUT_FILENO` for POSIX log capture.
 # Windows keeps hot reload enabled but currently leaves log forwarding off.
 libc = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Drives the receiver against the real `whisker run` WebSocket server.
+whisker-dev-server = { workspace = true }

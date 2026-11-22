@@ -131,7 +131,7 @@ pub fn inputs_from(
         host_sdk: None,
         minimum_system_version,
         app_icon_png,
-        template_version: 14,
+        template_version: 15,
         cargo_selection: crate::CargoSelection::default(),
     })
 }

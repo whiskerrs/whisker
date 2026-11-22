@@ -137,24 +137,9 @@ impl GtkFrameSink {
         Rc::clone(&self.feedback)
     }
 
-    /// Finds the node whose widget is `widget` or its nearest node ancestor.
-    pub(crate) fn node_for_widget(&self, widget: &gtk::Widget) -> Option<NodeId> {
-        let mut current = Some(widget.clone());
-        while let Some(widget) = current {
-            if let Some(id) = widget
-                .downcast_ref::<NodeWidget>()
-                .and_then(|node| node.state().id)
-            {
-                return Some(id);
-            }
-            current = widget.parent();
-        }
-        None
-    }
-
-    /// The nearest explicit cursor on `widget` or its node ancestors.
-    pub(crate) fn cursor_for_widget(&self, widget: &gtk::Widget) -> Option<&'static str> {
-        let mut node = self.node_for_widget(widget);
+    /// The nearest explicit cursor on `node` or its ancestors.
+    pub(crate) fn cursor_for(&self, node: NodeId) -> Option<&'static str> {
+        let mut node = Some(node);
         while let Some(id) = node {
             let cursor = self.nodes.get(&id)?.state().cursor;
             if cursor != CursorKeyword::Auto {

@@ -49,10 +49,11 @@ pub struct Installer {
     /// silently breaks hot reload (server on a custom port, device
     /// still on 9876).
     dev_port: u16,
-    /// Shared dev-session token to deliver to the device so its
-    /// `hello` is accepted by the server's auth gate. iOS gets it via
+    /// Per-session hot-reload secret ([`crate::Config::dev_token`]),
+    /// delivered out of band. iOS gets it via
     /// `SIMCTL_CHILD_WHISKER_DEV_TOKEN`; Android via
-    /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
+    /// `adb shell setprop debug.whisker_dev_token`. `None` launches the
+    /// app without one, which leaves native hot reload disabled.
     dev_token: Option<String>,
     linux: Option<LinuxParams>,
     windows: Option<WindowsParams>,
@@ -101,6 +102,10 @@ impl Installer {
     }
 
     pub async fn install_and_launch(&self) -> Result<()> {
+        // iOS opens this section itself, after the xcodebuild that runs here.
+        if !matches!(self.target, Target::IosSimulator | Target::Web) {
+            whisker_build::ui::section("Launch");
+        }
         match self.target {
             Target::Android => {
                 let p = self.android.as_ref().context(
@@ -181,17 +186,30 @@ impl Installer {
             let _ = previous.process.kill().await;
             let _ = previous.process.wait().await;
         }
+        let launch_step = whisker_build::ui::step(
+            whisker_build::ui::OperationKind::Launch,
+            executable
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        );
         let mut command = Command::new(executable);
         command
             .current_dir(executable.parent().expect("executable has a parent"))
+            .stdin(std::process::Stdio::null())
             .env("WHISKER_DEV_ADDR", format!("127.0.0.1:{}", self.dev_port))
             .kill_on_drop(true);
         if let Some(token) = &self.dev_token {
             command.env("WHISKER_DEV_TOKEN", token);
         }
-        let process = command
-            .spawn()
-            .with_context(|| format!("launch app {}", executable.display()))?;
+        let process = match command.spawn() {
+            Ok(process) => process,
+            Err(error) => {
+                launch_step.fail(error.to_string());
+                return Err(error).with_context(|| format!("launch app {}", executable.display()));
+            }
+        };
+        launch_step.done("");
         *slot = Some(HostChild {
             _exit_guard: process.id().map(whisker_build::child_guard::track),
             process,
@@ -207,6 +225,10 @@ impl Installer {
                 let params = self.android.as_ref().context(
                     "target=Android but no AndroidParams — cli must populate Config.android",
                 )?;
+                // The emulator may have rebooted or dropped the reverse
+                // since the install, and its property may hold a previous
+                // session's secret.
+                android_prepare_dev_channel(self.dev_port, self.dev_token.as_deref()).await?;
                 android_launch(params).await
             }
             Target::IosSimulator => {
@@ -229,8 +251,10 @@ impl Installer {
 /// ~70 % noise.
 async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::process::ExitStatus> {
     use tokio::io::AsyncReadExt;
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .env(whisker_build::ui::NESTED_ENV, "1");
     let mut child = cmd.spawn().context("spawn child")?;
     // Track the PID so workflow cancellation can SIGTERM an in-flight
     // xcodebuild / simctl instead of orphaning it. The guard unregisters
@@ -281,77 +305,6 @@ async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::proces
     Ok(status)
 }
 
-/// `xcodebuild`'s `-quiet` flag silences progress chatter but the
-/// underlying compiler still emits diagnostics. Framework deprecation
-/// cascades can produce hundreds of non-actionable lines on every build, so
-/// the concise UI filters warning chains while verbose mode preserves them.
-///
-/// Approach: drop anything that looks like a clang / xcodebuild
-/// warning chain — the `warning:` line, the `note:` follow-ups,
-/// the source-line listings (`  217 |`, `      |   ^`), the
-/// "in file included from" / "N warnings generated." summaries,
-/// and the `[MT] IDERunDestination` IDE chatter.
-///
-/// Real errors are preserved: lines containing `error:` /
-/// `fatal error:` / `** BUILD FAILED **` always fall through.
-fn is_benign_xcodebuild_line(raw: &str) -> bool {
-    // `--verbose` means "show me the full tool output", deprecation
-    // chain included.
-    if whisker_build::ui::is_verbose() {
-        return false;
-    }
-
-    let line = raw.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '·');
-
-    // First, so a `warning:`-prefixed error isn't suppressed below.
-    if line.starts_with("error:")
-        || line.contains(" error:")
-        || line.starts_with("fatal error:")
-        || line.starts_with("** BUILD FAILED")
-        || line.starts_with("** BUILD INTERRUPTED")
-    {
-        return false;
-    }
-
-    // `2026-05-21 18:21:52.770 xcodebuild[54160:34595363] [MT] IDERunDestination …`
-    if raw.starts_with("20") && raw.contains("xcodebuild[") && raw.contains("] [MT] ") {
-        return true;
-    }
-
-    // The xcframework command's success line.
-    if line.starts_with("xcframework successfully written out to:") {
-        return true;
-    }
-
-    // Diagnostic chain: warnings, notes, source listings, summary.
-    if line.starts_with("warning:")
-        || line.contains(" warning:")
-        || line.starts_with("note:")
-        || line.contains(" note:")
-        || line.starts_with("In file included from")
-        || line.ends_with(" warnings generated.")
-        || line.ends_with(" warning generated.")
-    {
-        return true;
-    }
-
-    // Source-line listings rendered alongside the warning chain:
-    //   `217 | #import "FrameworkHeader.h"`
-    //   `    | ^`
-    //   `56 |`        (empty source line for context)
-    // After trimming leading whitespace and ALL leading digits, the
-    // remainder always starts with `|` — trimming a single character
-    // would miss multi-digit line numbers.
-    let after_digits = line
-        .trim_start()
-        .trim_start_matches(|c: char| c.is_ascii_digit() || c.is_ascii_whitespace());
-    if after_digits.starts_with('|') {
-        return true;
-    }
-
-    false
-}
-
 /// Classifies which sub-command produced the stderr — we tune the
 /// "benign noise" set per tool because the false-positive shape
 /// differs (simctl emits NSPOSIX error preambles, xcodebuild emits
@@ -398,7 +351,7 @@ impl SimctlNoise {
                     || line.starts_with("(code=405)")
             }
             SimctlNoise::Other => false,
-            SimctlNoise::Xcodebuild => is_benign_xcodebuild_line(line),
+            SimctlNoise::Xcodebuild => whisker_build::ios::is_xcodebuild_noise(line),
             SimctlNoise::AdbInstall | SimctlNoise::AdbAmStart => false,
         }
     }
@@ -406,7 +359,8 @@ impl SimctlNoise {
     fn is_benign_stdout(&self, line: &str) -> bool {
         // `-quiet` does not fully silence xcodebuild, so its stdout needs the
         // benign filter too.
-        if matches!(self, SimctlNoise::Xcodebuild) && is_benign_xcodebuild_line(line) {
+        if matches!(self, SimctlNoise::Xcodebuild) && whisker_build::ios::is_xcodebuild_noise(line)
+        {
             return true;
         }
         match self {
@@ -443,8 +397,8 @@ fn adb_program() -> PathBuf {
 /// back, retrying on mismatch. Only the `getprop` round-trip proves
 /// the write: `adb shell` exit codes are historically unreliable, and
 /// emulator quick-boot snapshots restore a previous session's value —
-/// a silently-failed `setprop` then leaves that stale token in place
-/// and the server rejects every hello for the whole session.
+/// a silently-failed `setprop` then leaves that stale secret in place
+/// and the app fails the hot-reload handshake for the whole session.
 async fn deliver_android_dev_token(token: &str) -> bool {
     for attempt in 0..5 {
         if attempt > 0 {
@@ -466,6 +420,39 @@ async fn deliver_android_dev_token(token: &str) -> bool {
     false
 }
 
+/// Bridge the device to the dev server and hand it this session's secret.
+///
+/// Both must succeed before the app starts: its receiver dials
+/// `127.0.0.1:9876`, which only reaches `dev_port` on the host through
+/// `adb reverse` (the host side follows `--bind`), and it reads the
+/// secret once per connection attempt from `debug.whisker_dev_token`.
+/// The app process doesn't inherit adb-set environment variables, hence
+/// the system property. Every adb call goes through `run_filtered` so its
+/// stdio can't bypass the TUI's capture pipe.
+async fn android_prepare_dev_channel(dev_port: u16, dev_token: Option<&str>) -> Result<()> {
+    let mut reverse_cmd = adb();
+    let device_port = crate::ANDROID_DEVICE_PORT;
+    reverse_cmd.args([
+        "reverse",
+        &format!("tcp:{device_port}"),
+        &format!("tcp:{dev_port}"),
+    ]);
+    let reverse = run_filtered(reverse_cmd, SimctlNoise::Other).await?;
+    anyhow::ensure!(
+        reverse.success(),
+        "`adb reverse tcp:{device_port} tcp:{dev_port}` failed ({reverse}); the app could not \
+         reach the hot-reload server"
+    );
+    if let Some(token) = dev_token {
+        anyhow::ensure!(
+            deliver_android_dev_token(token).await,
+            "could not set debug.whisker_dev_token on the device; the app could not \
+             authenticate to the hot-reload server"
+        );
+    }
+    Ok(())
+}
+
 async fn android_install_and_launch(
     p: &AndroidParams,
     dev_port: u16,
@@ -478,32 +465,7 @@ async fn android_install_and_launch(
         anyhow::bail!("APK missing at {}", apk.display());
     }
 
-    // Bridge device `127.0.0.1:9876` → host `dev_port` so the
-    // dev-runtime reaches the WebSocket without knowing the
-    // emulator-gateway IP. The device always dials its default 9876;
-    // only the host side follows `--bind`, so a custom port still hot
-    // reloads. Best-effort — a previous run may have set it, and a
-    // physical device doesn't need it at all. Every adb call goes
-    // through `run_filtered` so its stdio can't bypass the TUI's
-    // capture pipe and overlay the live region.
-    let mut reverse_cmd = adb();
-    reverse_cmd.args(["reverse", "tcp:9876", &format!("tcp:{dev_port}")]);
-    let _ = run_filtered(reverse_cmd, SimctlNoise::Other).await;
-
-    // Deliver the dev-session token. The app process doesn't inherit
-    // adb-set env vars, so we stash it in a `debug.*` system property
-    // (settable over adb) that the device-side `whisker-dev-runtime`
-    // reads via `__system_property_get`. Without a matching token the
-    // dev-server refuses to ship patches to the app.
-    if let Some(token) = dev_token {
-        if !deliver_android_dev_token(token).await {
-            whisker_build::ui::warn(format!(
-                "dev token did not land on the device — the app will keep being \
-                 rejected by the hot-reload server (0 clients). Fix manually: \
-                 adb shell setprop debug.whisker_dev_token {token}"
-            ));
-        }
-    }
+    android_prepare_dev_channel(dev_port, dev_token).await?;
 
     let install_step = whisker_build::ui::step(
         whisker_build::ui::OperationKind::Install,
@@ -635,6 +597,7 @@ async fn ios_install_and_launch(
         anyhow::bail!("xcodebuild build failed ({xc_status})");
     }
     xc_step.done("");
+    whisker_build::ui::section("Launch");
 
     let app_path = derived
         .join("Build/Products/Debug-iphonesimulator")

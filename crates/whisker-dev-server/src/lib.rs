@@ -100,11 +100,40 @@ pub struct Config {
     pub watch_paths: Vec<PathBuf>,
     /// Address the WebSocket server binds.
     pub bind_addr: SocketAddr,
-    /// Shared dev-session token. When `Some`, the WebSocket server only
-    /// arms the patch channel for a client whose `hello` carries the
-    /// matching token, and the cli delivers it to the device (iOS env /
-    /// Android system property). `None` runs unauthenticated (the prior
-    /// behaviour). `whisker run` generates a random one per session.
+    /// Extra `Host` authorities accepted besides [`Config::bind_addr`].
+    ///
+    /// A port forward makes the device address the dev server under a
+    /// different authority than the one it is bound to: on Android,
+    /// `adb reverse` bridges the device's `127.0.0.1:`[`ANDROID_DEVICE_PORT`]
+    /// to the host's bound port, so every request carries that device-side
+    /// authority. List such authorities here (as `host:port`, compared
+    /// case-insensitively against the `Host` header).
+    ///
+    /// They are honoured only when `bind_addr` is a loopback or unspecified
+    /// address, which is the only setup a loopback port forward can reach.
+    /// Use IP literals or `localhost` only: a DNS name here would let a
+    /// rebinding attacker's page pass the `Host` check.
+    /// [`Config::defaults_for`] fills in [`android_forwarded_authorities`]
+    /// for [`Target::Android`] and leaves the list empty otherwise.
+    pub forwarded_authorities: Vec<String>,
+    /// Per-session secret that gates the native patch channel.
+    ///
+    /// With `Some(secret)`, every WebSocket client must complete the
+    /// [`whisker_dev_protocol`] mutual-authentication handshake for this
+    /// secret before it can receive anything; the installer delivers the
+    /// secret to the app out of band (`WHISKER_DEV_TOKEN` in the launch
+    /// environment, or the `debug.whisker_dev_token` system property on
+    /// Android). `whisker run` generates one per session with
+    /// [`whisker_dev_protocol::generate_secret`] for every native target.
+    ///
+    /// With `None`, clients connect without authentication and are treated
+    /// as browsers: a WebSocket upgrade must carry an `Origin` naming the dev
+    /// server's own `http` authority, so native clients (which send no
+    /// `Origin`) are refused. Browsers receive reload requests and WebAssembly
+    /// patches that [`PatchSender::send_web`] validated, but never native
+    /// libraries. Native hot patching therefore requires a secret; the Web
+    /// target runs without one because the page and the socket share the dev
+    /// server's origin.
     pub dev_token: Option<String>,
     /// Asks every connected app to stream [`Event::DeviceTrace`] frame timings.
     pub trace: bool,
@@ -128,6 +157,33 @@ pub struct Config {
     pub windows: Option<WindowsParams>,
 }
 
+/// Port the Android app dials on its own loopback interface.
+///
+/// `whisker-dev-runtime` falls back to `127.0.0.1:9876` when
+/// `WHISKER_DEV_ADDR` is unset, which is always the case on Android, and
+/// the installer bridges this port to the host's bound port with
+/// `adb reverse`. The two crates do not depend on each other, so the
+/// runtime repeats the literal; change both together.
+pub const ANDROID_DEVICE_PORT: u16 = 9876;
+
+/// `Host` authorities an Android app presents through `adb reverse`.
+///
+/// Requests tunnelled from the device keep the authority the app dialled
+/// (`127.0.0.1:`[`ANDROID_DEVICE_PORT`]) rather than the host's bound
+/// address, so the dev server must accept it explicitly. Feed the result
+/// into [`Config::forwarded_authorities`] for [`Target::Android`].
+///
+/// ```rust
+/// let authorities = whisker_dev_server::android_forwarded_authorities();
+/// assert!(authorities.contains(&"127.0.0.1:9876".to_string()));
+/// ```
+pub fn android_forwarded_authorities() -> Vec<String> {
+    vec![
+        format!("127.0.0.1:{ANDROID_DEVICE_PORT}"),
+        format!("localhost:{ANDROID_DEVICE_PORT}"),
+    ]
+}
+
 impl Config {
     /// A starting point with sensible defaults; callers override fields.
     pub fn defaults_for(workspace_root: PathBuf, package: String, target: Target) -> Self {
@@ -138,6 +194,11 @@ impl Config {
             target,
             watch_paths: Vec::new(),
             bind_addr: "127.0.0.1:9876".parse().expect("valid default addr"),
+            forwarded_authorities: if target == Target::Android {
+                android_forwarded_authorities()
+            } else {
+                Vec::new()
+            },
             dev_token: None,
             trace: false,
             hot_patch_mode: HotPatchMode::FullReloadOnly,
@@ -425,11 +486,7 @@ impl DevServer {
     /// restarts the app automatically: changes a patch can't express
     /// prompt for an explicit Full Reload (`DevCommand::FullReload`).
     pub async fn run(mut self) -> Result<()> {
-        whisker_build::ui::section("whisker run");
-        whisker_build::ui::info(format!(
-            "{} · {:?}",
-            self.config.package, self.config.target,
-        ));
+        let started_at = std::time::Instant::now();
         whisker_build::ui::debug(format!("mode={:?}", self.config.hot_patch_mode));
 
         // Builder + Installer are wired before the socket so no
@@ -502,7 +559,7 @@ impl DevServer {
         // there is nothing to patch and nothing a later save could
         // recover.
         //
-        whisker_build::ui::section("Initial build");
+        whisker_build::ui::section("Build");
         emit(&self.on_event, Event::BuildingFull);
         if let Err(e) = builder.build().await {
             let msg = format!("{e:#}");
@@ -524,6 +581,7 @@ impl DevServer {
             self.config.bind_addr,
             self.on_event.clone(),
             self.config.dev_token.clone(),
+            self.config.forwarded_authorities.clone(),
             self.config.trace,
             self.config.web.as_ref().map(|web| server::StaticFiles {
                 root: web.dist_dir.clone(),
@@ -534,10 +592,9 @@ impl DevServer {
         whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));
         whisker_build::ui::debug(format!("ws://{bound}/whisker-dev"));
         if let Some(web) = &self.config.web {
-            whisker_build::ui::info(format!(
-                "Local: http://127.0.0.1:{}{}",
-                bound.port(),
-                web.base_path
+            whisker_build::ui::info(whisker_build::ui::labeled(
+                "open",
+                format!("http://127.0.0.1:{}{}", bound.port(), web.base_path),
             ));
         }
 
@@ -608,10 +665,11 @@ impl DevServer {
             anyhow::bail!("initial install failed: {e:#}");
         }
         emit(&self.on_event, Event::HostLaunched);
-        whisker_build::ui::info(format!(
-            "initial done · {} client(s) connected",
-            sender.client_count()
-        ));
+        whisker_build::ui::completed(
+            whisker_build::ui::OperationKind::Ready,
+            "",
+            started_at.elapsed(),
+        );
 
         // Only now, after the fat build, are the capture caches
         // populated for `Patcher::initialize`. A failure is non-fatal:

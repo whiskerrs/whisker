@@ -578,6 +578,7 @@ fn rust_element_modules(
                 package: module.package.clone(),
                 crate_path: module.manifest_dir.clone(),
                 git: module.git.clone(),
+                registry_version: module.registry_version.clone(),
                 host_package: contribution.package,
                 host_dependency,
             })
@@ -1028,6 +1029,7 @@ mod tests {
             git: crate::GitSource::parse(
                 "git+https://github.com/whiskerrs/whisker?branch=next#1dc9ebcdbaba82ec",
             ),
+            registry_version: None,
         };
         let dependencies = crate::rust_element_module_dependencies(&rust_element_modules(
             &git_graph(vec![module]),

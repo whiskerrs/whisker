@@ -63,12 +63,23 @@ pub fn run(args: BuildArgs, no_tui: bool) -> Result<()> {
 
 pub(super) struct BuildUi {
     session: Option<crate::tui::TuiSession>,
+    crate_dir: std::path::PathBuf,
+    started_at: std::time::Instant,
 }
 
 impl BuildUi {
-    pub fn start(no_tui: bool, target: &str, bundle: &str) -> Self {
+    /// Start the build UI and announce what is being built. `identity` is
+    /// the bundle identifier or name the platform's tools build under.
+    pub fn start(
+        no_tui: bool,
+        manifest: &crate::manifest::ResolvedManifest,
+        platform: whisker_cng::GenerationTarget,
+        identity: &str,
+        flavor: &str,
+    ) -> Self {
+        let label = crate::platforms::label(platform);
         let session = if crate::tui::should_start(no_tui) {
-            match crate::tui::TuiSession::start(crate::tui::WorkflowKind::Build, target, bundle) {
+            match crate::tui::TuiSession::start(crate::tui::WorkflowKind::Build, label, identity) {
                 Ok(session) => Some(session),
                 Err(error) => {
                     eprintln!("couldn't start TUI ({error:#}); falling back to plain output");
@@ -78,15 +89,34 @@ impl BuildUi {
         } else {
             None
         };
-        Self { session }
+        manifest.announce(platform, identity, label, flavor);
+        whisker_build::ui::section("Build");
+        Self {
+            session,
+            crate_dir: manifest.crate_dir.clone(),
+            started_at: std::time::Instant::now(),
+        }
     }
 
+    /// Report the artifact; hints the caller prints afterwards land in the
+    /// same `Output` section.
     pub fn complete(&self, artifact: &std::path::Path) {
+        let shown = artifact
+            .strip_prefix(&self.crate_dir)
+            .unwrap_or(artifact)
+            .display()
+            .to_string();
         if let Some(session) = self.session.as_ref() {
             let handle = session.handle();
-            handle.set_artifact(artifact.display().to_string());
+            handle.set_artifact(shown.clone());
             handle.set_phase(crate::tui::AppPhase::Completed);
         }
-        whisker_build::ui::info(format!("artifact · {}", artifact.display()));
+        use whisker_build::ui;
+        ui::section("Output");
+        ui::info(ui::labeled("artifact", shown));
+        ui::info(ui::labeled(
+            "built",
+            ui::format_elapsed(self.started_at.elapsed()),
+        ));
     }
 }

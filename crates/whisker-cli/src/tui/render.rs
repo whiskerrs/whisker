@@ -40,7 +40,7 @@ pub(super) fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Lin
             // and step row read as one indicator.
             let (_, chip_bg, _) = status_chip(state);
             lines.push(Line::from(vec![
-                Span::raw(" "),
+                Span::raw("  "),
                 Span::styled(spinner.to_string(), Style::default().fg(chip_bg)),
                 Span::raw("  "),
                 Span::raw(label.clone()),
@@ -167,87 +167,145 @@ pub(super) fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Lin
     lines
 }
 
+/// Glyph column shared with `whisker_build::ui`'s plain renderer.
+fn glyph_row(glyph: &str, color: Color, rest: Vec<Span<'static>>) -> Line<'static> {
+    let mut spans = vec![
+        Span::raw("  "),
+        Span::styled(glyph.to_string(), Style::default().fg(color)),
+        Span::raw("  "),
+    ];
+    spans.extend(rest);
+    Line::from(spans)
+}
+
+fn status_glyph(status: StepStatus) -> (&'static str, Color) {
+    match status {
+        StepStatus::Done => ("✓", Color::Green),
+        StepStatus::Failed => ("✗", Color::Red),
+        StepStatus::Skipped => ("○", Color::DarkGray),
+    }
+}
+
 pub(super) fn render_history_item(item: &HistoryItem) -> Vec<Line<'static>> {
-    match item {
-        HistoryItem::PhaseEnter(label) => vec![Line::from(vec![
+    let line = match item {
+        HistoryItem::PhaseEnter(label) => Line::from(vec![
             Span::styled("▶ ", Style::default().fg(Color::Cyan)),
             Span::styled(label.clone(), Style::default().add_modifier(Modifier::BOLD)),
-        ])],
+        ]),
         HistoryItem::PhaseDone {
             label,
             status,
             elapsed,
         } => {
-            let (glyph, color) = match status {
-                StepStatus::Done => ("✓ ", Color::Green),
-                StepStatus::Failed => ("✗ ", Color::Red),
-                StepStatus::Skipped => ("○ ", Color::DarkGray),
-            };
-            vec![Line::from(vec![
-                Span::styled(glyph, Style::default().fg(color)),
-                Span::styled(label.clone(), Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw("  "),
-                Span::styled(fmt_elapsed(*elapsed), Style::default().fg(Color::DarkGray)),
-            ])]
+            let (glyph, color) = status_glyph(*status);
+            glyph_row(
+                glyph,
+                color,
+                vec![
+                    Span::raw(format!("{label}  ")),
+                    Span::styled(fmt_elapsed(*elapsed), Style::default().fg(Color::DarkGray)),
+                ],
+            )
         }
         HistoryItem::Step {
-            label,
+            kind,
+            detail,
+            summary,
             status,
             elapsed,
         } => {
-            let (glyph, color) = match status {
-                StepStatus::Done => ("✓", Color::Green),
-                StepStatus::Failed => ("✗", Color::Red),
-                StepStatus::Skipped => ("○", Color::DarkGray),
+            let (glyph, color) = status_glyph(*status);
+            let elapsed = fmt_elapsed(*elapsed);
+            let summary = if summary.is_empty() {
+                elapsed.clone()
+            } else {
+                format!("{summary}  {elapsed}")
             };
-            vec![Line::from(vec![
-                Span::raw("  "),
-                Span::styled(glyph, Style::default().fg(color)),
-                Span::raw("  "),
-                Span::raw(label.clone()),
-                Span::raw("  "),
-                Span::styled(fmt_elapsed(*elapsed), Style::default().fg(Color::DarkGray)),
-            ])]
+            let row = whisker_build::ui::step_row(*kind, detail, &summary);
+            let body = row
+                .strip_suffix(elapsed.as_str())
+                .unwrap_or(&row)
+                .to_string();
+            glyph_row(
+                glyph,
+                color,
+                vec![
+                    Span::raw(body),
+                    Span::styled(elapsed, Style::default().fg(Color::DarkGray)),
+                ],
+            )
         }
-        HistoryItem::CapturedStderr(text) => {
-            vec![Line::from(Span::raw(text.clone()))]
-        }
+        HistoryItem::CapturedStderr(text) => Line::from(Span::raw(text.clone())),
         HistoryItem::DeviceLog { stream, line } => {
             let tag = match stream.as_str() {
                 "stderr" => "[device:err]",
                 _ => "[device]",
             };
-            vec![Line::from(vec![
+            Line::from(vec![
                 Span::styled(tag, Style::default().fg(Color::Magenta)),
                 Span::raw(" "),
                 Span::raw(line.clone()),
-            ])]
+            ])
         }
         HistoryItem::Message { level, text } => {
             let (glyph, color) = match level {
-                MessageLevel::Info => ("·", Color::DarkGray),
+                MessageLevel::Info | MessageLevel::Debug => ("·", Color::DarkGray),
                 MessageLevel::Warning => ("⚠", Color::Yellow),
                 MessageLevel::Error => ("✗", Color::Red),
-                MessageLevel::Debug => ("·", Color::DarkGray),
-                MessageLevel::Log => ("", Color::Reset),
+                MessageLevel::Log => return wrap_line(&Line::from(Span::raw(text.clone()))),
             };
-            if glyph.is_empty() {
-                vec![Line::from(Span::raw(text.clone()))]
-            } else {
-                vec![Line::from(vec![
-                    Span::styled(format!("{glyph} "), Style::default().fg(color)),
-                    Span::raw(text.clone()),
-                ])]
-            }
+            glyph_row(glyph, color, vec![Span::raw(text.clone())])
         }
-        HistoryItem::Failure(reason) => vec![Line::from(vec![
-            Span::styled(
-                "✗ ",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(reason.clone(), Style::default().fg(Color::Red)),
-        ])],
+        HistoryItem::Failure(reason) => glyph_row(
+            "✗",
+            Color::Red,
+            vec![Span::styled(
+                reason.clone(),
+                Style::default().fg(Color::Red),
+            )],
+        ),
+    };
+    wrap_line(&line)
+}
+
+/// Terminal width the scrollback wraps at. `insert_before` gives each row
+/// exactly one line, so a row longer than this would be cut off.
+fn scrollback_width() -> usize {
+    crossterm::terminal::size()
+        .map(|(columns, _)| usize::from(columns))
+        .unwrap_or(120)
+        .max(20)
+}
+
+fn wrap_line(line: &Line<'static>) -> Vec<Line<'static>> {
+    wrap_line_at(line, scrollback_width())
+}
+
+/// Split `line` into rows of at most `width` columns, keeping span styles.
+pub(super) fn wrap_line_at(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut current: Vec<Span<'static>> = Vec::new();
+    let mut used = 0;
+    for span in &line.spans {
+        let mut text = String::new();
+        for ch in span.content.chars() {
+            let w = Span::raw(ch.to_string()).width();
+            if used + w > width && used > 0 {
+                if !text.is_empty() {
+                    current.push(Span::styled(std::mem::take(&mut text), span.style));
+                }
+                rows.push(Line::from(std::mem::take(&mut current)));
+                used = 0;
+            }
+            text.push(ch);
+            used += w;
+        }
+        if !text.is_empty() {
+            current.push(Span::styled(text, span.style));
+        }
     }
+    rows.push(Line::from(current));
+    rows
 }
 
 /// Paint `lines` into `buf` starting at the buffer's top-left.

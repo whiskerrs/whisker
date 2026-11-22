@@ -149,6 +149,12 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
         None
     };
     let tui_handle = tui_session.as_ref().map(crate::tui::TuiSession::handle);
+    m.announce(
+        crate::platforms::generation_target(target),
+        &bundle,
+        target_label,
+        "debug",
+    );
 
     // Run the rest of the cli pipeline. Each phase pushes its progress
     // through `tui_handle`. If the TUI isn't running, every step is
@@ -178,24 +184,6 @@ fn run_inner(
     // are plain platform applications backed by the Whisker Host SDK.
 
     let sync = m.project(target)?;
-    // Always say which path was taken: a template edit that didn't bump
-    // cng's `template_version` leaves the old gen/ tree on disk, and a
-    // silent "reused" makes that undiagnosable.
-    let tv = sync
-        .template_version
-        .map(|v| format!(" (template_version {v})"))
-        .unwrap_or_default();
-    if sync.regenerated {
-        whisker_build::ui::info(format!(
-            "regenerated gen/ at {}{tv}",
-            sync.gen_dir.display(),
-        ));
-    } else {
-        whisker_build::ui::info(format!(
-            "reused cached gen/ at {}{tv}",
-            sync.gen_dir.display(),
-        ));
-    }
 
     if target == Target::Macos {
         return run_macos(
@@ -266,14 +254,20 @@ fn run_inner(
         target,
         watch_paths: watch_paths.clone(),
         bind_addr: args.bind,
-        // Random per-session token authenticating the device to the
-        // hot-reload WebSocket. The patch channel `dlopen`s whatever it
-        // receives, so without this an unauthenticated peer on a
-        // LAN-exposed bind could push arbitrary native code; the gate
-        // also defends an accidental `--bind 0.0.0.0`.
-        // Web clients share this server's HTTP origin with the patch socket.
-        // Native-code patch transport keeps its random per-session token.
-        dev_token: (target != Target::Web).then(generate_dev_token),
+        // `adb reverse` makes the device present its own loopback
+        // authority, not `--bind`.
+        forwarded_authorities: if target == Target::Android {
+            whisker_dev_server::android_forwarded_authorities()
+        } else {
+            Vec::new()
+        },
+        // The native patch channel `dlopen`s what it receives, so it only
+        // runs between peers that prove this per-session secret; that also
+        // covers an accidental `--bind 0.0.0.0`. Web clients share this
+        // server's HTTP origin and only receive validated WebAssembly.
+        dev_token: (target != Target::Web)
+            .then(generate_dev_token)
+            .transpose()?,
         trace: args.trace,
         hot_patch_mode: if args.no_hot_patch {
             HotPatchMode::FullReloadOnly
@@ -371,7 +365,8 @@ fn run_macos(
         target: Target::Macos,
         watch_paths: watch_roots,
         bind_addr,
-        dev_token: Some(generate_dev_token()),
+        forwarded_authorities: Vec::new(),
+        dev_token: Some(generate_dev_token()?),
         trace: false,
         hot_patch_mode: if no_hot_patch {
             HotPatchMode::FullReloadOnly
@@ -449,35 +444,11 @@ fn target_destination(config: &Config) -> String {
     }
 }
 
-/// Generate a random hex token for the hot-reload session.
-///
-/// Reads 16 bytes from `/dev/urandom` (every host we run on is POSIX)
-/// and hex-encodes them into a 32-char token. If `/dev/urandom` is
-/// somehow unreadable we fall back to a time+pid-seeded value — weaker,
-/// but the token only needs to be unguessable within a dev session on
-/// the local machine, and the dev loop shouldn't hard-fail over it.
-fn generate_dev_token() -> String {
-    let mut buf = [0u8; 16];
-    let strong = std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf))
-        .is_ok();
-    if !strong {
-        // Fallback seed: nanos since epoch XOR pid, splatted across the
-        // buffer. Not cryptographic, but non-constant per session.
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let seed = nanos ^ (std::process::id() as u128);
-        for (i, b) in buf.iter_mut().enumerate() {
-            *b = (seed >> ((i % 16) * 8)) as u8;
-        }
-    }
-    let mut s = String::with_capacity(32);
-    for b in buf {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
+/// Generate the per-session hot-reload secret, failing instead of
+/// falling back to a guessable value when OS randomness is unavailable.
+fn generate_dev_token() -> Result<String> {
+    whisker_dev_protocol::generate_secret()
+        .context("OS randomness is required to authenticate the hot-reload channel")
 }
 
 /// Friendly label for the TUI header. `whisker_dev_server::Target`'s

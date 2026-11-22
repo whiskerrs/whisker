@@ -409,6 +409,8 @@ class WhiskerView(context: Context) :
             mountWhenSized()
             return
         }
+        // Queued module events (such as the first safe-area insets) must land before this frame lays out.
+        moduleEventFlush.run()
         val density = resources.displayMetrics.density
         val idle = nativeTick(
             handle,

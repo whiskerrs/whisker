@@ -30,6 +30,12 @@ jobs:
       - run: cargo test --workspace --all-targets
         env:
           RUST_TEST_THREADS: 1
+      # The receiver only exists behind the feature no workspace member
+      # enables, so its tests would otherwise never run.
+      - name: Test the hot-reload receiver
+        run: cargo test -p whisker-dev-runtime --features hot-reload --all-targets
+        env:
+          RUST_TEST_THREADS: 1
       - run: cargo test --workspace --doc
       - name: Check CNG without its generation engine
         run: cargo check -p whisker-cng --no-default-features --lib

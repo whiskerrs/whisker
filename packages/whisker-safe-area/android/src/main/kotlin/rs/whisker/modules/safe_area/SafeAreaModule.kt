@@ -31,6 +31,7 @@
 package rs.whisker.modules.safe_area
 
 import android.app.Activity
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.WhiskerModule
@@ -53,6 +54,12 @@ public class SafeAreaModule : Module() {
         Name("SafeArea")
         Events("insetsChanged")
 
+        Function("getInsets") {
+            val activity = appContext.currentActivity
+            val insets = activity?.window?.decorView?.let(ViewCompat::getRootWindowInsets)
+            if (activity != null && insets != null) encode(activity, insets) else WhiskerValue.Null
+        }
+
         OnStartObserving("insetsChanged") {
             if (insetsRegistration != null) return@OnStartObserving
             insetsRegistration = WhiskerInsetsDispatcher.addListener { insets ->
@@ -72,6 +79,10 @@ public class SafeAreaModule : Module() {
      * `WhiskerValue.Map` payload.
      */
     private fun dispatch(activity: Activity, insets: WindowInsetsCompat) {
+        sendEvent("insetsChanged", encode(activity, insets))
+    }
+
+    private fun encode(activity: Activity, insets: WindowInsetsCompat): WhiskerValue {
         val mask = WindowInsetsCompat.Type.systemBars() or
             WindowInsetsCompat.Type.displayCutout()
         val raw = insets.getInsets(mask)
@@ -84,6 +95,6 @@ public class SafeAreaModule : Module() {
             "trailing" to WhiskerValue.Float((raw.right / density).toDouble()),
             "bottom" to WhiskerValue.Float((raw.bottom / density).toDouble()),
         )
-        sendEvent("insetsChanged", WhiskerValue.Map(payload))
+        return WhiskerValue.Map(payload)
     }
 }

@@ -1,0 +1,19 @@
+[package]
+name = "whisker-dev-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Authenticated wire protocol shared by the `whisker run` dev server and the on-device dev runtime."
+
+[dependencies]
+hmac = { version = "=0.12.1" }
+sha2 = { version = "=0.10.9" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
