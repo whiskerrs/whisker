@@ -1,12 +1,13 @@
-//! `whisker-android-extra-files` — drop arbitrary text files into
-//! the generated `gen/android/` tree.
+//! `whisker-android-extra-files` — drop arbitrary text or binary
+//! files into the generated `gen/android/` tree.
 //!
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
 //! app.plugin::<AndroidExtraFiles>(|c| c
 //!     .add("app/google-services.json", json_str)
-//!     .add("app/proguard-rules-extra.pro", proguard_text));
+//!     .add("app/proguard-rules-extra.pro", proguard_text)
+//!     .add_bytes("app/src/main/res/mipmap-mdpi/ic_notification.png", PNG));
 //! ```
 //!
 //! Mirror of [`crate::plugins::ios_extra_files`] for Android.
@@ -49,6 +50,13 @@ impl AndroidExtraFilesConfig {
                 mode: Some(mode),
             },
         );
+        self
+    }
+    /// Add (or replace) one binary file (an image, a font, audio)
+    /// with default `0o644` permissions. The bytes are written
+    /// verbatim.
+    pub fn add_bytes(&mut self, path: impl Into<PathBuf>, bytes: &[u8]) -> &mut Self {
+        self.files.insert(path.into(), FileEntry::binary(bytes));
         self
     }
 }
