@@ -63,6 +63,12 @@ The Runtime uses that answer to decide where the text and its siblings belong.
 The Host then draws those boxes. Measuring a leaf is a Host responsibility;
 laying out the application tree is a Runtime responsibility.
 
+On Android, queued module events are delivered before each frame is laid out,
+so initial safe-area notifications are applied before presentation. The
+safe-area module also reads the current window insets synchronously on its
+first Rust access; screens mounted during a frame do not have to wait for an
+event-loop turn to reserve space for system bars and display cutouts.
+
 ### What crosses the boundary
 
 | Initiator → receiver | Request | Result or later notification |
