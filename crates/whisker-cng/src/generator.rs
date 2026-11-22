@@ -175,7 +175,7 @@ fn sync_with_graph(
 /// runtime ABI change or a Kotlin API consumed by applications/modules.
 // 0.1.21 is the first published Android SDK release that ships WhiskerView in
 // the standalone whisker-runtime-android AAR. 0.1.20 failed before publishing.
-const WHISKER_SDK_VERSION: &str = "0.1.27";
+const WHISKER_SDK_VERSION: &str = "0.1.28";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
@@ -184,7 +184,7 @@ const WHISKER_SDK_VERSION: &str = "0.1.27";
 /// version.
 // 0.5.0 ships the package-scoped module-report contract and the build-process
 // fixes required by the standalone new-architecture Android Host.
-const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.5.0";
+const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.5.1";
 const WHISKER_MAVEN_URL: &str = "https://whiskerrs.github.io/whisker/maven";
 
 fn sync_android(
