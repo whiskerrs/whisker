@@ -51,3 +51,4 @@ plist = { version = "1.8", default-features = false }
 [dev-dependencies]
 whisker-cng = { path = "../../crates/whisker-cng", version = "0.18.1" }
 whisker-firebase-crashlytics = { path = "crashlytics" }
+whisker-firebase-auth = { path = "auth" }

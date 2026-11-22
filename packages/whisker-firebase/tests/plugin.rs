@@ -32,13 +32,13 @@ impl App {
         config
     }
     fn compose(&self, platform: &str, config: &Config) -> anyhow::Result<ProjectIr> {
-        self.compose_with(platform, config, false)
+        self.compose_with(platform, config, &[])
     }
     fn compose_with(
         &self,
         platform: &str,
         config: &Config,
-        crashlytics: bool,
+        services: &[&str],
     ) -> anyhow::Result<ProjectIr> {
         let (engine, empty) = if platform == "android" {
             (
@@ -67,8 +67,11 @@ impl App {
             )
         };
         let mut engine = engine.with_app_crate_dir(&self.0);
-        if crashlytics {
+        if services.contains(&"crashlytics") {
             engine.register(whisker_firebase_crashlytics::WhiskerFirebaseCrashlytics);
+        }
+        if services.contains(&"auth") {
+            engine.register(whisker_firebase_auth::WhiskerFirebaseAuth);
         }
         engine.register(WhiskerFirebase);
         Ok(engine.compose(config, &empty)?.project)
@@ -214,7 +217,7 @@ fn service_features_control_the_actual_native_module_graph() {
             }
             let plugin = |name: &str| graph.cng_plugins.iter().any(|p| p.name == name);
             assert!(plugin("whisker-firebase"));
-            for service in ["messaging", "analytics", "crashlytics"] {
+            for service in ["auth", "messaging", "analytics", "crashlytics"] {
                 assert_eq!(
                     plugin(&format!("whisker-firebase-{service}")),
                     enabled.contains(&service),
@@ -228,7 +231,9 @@ fn service_features_control_the_actual_native_module_graph() {
 #[test]
 fn crashlytics_gradle_plugin_is_applied_after_google_services() {
     let app = App::new();
-    let ProjectIr::Android(android) = app.compose_with("android", &app.config(), true).unwrap()
+    let ProjectIr::Android(android) = app
+        .compose_with("android", &app.config(), &["crashlytics"])
+        .unwrap()
     else {
         panic!()
     };
@@ -248,4 +253,141 @@ fn crashlytics_gradle_plugin_is_applied_after_google_services() {
     let services = build.find("com.google.gms.google-services").unwrap();
     let crashlytics = build.find("com.google.firebase.crashlytics").unwrap();
     assert!(services < crashlytics, "{build}");
+}
+
+const PHONE_SCHEME: &str = "app-1-1234567890-ios-0123456789abcdef0123456789abcdef";
+
+fn url_schemes(ios: &IosProjectIr) -> Vec<PropertyListValue> {
+    match ios.apple.targets[&ios.apple.application]
+        .info_plist
+        .get("CFBundleURLTypes")
+    {
+        Some(PropertyListValue::Array(types)) => types
+            .iter()
+            .flat_map(|url_type| match url_type {
+                PropertyListValue::Dict(fields) => match fields.get("CFBundleURLSchemes") {
+                    Some(PropertyListValue::Array(schemes)) => schemes.clone(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn compose_auth_ios(app: &App, config: &Config) -> anyhow::Result<IosProjectIr> {
+    match app.compose_with("ios", config, &["auth"])? {
+        ProjectIr::Ios(ios) => Ok(ios),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn auth_registers_the_phone_url_scheme_once_from_the_shared_ios_config() {
+    let app = App::new();
+    std::fs::create_dir(app.0.join("config")).unwrap();
+    std::fs::rename(
+        app.0.join("GoogleService-Info.plist"),
+        app.0.join("config/Custom-Info.plist"),
+    )
+    .unwrap();
+    let mut config = app.config();
+    config.project_plugin::<WhiskerFirebase>(|firebase| {
+        firebase.ios_config = "config/Custom-Info.plist".into();
+    });
+    let mut ios = compose_auth_ios(&app, &config).unwrap();
+    let scheme = PropertyListValue::String(PHONE_SCHEME.into());
+    assert_eq!(url_schemes(&ios), vec![scheme.clone()]);
+
+    // Keep schemes from other plugins and do not add ours twice.
+    let application = ios.apple.application.clone();
+    let Some(PropertyListValue::Array(types)) = ios
+        .apple
+        .targets
+        .get_mut(&application)
+        .unwrap()
+        .info_plist
+        .get_mut("CFBundleURLTypes")
+    else {
+        panic!()
+    };
+    types.insert(
+        0,
+        PropertyListValue::Dict(
+            [(
+                "CFBundleURLSchemes".into(),
+                PropertyListValue::Array(vec![PropertyListValue::String("other".into())]),
+            )]
+            .into(),
+        ),
+    );
+    let context = ProjectContext {
+        project: ProjectIr::Ios(ios),
+        app_crate_dir: Some(app.0.clone()),
+    };
+    let ProjectUpdate::Replace { project, .. } = whisker_firebase_auth::WhiskerFirebaseAuth
+        .contribute(&context, &Default::default())
+        .unwrap()
+    else {
+        panic!("expected a replacement")
+    };
+    let ProjectIr::Ios(ios) = *project else {
+        panic!()
+    };
+    assert_eq!(
+        url_schemes(&ios),
+        vec![PropertyListValue::String("other".into()), scheme]
+    );
+}
+
+#[test]
+fn auth_scheme_can_be_turned_off_and_needs_the_firebase_plist() {
+    let app = App::new();
+    let mut config = app.config();
+    config.project_plugin::<whisker_firebase_auth::WhiskerFirebaseAuth>(|auth| {
+        auth.phone_url_scheme = false;
+    });
+    assert!(url_schemes(&compose_auth_ios(&app, &config).unwrap()).is_empty());
+
+    let context = ProjectContext {
+        project: ProjectIr::Ios(Default::default()),
+        app_crate_dir: Some(app.0.clone()),
+    };
+    let error = whisker_firebase_auth::WhiskerFirebaseAuth
+        .contribute(&context, &Default::default())
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("whisker-firebase-auth"),
+        "{error:#}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn configuration_in_a_symlinked_directory_is_rejected() {
+    let app = App::new();
+    std::fs::create_dir(app.0.join("config")).unwrap();
+    std::fs::rename(
+        app.0.join("GoogleService-Info.plist"),
+        app.0.join("config/GoogleService-Info.plist"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(app.0.join("config"), app.0.join("linked")).unwrap();
+    let mut config = app.config();
+    config.project_plugin::<WhiskerFirebase>(|firebase| {
+        firebase.ios_config = "linked/GoogleService-Info.plist".into();
+    });
+    let error = compose_auth_ios(&app, &config).unwrap_err();
+    assert!(format!("{error:#}").contains("symlinks"), "{error:#}");
+}
+
+#[test]
+fn auth_leaves_the_android_project_unchanged() {
+    let app = App::new();
+    assert_eq!(
+        app.compose_with("android", &app.config(), &["auth"])
+            .unwrap(),
+        app.compose("android", &app.config()).unwrap()
+    );
 }

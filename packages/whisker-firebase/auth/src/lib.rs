@@ -13,6 +13,28 @@
 //!
 //! Sign-in UIs for Google, Apple, and other providers are out of scope: obtain their
 //! tokens with a native sign-in library and pass them to [`Auth::sign_in_with_credential`].
+//!
+//! Phone numbers sign in in two steps:
+//!
+//! ```ignore
+//! use whisker_firebase::auth::{Auth, AuthCredential, PhoneVerification};
+//!
+//! let auth = Auth::instance()?;
+//! let credential = match auth.verify_phone_number("+16505550101").await? {
+//!     PhoneVerification::CodeSent { verification_id, .. } => {
+//!         AuthCredential::phone(&verification_id, &code_typed_by_the_user)
+//!     }
+//!     PhoneVerification::Verified(credential) => credential,
+//! };
+//! auth.sign_in_with_credential(&credential).await?;
+//! ```
+// The CNG plugin runs on the host only, so the on-device library does not link `plist`.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod plugin;
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub use plugin::{WhiskerFirebaseAuth, WhiskerFirebaseAuthConfig};
+
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use whisker::ReadSignal;
@@ -50,6 +72,20 @@ async fn invoke_async(method: &str, args: Vec<Wire>) -> Result<Wire> {
 
 fn string(value: &str) -> Wire {
     Wire::String(value.into())
+}
+
+async fn verify_phone(phone_number: &str, resend: Wire) -> Result<PhoneVerification> {
+    let fields = map(invoke_async("verifyPhoneNumber", vec![string(phone_number), resend]).await?)?;
+    if let Some(handle) = optional(&fields, "credential") {
+        return Ok(PhoneVerification::Verified(AuthCredential::new(
+            "phone",
+            [("handle", Some(handle.as_str()))],
+        )));
+    }
+    Ok(PhoneVerification::CodeSent {
+        verification_id: required(&fields, "verification_id")?,
+        resend: ResendToken(optional(&fields, "resend")),
+    })
 }
 
 fn unit(value: Wire) -> Result<()> {
@@ -134,6 +170,34 @@ impl Auth {
         UserCredential::decode(
             invoke_async("signInWithCredential", vec![credential.encode()]).await?,
         )
+    }
+
+    /// Send a verification code by SMS to a phone number in E.164 form, e.g. `+16505550101`.
+    /// Android needs a visible activity; iOS may present a reCAPTCHA when APNs is unavailable.
+    pub async fn verify_phone_number(&self, phone_number: &str) -> Result<PhoneVerification> {
+        verify_phone(phone_number, Wire::Null).await
+    }
+
+    /// Send a new code to the same number with the token from [`PhoneVerification::CodeSent`].
+    /// On Android, calling [`Auth::verify_phone_number`] again before the 60-second timeout
+    /// sends no new SMS; this call forces one. Only the token from the latest `CodeSent`
+    /// works: a failed resend keeps it, and a new `CodeSent` replaces it.
+    pub async fn resend_phone_code(
+        &self,
+        phone_number: &str,
+        resend: &ResendToken,
+    ) -> Result<PhoneVerification> {
+        let handle = resend.0.as_deref().map_or(Wire::Null, string);
+        verify_phone(phone_number, handle).await
+    }
+
+    /// Skip app verification (APNs, reCAPTCHA, Play Integrity) so the test phone numbers
+    /// configured in the Firebase console work on simulators and emulators. Never ship it enabled.
+    pub fn set_app_verification_disabled_for_testing(&self, disabled: bool) -> Result<()> {
+        unit(invoke(
+            "setAppVerificationDisabledForTesting",
+            vec![Wire::Bool(disabled)],
+        )?)
     }
 
     pub async fn send_password_reset_email(&self, email: &str) -> Result<()> {
@@ -244,6 +308,17 @@ impl AuthCredential {
         )
     }
 
+    /// The verification ID from [`PhoneVerification::CodeSent`] and the code from the SMS.
+    pub fn phone(verification_id: &str, sms_code: &str) -> Self {
+        Self::new(
+            "phone",
+            [
+                ("verification_id", Some(verification_id)),
+                ("sms_code", Some(sms_code)),
+            ],
+        )
+    }
+
     /// Another OAuth/OIDC provider configured in the Firebase console, e.g. `microsoft.com`.
     pub fn oauth(provider_id: &str, id_token: Option<&str>, access_token: Option<&str>) -> Self {
         Self::new(
@@ -266,6 +341,29 @@ impl AuthCredential {
         Wire::Map(fields)
     }
 }
+
+/// The result of [`Auth::verify_phone_number`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PhoneVerification {
+    /// The SMS was sent; pass this ID and the code to [`AuthCredential::phone`].
+    /// Pass `resend` to [`Auth::resend_phone_code`] for a new code.
+    CodeSent {
+        verification_id: String,
+        resend: ResendToken,
+    },
+    /// Android verified the number without a code, by instant verification or by SMS
+    /// auto-retrieval before `CodeSent`. A code auto-retrieved after `CodeSent` is dropped, so
+    /// keep the manual code entry. The credential works until a call with it succeeds, and only
+    /// in this app process.
+    Verified(AuthCredential),
+}
+
+/// Sends a new code with [`Auth::resend_phone_code`]. On Android it holds the SDK's
+/// `ForceResendingToken`, valid until the next `CodeSent` and in this app process only.
+/// iOS has no such token, so there a resend is a new verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResendToken(Option<String>);
 
 /// Profile information from one sign-in provider linked to a user.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -555,5 +653,27 @@ mod tests {
         assert!(User::decode_optional(Wire::Null).unwrap().is_none());
         let credential = AuthCredential::apple("token", None);
         assert!(!format!("{credential:?}").contains("token"));
+    }
+
+    #[test]
+    fn phone_credentials_encode_without_leaking_the_code() {
+        let credential = AuthCredential::phone("verification", "123456");
+        assert_eq!(credential.provider_id(), "phone");
+        assert!(!format!("{credential:?}").contains("123456"));
+        let Wire::Map(fields) = credential.encode() else {
+            panic!()
+        };
+        assert_eq!(fields["provider"], string("phone"));
+        assert_eq!(fields["verification_id"], string("verification"));
+        assert_eq!(fields["sms_code"], string("123456"));
+        assert_eq!(
+            normalize(FirebaseError::new(
+                SERVICE,
+                "ERROR_INVALID_VERIFICATION_CODE",
+                ""
+            ))
+            .code,
+            "invalid-verification-code"
+        );
     }
 }

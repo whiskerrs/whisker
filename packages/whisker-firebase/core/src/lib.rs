@@ -17,7 +17,9 @@ pub use timestamp::Timestamp;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::listener::{Listeners, listen, listen_event, signal_from_listener};
-    pub use crate::project::{android_app, ios_app_target, set_collection_default};
+    pub use crate::project::{
+        IOS_CONFIG, android_app, ios_app_target, read_app_file, set_collection_default,
+    };
     pub use crate::timestamp::TIMESTAMP_NAME;
     pub use crate::{string_field, unwrap_response};
 }

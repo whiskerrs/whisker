@@ -1,5 +1,8 @@
 import Foundation
 import FirebaseAuth
+#if os(iOS)
+import GoogleUtilities_AppDelegateSwizzler
+#endif
 import WhiskerModule
 
 @WhiskerModule
@@ -13,7 +16,12 @@ public final class FirebaseAuthModule: Module {
     private var listeners: [Int64: Handle] = [:]
 
     public override func definition() -> ModuleDefinition {
-        ModuleDefinition {
+        #if os(iOS)
+        // Auth proxies only scenes that connect after it exists, and this runs from
+        // didFinishLaunching, before the scene connects.
+        GULSceneDelegateSwizzler.proxyOriginalSceneDelegate()
+        #endif
+        return ModuleDefinition {
             Name("FirebaseAuth")
             Events("authState")
             Function("useEmulator") { (args: [WhiskerValue]) -> WhiskerValue in
@@ -52,6 +60,31 @@ public final class FirebaseAuthModule: Module {
                 do {
                     Auth.auth().signIn(with: try Self.credential(args.first), completion: Self.credentialCallback(promise))
                 } catch { promise.resolve(Self.failure("invalid-argument", error.localizedDescription)) }
+            }
+            AsyncFunction("verifyPhoneNumber") { (args: [WhiskerValue], promise: WhiskerPromise) in
+                guard let phoneNumber = args.first?.asString else {
+                    promise.resolve(Self.failure("invalid-argument", "Expected a phone number")); return
+                }
+                // Waits for Auth's phone setup on its work queue; verifying earlier fails with
+                // notification-not-forwarded.
+                _ = Auth.auth().currentUser
+                // The reCAPTCHA fallback presents from the key window.
+                DispatchQueue.main.async {
+                    PhoneAuthProvider.provider().verifyPhoneNumber(phoneNumber, uiDelegate: nil) { verificationID, error in
+                        if let error { promise.resolve(Self.sdkFailure(error)); return }
+                        guard let verificationID else {
+                            promise.resolve(Self.failure("internal-error", "Missing verification ID")); return
+                        }
+                        promise.resolve(Self.success(.map(["verification_id": .string(verificationID)])))
+                    }
+                }
+            }
+            Function("setAppVerificationDisabledForTesting") { (args: [WhiskerValue]) -> WhiskerValue in
+                guard let disabled = args.first?.asBool else {
+                    return Self.failure("invalid-argument", "Expected a boolean")
+                }
+                Auth.auth().settings?.isAppVerificationDisabledForTesting = disabled
+                return Self.success(.null)
             }
             AsyncFunction("sendPasswordResetEmail") { (args: [WhiskerValue], promise: WhiskerPromise) in
                 guard let email = args.first?.asString else {
@@ -212,6 +245,10 @@ public final class FirebaseAuthModule: Module {
         case "apple.com":
             guard let idToken else { throw missing }
             return OAuthProvider.appleCredential(withIDToken: idToken, rawNonce: fields["raw_nonce"]?.asString, fullName: nil)
+        case "phone":
+            guard let verificationID = fields["verification_id"]?.asString,
+                  let code = fields["sms_code"]?.asString else { throw missing }
+            return PhoneAuthProvider.provider().credential(withVerificationID: verificationID, verificationCode: code)
         default:
             guard let idToken else { throw missing }
             return OAuthProvider.credential(providerID: .custom(provider), idToken: idToken, accessToken: accessToken)
@@ -224,10 +261,24 @@ public final class FirebaseAuthModule: Module {
     private static func failure(_ code: String, _ message: String) -> WhiskerValue {
         .map(["error": .map(["code": .string(code), "message": .string(message)])])
     }
+    private static let serverResponseKey = "FIRAuthErrorUserInfoDeserializedResponseKey"
     private static func sdkFailure(_ error: Error) -> WhiskerValue {
         let error = error as NSError
         let name = error.userInfo["FIRAuthErrorUserInfoNameKey"] as? String ?? "ERROR_INTERNAL_ERROR"
-        return failure(name, error.localizedDescription)
+        var message = error.localizedDescription
+        // An internal error's description only says to inspect the details; carry them.
+        if name == "ERROR_INTERNAL_ERROR" {
+            let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+            let response = error.userInfo[serverResponseKey] ?? underlying?.userInfo[serverResponseKey]
+            if let server = (response as? [String: Any])?["message"] as? String {
+                message += " Server: \(server)"
+            } else if let response {
+                message += " Server: \(response)"
+            } else if let underlying {
+                message += " Underlying: \(underlying.domain) \(underlying.code)"
+            }
+        }
+        return failure(name, message)
     }
     private static func unitCallback(_ promise: WhiskerPromise) -> (Error?) -> Void {
         { error in promise.resolve(error.map(sdkFailure) ?? success(.null)) }
