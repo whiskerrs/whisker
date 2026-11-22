@@ -3,11 +3,11 @@
   <groupId>rs.whisker</groupId>
   <artifactId>whisker-gradle-plugin</artifactId>
   <versioning>
-    <latest>0.5.0</latest>
-    <release>0.5.0</release>
+    <latest>0.5.1</latest>
+    <release>0.5.1</release>
     <versions>
-      <version>0.5.0</version>
+      <version>0.5.1</version>
     </versions>
-    <lastUpdated>20260903144829</lastUpdated>
+    <lastUpdated>20261122211610</lastUpdated>
   </versioning>
 </metadata>
