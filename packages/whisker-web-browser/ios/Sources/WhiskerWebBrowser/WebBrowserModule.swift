@@ -1,4 +1,4 @@
-// `whisker-web-browser` Module (iOS).
+// `whisker-web-browser` Module (iOS and macOS).
 //
 // View-less module mirroring Expo's `expo-web-browser`: `openBrowser`
 // (SFSafariViewController, no cookie sharing) and `openAuthSession`
@@ -15,9 +15,13 @@
 
 import AuthenticationServices
 import Foundation
+import WhiskerModule
+#if canImport(UIKit)
 import SafariServices
 import UIKit
-import WhiskerModule
+#else
+import AppKit
+#endif
 
 private final class PresentationAnchor: NSObject, ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
@@ -28,7 +32,9 @@ private final class PresentationAnchor: NSObject, ASWebAuthenticationPresentatio
 @WhiskerModule
 public final class WebBrowserModule: Module {
     private var authSession: ASWebAuthenticationSession?
+    #if canImport(UIKit)
     private var safari: SFSafariViewController?
+    #endif
     private let anchor = PresentationAnchor()
 
     public override func definition() -> ModuleDefinition {
@@ -65,11 +71,13 @@ public final class WebBrowserModule: Module {
             }
 
             Function("dismissBrowser") { [weak self] _ in
+                #if canImport(UIKit)
                 DispatchQueue.main.async {
                     self?.safari?.dismiss(animated: true)
                     self?.safari = nil
                     self?.sendEvent("browserClosed", .map(["type": .string("dismiss")]))
                 }
+                #endif
                 return .null
             }
         }
@@ -106,6 +114,7 @@ public final class WebBrowserModule: Module {
         session.start()
     }
 
+    #if canImport(UIKit)
     private func openBrowser(url: URL) {
         guard let presenter = Self.keyWindow()?.rootViewController else { return }
         let vc = SFSafariViewController(url: url)
@@ -127,4 +136,15 @@ public final class WebBrowserModule: Module {
             .flatMap { $0.windows }
             .first { $0.isKeyWindow }
     }
+    #else
+    // The default browser is a separate process whose close is not observable.
+    private func openBrowser(url: URL) {
+        NSWorkspace.shared.open(url)
+        sendEvent("browserClosed", .map(["type": .string("dismiss")]))
+    }
+
+    fileprivate static func keyWindow() -> NSWindow? {
+        NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first
+    }
+    #endif
 }

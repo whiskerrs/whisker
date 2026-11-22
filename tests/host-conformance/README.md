@@ -26,8 +26,7 @@ neutral formats are documented by `schema/manifest.schema.json` and
 decoder, not a second source of fixture semantics.
 
 Every runner injects commands at the Host boundary and uses production Host
-code. Desktop creates real protocol packets and performs offscreen wgpu pixel
-comparison. Web creates protocol packets and drives the real `DomFrameSink` in
+code. Web creates protocol packets and drives the real `DomFrameSink` in
 headless Chrome; its current checkpoint is semantic DOM projection because the
 DOM has no synchronous texture readback API. Android's instrumentation tests
 live with `platforms/android/runtime`, inject ABI-equivalent operations, and
@@ -37,13 +36,13 @@ in a Simulator; the same suite runs natively on macOS against AppKit layer
 captures. Linux drives the real GTK4 frame sink and rasterizes the widget tree
 with the window's GSK renderer under X11. Windows encodes protocol packets with
 the driver's mobile C ABI encoder, presents them to the WinUI Host's
-Composition scene, and reads it back with `CaptureAsync`. All seven runners
+Composition scene, and reads it back with `CaptureAsync`. All six runners
 consume the fixtures in this directory.
 
 Manual visual WPT adaptations may attach logical-pixel `samples` to a paint
 checkpoint instead of inventing an exact reference image for behavior whose
-fine geometry is intentionally implementation-defined by CSS. Desktop,
-Android, and iOS assert those samples against production raster output. Web
+fine geometry is intentionally implementation-defined by CSS. Native
+Hosts assert those samples against production raster output. Web
 asserts the equivalent CSS projection and leaves dash/dot distribution to the
 browser, while sharing the same scenario and semantic values.
 
@@ -55,18 +54,12 @@ continues to verify the corresponding semantic CSS value.
 From the repository root, run one Host with:
 
 ```sh
-cargo xtask host-conformance desktop
 cargo xtask host-conformance web
 cargo xtask host-conformance android
 cargo xtask host-conformance ios
 xvfb-run -a cargo xtask host-conformance linux
 cargo xtask host-conformance windows
 ```
-
-Desktop conformance is gated by the `whisker-desktop/host-conformance` feature,
-which only the `xtask` entry point enables. Ordinary workspace unit tests do
-not execute the offscreen GPU fixture suite; CI reports it as an independent
-Host check.
 
 Web requires `wasm-pack`, Chrome, and `curl`. `xtask` detects the installed
 Chrome version and caches a compatible ChromeDriver under `target/xtask`; set

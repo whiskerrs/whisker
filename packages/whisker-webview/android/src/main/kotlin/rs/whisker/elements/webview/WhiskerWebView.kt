@@ -125,10 +125,8 @@ open class WhiskerWebView(context: WhiskerContext) :
             // `allowFileAccess` defaults to true below API 30.
             allowFileAccess = false
             allowContentAccess = false
-            // The default whitelist includes http://*, so mixed content has
-            // to be permitted for those pages to render.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             }
         }
 

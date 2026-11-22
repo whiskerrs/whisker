@@ -14,10 +14,11 @@ description = "Native GTK4 Linux Host for Whisker."
 [features]
 # Shared Host conformance fixtures run only through `cargo xtask host-conformance linux`.
 host-conformance = []
-hot-reload = ["whisker/hot-reload"]
+hot-reload = ["whisker/hot-reload", "dep:whisker-dev-runtime", "whisker-dev-runtime/hot-reload"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 whisker = { workspace = true }
+whisker-dev-runtime = { workspace = true, optional = true }
 whisker-engine = { workspace = true }
 whisker-protocol = { workspace = true }
 whisker-style = { workspace = true }

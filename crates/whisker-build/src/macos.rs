@@ -58,7 +58,8 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
         .arg(&project)
         .args(["-scheme", inputs.project_name])
         .args(["-configuration", configuration])
-        .args(["-destination", "platform=macOS"])
+        .arg("-destination")
+        .arg(format!("platform=macOS,arch={}", xcode_arch()))
         .arg("-derivedDataPath")
         .arg(inputs.derived_data)
         // Whisker's codegen plugin and compiler macros have separate trust prompts that headless builds cannot answer.
@@ -79,7 +80,10 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
             command.env(key, value);
         }
     }
-    let status = step.pipe(&mut command).context("spawn xcodebuild")?;
+    crate::ui::mark_nested(&mut command);
+    let status = step
+        .pipe_filtered(&mut command, crate::ios::is_xcodebuild_noise)
+        .context("spawn xcodebuild")?;
     if !status.success() {
         step.fail(status.to_string());
         return Err(anyhow!("xcodebuild failed ({status})"));

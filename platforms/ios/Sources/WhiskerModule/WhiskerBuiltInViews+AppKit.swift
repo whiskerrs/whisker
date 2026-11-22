@@ -26,6 +26,7 @@ public final class WhiskerScrollContainerView: NSScrollView, WhiskerEventSource 
     private var previousChildExtent = CGRect.null
     private var horizontal = false
     private var chromeVisible = true
+    private var indicatorEnabled = true
     private var snapFactor: CGFloat?
     private var snapOffset: CGFloat = 0
     private var snapStopAlways = false
@@ -99,9 +100,14 @@ public final class WhiskerScrollContainerView: NSScrollView, WhiskerEventSource 
         updateIndicatorVisibility()
     }
 
+    public func setScrollIndicatorVisible(_ visible: Bool) {
+        indicatorEnabled = visible
+        updateIndicatorVisibility()
+    }
+
     private func updateIndicatorVisibility() {
-        hasHorizontalScroller = chromeVisible && horizontal
-        hasVerticalScroller = chromeVisible && !horizontal
+        hasHorizontalScroller = chromeVisible && indicatorEnabled && horizontal
+        hasVerticalScroller = chromeVisible && indicatorEnabled && !horizontal
     }
 
     public func setItemSnap(factor: Double, offset: Double) {
@@ -117,6 +123,12 @@ public final class WhiskerScrollContainerView: NSScrollView, WhiskerEventSource 
     public func setScrollSnapStop(_ value: String) {
         snapStopAlways = value == "always"
     }
+
+    /** AppKit has no native pull-to-refresh control; the configuration is accepted and ignored. */
+    public func setRefreshEnabled(_ enabled: Bool) {}
+
+    /** AppKit has no native refresh indicator; the state is accepted and ignored. */
+    public func setRefreshing(_ refreshing: Bool) {}
 
     public var contentOffset: CGPoint { contentView.bounds.origin }
 
@@ -413,15 +425,15 @@ public final class WhiskerTextLabel: NSView, WhiskerEventSource {
         didSet { needsDisplay = true }
     }
 
+    /// Prepared layouts are shared by every label that shows the same measured
+    /// text, so this label applies its paint each time it uses the layout.
     public func installPreparedParagraph(_ layout: WhiskerParagraphLayout) {
         applyWhiskerIndent()
         if let richContent {
             guard richContent.string == layout.storage.string else { return }
-            layout.applyPaint(richContent)
             richLayout = layout
         } else {
             guard let attributedText, attributedText.string == layout.storage.string else { return }
-            layout.applyPaint(attributedText)
             plainLayout = layout
         }
         selectionController?.synchronize()
@@ -430,7 +442,10 @@ public final class WhiskerTextLabel: NSView, WhiskerEventSource {
 
     func preparedParagraphLayout(width: CGFloat) -> WhiskerParagraphLayout? {
         guard let richContent else { return nil }
-        if let richLayout, richLayout.container.size.width == width { return richLayout }
+        if let richLayout, richLayout.container.size.width == width {
+            richLayout.applyPaint(richContent)
+            return richLayout
+        }
         let layout = WhiskerParagraphLayout(text: richContent, width: width, maxLines: numberOfLines, overflow: richOverflow)
         richLayout = layout
         return layout
@@ -443,7 +458,10 @@ public final class WhiskerTextLabel: NSView, WhiskerEventSource {
             layout.draw(at: rect.origin)
             return
         }
-        if let plainLayout, drawPlain(plainLayout, in: rect) { return }
+        if let plainLayout, let attributedText {
+            plainLayout.applyPaint(attributedText)
+            if drawPlain(plainLayout, in: rect) { return }
+        }
         guard let attributedText else { return }
         let overflow: WhiskerTextOverflow = lineBreakMode == .byTruncatingTail ? .ellipsis : .clip
         let fallback = WhiskerParagraphLayout(text: attributedText, width: rect.width, maxLines: numberOfLines, overflow: overflow)

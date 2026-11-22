@@ -159,6 +159,7 @@ pub fn generate_with_selection(
         .arg(&manifest)
         .arg("--report-path")
         .arg(&report.0)
+        .env(crate::runner::QUIET_ENV, "1")
         .current_dir(crate_dir);
     selection.apply(&mut command);
     if let Some(target) = &selection.target {

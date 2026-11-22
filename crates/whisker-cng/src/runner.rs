@@ -89,6 +89,11 @@ pub struct GenerationReport {
     pub projects: BTreeMap<GenerationTarget, PlatformSync>,
 }
 
+/// Set by callers that report the generated projects themselves from the
+/// generation report, which silences the generator's own summary lines.
+#[cfg(feature = "generate")]
+pub(crate) const QUIET_ENV: &str = "WHISKER_CNG_QUIET";
+
 /// Generate platform projects from the configuration supplied by `whisker.rs`.
 ///
 /// Call once from `main`. With no arguments this generates Android, iOS, macOS,
@@ -221,6 +226,9 @@ fn run_inner(configure: impl FnOnce(&mut Config)) -> anyhow::Result<()> {
         write_report(&default_report, &report)?;
     }
     write_report(&report_path, &report)?;
+    if std::env::var_os(QUIET_ENV).is_some() {
+        return Ok(());
+    }
     for (target, project) in &report.projects {
         eprintln!(
             "{} {} project at {}",

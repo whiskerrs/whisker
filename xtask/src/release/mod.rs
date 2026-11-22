@@ -27,7 +27,13 @@ const IOS_PATH: &str = "crates/whisker-cng/src/ios_modules.rs";
 const WINDOWS_PATH: &str = "platforms/windows/build.rs";
 const REPOSITORY: &str = "whiskerrs/whisker";
 /// Published crates deliberately removed from the workspace; they stay on crates.io at their last version.
-const RETIRED_CRATES: &[&str] = &["whisker-macos"];
+const RETIRED_CRATES: &[&str] = &[
+    "whisker-macos",
+    "whisker-desktop",
+    "whisker-image-desktop",
+    "whisker-input-desktop",
+    "whisker-svg-desktop",
+];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

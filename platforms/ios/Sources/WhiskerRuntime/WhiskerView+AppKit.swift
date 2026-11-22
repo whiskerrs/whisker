@@ -48,6 +48,8 @@ public final class WhiskerView: NSView {
     }
 
     public override var isFlipped: Bool { true }
+    // Lets the window start with the view itself focused rather than auto-focusing the first text field.
+    public override var acceptsFirstResponder: Bool { true }
 
     public override init(frame: CGRect) {
         super.init(frame: frame)

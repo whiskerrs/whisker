@@ -50,6 +50,9 @@
 
 #![warn(missing_docs)]
 
+#[cfg(test)]
+extern crate self as whisker_router;
+
 pub mod core;
 pub mod plugin;
 pub mod render;

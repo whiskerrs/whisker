@@ -500,6 +500,11 @@ pub struct AndroidManifest {
     #[serde(default)]
     pub main_activity_url_schemes: Vec<String>,
 
+    /// `android:screenOrientation` on `MainActivity`. `None` leaves the
+    /// attribute out, so the system default applies.
+    #[serde(default)]
+    pub main_activity_screen_orientation: Option<String>,
+
     /// Overrides the `<application android:theme="…">` value. `None`
     /// keeps the template default (`@style/Theme.AppCompat.NoActionBar`).
     /// Set it to point the app at a plugin-generated theme — e.g. an

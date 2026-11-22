@@ -306,6 +306,35 @@ impl SurfaceEngine {
             .map_err(SurfaceError::Scene)
     }
 
+    /// Captures a pointer stream for a node.
+    pub fn set_pointer_capture(
+        &mut self,
+        node: NodeId,
+        pointer: PointerId,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_pointer_capture(node, pointer)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Releases a pointer stream previously captured by a node.
+    pub fn release_pointer_capture(
+        &mut self,
+        node: NodeId,
+        pointer: PointerId,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .release_pointer_capture(node, pointer)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Releases every captured pointer.
+    pub fn release_pointer_captures(&mut self) -> Result<(), SurfaceError> {
+        self.scene
+            .release_pointer_captures()
+            .map_err(SurfaceError::Scene)
+    }
+
     /// Returns the node currently retaining one pointer capture.
     pub fn pointer_capture_target(&self, pointer: PointerId) -> Option<NodeId> {
         self.scene.pointer_capture_target(pointer)
@@ -2096,8 +2125,26 @@ mod tests {
         );
         let pointer = PointerId::new(1).unwrap();
         assert_eq!(surface.pointer_capture_target(pointer), None);
-        surface.scene.set_pointer_capture(root, pointer).unwrap();
+        surface.set_pointer_capture(root, pointer).unwrap();
         assert_eq!(surface.pointer_capture_target(pointer), Some(root));
+        assert_eq!(
+            surface.set_pointer_capture(missing, pointer),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        assert_eq!(
+            surface.release_pointer_capture(missing, pointer),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        surface.release_pointer_capture(root, pointer).unwrap();
+        assert_eq!(surface.pointer_capture_target(pointer), None);
+        surface.set_pointer_capture(root, pointer).unwrap();
+        surface.release_pointer_captures().unwrap();
+        assert_eq!(surface.pointer_capture_target(pointer), None);
+        surface.set_pointer_capture(root, pointer).unwrap();
 
         let unsupported = resolve_style(
             &SpecifiedStyle::new().push(

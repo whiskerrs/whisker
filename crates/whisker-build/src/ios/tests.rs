@@ -41,21 +41,31 @@ fn module_packages_pin_the_runtime_version_the_cli_generates() {
     let packages = workspace.join("packages");
     // Absent when this crate is built from its published .crate,
     // which carries no sibling packages to check.
-    let Ok(entries) = std::fs::read_dir(&packages) else {
+    if !packages.is_dir() {
         return;
-    };
+    }
 
     let expected = format!(
         "\"https://github.com/whiskerrs/whisker.git\", exact: \"{WHISKER_IOS_SPM_VERSION}\""
     );
     let mut stale = Vec::new();
-    for entry in entries.flatten() {
-        let manifest = entry.path().join("Package.swift");
-        let Ok(source) = std::fs::read_to_string(&manifest) else {
-            continue;
-        };
-        if source.contains("whiskerrs/whisker.git") && !source.contains(&expected) {
-            stale.push(manifest.display().to_string());
+    let mut directories = vec![packages];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(&directory).unwrap().flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                // Build caches and CNG output hold untracked manifests.
+                if !name.starts_with('.') && name != "target" && name != "gen" {
+                    directories.push(path);
+                }
+            } else if name == "Package.swift" {
+                let source = std::fs::read_to_string(&path).unwrap();
+                if source.contains("whiskerrs/whisker.git") && !source.contains(&expected) {
+                    stale.push(path.display().to_string());
+                }
+            }
         }
     }
     assert!(
@@ -233,4 +243,26 @@ fn swift_call_sites_are_all_exported() {
         "Swift calls these bridge functions but BRIDGE_EXPORTS omits them, \
              so the dylib won't export them and the app won't link: {missing:?}",
     );
+}
+
+#[test]
+fn xcodebuild_noise_drops_successful_diagnostic_framing() {
+    for line in [
+        "error: the following command failed with exit code 0 but produced no further output",
+        "SwiftCompile normal arm64 /ws/platforms/ios/Sources/WhiskerRuntime/paint/BoxPaint.swift",
+        "[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>",
+        "--- xcodebuild: WARNING: Using the first of multiple matching destinations:",
+        "{ platform:macOS, arch:arm64, id:00008132-000221500EA3801C, name:My Mac }",
+        "note: Run script build phase 'Whisker Build Rust App' will be run during every build",
+        "/ws/BoxPaint.swift:759:34: warning: variable 'alpha' was never mutated",
+    ] {
+        assert!(super::is_xcodebuild_noise(line), "{line}");
+    }
+    for line in [
+        "/ws/BoxPaint.swift:759:34: error: cannot find 'x' in scope",
+        "error: the following command failed with exit code 65",
+        "** BUILD FAILED **",
+    ] {
+        assert!(!super::is_xcodebuild_noise(line), "{line}");
+    }
 }

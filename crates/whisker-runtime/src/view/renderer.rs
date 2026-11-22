@@ -213,6 +213,16 @@ pub trait DynRenderer {
         false
     }
 
+    /// Routes the rest of an active pointer's sequence to this element and has
+    /// the Host stop its native gestures for that pointer. Returns false when
+    /// unsupported or when the pointer is not down.
+    fn set_pointer_capture(&self, _handle: Element, _pointer: i64) -> bool {
+        false
+    }
+
+    /// Ends a capture this element holds on the pointer.
+    fn release_pointer_capture(&self, _handle: Element, _pointer: i64) {}
+
     /// Observes resolved Rust layout for framework control primitives.
     /// Ordinary renderers may ignore this; SurfaceRuntime reports after each
     /// successful Taffy pass without involving a Host event.
@@ -1040,6 +1050,34 @@ pub fn on_next_frame_applied(handle: Element, callback: impl FnOnce(u64) + 'stat
         },
         false,
     )
+}
+
+/// Routes the rest of an active pointer's sequence to `handle` and has the Host
+/// stop its native gestures, such as scrolling, for that pointer. `pointer` is
+/// a `Touch::identifier`. The elements the pointer went down on receive a
+/// cancel, except `handle` and its ancestors. The capture ends with
+/// [`release_pointer_capture`] or when the pointer goes up or is cancelled.
+/// Returns false when the renderer does not support capture or the pointer is
+/// not down.
+pub fn set_pointer_capture(handle: Element, pointer: i64) -> bool {
+    if is_phantom(handle) {
+        return false;
+    }
+    with_renderer(
+        |renderer| renderer.set_pointer_capture(handle, pointer),
+        false,
+    )
+}
+
+/// Ends a capture `handle` holds on `pointer`.
+pub fn release_pointer_capture(handle: Element, pointer: i64) {
+    if is_phantom(handle) {
+        return;
+    }
+    with_renderer(
+        |renderer| renderer.release_pointer_capture(handle, pointer),
+        (),
+    );
 }
 
 /// Registers an internal resolved-layout observer on one real element.

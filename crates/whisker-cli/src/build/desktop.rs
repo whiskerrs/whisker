@@ -26,8 +26,10 @@ pub fn run(args: Args, no_tui: bool, platform: GenerationTarget) -> Result<()> {
         .context("missing generated desktop project")?;
     let ui = super::BuildUi::start(
         no_tui,
-        platform.as_str(),
+        &manifest,
+        platform,
         manifest.config.name.as_deref().unwrap_or(&manifest.package),
+        "release",
     );
     let target = manifest
         .workspace_root
@@ -38,6 +40,8 @@ pub fn run(args: Args, no_tui: bool, platform: GenerationTarget) -> Result<()> {
         project_dir: &sync.gen_dir,
         target_dir: &target,
         profile: whisker_build::Profile::Release,
+        features: &[],
+        capture: None,
     })?;
     ui.complete(&artifact);
     Ok(())

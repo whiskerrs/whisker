@@ -19,6 +19,9 @@ pub struct ProjectDependencyGraph {
     /// the published SDK.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host_sdk: Option<PathBuf>,
+    /// Git source of the `whisker` crate, which the generated Rust Hosts must share.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub whisker_git: Option<crate::GitSource>,
 }
 
 impl ProjectDependencyGraph {
@@ -89,6 +92,7 @@ impl ProjectDependencyGraph {
             cng_plugins: discover_plugins_from_metadata(&metadata, app_package)
                 .context("resolve Whisker CNG plugins")?,
             host_sdk: crate::host_sdk::source_root(&metadata),
+            whisker_git: crate::git_source::whisker(&metadata),
         })
     }
 }

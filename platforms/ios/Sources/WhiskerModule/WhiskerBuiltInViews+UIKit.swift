@@ -25,6 +25,7 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     private var previousChildExtent = CGRect.null
     private var horizontal = false
     private var chromeVisible = true
+    private var indicatorEnabled = true
     private var snapFactor: CGFloat?
     private var snapOffset: CGFloat = 0
     private var snapStopAlways = false
@@ -33,6 +34,13 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     private var lastScrollOffset = CGPoint.zero
     private var releaseVelocity = CGPoint.zero
     private var pendingLogicalOffset: (offset: CGFloat, smooth: Bool)?
+    private var refreshEnabled = false
+    private var refreshRequested = false
+    private lazy var whiskerRefreshControl: UIRefreshControl = {
+        let control = UIRefreshControl()
+        control.addTarget(self, action: #selector(refreshControlTriggered), for: .valueChanged)
+        return control
+    }()
 
     public override var isScrollEnabled: Bool {
         didSet {
@@ -79,6 +87,42 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     public func setScrollOrientation(_ value: String) {
         horizontal = value == "horizontal"
         updateIndicatorVisibility()
+        updateRefreshControl()
+    }
+
+    /** Attaches the native pull-to-refresh control while the axis is vertical. */
+    public func setRefreshEnabled(_ enabled: Bool) {
+        refreshEnabled = enabled
+        updateRefreshControl()
+    }
+
+    /** Shows or hides the refresh indicator; a user pull starts it natively. */
+    public func setRefreshing(_ refreshing: Bool) {
+        refreshRequested = refreshing
+        guard let control = refreshControl else { return }
+        if refreshing, !control.isRefreshing {
+            control.beginRefreshing()
+        } else if !refreshing, control.isRefreshing {
+            control.endRefreshing()
+        }
+    }
+
+    private func updateRefreshControl() {
+        let active = refreshEnabled && !horizontal
+        // A pull needs vertical bounce even when the content fits the viewport.
+        alwaysBounceVertical = active
+        if active {
+            guard refreshControl == nil else { return }
+            refreshControl = whiskerRefreshControl
+            if refreshRequested { whiskerRefreshControl.beginRefreshing() }
+        } else if let control = refreshControl {
+            control.endRefreshing()
+            refreshControl = nil
+        }
+    }
+
+    @objc private func refreshControlTriggered() {
+        eventSink?("refresh", .map([:]))
     }
 
     public func setWhiskerChromeVisible(_ visible: Bool) {
@@ -86,9 +130,14 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
         updateIndicatorVisibility()
     }
 
+    public func setScrollIndicatorVisible(_ visible: Bool) {
+        indicatorEnabled = visible
+        updateIndicatorVisibility()
+    }
+
     private func updateIndicatorVisibility() {
-        showsHorizontalScrollIndicator = chromeVisible && horizontal
-        showsVerticalScrollIndicator = chromeVisible && !horizontal
+        showsHorizontalScrollIndicator = chromeVisible && indicatorEnabled && horizontal
+        showsVerticalScrollIndicator = chromeVisible && indicatorEnabled && !horizontal
     }
 
     public func setItemSnap(factor: Double, offset: Double) {
@@ -335,15 +384,15 @@ public final class WhiskerTextLabel: UILabel, WhiskerEventSource {
         didSet { setNeedsDisplay() }
     }
 
+    /// Prepared layouts are shared by every label that shows the same measured
+    /// text, so this label applies its paint each time it uses the layout.
     public func installPreparedParagraph(_ layout: WhiskerParagraphLayout) {
         applyWhiskerIndent()
         if let richContent {
             guard richContent.string == layout.storage.string else { return }
-            layout.applyPaint(richContent)
             richLayout = layout
         } else {
             guard let attributedText, attributedText.string == layout.storage.string else { return }
-            layout.applyPaint(attributedText)
             plainLayout = layout
         }
         selectionController?.synchronize()
@@ -352,7 +401,10 @@ public final class WhiskerTextLabel: UILabel, WhiskerEventSource {
 
     func preparedParagraphLayout(width: CGFloat) -> WhiskerParagraphLayout? {
         guard let richContent else { return nil }
-        if let richLayout, richLayout.container.size.width == width { return richLayout }
+        if let richLayout, richLayout.container.size.width == width {
+            richLayout.applyPaint(richContent)
+            return richLayout
+        }
         let layout = WhiskerParagraphLayout(text: richContent, width: width, maxLines: numberOfLines, overflow: richOverflow)
         richLayout = layout
         return layout
@@ -364,7 +416,10 @@ public final class WhiskerTextLabel: UILabel, WhiskerEventSource {
             layout.draw(at: rect.origin)
             return
         }
-        if let plainLayout, drawPlain(plainLayout, in: rect) { return }
+        if let plainLayout, let attributedText {
+            plainLayout.applyPaint(attributedText)
+            if drawPlain(plainLayout, in: rect) { return }
+        }
         super.drawText(in: rect)
         guard let decoration = whiskerDecoration, decoration.style == .wavy else { return }
         let textRect = self.textRect(forBounds: rect, limitedToNumberOfLines: numberOfLines)

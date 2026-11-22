@@ -1,8 +1,7 @@
 //! `whisker-input` — cross-platform text-input component.
 //!
 //! **API shape — 2 (Component + ref-bound handle).** A native UI
-//! element ([`Input`]) backed by native controls on iOS, Android, and Web,
-//! plus Whisker's GPU-rendered editable-text implementation on Desktop,
+//! element ([`Input`]) backed by native controls on every Host,
 //! with a Leptos-style **two-way binding**
 //! as the headline API plus a typed imperative handle ([`InputRef`])
 //! bound on mount via `element_ref:` for `focus` / `blur` / `clear` /
@@ -148,9 +147,9 @@
 //! - Android: `packages/whisker-input/android/src/main/kotlin/rs/whisker/elements/input/InputModule.kt`
 //!   (view: `WhiskerInputView.kt`)
 //! - Web: `packages/whisker-input/web/src/lib.rs`
-//! - Desktop: `packages/whisker-input/desktop/src/lib.rs` (shared by macOS,
-//!   Windows, and Linux; OS keyboard/IME events enter through
-//!   `platforms/desktop`)
+//! - macOS: the iOS sources, with `InputView+AppKit.swift`
+//! - Linux: `packages/whisker-input/linux/src/lib.rs`
+//! - Windows: `packages/whisker-input/windows/InputModule.cpp`
 
 mod measurement;
 
