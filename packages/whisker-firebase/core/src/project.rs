@@ -1,6 +1,7 @@
 //! Shared CNG plugin edits for service crates.
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use std::collections::BTreeMap;
+use std::path::Path;
 use whisker_plugin::project::*;
 
 /// Write a collection default read by the SDK at startup: an Info.plist key on iOS and
@@ -60,4 +61,31 @@ fn android_main_source_set(android: &mut AndroidProjectIr) -> Result<&mut Androi
         anyhow::bail!("Firebase requires an Android application module");
     };
     Ok(app.android.source_sets.entry("main".into()).or_default())
+}
+
+/// Where `whisker-firebase` places `GoogleService-Info.plist` in the iOS project. Service
+/// plugins that run after it find the user's file through this entry.
+pub const IOS_CONFIG: &str = "firebase/GoogleService-Info.plist";
+
+/// Read an app-relative input file, rejecting a symlink at any path component.
+pub fn read_app_file(context: &ProjectContext, source: &ProjectPath) -> Result<Vec<u8>> {
+    let root = context
+        .app_crate_dir
+        .as_deref()
+        .context("Firebase configuration needs an app crate directory")?;
+    let mut path = root.to_path_buf();
+    for part in Path::new(source.as_str()).components() {
+        path.push(part);
+        ensure!(
+            !std::fs::symlink_metadata(&path)
+                .with_context(|| format!(
+                    "Firebase configuration file unavailable: {}",
+                    path.display()
+                ))?
+                .file_type()
+                .is_symlink(),
+            "Firebase configuration must not contain symlinks"
+        );
+    }
+    std::fs::read(&path).with_context(|| format!("read Firebase configuration {}", path.display()))
 }

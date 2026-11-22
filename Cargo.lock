@@ -5187,7 +5187,6 @@ dependencies = [
  "plist",
  "serde",
  "whisker",
- "whisker-cng",
  "whisker-firebase-core",
  "whisker-plugin",
 ]

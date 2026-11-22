@@ -37,6 +37,3 @@ whisker-plugin = { path = "../../../crates/whisker-plugin", version = "0.18.1" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 plist = { version = "1.8", default-features = false }
-
-[dev-dependencies]
-whisker-cng = { path = "../../../crates/whisker-cng", version = "0.18.1" }

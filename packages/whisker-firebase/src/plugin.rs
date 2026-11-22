@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use whisker_firebase_core::__private::{IOS_CONFIG, read_app_file};
 use whisker_plugin::{PluginConfig, project::*};
 
 /// App-relative Firebase configuration files, downloaded from the Firebase console.
@@ -33,7 +33,7 @@ impl ProjectPlugin for WhiskerFirebase {
         match &mut project {
             ProjectIr::Android(android) => {
                 let source = ProjectPath::new(&config.android_config)?;
-                let bytes = input(context, &source)?;
+                let bytes = read_app_file(context, &source)?;
                 let json: serde_json::Value = serde_json::from_slice(&bytes)
                     .context("whisker-firebase: invalid google-services.json")?;
                 let module = android
@@ -102,7 +102,7 @@ impl ProjectPlugin for WhiskerFirebase {
             }
             ProjectIr::Ios(ios) => {
                 let source = ProjectPath::new(&config.ios_config)?;
-                let bytes = input(context, &source)?;
+                let bytes = read_app_file(context, &source)?;
                 let value = plist::Value::from_reader(std::io::Cursor::new(bytes))
                     .context("whisker-firebase: invalid GoogleService-Info.plist")?;
                 let values = value
@@ -134,7 +134,7 @@ impl ProjectPlugin for WhiskerFirebase {
                     values["BUNDLE_ID"].as_string() == Some(id.as_str()),
                     "GoogleService-Info.plist BUNDLE_ID does not match `{id}`"
                 );
-                let destination = ProjectPath::new("firebase/GoogleService-Info.plist")?;
+                let destination = ProjectPath::new(IOS_CONFIG)?;
                 let mut addition = IosProjectIr::default();
                 let mut target = target.clone();
                 target.resources.push(AppleResource::Copy {
@@ -175,26 +175,4 @@ fn validate_api_key(key: Option<&str>, file: &str) -> Result<()> {
         "{file} has a malformed API key; download the file again from the Firebase console"
     );
     Ok(())
-}
-
-fn input(context: &ProjectContext, source: &ProjectPath) -> Result<Vec<u8>> {
-    let root = context
-        .app_crate_dir
-        .as_deref()
-        .context("Firebase configuration needs an app crate directory")?;
-    let mut path = root.to_path_buf();
-    for part in Path::new(source.as_str()).components() {
-        path.push(part);
-        ensure!(
-            !std::fs::symlink_metadata(&path)
-                .with_context(|| format!(
-                    "Firebase configuration file unavailable: {}",
-                    path.display()
-                ))?
-                .file_type()
-                .is_symlink(),
-            "Firebase configuration must not contain symlinks"
-        );
-    }
-    std::fs::read(&path).with_context(|| format!("read Firebase configuration {}", path.display()))
 }
