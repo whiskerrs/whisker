@@ -131,9 +131,18 @@ including redirects to another HTTPS host. Custom token endpoints are unsupporte
 ## Plaintext credential staging
 
 Signing tools receive temporary files owned by the CLI process. Files are created
-with owner-only permissions, and directories are removed on normal drop, Ctrl-C,
-SIGTERM, or a Rust panic. The CLI installs cleanup before credential workflows,
-including non-interactive builds. Cleanup stops tracked build children first and
-removes only staging directories registered by that process. SIGKILL, process
-aborts, power loss, and filesystem errors can leave protected temporary files;
-inspect the operating system temporary directory after such failures.
+with owner-only permissions inside a staging directory that is removed when its
+guard drops, including while a main-thread panic unwinds.
+
+Ctrl-C and SIGTERM exit without unwinding, so the CLI installs a handler before
+credential workflows, including non-interactive builds. The handler stops tracked
+build children first, then removes only staging directories registered by that
+process.
+
+The panic hook only restores the terminal. It also runs for panics the process
+survives, such as a panicking Tokio task in the dev server, so it never stops
+builds or removes staging that a running build still reads.
+
+SIGKILL, process aborts, power loss, and filesystem errors can leave protected
+temporary files; inspect the operating system temporary directory after such
+failures.
