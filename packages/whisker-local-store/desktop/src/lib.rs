@@ -60,13 +60,16 @@ impl FileStore {
     fn open(path: PathBuf) -> Result<Self, String> {
         if let Ok(metadata) = std::fs::symlink_metadata(&path) {
             if metadata.file_type().is_symlink() {
-                return Err("local store cannot be a symbolic link".into());
+                return Err(format!(
+                    "local store cannot be a symbolic link: {}",
+                    path.display()
+                ));
             }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|error| format!("chmod {}: {error}", path.display()))?;
             }
         }
         let values = match std::fs::read(&path) {
@@ -90,12 +93,14 @@ impl FileStore {
             use std::os::unix::fs::DirBuilderExt;
             builder.mode(0o700);
         }
-        builder.create(parent).map_err(|error| error.to_string())?;
+        builder
+            .create(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| format!("chmod {}: {error}", parent.display()))?;
         }
         let bytes = serde_json::to_vec(&self.values)
             .map_err(|error| format!("encode local store: {error}"))?;
@@ -109,14 +114,15 @@ impl FileStore {
         }
         let mut file = options
             .open(&self.path)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| format!("open {}: {error}", self.path.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             file.set_permissions(std::fs::Permissions::from_mode(0o600))
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| format!("chmod {}: {error}", self.path.display()))?;
         }
-        file.write_all(&bytes).map_err(|error| error.to_string())
+        file.write_all(&bytes)
+            .map_err(|error| format!("write {}: {error}", self.path.display()))
     }
 }
 
