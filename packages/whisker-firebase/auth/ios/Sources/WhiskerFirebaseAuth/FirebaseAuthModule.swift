@@ -17,10 +17,8 @@ public final class FirebaseAuthModule: Module {
 
     public override func definition() -> ModuleDefinition {
         #if os(iOS)
-        // Phone sign-in's reCAPTCHA returns through scene(_:openURLContexts:). Auth proxies
-        // the scene delegate only for scenes that connect after Auth is created, and a
-        // Whisker app creates Auth on first use, after its scene connected. Modules are
-        // installed from didFinishLaunching, so starting the proxy here covers that scene.
+        // Auth proxies only scenes that connect after it exists, and this runs from
+        // didFinishLaunching, before the scene connects (the reCAPTCHA returns through it).
         GULSceneDelegateSwizzler.proxyOriginalSceneDelegate()
         #endif
         return ModuleDefinition {
@@ -67,10 +65,7 @@ public final class FirebaseAuthModule: Module {
                 guard let phoneNumber = args.first?.asString else {
                     promise.resolve(Self.failure("invalid-argument", "Expected a phone number")); return
                 }
-                // iOS has no resend token: a new call sends a new code, so args[1] is ignored.
-                // A new Auth sets up phone auth (its notification manager) on its serial work
-                // queue after init; verifying before that fails with notification-not-forwarded.
-                // currentUser reads on the same queue, so it returns once that setup is done.
+                // Waits for Auth's phone setup on its work queue; verifying earlier fails with notification-not-forwarded.
                 _ = Auth.auth().currentUser
                 // The reCAPTCHA fallback presents from the key window.
                 DispatchQueue.main.async {
@@ -275,7 +270,7 @@ public final class FirebaseAuthModule: Module {
             let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
             let response = error.userInfo[serverResponseKey] ?? underlying?.userInfo[serverResponseKey]
             if let server = (response as? [String: Any])?["message"] as? String {
-                message += " Server: \(server)" // e.g. BILLING_NOT_ENABLED for SMS on the Spark plan
+                message += " Server: \(server)"
             } else if let response {
                 message += " Server: \(response)"
             } else if let underlying {
