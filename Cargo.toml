@@ -93,6 +93,8 @@ members = [
     "packages/whisker-surface/linux",
     "packages/whisker-wgpu",
     "packages/whisker-wgpu/example",
+    "packages/whisker-scene",
+    "packages/whisker-scene/example",
 ]
 exclude = [
     "tests/cng-module-fixture",

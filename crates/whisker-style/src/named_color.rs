@@ -5,7 +5,7 @@
 /// The lookup is intentionally a compact static table instead of a parser
 /// dependency. Style updates are cold relative to frame sampling, and the
 /// linear scan keeps the mobile core footprint predictable.
-pub(crate) fn named_color_srgb(name: &str) -> Option<[u8; 3]> {
+pub fn named_color_srgb(name: &str) -> Option<[u8; 3]> {
     NAMED_COLORS
         .iter()
         .find(|(keyword, _)| keyword.eq_ignore_ascii_case(name))
