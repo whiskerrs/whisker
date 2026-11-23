@@ -74,6 +74,7 @@ internal class HostNode(
     var backdropBlur: Float = 0f
         set(value) {
             field = value
+            updateBackdropRegistration()
             invalidate()
         }
     internal var hitTestBehavior: Int = 0
@@ -409,6 +410,20 @@ internal class HostNode(
             dispatchDraw(canvas)
         }
         canvas.restoreToCount(save)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        updateBackdropRegistration()
+    }
+
+    override fun onDetachedFromWindow() {
+        root?.updateBackdropNode(this, active = false)
+        super.onDetachedFromWindow()
+    }
+
+    private fun updateBackdropRegistration() {
+        root?.updateBackdropNode(this, active = backdropBlur > 0f && isAttachedToWindow)
     }
 
     private fun drawBackdropBlur(canvas: Canvas) {
