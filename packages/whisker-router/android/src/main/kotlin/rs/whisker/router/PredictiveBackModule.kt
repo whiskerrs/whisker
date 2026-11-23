@@ -27,12 +27,16 @@
 // `OnStartObserving` registers the callback against the current host
 // Activity (resolved via `appContext.currentActivity`).
 // `OnStopObserving` removes it. If no subscriber is active, no callback
-// is registered — the host's normal back behaviour applies.
+// is registered — the host's normal back behaviour applies. While
+// observing, every host attach re-checks the Activity: a runtime retained
+// past its destroyed Activity (`WhiskerView.obtain`) moves the callback
+// to the dispatcher of the Activity that adopts it.
 
 package rs.whisker.router
 
 import android.os.Build
 import android.view.RoundedCorner
+import java.lang.ref.WeakReference
 import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -67,6 +71,9 @@ public class PredictiveBackModule : Module() {
      */
     private var callback: OnBackPressedCallback? = null
 
+    /** The Activity whose dispatcher holds [callback]. */
+    private var registeredActivity: WeakReference<ComponentActivity>? = null
+
     /**
      * Whether the Rust side currently wants back consumed (`setBackEnabled`).
      * Cached here because the callback registers deferred; while disabled,
@@ -75,11 +82,12 @@ public class PredictiveBackModule : Module() {
      */
     private var backEnabled: Boolean = false
     /**
-     * Pending registration listener. Set when `OnStartObserving` fires
-     * before the WhiskerView attaches to its window — fires once the host
-     * becomes available and finishes the deferred `addCallback`.
+     * Host attach listener, installed while observing. Finishes the
+     * deferred `addCallback` when `OnStartObserving` fires before the
+     * WhiskerView attaches, and moves the callback when a retained
+     * runtime attaches to a new Activity.
      */
-    private var pendingAttachListener: RuntimeAttachedListener? = null
+    private var attachListener: RuntimeAttachedListener? = null
 
     override fun definition(): ModuleDefinition = ModuleDefinition {
         Name("PredictiveBack")
@@ -145,41 +153,43 @@ public class PredictiveBackModule : Module() {
     }
 
     private fun ensureRegistered() {
-        if (callback != null) return
-        if (tryRegisterCallback()) return
+        tryRegisterCallback()
 
         // The Rust runtime renders the first tree from inside
         // WhiskerView's constructor (before `onAttachedToWindow`), so on
-        // cold start the host Activity isn't resolvable yet. Defer the
-        // dispatcher registration until WhiskerAppContext signals attach.
-        if (pendingAttachListener != null) return
-        val listener = RuntimeAttachedListener {
-            if (callback != null) return@RuntimeAttachedListener
-            tryRegisterCallback()
-        }
-        pendingAttachListener = listener
+        // cold start the host Activity isn't resolvable yet, and a
+        // retained runtime later attaches to a different Activity. Keep
+        // re-checking on every attach while observing.
+        if (attachListener != null) return
+        val listener = RuntimeAttachedListener { tryRegisterCallback() }
+        attachListener = listener
         appContext.addOnRuntimeAttachedListener(listener)
     }
 
     private fun teardown() {
-        pendingAttachListener?.let { appContext.removeOnRuntimeAttachedListener(it) }
-        pendingAttachListener = null
+        attachListener?.let { appContext.removeOnRuntimeAttachedListener(it) }
+        attachListener = null
         callback?.remove()
         callback = null
+        registeredActivity = null
     }
 
     /**
      * Register `OnBackPressedCallback` against the host Activity's
-     * dispatcher. Returns true when registered or already installed, false
-     * when the host isn't attached yet.
+     * dispatcher, moving it off a previous Activity. Returns true when
+     * registered or already installed, false when the host isn't attached
+     * yet.
      *
      * The `handleOnBackStarted` / `handleOnBackProgressed` /
      * `handleOnBackCancelled` overrides only run on API 34+; older
      * platforms fire `handleOnBackPressed` alone, degrading to commit-only.
      */
     private fun tryRegisterCallback(): Boolean {
-        if (callback != null) return true
-        val activity = appContext.currentActivity as? ComponentActivity ?: return false
+        val activity = appContext.currentActivity as? ComponentActivity
+            ?: return callback != null
+        if (callback != null && registeredActivity?.get() === activity) return true
+        callback?.remove()
+        callback = null
         val cb = object : OnBackPressedCallback(backEnabled) {
             override fun handleOnBackStarted(backEvent: BackEventCompat) {
                 sendEvent("backStarted", edgePayload(backEvent))
@@ -199,6 +209,7 @@ public class PredictiveBackModule : Module() {
         }
         activity.onBackPressedDispatcher.addCallback(cb)
         callback = cb
+        registeredActivity = WeakReference(activity)
         return true
     }
 

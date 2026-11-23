@@ -24,7 +24,7 @@ class MainActivity : ComponentActivity() {
         WhiskerWindow.enableEdgeToEdge(this)
         System.loadLibrary("{{rust_lib_name}}")
         WhiskerModuleBehaviors.registerAll()
-        setContentView(WhiskerView(this))
+        setContentView(WhiskerView.obtain(this))
         dispatchDeepLink(intent)
 {{main_activity_post_super}}    }
 
