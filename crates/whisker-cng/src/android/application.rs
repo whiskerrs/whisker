@@ -75,8 +75,10 @@ pub(super) fn declarations(inputs: &AndroidInputs) -> Result<AndroidProjectIr> {
     let repositories = |portal: bool| {
         let mut repos = vec![GradleRepository {
             id: "whisker".into(),
+            // A 503 from GitHub Pages disables the repository and fails the build, so it must
+            // never be asked for anything it does not host.
             expression: format!(
-                "maven {{ url = uri({}) }}",
+                r#"maven {{ url = uri({}); content {{ includeGroupByRegex("""rs\.whisker(\..+)?""") }} }}"#,
                 super::project_render::quote(&inputs.whisker_maven_url)
             ),
         }];
