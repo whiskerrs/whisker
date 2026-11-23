@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use glam::{Quat, Vec3};
 use whisker::Owner;
-use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, __reset_pending_mount_for_tests};
 use whisker::runtime::view::{
     BindType, DynRenderer, Element, install_renderer, uninstall_renderer,
