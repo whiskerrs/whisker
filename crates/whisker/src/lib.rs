@@ -362,7 +362,7 @@ pub mod __main_runtime {
 pub mod __driver_runtime {
     pub use whisker_driver::ffi_runtime::{
         create, destroy, dispatch_event, dispatch_module_event, dispatch_pointer,
-        dispatch_resource_event, pause, resume, tick,
+        dispatch_resource_event, drive_background, pause, resume, tick,
     };
 }
 

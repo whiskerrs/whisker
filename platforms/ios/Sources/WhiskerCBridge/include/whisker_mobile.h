@@ -797,6 +797,8 @@ extern bool whisker_view_tick(void *handle,
                               float height,
                               float scale);
 
+extern void whisker_view_drive_background(void *handle);
+
 extern bool whisker_view_pause(void *handle);
 
 extern bool whisker_view_resume(void *handle);
