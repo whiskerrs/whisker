@@ -179,10 +179,12 @@ struct WhiskerView::Impl {
     for (auto const& event : std::exchange(resource_events, {})) {
       whisker_view_dispatch_resource_event(handle, &event);
     }
-    if (!frame_requested) return;
-    frame_requested = false;
-    whisker_view_tick(handle, Now(), width, height, scale);
-    scene->DrawViews();
+    if (frame_requested) {
+      frame_requested = false;
+      whisker_view_tick(handle, Now(), width, height, scale);
+      scene->DrawViews();
+    }
+    scene->RunViewFrames(Now() / 1000.0);
   }
 
   void Pointer(xaml::Input::PointerRoutedEventArgs const& e, uint32_t event) {

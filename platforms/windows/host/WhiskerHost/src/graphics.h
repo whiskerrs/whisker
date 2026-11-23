@@ -24,6 +24,12 @@ struct __declspec(uuid("FAB19398-6D19-4D8A-B752-8F096C396069")) ICompositorInter
   virtual HRESULT __stdcall CreateGraphicsDevice(::IUnknown*, ::IUnknown**) = 0;
 };
 
+struct __declspec(uuid("FC084699-67D8-40E1-ADE7-08901D84FFDA")) ICompositorSwapChainInterop
+    : ICompositorInterop {
+  virtual HRESULT __stdcall CreateCompositionSurfaceForHandle(HANDLE, ::IUnknown**) = 0;
+  virtual HRESULT __stdcall CreateCompositionSurfaceForSwapChain(::IUnknown*, ::IUnknown**) = 0;
+};
+
 struct __declspec(uuid("D4B71A65-3052-4ABE-9183-E98DE02A41A9")) ICompositionDrawingSurfaceInterop2
     : ICompositionDrawingSurfaceInterop {
   virtual HRESULT __stdcall CopySurface(::IUnknown*, int, int, const RECT*) = 0;

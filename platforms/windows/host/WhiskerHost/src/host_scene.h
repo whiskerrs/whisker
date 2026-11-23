@@ -57,6 +57,8 @@ class HostScene {
   std::vector<ViewEvent> TakeViewEvents();
   // Paints module views invalidated outside a frame.
   void DrawViews();
+  // Runs `OnFrame` for every module view that requested one; returns whether any did.
+  bool RunViewFrames(double timestamp);
   // Answers the request from the element's module view `Measurement`, if it declares one.
   bool MeasureView(const WhiskerMobileMeasureRequest& request,
                    WhiskerMobileMeasureResponse& response) const;
@@ -86,6 +88,8 @@ class HostScene {
     NodeViewContext(HostScene& scene, uint64_t id) : scene_(scene), id_(id) {}
     void Emit(std::string_view event, Value detail) override;
     void Invalidate() override;
+    void SetCompositionSurfaceHandle(HANDLE handle) override;
+    void RequestFrame() override;
 
    private:
     HostScene& scene_;
@@ -140,6 +144,7 @@ class HostScene {
     bool clip_vertical = false;
     bool visible = true;
     bool has_text = false;
+    bool composition_surface = false;
     bool text_dirty = false;
     TextContent text;
   };
@@ -185,6 +190,7 @@ class HostScene {
   std::vector<ScrollEvent> scroll_events_;
   std::vector<ViewEvent> view_events_;
   std::unordered_set<uint64_t> dirty_views_;
+  std::unordered_set<uint64_t> frame_views_;
   std::function<void()> request_frame_;
   std::function<winrt::Microsoft::UI::Content::ContentIsland()> parent_island_;
   std::unordered_map<uint64_t, std::array<float, 2>> scroll_offsets_;

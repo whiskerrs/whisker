@@ -86,6 +86,8 @@ class ViewContext {
  public:
   virtual void Emit(std::string_view event, Value detail) = 0;
   virtual void Invalidate() = 0;
+  virtual void SetCompositionSurfaceHandle(HANDLE handle) = 0;
+  virtual void RequestFrame() = 0;
 
  protected:
   ~ViewContext() = default;
@@ -101,12 +103,19 @@ class ModuleView {
 
   // User space is logical pixels with the content box at the origin; the Host has cleared it.
   virtual void Draw(ID2D1DeviceContext* context, float width, float height) = 0;
+  // Runs once per `RequestFrame`, on the next display frame and outside Whisker's commit.
+  // `timestamp` is in seconds; the size is the content box in logical pixels.
+  virtual void OnFrame(double /*timestamp*/, float /*width*/, float /*height*/, float /*scale*/) {}
 
  protected:
   // Delivered on the next frame, so it is safe to call from a property setter.
   void Emit(std::string_view event, Value detail = {}) { context_->Emit(event, std::move(detail)); }
   // Schedules `Draw`; property and command handlers already imply it.
   void Invalidate() { context_->Invalidate(); }
+  // Shows a surface from `DCompositionCreateSurfaceHandle` in the content box instead of `Draw`.
+  // The handle must stay open until the view is destroyed.
+  void SetCompositionSurfaceHandle(HANDLE handle) { context_->SetCompositionSurfaceHandle(handle); }
+  void RequestFrame() { context_->RequestFrame(); }
 
  private:
   ViewContext* context_;
