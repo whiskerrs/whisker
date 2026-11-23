@@ -33,6 +33,7 @@ import rs.whisker.runtime.resource.HostResourceChannel
 import rs.whisker.runtime.resource.HostRasterSource
 import rs.whisker.runtime.resource.HostResourceService
 import rs.whisker.runtime.resource.HostResourceSnapshot
+import rs.whisker.runtime.scene.BackdropRegistry
 import rs.whisker.runtime.scene.HostElementBootstrap
 import rs.whisker.runtime.scene.HostNode
 import rs.whisker.runtime.scene.HostScene
@@ -92,6 +93,12 @@ class WhiskerView(context: Context) :
     private var backdropCaptureTarget: HostNode? = null
     private var backdropCaptureReached = false
     private val backdropCaptureAncestors = ArrayList<View>()
+    private val backdropNodes = BackdropRegistry<HostNode, View> { node, target ->
+        var current: View? = target
+        while (current != null && current !== node) current = current.parent as? View
+        current === node
+    }
+    private var invalidatingBackdrops = false
     private val pendingContinuousEvents = PendingContinuousEvents()
     private var continuousEventFlushPending = false
     private val pendingModuleEvents = PendingModuleEvents()
@@ -183,6 +190,23 @@ class WhiskerView(context: Context) :
 
     override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean =
         drawBackdropCaptureChild(canvas, child) ?: super.drawChild(canvas, child, drawingTime)
+
+    internal fun updateBackdropNode(node: HostNode, active: Boolean) {
+        backdropNodes.update(node, active)
+    }
+
+    // Property-only changes (an ancestor's translation during a route transition) and repaints of
+    // the content beneath do not re-record a backdrop node, so its baked offset and snapshot go stale.
+    override fun onDescendantInvalidated(child: View, target: View) {
+        super.onDescendantInvalidated(child, target)
+        if (invalidatingBackdrops || backdropCaptureTarget != null || backdropNodes.isEmpty) return
+        invalidatingBackdrops = true
+        try {
+            backdropNodes.affectedBy(target).forEach(View::invalidate)
+        } finally {
+            invalidatingBackdrops = false
+        }
+    }
 
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas)
