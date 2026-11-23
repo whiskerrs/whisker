@@ -1000,7 +1000,7 @@ mod tests {
         assert!(!settings.contains("lynx"));
         assert_eq!(
             settings
-                .matches("maven { url = uri(\"https://whiskerrs.github.io/whisker/maven\") }")
+                .matches(r#"maven { url = uri("https://whiskerrs.github.io/whisker/maven"); content { includeGroupByRegex("""rs\.whisker(\..+)?""") } }"#)
                 .count(),
             2,
             "the published SDK repository must resolve plugins and AARs",
