@@ -150,6 +150,18 @@ defers to the replayer.
 No payload. Same semantics as `PAINT_FILL_TINT` but for stroke
 paint.
 
+### `0x16 PAINT_STROKE_CAP` — set stroke line cap
+
+Payload: 1 × `u8`. `0` = butt, `1` = round, `2` = square (SVG
+`stroke-linecap`). Initial value is butt; scoped by `SAVE` /
+`RESTORE`. A replayer MUST treat any other value as butt.
+
+### `0x17 PAINT_STROKE_JOIN` — set stroke line join
+
+Payload: 1 × `u8`. `0` = miter, `1` = round, `2` = bevel (SVG
+`stroke-linejoin`). Initial value is miter; scoped by `SAVE` /
+`RESTORE`. A replayer MUST treat any other value as miter.
+
 ### `0x20 PATH_BEGIN` — start a new path
 
 No payload. Discards any in-progress path on the path builder.
@@ -186,8 +198,8 @@ future `0x31 PATH_FILL_EVEN_ODD`.)
 ### `0x32 PATH_STROKE`
 
 No payload. Strokes the in-progress path with the current
-`PAINT_STROKE_COLOR` (or tint) and `PAINT_STROKE_WIDTH`. Caps =
-butt, joins = miter (matches SVG defaults). v2 may extend.
+`PAINT_STROKE_COLOR` (or tint), `PAINT_STROKE_WIDTH`,
+`PAINT_STROKE_CAP`, and `PAINT_STROKE_JOIN`.
 
 ### `0x33 PATH_FILL_AND_STROKE`
 

@@ -338,6 +338,26 @@ public final class BuiltInElementModule: Module {
                 ) { (view: WhiskerScrollContainerView, value: WhiskerValue) in
                     view.isScrollEnabled = value.asBool ?? true
                 }
+                Prop(
+                    "show-scroll-indicator",
+                    clear: { (view: WhiskerScrollContainerView) in
+                        view.setScrollIndicatorVisible(true)
+                    }
+                ) { (view: WhiskerScrollContainerView, value: WhiskerValue) in
+                    view.setScrollIndicatorVisible(value.asBool ?? true)
+                }
+                Prop(
+                    "enable-refresh",
+                    clear: { (view: WhiskerScrollContainerView) in view.setRefreshEnabled(false) }
+                ) { (view: WhiskerScrollContainerView, value: WhiskerValue) in
+                    view.setRefreshEnabled(value.asBool ?? false)
+                }
+                Prop(
+                    "refreshing",
+                    clear: { (view: WhiskerScrollContainerView) in view.setRefreshing(false) }
+                ) { (view: WhiskerScrollContainerView, value: WhiskerValue) in
+                    view.setRefreshing(value.asBool ?? false)
+                }
                 Command("scrollTo") { (view: WhiskerScrollContainerView, value: WhiskerValue) in
                     guard case .map(let arguments) = value else { return }
                     view.scrollToLogicalOffset(
@@ -352,7 +372,7 @@ public final class BuiltInElementModule: Module {
                         smooth: arguments["smooth"]?.asBool ?? false
                     )
                 }
-                Events("scroll")
+                Events("scroll", "refresh")
             }
         }
     }

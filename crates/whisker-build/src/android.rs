@@ -279,7 +279,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         .pipe(&mut cmd)
         .with_context(|| format!("spawn cargo for {triple}"))?;
     if !status.success() {
-        cargo_step.done("failed");
+        cargo_step.fail(status.to_string());
         return Err(anyhow!("cargo build failed ({status}) for {triple}"));
     }
     cargo_step.done(match (before, so_mtime(&so_path)) {
@@ -358,7 +358,10 @@ pub fn stage_so_files(abi_dir: &Path, so: &Path, _tc: &AndroidToolchain, _abi: &
     }
     warn_if_not_16k_aligned(&dst_so);
 
-    crate::ui::info(format!("stage jniLibs ({})", so_name.to_string_lossy()));
+    crate::ui::info(crate::ui::labeled(
+        "stage",
+        format!("jniLibs ({})", so_name.to_string_lossy()),
+    ));
     Ok(())
 }
 
@@ -480,6 +483,7 @@ pub fn run_gradle_assemble(
     };
     let gradle_step = crate::ui::step(crate::ui::OperationKind::Gradle, task.to_string());
     let mut cmd = gradle_command(gen_android, task)?;
+    cmd.env_remove("WHISKER_FEATURES");
     if !features.is_empty() {
         cmd.env("WHISKER_FEATURES", features.join(" "));
     }
@@ -567,6 +571,7 @@ fn gradle_command(gen_android: &Path, task: &str) -> Result<Command> {
     if crate::ui::is_verbose() {
         cmd.env("WHISKER_VERBOSE", "1");
     }
+    crate::ui::mark_nested(&mut cmd);
     Ok(cmd)
 }
 
@@ -617,6 +622,7 @@ pub fn run_gradle_release(
     };
     let gradle_step = crate::ui::step(crate::ui::OperationKind::Gradle, task.to_string());
     let mut cmd = gradle_command(gen_android, task)?;
+    cmd.env_remove("WHISKER_FEATURES");
     for (k, v) in signing_env {
         cmd.env(k, v);
     }

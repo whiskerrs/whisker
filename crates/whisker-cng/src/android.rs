@@ -121,6 +121,10 @@ pub struct AndroidInputs {
     /// `MainActivity` deep-link schemes. See `AndroidManifest::main_activity_url_schemes`.
     #[serde(default)]
     pub main_activity_url_schemes: Vec<String>,
+    /// `MainActivity`'s `android:screenOrientation`. See
+    /// `AndroidManifest::main_activity_screen_orientation`.
+    #[serde(default)]
+    pub main_activity_screen_orientation: Option<String>,
     /// Overrides `<application android:theme>`. `None` → the template
     /// default. See `AndroidManifest::application_theme`.
     #[serde(default)]
@@ -668,6 +672,8 @@ pub fn inputs_from_with_engine(
     let extra_meta_data = android_ir.manifest.application_meta_data.clone();
     let extra_application_attributes = android_ir.manifest.application_attributes.clone();
     let main_activity_url_schemes = android_ir.manifest.main_activity_url_schemes.clone();
+    let main_activity_screen_orientation =
+        android_ir.manifest.main_activity_screen_orientation.clone();
     let android_theme = android_ir.manifest.application_theme.clone();
     let main_activity_imports = android_ir.manifest.main_activity_imports.clone();
     let main_activity_pre_super = android_ir.manifest.main_activity_pre_super.clone();
@@ -695,6 +701,7 @@ pub fn inputs_from_with_engine(
         extra_meta_data,
         extra_application_attributes,
         main_activity_url_schemes,
+        main_activity_screen_orientation,
         android_theme,
         main_activity_imports,
         main_activity_pre_super,
@@ -702,7 +709,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 40,
+        template_version: 46,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -756,6 +763,7 @@ mod tests {
             extra_meta_data: Vec::new(),
             extra_application_attributes: Vec::new(),
             main_activity_url_schemes: Vec::new(),
+            main_activity_screen_orientation: None,
             android_theme: None,
             main_activity_imports: Vec::new(),
             main_activity_pre_super: Vec::new(),
@@ -763,7 +771,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 40,
+            template_version: 46,
             cargo_selection: crate::CargoSelection::default(),
         }
     }
@@ -992,14 +1000,14 @@ mod tests {
         assert!(!settings.contains("lynx"));
         assert_eq!(
             settings
-                .matches("maven { url = uri(\"https://whiskerrs.github.io/whisker/maven\") }")
+                .matches(r#"maven { url = uri("https://whiskerrs.github.io/whisker/maven"); content { includeGroupByRegex("""rs\.whisker(\..+)?""") } }"#)
                 .count(),
             2,
             "the published SDK repository must resolve plugins and AARs",
         );
         assert!(settings.contains("rs.whisker:ksp"));
         assert!(settings.contains("id(\"rs.whisker\") version \"0.1.0\""));
-        assert!(settings.contains("includeBuild(localGradlePlugin)"));
+        assert!(settings.contains("includeBuild(localGradlePlugin.path)"));
         assert!(settings.contains("userPackage = \"hello-world\""));
 
         let app_gradle = std::fs::read_to_string(out.join("app/build.gradle.kts")).unwrap();

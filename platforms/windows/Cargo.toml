@@ -14,5 +14,8 @@ description = "Native WinUI 3 Windows Host for Whisker."
 links = "whisker-windows"
 exclude = ["host"]
 
+[features]
+hot-reload = ["whisker/hot-reload"]
+
 [target.'cfg(target_os = "windows")'.dependencies]
 whisker = { workspace = true }

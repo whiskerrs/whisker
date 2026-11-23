@@ -21,7 +21,7 @@ run Whisker's ABI generator.
 The name `WhiskerDriver.framework` describes the link product, while the Rust
 `whisker-driver` crate is specifically the safe FFI adapter inside that product.
 Platform-independent runtime behavior lives in `whisker-runtime`. Web and
-Desktop link that runtime directly and do not link `whisker-driver`.
+Linux link that runtime directly and do not link `whisker-driver`.
 
 ## Build flow
 

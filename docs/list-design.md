@@ -61,6 +61,8 @@ Optional configuration:
 - `content_style`, applied to the internal content View while `style` applies
   to the ScrollView viewport;
 - reactive `scroll_enabled`;
+- `on_refresh` and reactive `refreshing`, the ScrollView's native
+  pull-to-refresh (see [architecture.md](architecture.md#scrolling-lists-and-platform-modules));
 - `header`, `footer`, and `empty` render functions;
 - logical-pixel `start_reached_threshold` / `end_reached_threshold` and their
   edge-entry callbacks;
@@ -134,8 +136,7 @@ presentation, DOM attributes, and parentage are reset. Custom element
 presentations are destroyed normally; module authors do not need a List-aware
 reuse contract and custom native state cannot leak between keys.
 
-Desktop uses the same general pool for its lightweight element-content
-objects. Android and iOS reuse their built-in native View/Text content, and
+Android and iOS reuse their built-in native View/Text content, and
 Web reuses the corresponding DOM/native wrapper. Every pool is bounded.
 
 ## Complexity targets

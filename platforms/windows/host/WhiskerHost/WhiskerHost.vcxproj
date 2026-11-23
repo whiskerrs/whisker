@@ -38,6 +38,7 @@
     <ClInclude Include="include\whisker\module.h" />
     <ClInclude Include="include\whisker\whisker_app.h" />
     <ClInclude Include="include\whisker\whisker_view.h" />
+    <ClInclude Include="include\whisker\xaml_module.h" />
     <ClInclude Include="src\background.h" />
     <ClInclude Include="src\capabilities.h" />
     <ClInclude Include="src\clip_path.h" />

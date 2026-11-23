@@ -1,0 +1,25 @@
+[package]
+name = "whisker-wgpu-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Example app for `whisker-wgpu`: a spinning triangle under Whisker UI, with continuous and on-demand frames."
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = ["whisker-cng/generate"]
+
+[dependencies]
+whisker-cng = { path = "../../../crates/whisker-cng", version = "0.19.0", default-features = false }
+whisker = { workspace = true }
+whisker-surface = { path = "../../whisker-surface" }
+whisker-wgpu = { path = ".." }

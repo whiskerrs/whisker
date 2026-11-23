@@ -120,6 +120,8 @@ impl DomFrameSink {
         set_style(&root, "width", "100%")?;
         set_style(&root, "height", "100%")?;
         set_style(&root, "overflow", "hidden")?;
+        // Scroll views still pan, since a touch's effective touch-action stops at its nearest scroll container.
+        set_style(&root, "touch-action", "none")?;
         shadow
             .append_child(&root)
             .map_err(|error| js_error("attach Whisker Web surface root", error))?;

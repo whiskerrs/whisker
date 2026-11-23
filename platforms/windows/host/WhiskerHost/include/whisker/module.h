@@ -86,6 +86,8 @@ class ViewContext {
  public:
   virtual void Emit(std::string_view event, Value detail) = 0;
   virtual void Invalidate() = 0;
+  virtual void SetCompositionSurfaceHandle(HANDLE handle) = 0;
+  virtual void RequestFrame() = 0;
 
  protected:
   ~ViewContext() = default;
@@ -101,15 +103,53 @@ class ModuleView {
 
   // User space is logical pixels with the content box at the origin; the Host has cleared it.
   virtual void Draw(ID2D1DeviceContext* context, float width, float height) = 0;
+  // Runs once per `RequestFrame`, on the next display frame and outside Whisker's commit.
+  // `timestamp` is in seconds; the size is the content box in logical pixels.
+  virtual void OnFrame(double /*timestamp*/, float /*width*/, float /*height*/, float /*scale*/) {}
 
  protected:
   // Delivered on the next frame, so it is safe to call from a property setter.
   void Emit(std::string_view event, Value detail = {}) { context_->Emit(event, std::move(detail)); }
   // Schedules `Draw`; property and command handlers already imply it.
   void Invalidate() { context_->Invalidate(); }
+  // Shows a surface from `DCompositionCreateSurfaceHandle` in the content box instead of `Draw`.
+  // The handle must stay open until the view is destroyed.
+  void SetCompositionSurfaceHandle(HANDLE handle) { context_->SetCompositionSurfaceHandle(handle); }
+  void RequestFrame() { context_->RequestFrame(); }
 
  private:
   ViewContext* context_;
+};
+
+struct Size {
+  float width = 0;
+  float height = 0;
+};
+
+// Logical pixels; an unset available size means the axis is unconstrained.
+struct MeasureRequest {
+  std::optional<float> available_width;
+  std::optional<float> available_height;
+  std::optional<float> known_width;
+  std::optional<float> known_height;
+  uint16_t payload_version = 0;
+  Value payload;
+};
+
+enum class TextAlignment { Start, Center, End, Justify };
+enum class TextDirection { Ltr, Rtl };
+
+// The inherited text style the Host resolves for a view element declared with `text_style`.
+struct TextStyle {
+  std::vector<std::string> font_families;
+  float font_size = 14;
+  uint16_t font_weight = 400;
+  bool italic = false;
+  std::optional<float> line_height;
+  float letter_spacing = 0;
+  D2D1_COLOR_F color{0, 0, 0, 1};
+  TextAlignment alignment = TextAlignment::Start;
+  TextDirection direction = TextDirection::Ltr;
 };
 
 class PromiseState {
@@ -137,6 +177,8 @@ struct ViewDefinition {
   std::unordered_map<std::string, Handler> properties;
   std::unordered_map<std::string, Handler> commands;
   std::vector<std::string> events;
+  std::function<std::optional<Size>(const MeasureRequest&)> measure;
+  std::function<void(ModuleView&, const TextStyle&)> text_style;
 };
 
 template <typename T>
@@ -155,6 +197,18 @@ class ViewBuilder {
   }
   ViewBuilder& Events(std::initializer_list<std::string_view> names) {
     for (auto name : names) definition_.events.emplace_back(name);
+    return *this;
+  }
+  // Runs on the UI thread during layout; `nullopt` leaves the element unmeasured.
+  ViewBuilder& Measurement(std::function<std::optional<Size>(const MeasureRequest&)> measure) {
+    definition_.measure = std::move(measure);
+    return *this;
+  }
+  ViewBuilder& TextStyle(std::function<void(T&, const whisker::TextStyle&)> apply) {
+    definition_.text_style = [apply = std::move(apply)](ModuleView& view,
+                                                        const whisker::TextStyle& style) {
+      apply(static_cast<T&>(view), style);
+    };
     return *this;
   }
 

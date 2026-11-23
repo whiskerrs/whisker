@@ -1,6 +1,6 @@
 [package]
 name = "whisker-web-browser"
-version = "0.14.5"
+version = "0.14.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -29,11 +29,10 @@ crate-type = ["rlib"]
 android = { manifest = "build.gradle.kts" }
 ios = { manifest = "Package.swift" }
 web = { manifest = "web/Cargo.toml" }
-desktop = { manifest = "desktop/Cargo.toml" }
 macos = { manifest = "Package.swift" }
 windows = { manifest = "desktop/Cargo.toml" }
 linux = { manifest = "desktop/Cargo.toml" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.17.0" }
+whisker = { path = "../../crates/whisker", version = "0.19.0" }
 futures-channel = "0.3"

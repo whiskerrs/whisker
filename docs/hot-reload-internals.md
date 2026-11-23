@@ -77,7 +77,9 @@ wired in (`prepare_hot_reload_capture` in `lib.rs`):
   thin rebuild replays those vars so `env!("CARGO_PKG_*")` /
   `env!("OUT_DIR")` in user code still compiles under the raw
   (cargo-less) rustc spawn. Android, iOS, and macOS builds install it
-  through `RUSTC_WORKSPACE_WRAPPER`.
+  through `RUSTC_WORKSPACE_WRAPPER`; Linux, Windows and Web, whose
+  generated Cargo Host takes the user crate as a path dependency,
+  through `RUSTC_WRAPPER`.
 - `-C linker=whisker-linker-shim` — records each linker invocation's
   argv (keyed by output basename) to the linker-args cache, then
   forwards to the real linker.
@@ -105,32 +107,44 @@ On a `RustCode` change, `Patcher::build_patch(aslr_reference, crate_key)`
 runs:
 
 1. **`rustc --emit=obj`** for the changed crate, replaying its captured
-   rustc args (`thin_build::build_obj_plan` + `run_obj_plan`). This
-   yields an `.o` that still contains every `pub fn`'s mangled symbol —
+   rustc args (`thin_build::build_obj_plan` + `run_obj_plan`) with
+   `-C codegen-units=256`, so an edit re-runs LLVM only for the units
+   it touches. This yields one `.o` per codegen unit, which together
+   still contain every `pub fn`'s mangled symbol —
    object files are pre-link, so dead-code elimination and cdylib
    symbol stripping haven't run yet. (Going through cargo's `cdylib`
    path here would silently drop every mangled `pub fn`; that's why the
    pipeline drives `rustc`/the linker directly.)
 2. **Stub object synthesis** (`stub_object`, Option B / Dioxus-style).
-   For each undefined symbol the patch references, a tiny ARM64/Mach-O
-   stub defines a trampoline to that symbol's *live runtime address* in
+   For each undefined symbol the patch references, a tiny stub (ARM64
+   or x86-64, chosen from the original binary) defines a trampoline to that symbol's *live runtime address* in
    the host, computed from the host's static address plus the ASLR
    slide (`aslr_reference - cache.aslr_reference`). The stub bytes are
    cached per-session keyed by the FNV-1a hash of the needed-symbol set,
-   so body-only edits reuse them. On Linux/Android the host `.so` is
+   so body-only edits reuse them. On Android the host `.so` is
    also added to the link line as a `DT_NEEDED` fallback for the
    non-Text symbols the weak stubs don't cover (thread-locals, statics).
+   A Linux Host is a program, which can't be a link input: its exported
+   symbols resolve from the loader's global scope instead.
 3. **Explicit link** (`build_link_plan` + `run_link_plan`) of the thin
-   `.o` (+ stub + extras) into a patch dylib, replaying the captured
+   objects (+ stub + extras) into a patch dylib, replaying the captured
    linker args. On macOS, `_whisker_aslr_anchor` is force-exported so
-   subsecond's `dlsym(patch, …)` resolves.
+   subsecond's `dlsym(patch, …)` resolves. A patch for a Linux program
+   is linked `-Bsymbolic`: the program's own exports precede the patch
+   in lookup order, so an unbound call between two patched functions
+   would reach the old code. On Windows the line is rebuilt for
+   `link.exe` (`msvc::build_link_plan`) as a DLL that keeps only the
+   system import libraries: a PE image resolves nothing against the
+   program that loads it, so every Host function comes from the stubs,
+   and so does the `__imp_` pointer through which MSVC code reads
+   another crate's `static`.
 4. **JumpTable construction** (`symbol_table` + `cache` +
    `build_jump_table`). Parse the patch dylib's symbols with the
    `object` crate, diff against the cached original, and emit a
    `subsecond_types::JumpTable` of `old_addr → new_addr` pairs.
 
 Sub-crate patches (`crate_key != user crate`) additionally rebuild the
-*user* crate's `.o` and link it in, because the user crate carries the
+*user* crate's objects and link them in, because the user crate carries the
 `whisker_aslr_anchor` symbol subsecond needs in the patch dylib's
 `.dynsym`.
 
@@ -138,9 +152,11 @@ Sub-crate patches (`crate_key != user crate`) additionally rebuild the
 
 The patch is broadcast over the WebSocket at `ws://<bind>/whisker-dev`.
 Connection direction is **device → host**: the on-device
-`whisker-dev-runtime` dials the host's `whisker run`.
+`whisker-dev-runtime` dials the host's `whisker run`. The connection is
+first authenticated (see [Dev-session security model](#dev-session-security-model));
+every message after that travels in an authenticated envelope.
 
-Patches are **binary** frames:
+A patch envelope's payload is:
 
 ```text
 [8 bytes: u64 BE — JSON header length]
@@ -154,10 +170,10 @@ can only be strings, which round-trips badly through the custom
 `u64`-keyed `AddressMap`); both sides share that adapter
 (`server::wire_jump_table` ↔ `hot_reload::deserialize_jump_table`).
 
-On connect, the device sends a **text** `hello` frame:
+Once authenticated, the device sends a `hello` message:
 
 ```json
-{ "kind": "hello", "aslr_reference": <u64>, "token": "<hex>" }
+{ "kind": "hello", "aslr_reference": <u64> }
 ```
 
 The `aslr_reference` is the device's `subsecond::aslr_reference()` —
@@ -180,12 +196,14 @@ crash the device.
 
 `whisker-dev-runtime/src/hot_reload.rs::handle_patch_frame`:
 
-1. Parse the frame, write the dylib bytes to a writable, dlopen-able
-   dir (`/data/data/<pkg>/cache/whisker-patches/` on Android, `$TMPDIR`
-   elsewhere), and rewrite `table.lib` to that local path.
+1. Parse the frame, write the dylib bytes to a fresh owner-only
+   `whisker-patch-<random hex>/` directory under a writable, dlopen-able
+   base (`/data/data/<pkg>/cache/` on Android, `$TMPDIR` elsewhere), and
+   rewrite `table.lib` to that local path. The file is created
+   exclusively, so another process cannot pre-place or swap it.
 2. Publish the JumpTable as a monotonically numbered generation in the
    process-wide coordinator. A bounded history ensures multiple
-   `WhiskerView` / desktop runtime instances can each observe every patch.
+   `WhiskerView` instances can each observe every patch.
 3. Wake every registered runtime through its own `RuntimeWakeHandle`.
 
 At the beginning of the next Host-driven runtime transaction,
@@ -198,8 +216,7 @@ edits (new elements, new signals) therefore reflect in every mounted tree.
 State local to a remounted component is lost; state above the remount point
 and in unchanged components survives.
 
-Android and iOS call this safe point from `MobileRuntime::tick`; desktop calls
-it at the start of `DesktopApplication::drive_frame`. Both use the same
+Android and iOS call this safe point from `MobileRuntime::tick` through the
 `NativeHotReload` adapter. The receiver thread never enters a runtime and
 never applies code while a `subsecond::call` frame is active.
 
@@ -329,40 +346,113 @@ consumers).
 
 ## Dev-session security model
 
-The patch channel `dlopen`s whatever bytes it receives, so on a
-LAN-exposed bind an unauthenticated peer could push arbitrary native
-code. Two defenses:
+The patch channel `dlopen`s whatever bytes it receives, so only the app
+launched by the current `whisker run` session may receive patches, and
+only from that session's server. The shared protocol lives in
+[`whisker-dev-protocol`](../crates/whisker-dev-protocol/src/lib.rs); the
+server and the runtime own the sockets.
 
 - **Loopback bind by default.** `whisker run --bind` defaults to
   `127.0.0.1:9876`. On Android the device reaches the host through
   `adb reverse tcp:9876 tcp:<dev_port>` (set up by the installer); the
   app reads `WHISKER_DEV_ADDR` or falls back to `127.0.0.1:9876`.
-- **Per-session token.** `whisker run` generates a random 32-hex-char
-  token per session (`generate_dev_token` in `whisker-cli/src/run.rs`,
-  16 bytes from `/dev/urandom`). It's delivered to the device
-  out-of-band:
+- **Request origin policy.** `server.rs::validate_request` runs before
+  the static files and the WebSocket handler and answers `403` unless:
+  - `Host` names the bound IP and port, or `localhost` with the bound
+    port for a loopback or wildcard bind. DNS names, including mDNS names
+    such as `mac.local`, are refused so DNS rebinding cannot reach the
+    server; a portless `Host` means port 80.
+  - `Origin`, when present, is exactly `http://<Host>`. Pages served over
+    `https` (and so `wss` sockets), opaque `null` origins and every other
+    origin are refused.
+  - A WebSocket upgrade without `Origin` comes from a native client, which
+    is allowed only when the session has a secret.
+
+  Android requests arrive with the device-side `Host` `127.0.0.1:9876`
+  whatever `--bind` says, because the app always dials that address
+  through `adb reverse`. For the Android target `whisker run` sets
+  `Config::forwarded_authorities` to `127.0.0.1:9876` and
+  `localhost:9876` (`ANDROID_DEVICE_PORT`), which the server accepts in
+  addition to the bound authority when bound to a loopback or wildcard
+  address. They are an IP literal and `localhost`, so they do not let an
+  attacker-controlled name through. A LAN-IP bind gets no forwarded
+  authority; `adb reverse` cannot reach it anyway.
+- **Per-session secret.** `whisker run` generates a 32-hex-character
+  secret (128 bits from the operating-system CSPRNG,
+  `whisker_dev_protocol::generate_secret`) for every native target and
+  delivers it out of band:
   - **iOS Simulator / host:** the `WHISKER_DEV_TOKEN` env var, set via
     `SIMCTL_CHILD_WHISKER_DEV_TOKEN` (the `SIMCTL_CHILD_<NAME>`
     convention surfaces `<NAME>` inside the launched app).
   - **Android:** the `debug.whisker_dev_token` system property, set
-    with `adb shell setprop` (the app process doesn't inherit
-    adb-set env vars). `whisker-dev-runtime` reads it via
+    with `adb shell setprop` and verified with `getprop` (the app process
+    doesn't inherit adb-set env vars). `whisker-dev-runtime` reads it via
     `__system_property_get`.
 
-The device echoes the token in its `hello`. The server validates it
-(`server.rs::handle_socket`): a client starts *unauthenticated* when a
-token is required and is promoted only on a matching `hello`; a missing
-or mismatched token closes the connection without ever arming the patch
-path. A token-less server (`dev_token == None`, e.g. tests) runs open by
-default. While unauthenticated, broadcast patches are dropped (not
-buffered) for that client — the device re-receives the full JumpTable on
-the next save anyway.
+  On Android, both the `adb reverse` and the property must succeed
+  before every launch, including relaunches without a reinstall;
+  otherwise the launch fails. Without randomness the CLI refuses to start
+  instead of using a guessable secret.
+- **Mutual authentication.** The secret never crosses the wire. The app
+  sends a challenge with a fresh 256-bit nonce; the server answers with
+  its own nonce and an HMAC-SHA256 proof over both nonces; the app checks
+  that proof before sending its own. Proofs use separate server and
+  client domains, so neither can be reflected. A substituted server
+  therefore learns nothing about the app: no ASLR reference, logs, or
+  traces are sent before the server is verified. Handshake messages are
+  at most 4 KiB and skip WebSocket ping/pong frames, and either side
+  drops a connection that hasn't authenticated within five seconds.
+- **Authenticated envelopes.** Every later message is
+  `[version:1][kind:1][sequence:u64 BE][payload][HMAC:32]`. Kind 1 carries
+  a patch, kind 2 UTF-8 JSON (hello, logs, traces, control). The tag
+  covers the direction, both nonces, and every preceding byte, and each
+  direction must use the next sequence number without wrapping.
+  Modified, replayed, reordered, reflected, and cross-session envelopes
+  close the connection before patch metadata is parsed or a library is
+  written.
+- **Bounded reads.** An envelope is at most 256 MiB; text payloads and
+  patch metadata at most 1 MiB. The server caps every client message at
+  1 MiB plus the envelope overhead, because clients never send patches.
+  The runtime reads at most 8 KiB, enough for the HTTP upgrade response
+  and the server proof, until the server is authenticated; the server
+  sends nothing between its proof and accepting the client's, so that
+  cap is lifted with nothing buffered past it. A patch that doesn't fit
+  one envelope is dropped with a warning and needs a Full Reload.
+- **Browsers only get WebAssembly.** The Web target runs without a
+  secret in browser-only, same-origin mode: only a page served by the
+  dev server itself can open the socket, and native clients, which send
+  no `Origin`, are refused at the upgrade. Clients of a secret-less
+  server receive reload requests and side modules that pass `wasmparser`
+  validation (`PatchSender::send_web`), never native libraries. Their
+  `hello` cannot set the stored `aslr_reference`; the server records `0`,
+  since the web patcher needs the handshake but not a slide. Native hot
+  patching therefore always requires a secret.
+- **Visible failures.** There is no version negotiation: a CLI and a
+  runtime built from different protocol versions fail the handshake. The
+  runtime writes the reason (stale secret, version mismatch, timeout,
+  protocol violation) to stderr, once per distinct reason, which reaches
+  logcat or the system log; an unreachable server is not reported. The
+  server shows rejected handshakes as warnings, also once per reason.
+
+HMAC authenticates the connection but does not encrypt it. The
+operating system's debug transport and the provisioned secret are
+trusted: anyone who can read the Android debug property can impersonate
+that session's server or app.
+
+Device log lines and stream names pass through `strip_controls` before
+reaching the TUI or plain terminal output: C0, DEL and C1 controls and
+bidirectional formatting characters are removed, and tabs are kept in
+the line.
 
 ## Known boundaries
 
 - **iOS hardware is unsupported** for Hot Reload: `mmap(PROT_WRITE |
   PROT_EXEC)` is blocked by Apple's W^X policy, so `apply_patch` can't
-  run. Targets are macOS host, Android, and the iOS Simulator.
+  run. Targets are macOS, Linux, Windows, Android, and the iOS Simulator.
+- **Windows reads symbols from PDBs.** A PE image has no symbol table, so
+  the capture build links with `/EXPORT:whisker_aslr_anchor`, `/OPT:NOREF`
+  and `/INCREMENTAL:NO`, and both the program and each patch DLL are read
+  through their PDBs.
 - **Web patches WebAssembly side modules.** `whisker run web` owns the Cargo,
   wasm-bindgen, static-server, and WebSocket loop. Rust edits are compiled as
   PIC side modules and applied through subsecond's indirect function table;
@@ -379,3 +469,19 @@ the next save anyway.
   function, type, or constant leaves every component hash unchanged, and
   editing the application's root component has no parent to remount into;
   both fall back to a full remount, which resets all state.
+
+## Compiler environment capture
+
+Thin rebuild capture persists only Cargo package metadata, crate and binary names,
+manifest paths, the Cargo executable, and OUT_DIR. Registry configuration,
+authentication tokens, arbitrary CARGO_* variables, and jobserver descriptors
+are excluded. Do not use secret environment variables as compile-time app data.
+
+## Release environment boundary
+
+Release archive and Gradle launch commands remove `WHISKER_FEATURES` from their
+environment. The generated Xcode script and the Gradle Rust build task also ignore
+and remove that variable for Release builds, including IDE builds using a reused
+Gradle daemon. Explicit application Cargo features remain application configuration;
+this boundary prevents the development CLI's environment injection from carrying
+hot-reload into release builds.

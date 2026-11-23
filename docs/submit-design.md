@@ -120,3 +120,10 @@ specification fails there and a placement on it would never appear.
 - **Images in `store pull`.** It prints text only.
 
 Not yet covered: app preview videos and the age rating declaration.
+
+## Google token endpoint
+
+Play service-account assertions are sent only to
+`https://oauth2.googleapis.com/token`. Validate `token_uri` before parsing the
+private key or signing an assertion. Token requests do not follow redirects,
+including redirects to another HTTPS host. Custom token endpoints are unsupported.

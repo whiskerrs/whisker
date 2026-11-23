@@ -165,6 +165,8 @@ class Replayer {
     bool fill_tint = false;
     bool stroke_tint = false;
     float stroke_width = 1;
+    D2D1_CAP_STYLE stroke_cap = D2D1_CAP_STYLE_FLAT;
+    D2D1_LINE_JOIN stroke_join = D2D1_LINE_JOIN_MITER;
     float opacity = 1;
   };
 
@@ -214,6 +216,22 @@ class Replayer {
       case 0x15:
         state_.stroke_tint = true;
         return true;
+      case 0x16: {
+        uint8_t cap = 0;
+        if (!reader.U8(cap)) return false;
+        state_.stroke_cap = cap == 1   ? D2D1_CAP_STYLE_ROUND
+                            : cap == 2 ? D2D1_CAP_STYLE_SQUARE
+                                       : D2D1_CAP_STYLE_FLAT;
+        return true;
+      }
+      case 0x17: {
+        uint8_t join = 0;
+        if (!reader.U8(join)) return false;
+        state_.stroke_join = join == 1   ? D2D1_LINE_JOIN_ROUND
+                             : join == 2 ? D2D1_LINE_JOIN_BEVEL
+                                         : D2D1_LINE_JOIN_MITER;
+        return true;
+      }
       case 0x20:
         BeginPath();
         return true;
@@ -312,9 +330,20 @@ class Replayer {
     }
     if (stroke) {
       if (auto brush = Brush(state_.stroke_tint ? tint_ : state_.stroke)) {
-        context_->DrawGeometry(path_.Get(), brush.Get(), state_.stroke_width);
+        context_->DrawGeometry(path_.Get(), brush.Get(), state_.stroke_width, StrokeStyle().Get());
       }
     }
+  }
+
+  ComPtr<ID2D1StrokeStyle> StrokeStyle() {
+    ComPtr<ID2D1StrokeStyle> style;
+    ComPtr<ID2D1Factory> factory;
+    context_->GetFactory(&factory);
+    factory->CreateStrokeStyle(
+        D2D1::StrokeStyleProperties(state_.stroke_cap, state_.stroke_cap, state_.stroke_cap,
+                                    state_.stroke_join),
+        nullptr, 0, &style);
+    return style;
   }
 
   ComPtr<ID2D1SolidColorBrush> Brush(std::optional<D2D1_COLOR_F> color) {

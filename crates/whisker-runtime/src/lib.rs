@@ -39,6 +39,7 @@ pub mod text_query;
 mod transform_interpolation;
 pub mod value;
 pub mod view;
+mod viewport;
 
 /// Link-time registration hooks used by `#[whisker::module_element]`.
 ///
@@ -60,18 +61,21 @@ pub use element_registry::{
 };
 pub use frame_timing::FrameTiming;
 pub use runtime_context::RuntimeContext;
+#[doc(hidden)]
+pub use runtime_context::{WeakRuntimeContext, current_runtime_context};
 pub use runtime_instance::{
     RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeInstance, RuntimeLifecycle,
     RuntimeLifecycleError,
 };
 pub use runtime_wake::{RuntimeWake, RuntimeWakeHandle};
 pub use standard_ui::{
-    SCROLL_BY_COMMAND, SCROLL_ENABLED_PROPERTY, SCROLL_TO_COMMAND, SCROLL_VIEW_ELEMENT_NAME,
-    TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME, scroll_view_element_binding, text_element_binding,
-    view_element_binding,
+    REFRESH_ENABLED_PROPERTY, REFRESHING_PROPERTY, SCROLL_BY_COMMAND, SCROLL_ENABLED_PROPERTY,
+    SCROLL_TO_COMMAND, SCROLL_VIEW_ELEMENT_NAME, TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME,
+    scroll_view_element_binding, text_element_binding, view_element_binding,
 };
 pub use surface_runtime::{
     InputDispatch, ResourceEventApply, RuntimeBindingError, RuntimeFrame, RuntimeFrameError,
     RuntimeInputError, RuntimeLayoutError, RuntimePresentError, RuntimeResourceError,
     SurfaceRuntime, standard_element_registrations,
 };
+pub use viewport::{Viewport, viewport};

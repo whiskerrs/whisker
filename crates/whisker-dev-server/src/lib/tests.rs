@@ -18,6 +18,17 @@ fn config_defaults_pick_loopback_and_full_reload_only() {
 }
 
 #[test]
+fn config_defaults_accept_the_adb_forwarded_authority_only_on_android() {
+    let android = Config::defaults_for(PathBuf::from("/tmp/ws"), "app".into(), Target::Android);
+    assert_eq!(
+        android.forwarded_authorities,
+        ["127.0.0.1:9876", "localhost:9876"]
+    );
+    let ios = Config::defaults_for(PathBuf::from("/tmp/ws"), "app".into(), Target::IosSimulator);
+    assert!(ios.forwarded_authorities.is_empty());
+}
+
+#[test]
 fn target_variants_compare_by_value() {
     assert_eq!(Target::Android, Target::Android);
     assert_ne!(Target::Android, Target::IosSimulator);
@@ -61,7 +72,7 @@ fn mk_config(workspace_root: PathBuf, target: Target) -> Config {
                 device_override: None,
             });
         }
-        Target::Macos | Target::Web => {}
+        Target::Macos | Target::Web | Target::Linux | Target::Windows => {}
     }
     cfg
 }

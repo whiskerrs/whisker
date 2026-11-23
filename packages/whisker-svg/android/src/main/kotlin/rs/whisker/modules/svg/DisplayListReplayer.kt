@@ -38,6 +38,8 @@ internal interface DLVisitor {
     fun fillColor(c: DLColor) {}
     fun strokeColor(c: DLColor) {}
     fun strokeWidth(w: Float) {}
+    fun strokeCap(cap: Int) {}
+    fun strokeJoin(join: Int) {}
     fun opacity(a: Float) {}
     fun fillTint() {}
     fun strokeTint() {}
@@ -93,6 +95,18 @@ internal fun dlReplay(bytes: ByteArray, visitor: DLVisitor) {
             DLFormat.OP_PAINT_FILL_COLOR -> visitor.fillColor(cursor.readColor())
             DLFormat.OP_PAINT_STROKE_COLOR -> visitor.strokeColor(cursor.readColor())
             DLFormat.OP_PAINT_STROKE_WIDTH -> visitor.strokeWidth(cursor.readF32())
+            DLFormat.OP_PAINT_STROKE_CAP -> visitor.strokeCap(
+                when (val v = cursor.readU8().toInt() and 0xFF) {
+                    DLFormat.CAP_ROUND, DLFormat.CAP_SQUARE -> v
+                    else -> DLFormat.CAP_BUTT
+                },
+            )
+            DLFormat.OP_PAINT_STROKE_JOIN -> visitor.strokeJoin(
+                when (val v = cursor.readU8().toInt() and 0xFF) {
+                    DLFormat.JOIN_ROUND, DLFormat.JOIN_BEVEL -> v
+                    else -> DLFormat.JOIN_MITER
+                },
+            )
             DLFormat.OP_PAINT_OPACITY -> visitor.opacity(cursor.readF32())
             DLFormat.OP_PAINT_FILL_TINT -> visitor.fillTint()
             DLFormat.OP_PAINT_STROKE_TINT -> visitor.strokeTint()
@@ -182,6 +196,24 @@ internal class DLTraceVisitor : DLVisitor {
         lines.add("STROKE_COLOR #%02X%02X%02X%02X".format(c.r, c.g, c.b, c.a))
     }
     override fun strokeWidth(w: Float) { lines.add("STROKE_WIDTH ${fmtF(w)}") }
+    override fun strokeCap(cap: Int) {
+        lines.add(
+            when (cap) {
+                DLFormat.CAP_ROUND -> "STROKE_CAP ROUND"
+                DLFormat.CAP_SQUARE -> "STROKE_CAP SQUARE"
+                else -> "STROKE_CAP BUTT"
+            },
+        )
+    }
+    override fun strokeJoin(join: Int) {
+        lines.add(
+            when (join) {
+                DLFormat.JOIN_ROUND -> "STROKE_JOIN ROUND"
+                DLFormat.JOIN_BEVEL -> "STROKE_JOIN BEVEL"
+                else -> "STROKE_JOIN MITER"
+            },
+        )
+    }
     override fun opacity(a: Float) { lines.add("OPACITY ${fmtF(a)}") }
     override fun fillTint() { lines.add("FILL_TINT") }
     override fun strokeTint() { lines.add("STROKE_TINT") }

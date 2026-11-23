@@ -26,8 +26,6 @@ pub(super) struct ManifestRaw {
     #[serde(default)]
     pub android: Option<AndroidSectionRaw>,
     #[serde(default)]
-    pub desktop: Option<RustHostSectionRaw>,
-    #[serde(default)]
     pub web: Option<RustHostSectionRaw>,
     /// Parsed separately by CNG plugin discovery.
     #[serde(default, rename = "plugins")]
@@ -46,7 +44,6 @@ pub(super) struct PlatformDeclarationsRaw {
     pub android: Option<PlatformDeclarationRaw>,
     pub ios: Option<PlatformDeclarationRaw>,
     pub web: Option<PlatformDeclarationRaw>,
-    pub desktop: Option<PlatformDeclarationRaw>,
     pub macos: Option<PlatformDeclarationRaw>,
     pub windows: Option<PlatformDeclarationRaw>,
     pub linux: Option<PlatformDeclarationRaw>,
@@ -88,7 +85,6 @@ pub struct ResolvedModulePlatforms {
     pub android: Option<ResolvedPlatformImplementation>,
     pub ios: Option<ResolvedPlatformImplementation>,
     pub web: Option<ResolvedPlatformImplementation>,
-    pub desktop: Option<ResolvedPlatformImplementation>,
     pub macos: Option<ResolvedPlatformImplementation>,
     pub windows: Option<ResolvedPlatformImplementation>,
     pub linux: Option<ResolvedPlatformImplementation>,
@@ -124,7 +120,6 @@ pub enum ModulePlatform {
     Android,
     Ios,
     Web,
-    Desktop,
     Macos,
     Windows,
     Linux,
@@ -136,7 +131,6 @@ impl ModulePlatform {
             Self::Android => "android",
             Self::Ios => "ios",
             Self::Web => "web",
-            Self::Desktop => "desktop",
             Self::Macos => "macos",
             Self::Windows => "windows",
             Self::Linux => "linux",
@@ -167,7 +161,6 @@ pub(super) fn resolve_platforms(
     if raw.android.is_none()
         && raw.ios.is_none()
         && raw.web.is_none()
-        && raw.desktop.is_none()
         && raw.macos.is_none()
         && raw.windows.is_none()
         && raw.linux.is_none()
@@ -201,14 +194,6 @@ pub(super) fn resolve_platforms(
             manifest_dir,
             ModulePlatform::Web,
             raw.web.as_ref(),
-        )?,
-        desktop: resolve_platform(
-            package,
-            package_version,
-            registry_source,
-            manifest_dir,
-            ModulePlatform::Desktop,
-            raw.desktop.as_ref(),
         )?,
         macos: resolve_platform(
             package,
@@ -356,7 +341,6 @@ fn resolve_platform_manifest(
             )
         }
         ModulePlatform::Web
-        | ModulePlatform::Desktop
         | ModulePlatform::Macos
         | ModulePlatform::Windows
         | ModulePlatform::Linux => {
@@ -499,14 +483,6 @@ pub(super) fn resolve_legacy_platforms(
                     kind: NativeManifestKind::SwiftPm,
                 },
             )),
-        desktop: resolve_legacy_rust_host(
-            package,
-            package_version,
-            "desktop",
-            manifest_dir,
-            manifest.desktop.as_ref(),
-        )?
-        .map(ResolvedPlatformImplementation::RustHost),
         web: resolve_legacy_rust_host(
             package,
             package_version,
@@ -735,15 +711,15 @@ mod tests {
         let contribution = resolve_legacy_rust_host(
             "whisker-example",
             "1.2.3",
-            "desktop",
+            "web",
             Path::new("/definitely/not/a/module/package"),
             Some(&RustHostSectionRaw {
-                package: "whisker-example-desktop-host".into(),
+                package: "whisker-example-web-host".into(),
             }),
         )
         .unwrap()
         .unwrap();
-        assert_eq!(contribution.package, "whisker-example-desktop-host");
+        assert_eq!(contribution.package, "whisker-example-web-host");
         assert_eq!(
             contribution.source,
             ResolvedRustHostSource::Registry {

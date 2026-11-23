@@ -28,9 +28,10 @@
 //! uniquely-named anchor symbol gives the right slide.
 
 use anyhow::{Context, Result};
+use object::{Architecture, Object};
 use std::path::{Path, PathBuf};
 
-use super::symbol_table::{SymbolTable, parse_symbol_table_from_bytes};
+use super::symbol_table::{SymbolTable, parse_symbol_table_of};
 
 /// Pre-parsed snapshot of the original (== "fat") binary. Built once
 /// per dev-server run; subsequent JumpTable construction reads from
@@ -48,6 +49,13 @@ pub struct HotpatchModuleCache {
     /// the file's image base, and why we use a dedicated anchor
     /// rather than upstream subsecond's `main`.
     pub aslr_reference: u64,
+    /// CPU architecture of the original binary; the stub object's
+    /// trampolines are encoded for it.
+    pub architecture: Architecture,
+    /// The original is an ELF program rather than a shared library, so
+    /// a patch can't name it as a link input and must bind its own
+    /// definitions itself.
+    pub is_elf_executable: bool,
 }
 
 impl HotpatchModuleCache {
@@ -58,7 +66,7 @@ impl HotpatchModuleCache {
     pub fn from_path(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
         let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-        let symbols = parse_symbol_table_from_bytes(&bytes)
+        let symbols = parse_symbol_table_of(&path, &bytes)
             .with_context(|| format!("parse {} symbols", path.display()))?;
         // Mach-O symbol tables keep the legacy underscore prefix
         // (`_whisker_aslr_anchor`); ELF strips it. Try both so the
@@ -75,10 +83,14 @@ impl HotpatchModuleCache {
             .or_else(|| symbols.by_name.get("_whisker_aslr_anchor"))
             .map(|s| s.address)
             .unwrap_or(0);
+        let file = object::File::parse(&*bytes)
+            .with_context(|| format!("parse {} header", path.display()))?;
         Ok(Self {
             lib: path,
             symbols,
             aslr_reference,
+            architecture: file.architecture(),
+            is_elf_executable: is_elf_executable(&file),
         })
     }
 
@@ -91,6 +103,25 @@ impl HotpatchModuleCache {
     /// Convenience: borrow path back as a `&Path`.
     pub fn lib_path(&self) -> &Path {
         &self.lib
+    }
+}
+
+/// An ELF program is one the kernel hands to a dynamic loader
+/// (`PT_INTERP`); a PIE shares `ET_DYN` with shared libraries.
+fn is_elf_executable(file: &object::File<'_>) -> bool {
+    use object::read::elf::{FileHeader, ProgramHeader};
+    fn has_interp<Elf: FileHeader<Endian = object::Endianness>>(
+        elf: &object::read::elf::ElfFile<'_, Elf>,
+    ) -> bool {
+        let endian = elf.endian();
+        elf.elf_program_headers()
+            .iter()
+            .any(|header| header.p_type(endian) == object::elf::PT_INTERP)
+    }
+    match file {
+        object::File::Elf64(elf) => has_interp(elf),
+        object::File::Elf32(elf) => has_interp(elf),
+        _ => false,
     }
 }
 

@@ -4,7 +4,8 @@
 //! complete module skeleton: `Cargo.toml` (carrying the
 //! `[package.metadata.whisker.module.platforms]` support map), `Package.swift`,
 //! `build.gradle.kts`, `src/lib.rs`, and the platform sources under
-//! `ios/`, `android/`, `desktop/`, and `web/` (Expo-style layout). The skeleton compiles
+//! `ios/` (shared with macOS), `android/`, `linux/`, `windows/`, and `web/`
+//! (Expo-style layout). The skeleton compiles
 //! standalone — the consumer just runs `cargo build` and adds the
 //! crate as a dep to their Whisker app.
 //!
@@ -117,8 +118,13 @@ pub fn run(args: NewModuleArgs) -> Result<()> {
     match args.shape {
         ModuleShape::ViewBearing => {
             write(&target_dir, "src/lib.rs", &lib_rs_view(&v))?;
-            write(&target_dir, "desktop/Cargo.toml", &desktop_cargo_toml(&v))?;
-            write(&target_dir, "desktop/src/lib.rs", &desktop_lib_rs(&v))?;
+            write(&target_dir, "linux/Cargo.toml", &linux_cargo_toml(&v))?;
+            write(&target_dir, "linux/src/lib.rs", &linux_view_lib_rs(&v))?;
+            write(
+                &target_dir,
+                &format!("windows/{module_class}.cpp"),
+                &windows_view_module(&v),
+            )?;
             write(&target_dir, "web/Cargo.toml", &web_cargo_toml(&v))?;
             write(&target_dir, "web/src/lib.rs", &web_lib_rs(&v))?;
             write(
@@ -144,6 +150,13 @@ pub fn run(args: NewModuleArgs) -> Result<()> {
         }
         ModuleShape::FunctionOnly => {
             write(&target_dir, "src/lib.rs", &lib_rs_module(&v))?;
+            write(&target_dir, "linux/Cargo.toml", &linux_cargo_toml(&v))?;
+            write(&target_dir, "linux/src/lib.rs", &linux_function_lib_rs(&v))?;
+            write(
+                &target_dir,
+                &format!("windows/{module_class}.cpp"),
+                &windows_function_module(&v),
+            )?;
             write(
                 &target_dir,
                 &format!("{ios_src}/{module_class}.swift"),
@@ -162,7 +175,7 @@ pub fn run(args: NewModuleArgs) -> Result<()> {
          \n\
          Next steps:\n  \
          1. cd {}\n  \
-         2. Implement the platform-side logic in ios/, android/, desktop/, and web/.\n  \
+         2. Implement the platform-side logic in ios/, android/, linux/, windows/, and web/.\n  \
          3. From your Whisker app: `cargo add --path {}` (or publish to crates.io).\n  \
          4. See https://whisker.rs/docs/authoring-a-module for the full reference.",
         target_dir.display(),
@@ -222,14 +235,10 @@ fn whisker_dep_version() -> String {
 }
 
 fn cargo_toml(v: &Vars, shape: &ModuleShape) -> String {
-    let rust_hosts = if matches!(shape, ModuleShape::ViewBearing) {
-        r#"
-desktop = { manifest = "desktop/Cargo.toml" }
-web = { manifest = "web/Cargo.toml" }
-"#
-        .to_string()
+    let web = if matches!(shape, ModuleShape::ViewBearing) {
+        "web = { manifest = \"web/Cargo.toml\" }\n"
     } else {
-        String::new()
+        ""
     };
     format!(
         r#"[package]
@@ -246,6 +255,7 @@ include = [
     "/src/lib.rs",
     "/android/**/*.kt",
     "/ios/**/*.swift",
+    "/windows/**/*.cpp",
     "/README.md",
 ]
 
@@ -257,7 +267,10 @@ crate-type = ["rlib"]
 [package.metadata.whisker.module.platforms]
 android = {{ manifest = "build.gradle.kts" }}
 ios = {{ manifest = "Package.swift" }}
-{rust_hosts}
+macos = {{ manifest = "Package.swift" }}
+linux = {{ manifest = "linux/Cargo.toml" }}
+windows = {{ sources = "windows" }}
+{web}
 
 [dependencies]
 # The umbrella `whisker` crate. The proc macros' emit paths
@@ -267,7 +280,7 @@ whisker = "{dep_version}"
 "#,
         name = v.crate_name,
         dep_version = whisker_dep_version(),
-        rust_hosts = rust_hosts,
+        web = web,
     )
 }
 
@@ -331,7 +344,7 @@ import PackageDescription
 
 let package = Package(
     name: "{name}",
-    platforms: [.iOS(.v13), .macOS(.v13)],
+    platforms: [.iOS(.v13), .macOS(.v14)],
     products: [
         .library(name: "{spm}", targets: ["{spm}"]),
     ],
@@ -439,7 +452,7 @@ fn lib_rs_view(v: &Vars) -> String {
 //!
 //! Registers an element under `{element_name}` and exposes the
 //! `{tag}` symbol for use inside `render!`. Platform-side classes
-//! live under `ios/`, `android/`, `desktop/`, and `web/`.
+//! live under `ios/`, `android/`, `linux/`, `windows/`, and `web/`.
 
 use whisker::Style;
 
@@ -463,45 +476,176 @@ pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition
     )
 }
 
-fn desktop_cargo_toml(v: &Vars) -> String {
+fn linux_cargo_toml(v: &Vars) -> String {
     format!(
         r#"[package]
-name = "{name}-desktop"
+name = "{name}-linux"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "Desktop Host implementation for {name}."
+description = "Linux Host implementation for {name}."
 
-[dependencies]
-whisker-desktop = "{dep_version}"
+[target.'cfg(target_os = "linux")'.dependencies]
+whisker = "{dep_version}"
+whisker-linux = "{dep_version}"
 "#,
         name = v.crate_name,
         dep_version = whisker_dep_version(),
     )
 }
 
-fn desktop_lib_rs(v: &Vars) -> String {
+fn linux_view_lib_rs(v: &Vars) -> String {
     format!(
-        r#"//! Desktop Host implementation for `{name}`.
+        r#"//! Linux Host implementation for `{name}`.
 
-use whisker_desktop::{{DesktopViewDefinition, ModuleDefinition, WhiskerModule}};
+#![cfg(target_os = "linux")]
 
-struct {tag}Module;
+use whisker_linux::gtk4::{{self as gtk, prelude::*}};
+use whisker_linux::{{LinuxModuleDefinition, LinuxView, LinuxViewDefinition}};
 
-#[WhiskerModule]
-impl WhiskerModule for {tag}Module {{
-    type Definition = ModuleDefinition;
+struct {view_class} {{
+    area: gtk::DrawingArea,
+}}
+
+impl {view_class} {{
+    fn new() -> Self {{
+        let area = gtk::DrawingArea::new();
+        area.set_draw_func(|_, cr, _, _| {{
+            cr.set_source_rgb(1.0, 0.5, 0.63);
+            let _ = cr.paint();
+        }});
+        Self {{ area }}
+    }}
+}}
+
+impl LinuxView for {view_class} {{
+    fn widget(&self) -> gtk::Widget {{
+        self.area.clone().upcast()
+    }}
+}}
+
+struct {module_class};
+
+#[whisker::WhiskerModule]
+impl whisker::WhiskerModule for {module_class} {{
+    type Definition = LinuxModuleDefinition;
 
     fn definition() -> Self::Definition {{
-        ModuleDefinition::new()
-            .name("{element_name}")
-            .view(DesktopViewDefinition::new("{element_name}", || ()))
+        // Declare props with `.prop(name, set, reset)` and commands with `.command(...)`.
+        LinuxModuleDefinition::new().name("{element_name}").view(
+            LinuxViewDefinition::new("{element_name}", |_| {view_class}::new()),
+        )
+    }}
+}}
+"#,
+        name = v.crate_name,
+        module_class = v.module_class,
+        view_class = v.view_class,
+        element_name = v.element_name,
+    )
+}
+
+fn linux_function_lib_rs(v: &Vars) -> String {
+    format!(
+        r#"//! Linux Host implementation for `{name}`.
+
+#![cfg(target_os = "linux")]
+
+use whisker::platform_module::WhiskerValue;
+use whisker_linux::LinuxModuleDefinition;
+
+struct {module_class};
+
+#[whisker::WhiskerModule]
+impl whisker::WhiskerModule for {module_class} {{
+    type Definition = LinuxModuleDefinition;
+
+    fn definition() -> Self::Definition {{
+        // The package-qualified form of the Rust side's `module!("Whisker{tag}")`.
+        LinuxModuleDefinition::new()
+            .name("{name}:Whisker{tag}")
+            .function("_placeholder", |_, _| {{
+                // TODO: implement the function the Rust API calls.
+                WhiskerValue::Null
+            }})
     }}
 }}
 "#,
         name = v.crate_name,
         tag = v.tag,
+        module_class = v.module_class,
+    )
+}
+
+fn windows_view_module(v: &Vars) -> String {
+    format!(
+        r#"// `{module_class}` -- Windows side of the `{element_name}` Whisker module.
+
+#include <whisker/module.h>
+
+namespace {{
+
+class {view_class} : public whisker::ModuleView {{
+ public:
+  using ModuleView::ModuleView;
+
+  void Draw(ID2D1DeviceContext* context, float width, float height) override {{
+    ID2D1SolidColorBrush* brush = nullptr;
+    if (FAILED(context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.5f, 0.63f), &brush))) return;
+    context->FillRectangle(D2D1::RectF(0, 0, width, height), brush);
+    brush->Release();
+  }}
+}};
+
+class {module_class} : public whisker::Module {{
+ public:
+  whisker::ModuleDefinition Definition() override {{
+    return whisker::ModuleDefinition().Name("{tag}").View<{view_class}>(
+        "{element_name}", [](auto& view) {{
+          // Declare Prop / Command entries here, e.g.:
+          //   view.Prop("title", []({view_class}& v, const whisker::Value& value) {{ ... }});
+        }});
+  }}
+}};
+
+}}  // namespace
+
+WHISKER_MODULE({module_class})
+"#,
+        tag = v.tag,
+        module_class = v.module_class,
+        view_class = v.view_class,
         element_name = v.element_name,
+    )
+}
+
+fn windows_function_module(v: &Vars) -> String {
+    format!(
+        r#"// `{module_class}` -- Windows side of the `{name}` Whisker function-only module.
+
+#include <whisker/module.h>
+
+namespace {{
+
+class {module_class} : public whisker::Module {{
+ public:
+  whisker::ModuleDefinition Definition() override {{
+    // The package-qualified form of the Rust side's `module!("Whisker{tag}")`.
+    return whisker::ModuleDefinition().Name("{name}:Whisker{tag}").Function(
+        "_placeholder", [](const whisker::Arguments&) {{
+          // TODO: implement the function the Rust API calls.
+          return whisker::Value{{}};
+        }});
+  }}
+}};
+
+}}  // namespace
+
+WHISKER_MODULE({module_class})
+"#,
+        name = v.crate_name,
+        tag = v.tag,
+        module_class = v.module_class,
     )
 }
 
@@ -555,11 +699,20 @@ fn lib_rs_module(v: &Vars) -> String {
     format!(
         r#"//! `{name}` — Whisker function-only platform module.
 //!
-//! Exposes typed Rust -> Kotlin/Swift function calls without
-//! rendering UI. Platform-side classes live under `ios/` and
-//! `android/`.
+//! Exposes typed Rust -> platform function calls without rendering
+//! UI. Platform-side classes live under `ios/`, `android/`, `linux/`,
+//! and `windows/`.
 
 use whisker::platform_module::{{WhiskerModuleError, WhiskerValue}};
+
+/// Empty visual schema paired with the service-only Rust Host modules.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {{
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        std::iter::empty::<whisker::ElementProviderMetadata>(),
+    )
+}}
 
 /// Typed Rust API for the `Whisker{tag}` platform module.
 ///
@@ -628,8 +781,9 @@ fn swift_view(v: &Vars) -> String {
 // `@objc({view_class})` pins the Obj-C class name so the
 // codegen plugin's `NSClassFromString` lookup resolves it.
 
-import UIKit
 import WhiskerModule
+#if canImport(UIKit)
+import UIKit
 
 @objc({view_class})
 public final class {view_class}: WhiskerUI<UIView> {{
@@ -639,6 +793,19 @@ public final class {view_class}: WhiskerUI<UIView> {{
         return v
     }}
 }}
+#else
+import AppKit
+
+@objc({view_class})
+public final class {view_class}: WhiskerUI<NSView> {{
+    @objc public override func createView() -> NSView {{
+        let v = NSView()
+        v.wantsLayer = true
+        v.layer?.backgroundColor = NSColor.systemPink.cgColor
+        return v
+    }}
+}}
+#endif
 "#,
         name = v.crate_name,
         tag = v.tag,
@@ -739,8 +906,9 @@ public final class {module_class}: Module {{
             // The Name MUST match the Rust sys trait's
             // `#[whisker::platform_module(name = "...")]`.
             Name("Whisker{tag}")
-            Function("_placeholder") {{
+            Function("_placeholder") {{ (_: [WhiskerValue]) -> WhiskerValue in
                 // TODO: implement the function the Rust sys trait declares.
+                .null
             }}
         }}
     }}
@@ -765,6 +933,7 @@ package rs.whisker.modules.{ns}
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerModule
+import rs.whisker.runtime.WhiskerValue
 
 @WhiskerModule
 class {module_class} : Module() {{
@@ -772,8 +941,9 @@ class {module_class} : Module() {{
         // The Name MUST match the Rust sys trait's
         // `#[whisker::platform_module(name = "...")]`.
         Name("Whisker{tag}")
-        Function("_placeholder") {{
+        Function("_placeholder") {{ _ ->
             // TODO: implement the function the Rust sys trait declares.
+            WhiskerValue.Null
         }}
     }}
 }}
@@ -896,7 +1066,7 @@ mod tests {
     }
 
     #[test]
-    fn view_scaffold_separates_common_desktop_and_web_crates() {
+    fn view_scaffold_covers_every_host() {
         let root = tempdir();
         run(NewModuleArgs {
             name: "whisker-switch".into(),
@@ -908,8 +1078,9 @@ mod tests {
         for path in [
             "Cargo.toml",
             "src/lib.rs",
-            "desktop/Cargo.toml",
-            "desktop/src/lib.rs",
+            "linux/Cargo.toml",
+            "linux/src/lib.rs",
+            "windows/SwitchModule.cpp",
             "web/Cargo.toml",
             "web/src/lib.rs",
         ] {
@@ -917,17 +1088,22 @@ mod tests {
         }
         let common = std::fs::read_to_string(module.join("src/lib.rs")).unwrap();
         assert!(common.contains("whisker-switch:Switch"));
-        assert!(!common.contains("whisker_desktop"));
+        assert!(!common.contains("whisker_linux"));
         assert!(!common.contains("whisker_web"));
         let manifest = std::fs::read_to_string(module.join("Cargo.toml")).unwrap();
         assert!(manifest.contains("[package.metadata.whisker.module.platforms]"));
         assert!(manifest.contains("web = { manifest = \"web/Cargo.toml\" }"));
-        assert!(manifest.contains("desktop = { manifest = \"desktop/Cargo.toml\" }"));
-        let desktop = std::fs::read_to_string(module.join("desktop/Cargo.toml")).unwrap();
-        assert!(desktop.contains("name = \"whisker-switch-desktop\""));
-        let desktop_source = std::fs::read_to_string(module.join("desktop/src/lib.rs")).unwrap();
-        assert!(desktop_source.contains("whisker-switch:Switch"));
-        assert!(desktop_source.contains(".name(\"whisker-switch:Switch\")"));
+        assert!(manifest.contains("macos = { manifest = \"Package.swift\" }"));
+        assert!(manifest.contains("linux = { manifest = \"linux/Cargo.toml\" }"));
+        assert!(manifest.contains("windows = { sources = \"windows\" }"));
+        assert!(!manifest.contains("desktop"));
+        let linux = std::fs::read_to_string(module.join("linux/Cargo.toml")).unwrap();
+        assert!(linux.contains("name = \"whisker-switch-linux\""));
+        let linux_source = std::fs::read_to_string(module.join("linux/src/lib.rs")).unwrap();
+        assert!(linux_source.contains("LinuxViewDefinition::new(\"whisker-switch:Switch\""));
+        let windows = std::fs::read_to_string(module.join("windows/SwitchModule.cpp")).unwrap();
+        assert!(windows.contains("View<SwitchView>(\n        \"whisker-switch:Switch\""));
+        assert!(windows.contains("WHISKER_MODULE(SwitchModule)"));
         let web = std::fs::read_to_string(module.join("web/Cargo.toml")).unwrap();
         assert!(web.contains("name = \"whisker-switch-web\""));
         let web_source = std::fs::read_to_string(module.join("web/src/lib.rs")).unwrap();
@@ -945,6 +1121,32 @@ mod tests {
                 .unwrap();
         assert!(ios.contains("Name(\"Switch\")"));
         assert!(ios.contains("View(\"whisker-switch:Switch\""));
+        let ios_view =
+            std::fs::read_to_string(module.join("ios/Sources/WhiskerSwitch/SwitchView.swift"))
+                .unwrap();
+        assert!(ios_view.contains("WhiskerUI<UIView>"));
+        assert!(ios_view.contains("WhiskerUI<NSView>"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn function_scaffold_qualifies_desktop_module_names() {
+        let root = tempdir();
+        run(NewModuleArgs {
+            name: "whisker-clock".into(),
+            path: Some(root.clone()),
+            shape: ModuleShape::FunctionOnly,
+        })
+        .unwrap();
+        let module = root.join("whisker-clock");
+        let manifest = std::fs::read_to_string(module.join("Cargo.toml")).unwrap();
+        assert!(manifest.contains("windows = { sources = \"windows\" }"));
+        assert!(!manifest.contains("web ="));
+        let linux = std::fs::read_to_string(module.join("linux/src/lib.rs")).unwrap();
+        assert!(linux.contains(".name(\"whisker-clock:WhiskerClock\")"));
+        let windows = std::fs::read_to_string(module.join("windows/ClockModule.cpp")).unwrap();
+        assert!(windows.contains("Name(\"whisker-clock:WhiskerClock\")"));
+        assert!(!module.join("web").exists());
         std::fs::remove_dir_all(root).ok();
     }
 }

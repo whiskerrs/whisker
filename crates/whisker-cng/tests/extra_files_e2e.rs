@@ -152,6 +152,21 @@ fn ios_extra_file_with_parent_dir_traversal_is_rejected() {
 }
 
 #[test]
+fn ios_binary_extra_file_is_written_byte_for_byte() {
+    let bytes = [0x00u8, 0x01, 0xfe, 0xff];
+    let mut app = base_ios_app();
+    app.plugin::<IosExtraFiles>(|c| {
+        c.add_bytes("Resources/blob.bin", &bytes);
+    });
+    let (tmp, out) = sync_ios(&app);
+    assert_eq!(
+        std::fs::read(out.join("Resources/blob.bin")).unwrap(),
+        bytes
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn ios_no_plugin_means_no_extra_files_written() {
     let app = base_ios_app();
     let (tmp, out) = sync_ios(&app);
@@ -188,6 +203,23 @@ fn android_extra_file_mode_is_applied_on_unix() {
     let script = out.join("scripts/precheck.sh");
     let mode = std::fs::metadata(&script).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o755, "mode was {mode:o}");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn android_binary_extra_file_is_written_byte_for_byte() {
+    // A PNG header plus bytes that are not valid UTF-8.
+    let png = [
+        0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xfe, 0xff,
+    ];
+    let mut app = base_android_app();
+    app.plugin::<AndroidExtraFiles>(|c| {
+        c.add_bytes("app/src/main/res/mipmap-mdpi/ic_notification.png", &png);
+    });
+    let (tmp, out) = sync_android(&app);
+    let written =
+        std::fs::read(out.join("app/src/main/res/mipmap-mdpi/ic_notification.png")).unwrap();
+    assert_eq!(written, png);
     let _ = std::fs::remove_dir_all(&tmp);
 }
 

@@ -25,6 +25,14 @@ private struct AlignmentItem {
 extension WhiskerParagraphLayout {
     func resolveVerticalAlignment() {
         guard storage.length > 0 else { return }
+        var aligned = false
+        storage.enumerateAttributes(in: NSRange(location: 0, length: storage.length), options: .longestEffectiveRangeNotRequired) { attributes, _, stop in
+            let attachment = attributes[.whiskerInlineAttachment] as? WhiskerInlineAttachment
+            guard (attachment?.alignment ?? attributes[.whiskerVerticalAlignment] as? Int ?? 0) != 0 else { return }
+            aligned = true
+            stop.pointee = true
+        }
+        guard aligned else { return }
         var lines = [NSRange]()
         manager.enumerateLineFragments(forGlyphRange: manager.glyphRange(for: container)) { _, _, _, glyphs, _ in
             lines.append(self.manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil))

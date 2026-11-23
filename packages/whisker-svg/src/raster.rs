@@ -1,8 +1,8 @@
-//! CPU rasterizer for compiled display lists, shared by the desktop Hosts.
+//! CPU rasterizer for compiled display lists, used by the Linux Host.
 
 use tiny_skia::{FillRule, Paint, Path, PathBuilder, Pixmap, Stroke};
 
-use crate::{Color, Transform, Visitor, replay};
+use crate::{Color, LineCap, LineJoin, Transform, Visitor, replay};
 
 /// Renders `display_list` into `width`×`height` premultiplied RGBA8 pixels.
 ///
@@ -47,6 +47,8 @@ struct State {
     fill: Option<PaintSource>,
     stroke: Option<PaintSource>,
     stroke_width: f32,
+    stroke_cap: LineCap,
+    stroke_join: LineJoin,
     opacity: f32,
 }
 
@@ -57,6 +59,8 @@ impl Default for State {
             fill: Some(PaintSource::Literal(Color::BLACK)),
             stroke: None,
             stroke_width: 1.0,
+            stroke_cap: LineCap::Butt,
+            stroke_join: LineJoin::Miter,
             opacity: 1.0,
         }
     }
@@ -130,6 +134,16 @@ impl RasterVisitor {
         let transform = self.state.transform;
         let stroke = Stroke {
             width: self.state.stroke_width.max(0.0),
+            line_cap: match self.state.stroke_cap {
+                LineCap::Butt => tiny_skia::LineCap::Butt,
+                LineCap::Round => tiny_skia::LineCap::Round,
+                LineCap::Square => tiny_skia::LineCap::Square,
+            },
+            line_join: match self.state.stroke_join {
+                LineJoin::Miter => tiny_skia::LineJoin::Miter,
+                LineJoin::Round => tiny_skia::LineJoin::Round,
+                LineJoin::Bevel => tiny_skia::LineJoin::Bevel,
+            },
             ..Stroke::default()
         };
         let Some(path) = self.finish_path().cloned() else {
@@ -180,6 +194,14 @@ impl Visitor for RasterVisitor {
 
     fn stroke_width(&mut self, width: f32) {
         self.state.stroke_width = width;
+    }
+
+    fn stroke_cap(&mut self, cap: LineCap) {
+        self.state.stroke_cap = cap;
+    }
+
+    fn stroke_join(&mut self, join: LineJoin) {
+        self.state.stroke_join = join;
     }
 
     fn opacity(&mut self, alpha: f32) {
@@ -259,5 +281,21 @@ mod tests {
         assert_eq!(&pixels[0..4], &[0, 0, 0, 0]);
         let center = (5 * 20 + 10) * 4;
         assert_eq!(&pixels[center..center + 4], &[12, 34, 56, 255]);
+    }
+
+    #[test]
+    fn round_cap_paints_zero_length_segment() {
+        let svg = |cap: &str| {
+            format!(
+                r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="{cap}"><path d="M12 8h.01"/></svg>"#
+            )
+        };
+        let dot_alpha = |cap: &str| {
+            let compiled = crate::compile(&svg(cap)).unwrap();
+            let pixels = rasterize(&compiled.bytes, Color::BLACK, 24, 24).unwrap();
+            pixels[(8 * 24 + 12) * 4 + 3]
+        };
+        assert!(dot_alpha("round") > 128);
+        assert!(dot_alpha("butt") < 16);
     }
 }

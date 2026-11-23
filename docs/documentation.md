@@ -73,8 +73,9 @@ incrementally before enabling the same lint there.
 - Use structured `css!` values; raw style strings are not supported.
 - Describe `render!`, `css!`, and `routes!` as authoring adapters over public
   builders. The builder API is the semantic contract.
-- Call Android, iOS, Web, and Desktop implementations **Hosts**. Android/iOS use
-  the FFI Driver; Web/Desktop compose the Rust runtime directly.
+- Call Android, iOS, macOS, Windows, Linux, and Web implementations **Hosts**.
+  Android/iOS/macOS/Windows use the FFI Driver; Web/Linux compose the Rust
+  runtime directly.
 - Do not describe Lynx as a current dependency. Name it only when explaining
   a compatibility constraint that still applies, using past-tense wording.
 - Copy non-trivial code from a checked example or test whenever possible. If a

@@ -1,0 +1,28 @@
+[package]
+name = "whisker-wgpu"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Draw into Whisker surfaces with wgpu, sharing one device across the app."
+
+[dependencies]
+whisker-surface = { path = "../whisker-surface", version = "0.1.0" }
+wgpu = "30.0.1"
+raw-window-handle = "0.6"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ash = "0.38"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "30.0.1", features = ["webgl"] }
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["console"] }

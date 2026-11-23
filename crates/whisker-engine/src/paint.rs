@@ -14,7 +14,7 @@ use whisker_style::{
     OffsetRotateValue, OverflowValue, VisibilityValue,
 };
 
-use crate::color::named_color_srgb;
+use whisker_style::named_color_srgb;
 
 mod motion_path;
 
