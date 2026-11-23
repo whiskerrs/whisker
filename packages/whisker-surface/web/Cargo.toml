@@ -9,5 +9,5 @@ description = "Web Host implementation for whisker-surface."
 
 [dependencies]
 whisker-surface = { path = "..", version = "0.1.0" }
-whisker-web = { path = "../../../platforms/web", version = "0.19.0" }
+whisker-web = { path = "../../../platforms/web", version = "0.19.1" }
 web-sys = { version = "0.3", features = ["Document", "Element", "HtmlCanvasElement", "Window"] }
