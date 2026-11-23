@@ -133,10 +133,35 @@ pub(super) fn motion_event_body(
     ])
 }
 
-pub(super) fn with_current_target(body: &WhiskerValue, target: WhiskerValue) -> WhiskerValue {
+/// Rebinds one shared event body to the listener's `currentTarget`.
+///
+/// `local` is the pointer in the current target's border-box space and the
+/// border-box size. It is written as `offset` and `size` so each listener on a
+/// bubbling path reads coordinates relative to its own element.
+pub(super) fn with_current_target(
+    body: &WhiskerValue,
+    target: WhiskerValue,
+    local: Option<(InputPoint, LayoutRect)>,
+) -> WhiskerValue {
     let mut body = body.clone();
     if let WhiskerValue::Map(entries) = &mut body {
         entries.insert("currentTarget".to_owned(), target);
+        if let Some((offset, size)) = local {
+            entries.insert(
+                "offset".to_owned(),
+                WhiskerValue::map([
+                    ("x", WhiskerValue::Float(f64::from(offset.x))),
+                    ("y", WhiskerValue::Float(f64::from(offset.y))),
+                ]),
+            );
+            entries.insert(
+                "size".to_owned(),
+                WhiskerValue::map([
+                    ("width", WhiskerValue::Float(f64::from(size.width))),
+                    ("height", WhiskerValue::Float(f64::from(size.height))),
+                ]),
+            );
+        }
     }
     body
 }

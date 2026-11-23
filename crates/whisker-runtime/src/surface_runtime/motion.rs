@@ -255,7 +255,11 @@ impl SurfaceRuntime {
                 firings.extend(planned.into_iter().map(|(current_target, callback)| {
                     (
                         callback,
-                        with_current_target(&body, state.element_target_value(current_target)),
+                        with_current_target(
+                            &body,
+                            state.element_target_value(current_target),
+                            None,
+                        ),
                     )
                 }));
             }

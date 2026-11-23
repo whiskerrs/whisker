@@ -21,9 +21,9 @@ use crate::view::{BindType, DynRenderer, Element, LayoutObservation, with_instal
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     Accessibility, BoxPaint, ElementRegistration, ElementSchema, ElementTypeId, ElementValueKind,
-    HitTestBehavior, HostPresentationUpdate, InputEvent, InputEventError, MeasurementReady, NodeId,
-    PaintColor, PointerInput, ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError,
-    SurfaceId,
+    HitTestBehavior, HostPresentationUpdate, InputEvent, InputEventError, InputPoint, LayoutRect,
+    MeasurementReady, NodeId, PaintColor, PointerInput, ResourceCommand, ResourceEvent, ResourceId,
+    ResourceMessageError, SurfaceId,
 };
 #[cfg(test)]
 use whisker_engine::whisker_style::ComputedTransformFunction;
@@ -649,7 +649,8 @@ impl SurfaceRuntime {
                 .into_iter()
                 .filter(|(current_target, _)| !above.contains(current_target))
                 .map(|(current_target, callback)| {
-                    (callback, state.element_target_value(current_target))
+                    let local = state.element_local_point(current_target, pointer.position);
+                    (callback, state.element_target_value(current_target), local)
                 })
                 .collect::<Vec<_>>();
             (
@@ -661,8 +662,8 @@ impl SurfaceRuntime {
                 ),
             )
         };
-        for (callback, current_target) in firings {
-            callback(with_current_target(&body, current_target));
+        for (callback, current_target, local) in firings {
+            callback(with_current_target(&body, current_target, local));
         }
         Ok(())
     }
@@ -832,7 +833,10 @@ impl SurfaceRuntime {
                 .plan_element_event(root, target, logical, event_name)?
                 .into_iter()
                 .map(|(current_target, callback)| {
-                    (callback, state.element_target_value(current_target))
+                    let local = event.pointer.and_then(|pointer| {
+                        state.element_local_point(current_target, pointer.position)
+                    });
+                    (callback, state.element_target_value(current_target), local)
                 })
                 .collect::<Vec<_>>();
             (
@@ -847,8 +851,8 @@ impl SurfaceRuntime {
         };
 
         let listener_count = firings.len();
-        for (callback, current_target) in firings {
-            callback(with_current_target(&body, current_target));
+        for (callback, current_target, local) in firings {
+            callback(with_current_target(&body, current_target, local));
         }
         Ok(InputDispatch {
             target: Some(target),
@@ -1407,6 +1411,18 @@ impl BindingState {
         element.map_or(WhiskerValue::Null, |element| {
             self.element_target_value(element)
         })
+    }
+
+    /// Maps a surface-space pointer into one element's border-box space.
+    ///
+    /// Inline spans have no retained node, so they report no local geometry.
+    fn element_local_point(
+        &self,
+        element: Element,
+        point: InputPoint,
+    ) -> Option<(InputPoint, LayoutRect)> {
+        let node = self.elements.get(&element)?.node?;
+        self.surface.local_point(node, point)
     }
 
     fn element_target_value(&self, element: Element) -> WhiskerValue {

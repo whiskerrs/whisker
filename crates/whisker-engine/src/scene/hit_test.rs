@@ -13,6 +13,54 @@ impl Scene {
         Ok(self.hit_test_node(root, point, [0.0; 2]))
     }
 
+    /// Maps a surface-space point into one node's border-box space.
+    ///
+    /// Returns the mapped point and the node's border-box rect, whose origin
+    /// is `(0, 0)`. Ancestor transforms and Host scroll offsets are inverted
+    /// the same way hit testing walks them. Returns `None` while the node or
+    /// an ancestor has no layout, or when a transform is not invertible.
+    pub fn local_point(
+        &self,
+        node: NodeId,
+        mut point: InputPoint,
+    ) -> Option<(InputPoint, LayoutRect)> {
+        let mut chain = Vec::new();
+        let mut current = Some(node);
+        while let Some(node) = current {
+            let state = self.nodes.get(&node)?;
+            chain.push(state.as_ref());
+            current = state.parent;
+        }
+        let mut origin = [0.0; 2];
+        let mut border = [0.0; 2];
+        let mut size = [0.0; 2];
+        for state in chain.into_iter().rev() {
+            let geometry = state.layout?;
+            border = [
+                origin[0] + geometry.border_box.x,
+                origin[1] + geometry.border_box.y,
+            ];
+            size = [geometry.border_box.width, geometry.border_box.height];
+            point = inverse_map_around(state.transform, point, border)?;
+            origin = [
+                border[0] - state.host_scroll_offset[0],
+                border[1] - state.host_scroll_offset[1],
+            ];
+        }
+        Some((
+            InputPoint {
+                x: point.x - border[0],
+                y: point.y - border[1],
+            },
+            LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: size[0],
+                height: size[1],
+            },
+        ))
+    }
+
     /// Resolves a visible inline source span at a surface-space pointer position.
     pub fn text_span_at(
         &self,
@@ -687,6 +735,76 @@ mod tests {
         assert_eq!(
             scene.hit_test(root, InputPoint { x: 110.0, y: 10.0 }),
             Ok(Some(child))
+        );
+    }
+
+    #[test]
+    fn local_point_maps_through_offsets_transforms_and_host_scrolling() {
+        let (mut scene, root, child) = scene_with_child();
+        scene
+            .set_layout(
+                child,
+                LayoutRect {
+                    x: 20.0,
+                    y: 120.0,
+                    width: 50.0,
+                    height: 40.0,
+                },
+            )
+            .unwrap();
+        let size = LayoutRect {
+            x: 0.0,
+            y: 0.0,
+            width: 50.0,
+            height: 40.0,
+        };
+        assert_eq!(
+            scene.local_point(child, InputPoint { x: 30.0, y: 125.0 }),
+            Some((InputPoint { x: 10.0, y: 5.0 }, size))
+        );
+
+        scene.update_host_scroll_offset(root, [0.0, 100.0]).unwrap();
+        assert_eq!(
+            scene.local_point(child, InputPoint { x: 30.0, y: 25.0 }),
+            Some((InputPoint { x: 10.0, y: 5.0 }, size))
+        );
+
+        let mut translated = Transform::IDENTITY;
+        translated.0[12] = 100.0;
+        scene.set_transform(child, translated).unwrap();
+        assert_eq!(
+            scene.local_point(child, InputPoint { x: 130.0, y: 25.0 }),
+            Some((InputPoint { x: 10.0, y: 5.0 }, size))
+        );
+        assert_eq!(
+            scene.local_point(root, InputPoint { x: 30.0, y: 25.0 }),
+            Some((
+                InputPoint { x: 30.0, y: 25.0 },
+                LayoutRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 300.0,
+                    height: 300.0,
+                },
+            ))
+        );
+
+        scene.set_transform(child, Transform([0.0; 16])).unwrap();
+        assert_eq!(
+            scene.local_point(child, InputPoint { x: 0.0, y: 0.0 }),
+            None
+        );
+        let unlaid = scene
+            .create_node(whisker_protocol::ElementTypeId::new(1).unwrap())
+            .unwrap();
+        scene.insert_child(root, unlaid, 1).unwrap();
+        assert_eq!(
+            scene.local_point(NodeId::new(999).unwrap(), InputPoint { x: 0.0, y: 0.0 }),
+            None
+        );
+        assert_eq!(
+            scene.local_point(unlaid, InputPoint { x: 0.0, y: 0.0 }),
+            None
         );
     }
 
