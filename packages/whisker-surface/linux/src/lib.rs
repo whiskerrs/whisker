@@ -1,7 +1,7 @@
 //! Linux Host implementation for `whisker-surface`.
 //!
 //! GTK cannot hand a child window to a renderer, so the renderer presents finished frames through a
-//! [`whisker_surface::DmabufSink`] and this widget shows them as textures.
+//! `whisker_surface::DmabufSink` and this widget shows them as textures.
 
 #![cfg(target_os = "linux")]
 

@@ -9,7 +9,7 @@ let package = Package(
         .library(name: "WhiskerSurface", targets: ["WhiskerSurface"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.22"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.23"),
     ],
     targets: [
         .target(

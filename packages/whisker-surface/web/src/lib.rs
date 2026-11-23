@@ -1,5 +1,7 @@
 //! Web Host implementation for `whisker-surface`.
 
+#![cfg(target_arch = "wasm32")]
+
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 use std::time::Duration;
