@@ -201,9 +201,9 @@ fn swift_call_sites_are_all_exported() {
         }
     }
 
-    // Monorepo layout only — a published crate has no CNG templates.
+    // Monorepo layout only — a published crate has no Swift Host sources.
     let ios = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../whisker-cng/src/templates/ios/Sources");
+        .join("../../platforms/ios/Sources/WhiskerRuntime");
     if !ios.is_dir() {
         return;
     }

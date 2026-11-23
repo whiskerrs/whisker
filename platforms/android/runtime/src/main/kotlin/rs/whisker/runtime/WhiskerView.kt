@@ -1,6 +1,7 @@
 package rs.whisker.runtime
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -64,6 +65,20 @@ class WhiskerView(context: Context) :
     private var frameScheduled = false
     private var windowVisible = true
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val runsInBackground by lazy {
+        val application = context.packageManager.getApplicationInfo(
+            context.packageName,
+            PackageManager.GET_META_DATA,
+        )
+        application.metaData?.getBoolean("rs.whisker.runsInBackground") == true
+    }
+    private var backgroundDriveScheduled = false
+    private val backgroundDrive = Runnable {
+        backgroundDriveScheduled = false
+        if (nativeHandle != 0L && !runtimePaused && isAttachedToWindow && !windowVisible) {
+            nativeDriveBackground(nativeHandle)
+        }
+    }
     private val elements = WhiskerElementRegistry.newBindings()
     private val measurements = HostMeasurementProvider(context, elements)
     private val bootstrap = HostElementBootstrap(elements)
@@ -246,6 +261,7 @@ class WhiskerView(context: Context) :
         frameScheduled = false
         continuousEventFlushPending = false
         choreographer.removeFrameCallback(this)
+        cancelBackgroundDrive()
         mainHandler.removeCallbacks(continuousEventFlush)
         pendingContinuousEvents.clear()
         WhiskerAppContext.popRuntimeOwner(this)
@@ -303,6 +319,7 @@ class WhiskerView(context: Context) :
         frameScheduled = false
         continuousEventFlushPending = false
         choreographer.removeFrameCallback(this)
+        cancelBackgroundDrive()
         mainHandler.removeCallbacks(continuousEventFlush)
         mainHandler.removeCallbacks(moduleEventFlush)
         scene.clear()
@@ -315,6 +332,7 @@ class WhiskerView(context: Context) :
         super.onWindowVisibilityChanged(visibility)
         windowVisible = visibility == View.VISIBLE
         if (windowVisible) {
+            cancelBackgroundDrive()
             mountWhenSized()
             requestFrameFromNative()
         } else {
@@ -323,7 +341,13 @@ class WhiskerView(context: Context) :
             choreographer.removeFrameCallback(this)
             mainHandler.removeCallbacks(continuousEventFlush)
             pendingContinuousEvents.clear()
+            requestFrameFromNative()
         }
+    }
+
+    private fun cancelBackgroundDrive() {
+        mainHandler.removeCallbacks(backgroundDrive)
+        backgroundDriveScheduled = false
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -391,8 +415,19 @@ class WhiskerView(context: Context) :
 
     /** Called from Rust through JNI. Safe even when the wake originates off-main. */
     fun requestFrameFromNative() {
-        if (!isAttachedToWindow || !windowVisible || nativeHandle == 0L) return
-        if (!isLaidOut || android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { requestFrameFromNative() }
+            return
+        }
+        if (!isAttachedToWindow || runtimePaused || nativeHandle == 0L) return
+        if (!windowVisible) {
+            if (runsInBackground && !backgroundDriveScheduled) {
+                backgroundDriveScheduled = true
+                mainHandler.post(backgroundDrive)
+            }
+            return
+        }
+        if (!isLaidOut) {
             post { requestFrameFromNative() }
             return
         }
@@ -746,6 +781,7 @@ class WhiskerView(context: Context) :
         scale: Float,
     ): Boolean
     private external fun nativePause(handle: Long): Boolean
+    private external fun nativeDriveBackground(handle: Long)
     private external fun nativeResume(handle: Long): Boolean
     private external fun nativeDestroy(handle: Long)
     private external fun nativeDispatchEvent(

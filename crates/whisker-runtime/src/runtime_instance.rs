@@ -59,6 +59,69 @@ mod tests {
     use whisker_style::{SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty, StyleValue};
 
     #[test]
+    fn background_drive_resumes_a_task_started_by_a_module_event() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(79).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let wake_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let wake = std::sync::Arc::clone(&wake_count);
+        let mut runtime = RuntimeInstance::new(
+            surface,
+            RuntimeWakeHandle::new(move || {
+                wake.fetch_add(1, Ordering::Relaxed);
+            }),
+        );
+        let modules = ModuleHost::new(|_, _, _, _, _| false, |_, _, _| {});
+        let observed = Rc::new(Cell::new(0));
+        let subscription = Rc::new(RefCell::new(None::<ModuleSubscription>));
+        let (sender, receiver) = futures_channel::oneshot::channel();
+
+        with_module_host(&modules, || {
+            runtime
+                .mount({
+                    let observed = Rc::clone(&observed);
+                    let subscription = Rc::clone(&subscription);
+                    move || {
+                        let signal = RwSignal::new(0);
+                        let receiver = RefCell::new(Some(receiver));
+                        effect(move || observed.set(signal.get()));
+                        *subscription.borrow_mut() =
+                            Some(PlatformModule::named("demo").on_event("command", move |_| {
+                                let receiver = receiver.borrow_mut().take().unwrap();
+                                crate::tasks::spawn_local(async move {
+                                    signal.set(receiver.await.unwrap());
+                                });
+                            }));
+                        create_element(ElementTag::View)
+                    }
+                })
+                .unwrap();
+        });
+
+        assert!(
+            runtime
+                .dispatch_module_event(&modules, "demo", "command", WhiskerValue::Null)
+                .unwrap()
+        );
+        with_module_host(&modules, || runtime.drive_background()).unwrap();
+        assert_eq!(observed.get(), 0);
+
+        let before = wake_count.load(Ordering::Relaxed);
+        std::thread::spawn(move || sender.send(1).unwrap())
+            .join()
+            .unwrap();
+        assert!(wake_count.load(Ordering::Relaxed) > before);
+        assert_eq!(observed.get(), 0);
+        with_module_host(&modules, || runtime.drive_background()).unwrap();
+        assert_eq!(observed.get(), 1);
+
+        runtime.context.enter(|| subscription.borrow_mut().take());
+        runtime.unmount().unwrap();
+    }
+
+    #[test]
     fn one_input_event_takes_one_surface_snapshot_for_text_and_style_updates() {
         __reset_for_tests();
         let surface = SurfaceRuntime::new(
@@ -1494,6 +1557,32 @@ impl RuntimeInstance {
             self.wake.wake();
         }
         Ok(apply)
+    }
+
+    /// Drives pending tasks and effects without advancing animations or presenting a frame.
+    pub fn drive_background(&self) -> Result<(), RuntimeEventError> {
+        self.require(RuntimeLifecycle::Running, "drive background work")
+            .map_err(RuntimeEventError::Lifecycle)?;
+        let surface = self.surface.clone();
+        self.context.enter(|| {
+            view::with_installed_renderer(surface.renderer(), || {
+                self.activations.borrow_mut().clear();
+                surface.clear_active_pointers();
+                crate::drain_runtime_dispatches();
+                self.drain_pending_host_events()?;
+                surface.begin_mutation_batch();
+                reactive::flush();
+                crate::tasks::run_until_stalled();
+                reactive::flush();
+                reactive::flush_mounts();
+                surface
+                    .finish_mutation_batch()
+                    .map_err(RuntimeInputError::Binding)
+                    .map_err(RuntimeEventError::Input)?;
+                self.drain_pending_host_events()?;
+                Ok(())
+            })
+        })
     }
 
     /// Applies current Host viewport metrics, processes ready tasks and reactive

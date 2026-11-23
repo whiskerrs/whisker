@@ -9,6 +9,11 @@ public final class WhiskerView: UIView {
     private var runtimeHandle: UnsafeMutableRawPointer?
     private var runtimePaused = false
     private var isApplicationActive = true
+    private let runsInBackground = {
+        let value = Bundle.main.object(forInfoDictionaryKey: "WhiskerRunsInBackground")
+        return value as? Bool == true || value as? String == "true"
+    }()
+    private var backgroundDriveScheduled = false
     private var moduleEventSinkEpoch: UInt64 = 0
     private let pendingModuleEvents = PendingModuleEvents()
     private lazy var pointerInputRecognizer: WhiskerTouchObserverGestureRecognizer = {
@@ -296,12 +301,28 @@ public final class WhiskerView: UIView {
     }
 
     func requestFrame() {
-        guard runtimeHandle != nil, !runtimePaused, isApplicationActive, window != nil else { return }
+        guard runtimeHandle != nil, !runtimePaused, window != nil else { return }
+        guard isApplicationActive else {
+            scheduleBackgroundDrive()
+            return
+        }
         if displayLink == nil {
             displayLink = CADisplayLink(target: self, selector: #selector(driveFrame(_:)))
             displayLink?.add(to: .main, forMode: .common)
         }
         displayLink?.isPaused = false
+    }
+
+    private func scheduleBackgroundDrive() {
+        guard runsInBackground, !backgroundDriveScheduled else { return }
+        backgroundDriveScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            backgroundDriveScheduled = false
+            guard let handle = runtimeHandle, !runtimePaused,
+                  !isApplicationActive, window != nil else { return }
+            whisker_view_drive_background(handle)
+        }
     }
 
     @objc private func driveFrame(_ link: CADisplayLink) {
@@ -334,7 +355,13 @@ public final class WhiskerView: UIView {
 
     @objc private func applicationWillResignActive() {
         isApplicationActive = false
-        pauseRuntime()
+        if runsInBackground, window != nil {
+            displayLink?.invalidate()
+            displayLink = nil
+            requestFrame()
+        } else {
+            pauseRuntime()
+        }
     }
 
     private func pauseRuntime() {

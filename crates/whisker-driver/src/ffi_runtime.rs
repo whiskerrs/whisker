@@ -358,6 +358,26 @@ pub unsafe fn tick(
     }
 }
 
+/// Processes work for a mounted runtime whose Host view is temporarily hidden.
+///
+/// # Safety
+/// `handle` must be a live pointer returned by [`create`] on this UI thread.
+pub unsafe fn drive_background(handle: *mut c_void) {
+    let Some(mobile) = (unsafe { handle.cast::<MobileRuntime>().as_mut() }) else {
+        return;
+    };
+    if let Err(error) = mobile.rust_modules.dispatch_pending_events(&mobile.runtime) {
+        mobile_error(format_args!("Whisker mobile module event failed: {error}"));
+    }
+    let modules = std::rc::Rc::clone(&mobile.modules);
+    if let Err(error) = with_module_host(&modules, || mobile.runtime.drive_background()) {
+        mobile_error(format_args!(
+            "Whisker mobile background work failed: {error}"
+        ));
+    }
+    mobile.drain_resource_commands();
+}
+
 /// Suspends one mounted runtime while retaining its application and scene.
 ///
 /// # Safety

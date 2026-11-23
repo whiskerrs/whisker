@@ -251,6 +251,13 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos", target_os = "windows"))]
         #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_drive_background(handle: *mut ::std::ffi::c_void) {
+            // SAFETY: The Host passes its live runtime handle on the UI thread.
+            unsafe { ::whisker::__driver_runtime::drive_background(handle) }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos", target_os = "windows"))]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_pause(
             handle: *mut ::std::ffi::c_void,
         ) -> bool {

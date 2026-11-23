@@ -94,6 +94,15 @@ Android, iOS, and macOS carry these interactions through the mobile FFI Driver.
 Web and Linux use Rust calls directly. The Driver adapts the boundary; it
 does not take over layout, scheduling policy, or platform drawing.
 
+Android and iOS apps that already run background work, such as audio playback,
+can opt into event-driven task and effect processing while their Host view is
+hidden or inactive. Set `WhiskerRunsInBackground` to `true` in the iOS
+`Info.plist`, or set application metadata `rs.whisker.runsInBackground` to
+`true` in the Android manifest. The Host processes native events and task
+wakes without measuring or presenting the scene. The setting does not grant
+background permissions or keep the process running when the OS suspends it.
+Detaching the view still pauses its runtime.
+
 ### Shared UI terms
 
 A few terms recur throughout the implementation:
