@@ -43,6 +43,11 @@ impl DmabufSink {
         self.0.present(frame)
     }
 
+    /// DRM format modifiers the Host can import for `fourcc`.
+    pub fn modifiers(&self, fourcc: u32) -> Vec<u64> {
+        self.0.modifiers(fourcc)
+    }
+
     /// Shows premultiplied RGBA8 pixels copied from the GPU.
     pub fn present_pixels(&self, width: u32, height: u32, stride: u32, pixels: &[u8]) {
         self.0.present_pixels(width, height, stride, pixels);
@@ -52,5 +57,6 @@ impl DmabufSink {
 #[doc(hidden)]
 pub trait DmabufPresenter: 'static {
     fn present(&self, frame: DmabufFrame) -> bool;
+    fn modifiers(&self, fourcc: u32) -> Vec<u64>;
     fn present_pixels(&self, width: u32, height: u32, stride: u32, pixels: &[u8]);
 }
