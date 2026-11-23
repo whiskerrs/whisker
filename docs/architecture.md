@@ -238,6 +238,20 @@ launch shells are written in Kotlin, Swift, and C++:
 Web and Linux do not pass through this mobile ABI. They instantiate the
 runtime directly and supply Rust implementations of the same Host boundaries.
 
+### Android input line boxes
+
+`whisker-input` shares its resolved line box between the measuring `StaticLayout`
+and the native `EditText`. An explicit `line-height` uses a `LineHeightSpan` for
+text and hints, with half-leading split between the view's top and bottom
+padding. Heights below the primary font's natural height are clamped to that
+height because view padding cannot represent negative half-leading.
+
+The final line retains the primary font's descent so a trailing newline's empty,
+span-less line has the same geometry. Both layouts enable fallback line spacing;
+on API 35 and later the view disables the locale-preferred minimum line height.
+When an auto-sized field grows, it clamps its old scroll offset to the new
+content bounds so the first line remains visible.
+
 ### Scrolling, lists, and platform modules
 
 A `ScrollView` makes the boundary especially visible. The Runtime lays out its

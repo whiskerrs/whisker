@@ -3,6 +3,7 @@ package rs.whisker.elements.input
 import android.graphics.Typeface
 import android.os.Build
 import android.text.Layout
+import android.text.SpannableString
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.widget.EditText
@@ -25,9 +26,6 @@ internal object InputTypography {
         }
     }
 
-    fun spacing(paint: TextPaint, lineHeight: Float?): Float =
-        lineHeight?.let { it - (paint.fontMetricsInt.descent - paint.fontMetricsInt.ascent) } ?: 0f
-
     fun apply(view: EditText, style: WhiskerTextStyle) {
         val density = view.resources.displayMetrics.density
         view.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, inputTextSizePixels(style.fontSize, density))
@@ -36,7 +34,23 @@ internal object InputTypography {
         view.includeFontPadding = false
         view.breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
         view.hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
-        view.setLineSpacing(spacing(view.paint, style.lineHeight?.times(density)), 1f)
+        // CSS line-height is applied by InputLineHeightSpan, not line spacing.
+        view.setLineSpacing(0f, 1f)
+        // Pin the API 28+ default the measurer mirrors in configureFallback.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) view.isFallbackLineSpacing = true
+        // API 35 raises each line to the locale's preferred minimum height
+        // (a CJK font's for `ja`). The measurer has no such minimum, and the
+        // span-less empty line after a trailing newline would outgrow the
+        // measured height by the difference.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            view.setLocalePreferredLineHeightForMinimumUsed(false)
+        }
+    }
+
+    /** Mirrors the EditText's fallback line spacing in a measuring layout. */
+    fun configureFallback(builder: StaticLayout.Builder): StaticLayout.Builder {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) builder.setUseLineSpacingFromFallbacks(true)
+        return builder
     }
 }
 
@@ -62,15 +76,18 @@ internal fun measureInput(request: WhiskerMeasureRequest): WhiskerMeasuredSize? 
         WhiskerAvailableSpace.MIN_CONTENT -> if (multiline) 1f else desired
         WhiskerAvailableSpace.MAX_CONTENT -> desired
     }
-    val lineHeight = data["line_height"]?.asDouble()?.toFloat()?.times(scale)
-    val layout = StaticLayout.Builder.obtain(content, 0, content.length, paint, ceil(width.toDouble()).toInt().coerceAtLeast(1))
+    val box = InputLineBox.of(paint, data["line_height"]?.asDouble()?.toFloat()?.times(scale))
+    val styled: CharSequence = if (box == null) content else SpannableString(content).also { applyInputLineBox(it, box) }
+    val layout = InputTypography.configureFallback(StaticLayout.Builder.obtain(styled, 0, styled.length, paint, ceil(width.toDouble()).toInt().coerceAtLeast(1)))
         .setIncludePad(false)
         .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
         .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
         .setMaxLines(if (multiline) Int.MAX_VALUE else 1)
-        .setLineSpacing(InputTypography.spacing(paint, lineHeight), 1f)
+        .setLineSpacing(0f, 1f)
         .build()
     var usedWidth = 0f
     for (line in 0 until layout.lineCount) usedWidth = max(usedWidth, layout.getLineWidth(line))
-    return WhiskerMeasuredSize(request.knownWidth ?: usedWidth / scale, request.knownHeight ?: layout.height / scale)
+    // The view carries the line box's half-leading as padding (InputLineBox).
+    val height = layout.height + (box?.paddingTop ?: 0) + (box?.paddingBottom ?: 0)
+    return WhiskerMeasuredSize(request.knownWidth ?: usedWidth / scale, request.knownHeight ?: height / scale)
 }
