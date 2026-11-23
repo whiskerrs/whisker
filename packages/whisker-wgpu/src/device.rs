@@ -211,6 +211,7 @@ async fn request_adapter(
 async fn open(instance: wgpu::Instance, adapter: wgpu::Adapter) -> Result<Gpu, GpuError> {
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
+            required_features: exported_frame_features(&adapter),
             required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                 .using_resolution(adapter.limits()),
             ..Default::default()
@@ -223,6 +224,15 @@ async fn open(instance: wgpu::Instance, adapter: wgpu::Adapter) -> Result<Gpu, G
         device,
         queue,
     })
+}
+
+/// Lets Linux surfaces hand frames to GTK as dmabufs instead of copying them back.
+fn exported_frame_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    if cfg!(target_os = "linux") {
+        adapter.features() & wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF
+    } else {
+        wgpu::Features::empty()
+    }
 }
 
 #[allow(clippy::unused_async)]

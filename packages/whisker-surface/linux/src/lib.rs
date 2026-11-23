@@ -82,6 +82,18 @@ impl DmabufPresenter for Presenter {
         }
     }
 
+    fn modifiers(&self, fourcc: u32) -> Vec<u64> {
+        let Some(picture) = self.picture.upgrade() else {
+            return Vec::new();
+        };
+        let formats = picture.display().dmabuf_formats();
+        (0..formats.n_formats())
+            .map(|index| formats.format(index))
+            .filter(|(format, _)| *format == fourcc)
+            .map(|(_, modifier)| modifier)
+            .collect()
+    }
+
     fn present_pixels(&self, width: u32, height: u32, stride: u32, pixels: &[u8]) {
         let Some(picture) = self.picture.upgrade() else {
             return;

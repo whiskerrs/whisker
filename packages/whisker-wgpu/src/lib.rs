@@ -9,6 +9,8 @@
 //! ```
 
 mod device;
+#[cfg(target_os = "linux")]
+mod linux;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -103,7 +105,7 @@ enum Target {
         config: wgpu::SurfaceConfiguration,
     },
     #[cfg(target_os = "linux")]
-    Readback(readback::Readback),
+    Frames(linux::Frames),
 }
 
 impl Target {
@@ -115,7 +117,7 @@ impl Target {
                 .copied()
                 .unwrap_or(config.format),
             #[cfg(target_os = "linux")]
-            Target::Readback(readback) => readback.format(),
+            Target::Frames(frames) => frames.format(),
         }
     }
 }
@@ -217,7 +219,7 @@ async fn connect(target: NativeSurface) -> Result<(Gpu, Target), String> {
     #[cfg(target_os = "linux")]
     if let NativeSurface::Dmabuf(sink) = target {
         let gpu = device::gpu().await.map_err(|error| error.to_string())?;
-        return Ok((gpu, Target::Readback(readback::Readback::new(sink))));
+        return Ok((gpu, Target::Frames(linux::Frames::new(sink))));
     }
     let (gpu, surface) = device::connect(&target).await?;
     let caps = surface.get_capabilities(&gpu.adapter);
@@ -297,7 +299,7 @@ fn resize_target(gpu: &Gpu, target: &mut Target, size: SurfaceSize) {
             surface.configure(&gpu.device, config);
         }
         #[cfg(target_os = "linux")]
-        Target::Readback(readback) => readback.resize(gpu, width, height),
+        Target::Frames(frames) => frames.resize(gpu, width, height),
     }
 }
 
@@ -321,96 +323,7 @@ fn draw(gpu: &Gpu, target: &mut Target, renderer: &mut impl Renderer, frame: Fra
             gpu.queue.present(texture);
         }
         #[cfg(target_os = "linux")]
-        Target::Readback(readback) => readback.draw(gpu, renderer, frame),
-    }
-}
-
-#[cfg(target_os = "linux")]
-mod readback {
-    use whisker_surface::{DmabufSink, FrameInfo};
-
-    use crate::{Gpu, Renderer};
-
-    const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-
-    pub(crate) struct Readback {
-        sink: DmabufSink,
-        texture: Option<(wgpu::Texture, wgpu::Buffer, u32)>,
-    }
-
-    impl Readback {
-        pub(crate) fn new(sink: DmabufSink) -> Self {
-            Self {
-                sink,
-                texture: None,
-            }
-        }
-
-        pub(crate) fn format(&self) -> wgpu::TextureFormat {
-            FORMAT
-        }
-
-        pub(crate) fn resize(&mut self, gpu: &Gpu, width: u32, height: u32) {
-            let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("whisker-wgpu readback"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
-            let stride = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-            let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("whisker-wgpu readback"),
-                size: u64::from(stride) * u64::from(height),
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            self.texture = Some((texture, buffer, stride));
-        }
-
-        pub(crate) fn draw(&mut self, gpu: &Gpu, renderer: &mut impl Renderer, frame: FrameInfo) {
-            let Some((texture, buffer, stride)) = &self.texture else {
-                return;
-            };
-            let view = texture.create_view(&Default::default());
-            renderer.render(gpu, &view, frame);
-            let size = texture.size();
-            let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            encoder.copy_texture_to_buffer(
-                texture.as_image_copy(),
-                wgpu::TexelCopyBufferInfo {
-                    buffer,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(*stride),
-                        rows_per_image: None,
-                    },
-                },
-                size,
-            );
-            gpu.queue.submit([encoder.finish()]);
-            let slice = buffer.slice(..);
-            slice.map_async(wgpu::MapMode::Read, |_| {});
-            if gpu
-                .device
-                .poll(wgpu::PollType::wait_indefinitely())
-                .is_err()
-            {
-                return;
-            }
-            if let Ok(pixels) = slice.get_mapped_range() {
-                self.sink
-                    .present_pixels(size.width, size.height, *stride, &pixels);
-            }
-            buffer.unmap();
-        }
+        Target::Frames(frames) => frames.draw(gpu, renderer, frame),
     }
 }
 

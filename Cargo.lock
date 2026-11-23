@@ -6397,6 +6397,7 @@ dependencies = [
 name = "whisker-wgpu"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "pollster",
  "raw-window-handle",
  "wasm-bindgen-futures",
