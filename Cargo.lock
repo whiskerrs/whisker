@@ -649,7 +649,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]
@@ -1509,6 +1509,12 @@ dependencies = [
  "log",
  "xml-rs",
 ]
+
+[[package]]
+name = "glam"
+version = "0.30.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19fc433e8437a212d1b6f1e68c7824af3aed907da60afa994e7f542d18d12aa9"
 
 [[package]]
 name = "glib"
@@ -6164,6 +6170,29 @@ name = "whisker-safe-area"
 version = "0.14.8"
 dependencies = [
  "whisker",
+]
+
+[[package]]
+name = "whisker-scene"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "image",
+ "pollster",
+ "whisker",
+ "whisker-surface",
+ "whisker-wgpu",
+]
+
+[[package]]
+name = "whisker-scene-example"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-cng",
+ "whisker-scene",
+ "whisker-surface",
 ]
 
 [[package]]

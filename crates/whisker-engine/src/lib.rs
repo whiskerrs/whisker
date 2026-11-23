@@ -17,7 +17,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-mod color;
 mod layout;
 mod measurement;
 mod paint;

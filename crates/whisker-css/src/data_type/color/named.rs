@@ -163,6 +163,12 @@ pub enum NamedColor {
 }
 
 impl NamedColor {
+    /// The color's sRGB channels.
+    pub fn srgb(self) -> [u8; 3] {
+        whisker_style::named_color_srgb(self.name())
+            .expect("every NamedColor keyword is in the CSS named-color table")
+    }
+
     /// The canonical lowercase CSS keyword for this color.
     pub fn name(self) -> &'static str {
         match self {
@@ -335,6 +341,14 @@ mod tests {
         assert_eq!(NamedColor::DodgerBlue.name(), "dodgerblue");
         assert_eq!(NamedColor::RebeccaPurple.name(), "rebeccapurple");
         assert_eq!(NamedColor::YellowGreen.name(), "yellowgreen");
+    }
+
+    #[test]
+    fn every_variant_has_srgb_channels() {
+        for c in ALL {
+            c.srgb();
+        }
+        assert_eq!(NamedColor::RebeccaPurple.srgb(), [102, 51, 153]);
     }
 
     // Exhaustive walk to keep coverage at 100%. If a new color is

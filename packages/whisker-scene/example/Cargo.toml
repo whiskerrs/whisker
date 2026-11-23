@@ -1,0 +1,25 @@
+[package]
+name = "whisker-scene-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Example app for `whisker-scene`: a lit scene written as components."
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = ["whisker-cng/generate"]
+
+[dependencies]
+whisker-cng = { path = "../../../crates/whisker-cng", version = "0.19.0", default-features = false }
+whisker = { workspace = true }
+whisker-surface = { path = "../../whisker-surface" }
+whisker-scene = { path = ".." }

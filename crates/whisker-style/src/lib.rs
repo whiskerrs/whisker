@@ -11,6 +11,7 @@ mod declaration;
 mod layout;
 mod layout_value;
 mod motion;
+mod named_color;
 mod paint;
 mod property;
 mod resolution;
@@ -39,6 +40,7 @@ pub use motion::{
     MotionIterationCount, MotionPlayState, MotionStepPosition, MotionTime, TransitionPropertyValue,
     TransitionValue,
 };
+pub use named_color::named_color_srgb;
 pub use paint::{
     BorderStyleValue, ComputedBackgroundImage, ComputedBackgroundLayerStyle,
     ComputedBackgroundPosition, ComputedBackgroundSize, ComputedBoxShadow, ComputedClipPath,
