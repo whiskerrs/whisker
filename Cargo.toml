@@ -45,6 +45,7 @@ members = [
     "platforms/web",
     "examples/chat",
     "examples/news",
+    "examples/commitcity",
     "tests/mobile-link-test",
     "tests/rust-host-link-test",
     "packages/whisker-haptics",

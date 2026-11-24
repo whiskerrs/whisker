@@ -5700,6 +5700,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-commitcity"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "whisker",
+ "whisker-cng",
+ "whisker-input",
+ "whisker-safe-area",
+ "whisker-scene",
+ "whisker-surface",
+]
+
+[[package]]
 name = "whisker-config"
 version = "0.19.2"
 dependencies = [
