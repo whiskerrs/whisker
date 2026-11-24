@@ -5,6 +5,7 @@ use whisker::css::Color;
 use whisker_surface::{FrameInfo, SurfaceSize};
 use whisker_wgpu::{Gpu, Renderer, wgpu};
 
+use super::pipeline::SHARED;
 use super::*;
 use crate::core::{
     Geometry, Light, Material, Node, Projection, Scene, StandardMaterial, Transform,
@@ -240,5 +241,24 @@ fn translucent_meshes_blend_over_opaque_ones() {
         scene.root().add_child(&back);
         let center = pixel(&render(gpu, scene), SIZE / 2, SIZE / 2);
         assert!((180..=195).contains(&center[0]), "{center:?}");
+    });
+}
+
+#[test]
+fn a_mesh_centered_off_screen_still_draws_the_part_in_view() {
+    with_gpu(|gpu| {
+        let scene = Scene::new();
+        scene.set_background(Color::rgb(0, 0, 255));
+        let mesh = Node::new();
+        mesh.set_transform(Transform::from_translation(Vec3::new(6.0, 0.0, 0.0)));
+        mesh.set_mesh(Some((
+            Geometry::cuboid(Vec3::new(12.0, 1.0, 1.0)),
+            Material::Unlit {
+                color: Color::rgb(255, 0, 0),
+            },
+        )));
+        scene.root().add_child(&mesh);
+        let pixels = render(gpu, scene);
+        assert_eq!(pixel(&pixels, SIZE / 2 + 4, SIZE / 2), [255, 0, 0, 255]);
     });
 }
