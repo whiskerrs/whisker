@@ -53,6 +53,7 @@ bool whisker_view_tick(void *handle,
 }
 
 bool whisker_view_pause(void *handle) { (void)handle; return true; }
+void whisker_view_drive_background(void *handle) { (void)handle; }
 bool whisker_view_resume(void *handle) { (void)handle; return true; }
 
 void whisker_view_destroy(void *handle) { (void)handle; }

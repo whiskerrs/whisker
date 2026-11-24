@@ -1,6 +1,9 @@
 package rs.whisker.runtime
 
+import android.app.Activity
 import android.content.Context
+import android.content.MutableContextWrapper
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -11,6 +14,7 @@ import android.util.Log
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import androidx.core.view.ViewCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -55,15 +59,32 @@ class WhiskerView(context: Context) :
     private var nativeHandle = 0L
     private var runtimePaused = false
     private var permanentlyDestroyed = false
+
+    /** True while the runtime outlives its destroyed Activity without a window (see [obtain]). */
+    private var retainedHeadless = false
     private var lifecycleOwner: LifecycleOwner? = null
     private val lifecycleObserver = LifecycleEventObserver { owner, event ->
         if (event == Lifecycle.Event.ON_DESTROY && owner === lifecycleOwner) {
-            destroyRuntime(permanent = true)
+            if (canRetainHeadless()) enterHeadless() else destroyRuntime(permanent = true)
         }
     }
     private var frameScheduled = false
     private var windowVisible = true
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val runsInBackground by lazy {
+        val application = context.packageManager.getApplicationInfo(
+            context.packageName,
+            PackageManager.GET_META_DATA,
+        )
+        application.metaData?.getBoolean("rs.whisker.runsInBackground") == true
+    }
+    private var backgroundDriveScheduled = false
+    private val backgroundDrive = Runnable {
+        backgroundDriveScheduled = false
+        if (nativeHandle != 0L && !runtimePaused && drivesInBackground()) {
+            nativeDriveBackground(nativeHandle)
+        }
+    }
     private val elements = WhiskerElementRegistry.newBindings()
     private val measurements = HostMeasurementProvider(context, elements)
     private val bootstrap = HostElementBootstrap(elements)
@@ -194,10 +215,21 @@ class WhiskerView(context: Context) :
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        val reattached = retainedHeadless
+        if (reattached) {
+            retainedHeadless = false
+            cancelBackgroundDrive()
+            WhiskerViewRetainer.forget(this)
+        }
         bindLifecycleOwner()
         WhiskerAppContext.pushRuntimeOwner(this)
         mountWhenSized()
         resumeRuntime()
+        if (reattached) {
+            requestFrameFromNative()
+            // Safe-area and keyboard modules learn the new window's insets on the next dispatch.
+            mainHandler.post { if (isAttachedToWindow) ViewCompat.requestApplyInsets(this) }
+        }
     }
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
@@ -242,14 +274,17 @@ class WhiskerView(context: Context) :
     }
 
     override fun onDetachedFromWindow() {
-        pauseRuntime()
+        // A retained runtime keeps driving module events and tasks while it has no window.
+        if (retainedHeadless) windowVisible = false else pauseRuntime()
         frameScheduled = false
         continuousEventFlushPending = false
         choreographer.removeFrameCallback(this)
+        cancelBackgroundDrive()
         mainHandler.removeCallbacks(continuousEventFlush)
         pendingContinuousEvents.clear()
         WhiskerAppContext.popRuntimeOwner(this)
         super.onDetachedFromWindow()
+        if (retainedHeadless) requestFrameFromNative()
     }
 
     /**
@@ -290,7 +325,42 @@ class WhiskerView(context: Context) :
         }
     }
 
+    /**
+     * Whether the Activity being destroyed may leave this runtime running without a window.
+     *
+     * Requires the `rs.whisker.runsInBackground` opt-in, a held [WhiskerRuntimeRetention] lease
+     * and a view created by [obtain], whose context can be moved off the destroyed Activity.
+     */
+    private fun canRetainHeadless(): Boolean =
+        nativeHandle != 0L && !permanentlyDestroyed && runsInBackground &&
+            context is MutableContextWrapper && WhiskerRuntimeRetention.isRequested
+
+    /** Detaches from the destroyed Activity and keeps the runtime for the next [obtain]. */
+    private fun enterHeadless() {
+        lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
+        lifecycleOwner = null
+        retainedHeadless = true
+        // Detaching runs onDetachedFromWindow synchronously, which keeps the runtime running.
+        (parent as? ViewGroup)?.removeView(this)
+        (context as MutableContextWrapper).setBaseContext(context.applicationContext)
+        WhiskerViewRetainer.hold(this)
+        requestFrameFromNative()
+    }
+
+    /** Moves a retained view onto [activity] before it is attached to that Activity's window. */
+    internal fun adopt(activity: Activity) {
+        (context as MutableContextWrapper).setBaseContext(activity)
+    }
+
+    /** True while a hidden or windowless runtime should process background work. */
+    private fun drivesInBackground(): Boolean =
+        if (isAttachedToWindow) !windowVisible && runsInBackground else retainedHeadless
+
     private fun destroyRuntime(permanent: Boolean = false) {
+        if (retainedHeadless) {
+            retainedHeadless = false
+            WhiskerViewRetainer.forget(this)
+        }
         permanentlyDestroyed = permanentlyDestroyed || permanent
         lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
         lifecycleOwner = null
@@ -303,6 +373,7 @@ class WhiskerView(context: Context) :
         frameScheduled = false
         continuousEventFlushPending = false
         choreographer.removeFrameCallback(this)
+        cancelBackgroundDrive()
         mainHandler.removeCallbacks(continuousEventFlush)
         mainHandler.removeCallbacks(moduleEventFlush)
         scene.clear()
@@ -315,6 +386,7 @@ class WhiskerView(context: Context) :
         super.onWindowVisibilityChanged(visibility)
         windowVisible = visibility == View.VISIBLE
         if (windowVisible) {
+            cancelBackgroundDrive()
             mountWhenSized()
             requestFrameFromNative()
         } else {
@@ -323,7 +395,13 @@ class WhiskerView(context: Context) :
             choreographer.removeFrameCallback(this)
             mainHandler.removeCallbacks(continuousEventFlush)
             pendingContinuousEvents.clear()
+            requestFrameFromNative()
         }
+    }
+
+    private fun cancelBackgroundDrive() {
+        mainHandler.removeCallbacks(backgroundDrive)
+        backgroundDriveScheduled = false
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -391,8 +469,19 @@ class WhiskerView(context: Context) :
 
     /** Called from Rust through JNI. Safe even when the wake originates off-main. */
     fun requestFrameFromNative() {
-        if (!isAttachedToWindow || !windowVisible || nativeHandle == 0L) return
-        if (!isLaidOut || android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { requestFrameFromNative() }
+            return
+        }
+        if (runtimePaused || nativeHandle == 0L) return
+        if (!isAttachedToWindow || !windowVisible) {
+            if (drivesInBackground() && !backgroundDriveScheduled) {
+                backgroundDriveScheduled = true
+                mainHandler.post(backgroundDrive)
+            }
+            return
+        }
+        if (!isLaidOut) {
             post { requestFrameFromNative() }
             return
         }
@@ -746,6 +835,7 @@ class WhiskerView(context: Context) :
         scale: Float,
     ): Boolean
     private external fun nativePause(handle: Long): Boolean
+    private external fun nativeDriveBackground(handle: Long)
     private external fun nativeResume(handle: Long): Boolean
     private external fun nativeDestroy(handle: Long)
     private external fun nativeDispatchEvent(
@@ -791,4 +881,26 @@ class WhiskerView(context: Context) :
         dimensionsMask: Int,
         diagnostic: String,
     ): Boolean
+
+    public companion object {
+        /**
+         * Returns the view retained after its previous Activity was destroyed, or a new view for
+         * [activity].
+         *
+         * Views created here can outlive their Activity while a [WhiskerRuntimeRetention] lease
+         * is held and the app opts into `rs.whisker.runsInBackground`; the next call adopts the
+         * same runtime, so playback and other background state continue without a restart.
+         */
+        @JvmStatic
+        public fun obtain(activity: Activity): WhiskerView {
+            check(Looper.myLooper() == Looper.getMainLooper()) {
+                "WhiskerView.obtain() must run on the main thread"
+            }
+            WhiskerViewRetainer.take()?.let { retained ->
+                retained.adopt(activity)
+                return retained
+            }
+            return WhiskerView(MutableContextWrapper(activity))
+        }
+    }
 }

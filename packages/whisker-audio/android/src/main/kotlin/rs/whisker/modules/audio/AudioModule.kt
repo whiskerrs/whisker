@@ -18,6 +18,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import rs.whisker.runtime.RuntimeAttachedListener
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerApplication
 import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
@@ -125,11 +126,12 @@ class AudioModule : Module() {
 
     /**
      * Create the ExoPlayer for `id` and wire its `Player.Listener` so state
-     * changes flow back to Rust. Defers when the host Activity isn't
-     * attached yet — the common case during the very first render.
+     * changes flow back to Rust. Players hold the application context, so
+     * they neither pin an Activity nor wait for one while the runtime runs
+     * without a window; creation only defers when no context is known yet.
      */
     private fun createPlayer(id: Long, source: String) {
-        val ctx = appContext.currentActivity
+        val ctx = appContext.currentActivity?.applicationContext ?: WhiskerApplication.appContext
         if (ctx == null) {
             pendingCreates.add(id to source)
             ensureAttachListener()
