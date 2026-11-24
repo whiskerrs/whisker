@@ -74,6 +74,11 @@ pub(crate) struct Sample {
 }
 
 impl Gestures {
+    /// Whether a finger or mouse button is down on the map.
+    pub fn is_active(&self) -> bool {
+        !self.pointers.is_empty()
+    }
+
     pub fn new(moves: bool) -> Gestures {
         Gestures {
             moves,

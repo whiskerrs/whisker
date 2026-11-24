@@ -17,7 +17,7 @@ use web_sys::{
 
 use crate::geo::TileId;
 use crate::style::{GeoJsonOptions, Layer, SourceKind, parse_layers};
-use crate::tiles::geojson::GeoJsonIndex;
+use crate::tiles::geojson::{ClusterQuery, GeoJsonIndex};
 use crate::tiles::{Features, TileContent, process, vector_content};
 use crate::wire::{
     TileJob, decode_content, decode_geojson, decode_job, encode_content, encode_geojson, encode_job,
@@ -68,7 +68,7 @@ pub(crate) async fn tile(
         bytes,
     };
     let data = encode_job(&job);
-    let Some(reply) = send(&data, None, None) else {
+    let Some(reply) = send(&data, None, None, false) else {
         return Err(job.bytes);
     };
     match Wait(reply).await {
@@ -184,7 +184,12 @@ fn running<R>(
 }
 
 /// Posts a job to `target`, or to the Worker with the fewest jobs waiting.
-fn send(data: &[u8], target: Option<usize>, geojson: Option<u32>) -> Option<Rc<Reply>> {
+fn send(
+    data: &[u8],
+    target: Option<usize>,
+    geojson: Option<u32>,
+    query: bool,
+) -> Option<Rc<Reply>> {
     running(|workers, jobs, next_job| {
         let index = match target {
             Some(index) => index,
@@ -204,6 +209,9 @@ fn send(data: &[u8], target: Option<usize>, geojson: Option<u32>) -> Option<Rc<R
         let mut fields = vec![("job", JsValue::from(job)), ("data", array.into())];
         if let Some(geojson) = geojson {
             fields.push(("geojson", JsValue::from(geojson)));
+        }
+        if query {
+            fields.push(("query", JsValue::TRUE));
         }
         post(&slot.worker, &fields, Some(&transfer));
         slot.pending += 1;
@@ -308,10 +316,25 @@ pub(crate) async fn geojson_tile(
         max_zoom,
         bytes: Vec::new(),
     };
-    let reply = send(&encode_job(&job), Some(index.worker), Some(index.id)).ok_or(())?;
+    let reply = send(&encode_job(&job), Some(index.worker), Some(index.id), false).ok_or(())?;
     match Wait(reply).await {
         Outcome::Done(Some(out)) => Ok(decode_content(&out, Features::encoded(Vec::new()))),
         Outcome::Done(None) => Ok(None),
+        Outcome::Retry => Err(()),
+    }
+}
+
+/// Answers `query` from `index` in its Worker, or `Err` once that Worker has stopped.
+pub(crate) async fn geojson_cluster(
+    index: &RemoteIndex,
+    query: ClusterQuery,
+) -> Result<serde_json::Value, ()> {
+    let data = serde_json::to_vec(&query.to_json()).map_err(|_| ())?;
+    let reply = send(&data, Some(index.worker), Some(index.id), true).ok_or(())?;
+    match Wait(reply).await {
+        Outcome::Done(out) => Ok(out
+            .and_then(|out| serde_json::from_slice(&out).ok())
+            .unwrap_or(serde_json::Value::Null)),
         Outcome::Retry => Err(()),
     }
 }
@@ -552,6 +575,19 @@ fn handle(scope: &DedicatedWorkerGlobalScope, data: JsValue) {
     let geojson = field(&data, "geojson")
         .and_then(|id| id.as_f64())
         .map(|id| id as u32);
+    if let (Some(index), Some(true)) = (geojson, field(&data, "query").and_then(|q| q.as_bool())) {
+        let answer = field(&data, "data")
+            .and_then(|data| data.dyn_into::<js_sys::Uint8Array>().ok())
+            .and_then(|data| serde_json::from_slice(&data.to_vec()).ok())
+            .and_then(|json| ClusterQuery::from_json(&json))
+            .and_then(|query| {
+                WORKER_GEOJSON.with(|indexes| Some(indexes.borrow().get(&index)?.cluster(query)))
+            })
+            .and_then(|answer| serde_json::to_vec(&answer).ok())
+            .map(|bytes| js_sys::Uint8Array::from(&bytes[..]));
+        reply(scope, job_id, answer);
+        return;
+    }
     let out = field(&data, "data")
         .and_then(|data| data.dyn_into::<js_sys::Uint8Array>().ok())
         .and_then(|data| decode_job(&data.to_vec()))
@@ -579,6 +615,10 @@ fn handle(scope: &DedicatedWorkerGlobalScope, data: JsValue) {
             }
         })
         .map(|content| js_sys::Uint8Array::from(&encode_content(&content, geojson.is_some())[..]));
+    reply(scope, job_id, out);
+}
+
+fn reply(scope: &DedicatedWorkerGlobalScope, job_id: JsValue, out: Option<js_sys::Uint8Array>) {
     let message = js_sys::Object::new();
     let _ = js_sys::Reflect::set(&message, &"job".into(), &job_id);
     let _ = js_sys::Reflect::set(

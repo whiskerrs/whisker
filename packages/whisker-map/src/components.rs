@@ -14,6 +14,7 @@ use whisker::{Children, RwSignal, Signal, Style};
 use whisker_surface::{SurfaceView, WheelEvent};
 
 use crate::camera::MapCamera;
+use crate::events::{EventCallback, MapEvents, SourceDataCallback};
 use crate::geo::LatLng;
 use crate::gesture::{Gestures, PointerKind, Sample, wheel};
 use crate::handle::MapRef;
@@ -38,10 +39,18 @@ pub fn map_view(
     #[prop(default = true)] gestures: bool,
     style: Style,
     on_tap: Option<TapCallback>,
+    on_move_end: Option<EventCallback>,
+    on_idle: Option<EventCallback>,
+    on_source_data: Option<SourceDataCallback>,
     map_ref: Option<MapRef>,
     children: Children,
 ) -> Element {
     let map = MapInner::new(camera.get_untracked());
+    map.set_events(MapEvents {
+        move_end: on_move_end.clone(),
+        idle: on_idle.clone(),
+        source_data: on_source_data.clone(),
+    });
     map.bind_camera(camera);
     map.load_style(map_style.clone());
     let surface = {
@@ -114,7 +123,7 @@ fn bind_gestures(root: Element, map: Rc<MapInner>, moves: bool, on_tap: Option<T
             };
             let tap = {
                 let mut gestures = gestures.borrow_mut();
-                match phase {
+                let tap = match phase {
                     Phase::Down => {
                         set_pointer_capture(root, event.pointer_id);
                         gestures.down(&map, sample);
@@ -133,7 +142,9 @@ fn bind_gestures(root: Element, map: Rc<MapInner>, moves: bool, on_tap: Option<T
                         gestures.cancel(sample);
                         None
                     }
-                }
+                };
+                map.set_touching(gestures.is_active());
+                tap
             };
             if let (Some(point), Some(on_tap)) = (tap, &on_tap) {
                 (on_tap.0)(map.tap_at(point));

@@ -122,6 +122,10 @@ impl GlyphStore {
         &self.template
     }
 
+    pub fn is_loading(&self) -> bool {
+        self.in_flight.get() > 0
+    }
+
     pub fn glyph(self: &Rc<Self>, font: &Arc<str>, codepoint: u32) -> Lookup {
         if let Some(glyph) = self.glyphs.borrow().get(&(font.clone(), codepoint)) {
             return Lookup::Ready(glyph.clone());

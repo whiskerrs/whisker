@@ -17,6 +17,7 @@ mod animation;
 mod cache;
 mod camera;
 mod components;
+mod events;
 mod geo;
 mod gesture;
 mod handle;
@@ -39,7 +40,8 @@ mod worker;
 
 pub use camera::{MAX_PITCH, MAX_ZOOM, MIN_ZOOM, MapCamera};
 pub use components::{MapView, Marker};
+pub use events::{EventCallback, MapSourceData, SourceDataCallback};
 pub use geo::LatLng;
 pub use handle::MapRef;
-pub use query::{MapFeature, MapTap, TapCallback};
+pub use query::{MapFeature, MapTap, RenderedQuery, ScreenArea, SourceQuery, TapCallback};
 pub use style::{MapProjection, MapStyle};

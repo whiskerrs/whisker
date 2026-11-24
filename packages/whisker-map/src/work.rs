@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::geo::TileId;
 use crate::style::{GeoJsonOptions, Layer, SourceKind};
-use crate::tiles::geojson::GeoJsonIndex;
+use crate::tiles::geojson::{ClusterQuery, GeoJsonIndex};
 use crate::tiles::{TileContent, process, vector_content};
 
 /// Makes a tile from its source's bytes: on a worker thread, or on the web in a Web Worker,
@@ -81,6 +81,26 @@ pub(crate) async fn geojson_tile(
         ))
     })
     .await
+}
+
+/// Answers a cluster question about a GeoJSON source's index.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(clippy::infallible_destructuring_match)
+)]
+pub(crate) async fn geojson_cluster(index: GeoJson, query: ClusterQuery) -> serde_json::Value {
+    let local = match index {
+        GeoJson::Local(index) => index,
+        #[cfg(target_arch = "wasm32")]
+        GeoJson::Remote(remote) => match crate::worker::geojson_cluster(&remote, query).await {
+            Ok(answer) => return answer,
+            Err(()) => match remote.local().await {
+                Some(local) => local,
+                None => return serde_json::Value::Null,
+            },
+        },
+    };
+    run(move || local.cluster(query)).await
 }
 
 /// Tells the Workers about a style's layers, which tile jobs then name.
