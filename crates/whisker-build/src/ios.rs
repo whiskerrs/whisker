@@ -104,6 +104,7 @@ fn cargo_build_ios_dylib(
         triple,
         "--crate-type",
         crate_type,
+        "--message-format=json-render-diagnostics",
     ]);
     cmd.envs(release_profile_env(hot_reload));
     let generation_target = if triple.ends_with("-apple-darwin") {
@@ -140,10 +141,19 @@ fn cargo_build_ios_dylib(
         }
     }
     cmd.current_dir(workspace_root);
-    let status = step.pipe(&mut cmd).context("spawn cargo")?;
+    let (status, messages) = step.pipe_collecting_json(&mut cmd).context("spawn cargo")?;
     if !status.success() {
         return Err(anyhow!("cargo rustc failed for {triple} ({status})"));
     }
+    crate::gc::record_and_sweep(
+        &crate::gc::BuildScope {
+            workspace_root,
+            triple,
+            profile_dir: "release",
+            variant: crate_type,
+        },
+        &messages,
+    );
     Ok(())
 }
 
@@ -309,9 +319,7 @@ pub fn build_framework_for_xcode_run_script(
         )?;
         s.done("");
         slice_paths.push(
-            inputs
-                .workspace_root
-                .join("target")
+            whisker_cng::cargo_target_dir(inputs.workspace_root)
                 .join(triple)
                 .join("release")
                 .join(&cargo_dylib_name),

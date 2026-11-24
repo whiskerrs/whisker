@@ -27,11 +27,14 @@ pub mod android;
 pub mod capture;
 pub mod child_guard;
 pub mod desktop;
+pub mod gc;
 pub mod ios;
 pub mod macos;
 pub mod modules;
 pub mod ui;
 pub mod web;
+
+pub use whisker_cng::cargo_target_dir;
 
 pub use capture::{
     CaptureShims, capture_env_vars, capture_env_vars_all_crates, capture_env_vars_for_triple,

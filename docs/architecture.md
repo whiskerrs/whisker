@@ -313,6 +313,26 @@ report instead of generating a second time. `whisker doctor` can inspect the las
 completed report without executing user code. Generated packages, reports, and
 build caches under `target/.whisker/` are disposable and are not committed.
 
+Compiled output — the application's own artifacts, the generator and CNG
+plugin builds, and the Web and desktop build trees — goes to Cargo's target
+directory as `cargo metadata` reports it, so `CARGO_TARGET_DIR` or
+`build.target-dir` lets several applications share one. Per-application state
+(hot reload captures and patches, Xcode DerivedData, generation reports) stays
+under the workspace's own `target/.whisker/`, so applications sharing a target
+directory never overwrite each other's.
+
+Cargo never deletes a unit once its hash changes, so after each successful
+Android, iOS or macOS build whisker records the units the build used (from
+cargo's JSON messages) in a manifest under `<target>/.whisker-gc/` and deletes
+the units of that `<target>/<triple>/<profile>` directory no live manifest
+references, holding cargo's `.cargo-lock` while it does. Manifests of other
+workspaces protect their units; they expire after 14 days or when their
+workspace is gone, and anything written in the last ten minutes is kept for
+concurrent builds. `target/<profile>`, which also serves `cargo test` and
+`clippy`, is never swept. `whisker clean` runs the sweep on demand (`--all`
+also drops the workspace's `target/.whisker/`), and `WHISKER_NO_GC=1` turns the
+automatic sweep off.
+
 The tooling has a different lifetime from the shipped UI runtime:
 
 | Tooling crate | Responsibility |

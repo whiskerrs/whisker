@@ -480,6 +480,27 @@ impl Step {
         cmd: &mut std::process::Command,
         noise: fn(&str) -> bool,
     ) -> std::io::Result<std::process::ExitStatus> {
+        self.pipe_inner(cmd, noise, None)
+    }
+
+    /// [`Step::pipe`] for a cargo run with `--message-format=json-*`:
+    /// stdout's JSON messages are returned instead of printed.
+    pub fn pipe_collecting_json(
+        &self,
+        cmd: &mut std::process::Command,
+    ) -> std::io::Result<(std::process::ExitStatus, Vec<String>)> {
+        let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let status = self.pipe_inner(cmd, |_| false, Some(sink.clone()))?;
+        let messages = std::mem::take(&mut *sink.lock().unwrap_or_else(|e| e.into_inner()));
+        Ok((status, messages))
+    }
+
+    fn pipe_inner(
+        &self,
+        cmd: &mut std::process::Command,
+        noise: fn(&str) -> bool,
+        json_sink: Option<JsonSink>,
+    ) -> std::io::Result<std::process::ExitStatus> {
         cmd.stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -495,10 +516,10 @@ impl Step {
         let reported = self.reported;
         let kind = self.kind;
         let t_out = std::thread::spawn(move || {
-            stream_through_bar(stdout, bar_stdout, reported, kind, noise)
+            stream_through_bar(stdout, bar_stdout, reported, kind, noise, json_sink)
         });
         let t_err = std::thread::spawn(move || {
-            stream_through_bar(stderr, bar_stderr, reported, kind, noise)
+            stream_through_bar(stderr, bar_stderr, reported, kind, noise, None)
         });
         let status = child.wait()?;
         let _ = t_out.join();
@@ -562,17 +583,26 @@ impl Step {
 ///
 /// Verbose mode (`WHISKER_VERBOSE=1`) bypasses 1 + 2 and emits every
 /// non-empty line verbatim — useful when debugging the filter itself.
+type JsonSink = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
 fn stream_through_bar<R: std::io::Read + Send + 'static>(
     stream: Option<R>,
     bar: Option<ProgressBar>,
     reported: bool,
     kind: OperationKind,
     noise: fn(&str) -> bool,
+    json_sink: Option<JsonSink>,
 ) {
     use std::io::{BufRead, BufReader};
     let Some(s) = stream else { return };
     let reader = BufReader::new(s);
     for line in reader.lines().map_while(Result::ok) {
+        if let Some(sink) = &json_sink
+            && line.starts_with('{')
+        {
+            sink.lock().unwrap_or_else(|e| e.into_inner()).push(line);
+            continue;
+        }
         if let Some(progress) = subprocess_progress_text(&line) {
             if reported {
                 report(ProgressEvent::OperationProgress {
