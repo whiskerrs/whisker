@@ -8,8 +8,8 @@ use whisker_wgpu::{Gpu, Renderer, wgpu};
 use super::pipeline::SHARED;
 use super::*;
 use crate::core::{
-    Fog, Geometry, Light, Material, Node, Projection, Scene, Shadow, StandardMaterial, ToneMapping,
-    Transform,
+    Environment, Fog, Geometry, Light, Material, Node, Projection, Scene, Shadow, StandardMaterial,
+    ToneMapping, Transform,
 };
 
 #[test]
@@ -547,5 +547,102 @@ fn fog_fades_distant_surfaces_into_its_color() {
         }));
         let thin = pixel(&render(gpu, scene), SIZE / 2, SIZE / 2);
         assert!(thin[0] > 240 && thin[1] < 20, "{thin:?}");
+    });
+}
+
+/// An environment colored by the axis each direction leans most toward.
+fn axis_environment() -> Environment {
+    let (width, height) = (128, 64);
+    let pixels = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let theta = (y as f32 + 0.5) / height as f32 * std::f32::consts::PI;
+            let phi = ((x as f32 + 0.5) / width as f32 - 0.5) * 2.0 * std::f32::consts::PI;
+            let d = Vec3::new(
+                theta.sin() * phi.sin(),
+                theta.cos(),
+                -theta.sin() * phi.cos(),
+            );
+            let a = d.abs();
+            if a.x >= a.y && a.x >= a.z {
+                if d.x > 0.0 { Vec3::X } else { Vec3::Z }
+            } else if a.y >= a.z {
+                if d.y > 0.0 { Vec3::ONE } else { Vec3::ZERO }
+            } else if d.z > 0.0 {
+                Vec3::Y
+            } else {
+                Vec3::new(1.0, 1.0, 0.0)
+            }
+        })
+        .collect();
+    Environment::from_radiance(width, height, pixels)
+}
+
+fn mirror_from(eye: Vec3, up: Vec3) -> [u8; 4] {
+    let scene = Scene::new();
+    scene.set_environment(Some(axis_environment()), 1.0);
+    let camera = Node::new();
+    camera.set_transform(Transform::looking_at(eye, Vec3::ZERO, up));
+    camera.set_camera(Some(Projection::Perspective {
+        fov_y: 0.3,
+        near: 0.1,
+        far: 20.0,
+    }));
+    let mirror = Node::new();
+    mirror.set_mesh(Some((
+        Geometry::cuboid(Vec3::ONE),
+        Material::Standard(StandardMaterial {
+            metallic: 1.0,
+            roughness: 0.0,
+            ..Default::default()
+        }),
+    )));
+    scene.root().add_child(&camera);
+    scene.root().add_child(&mirror);
+    let mut out = [0; 4];
+    with_gpu(|gpu| out = pixel(&render(gpu, scene), SIZE / 2, SIZE / 2));
+    out
+}
+
+#[test]
+fn a_mirror_reflects_the_environment_it_faces() {
+    let red = mirror_from(Vec3::X * 5.0, Vec3::Y);
+    assert!(red[0] > 200 && red[1] < 40 && red[2] < 40, "+X {red:?}");
+    let green = mirror_from(Vec3::Z * 5.0, Vec3::Y);
+    assert!(
+        green[1] > 200 && green[0] < 40 && green[2] < 40,
+        "+Z {green:?}"
+    );
+    let white = mirror_from(Vec3::Y * 5.0, Vec3::Z);
+    assert!(white.iter().take(3).all(|c| *c > 200), "+Y {white:?}");
+}
+
+#[test]
+fn an_even_environment_lights_a_matte_surface_by_its_radiance() {
+    with_gpu(|gpu| {
+        let (scene, _, caster, view_proj) =
+            shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::Y * 1.5);
+        caster.remove_from_parent();
+        let environment = Environment::from_radiance(8, 4, vec![Vec3::splat(0.5); 32]);
+        scene.set_environment(Some(environment), 1.0);
+        let lit = floor_pixel(&render(gpu, scene), view_proj, 1.0, 0.0);
+        // 0.5 minus the few percent reflected instead of diffused, about 180 encoded.
+        assert!((170..=192).contains(&lit[0]), "{lit:?}");
+    });
+}
+
+#[test]
+fn the_environment_can_stand_in_for_the_background() {
+    with_gpu(|gpu| {
+        let scene = Scene::new();
+        scene.set_background(Color::rgb(0, 0, 255));
+        scene.set_environment(Some(axis_environment()), 1.0);
+        let pixels = render(gpu, scene.clone());
+        assert_eq!(pixel(&pixels, SIZE / 2, SIZE / 2), [0, 0, 255, 255]);
+
+        scene.set_environment_background(true);
+        // The default camera looks down -Z, which the environment paints yellow.
+        let sky = pixel(&render(gpu, scene), SIZE / 2, SIZE / 2);
+        assert!(sky[0] > 200 && sky[1] > 200 && sky[2] < 40, "{sky:?}");
     });
 }

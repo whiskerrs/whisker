@@ -17,7 +17,7 @@ whisker-surface = { path = "../whisker-surface", version = "0.1.1" }
 whisker-wgpu = { path = "../whisker-wgpu", version = "0.1.1" }
 glam = "0.30"
 bytemuck = { version = "1.25", features = ["derive"] }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "hdr"] }
 gltf = { version = "1.4", default-features = false, features = ["utils", "names", "KHR_lights_punctual", "KHR_materials_emissive_strength", "KHR_materials_unlit", "KHR_texture_transform"] }
 base64 = "0.22"
 

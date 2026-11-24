@@ -7,7 +7,7 @@ use std::rc::Rc;
 use glam::Mat4;
 use whisker_wgpu::{Gpu, wgpu};
 
-use super::resources::{GpuTexture, upload_texture};
+use super::resources::{GpuTexture, half, upload_cube, upload_texture};
 use super::shadow::{MAX_SHADOW_LAYERS, SHADOW_FORMAT};
 use super::{DEPTH_FORMAT, MAX_DIRECTIONAL, MAX_POINT};
 use crate::core::{AlphaMode, Material, TextureTransform, linear_rgba, srgb_rgba};
@@ -16,6 +16,7 @@ use crate::core::{AlphaMode, Material, TextureTransform, linear_rgba, srgb_rgba}
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct FrameUniform {
     pub(super) view_proj: [[f32; 4]; 4],
+    pub(super) inverse_view_proj: [[f32; 4]; 4],
     pub(super) camera_position: [f32; 4],
     pub(super) camera_forward: [f32; 4],
     pub(super) ambient: [f32; 4],
@@ -26,6 +27,8 @@ pub(super) struct FrameUniform {
     pub(super) tone: [f32; 4],
     pub(super) fog_color: [f32; 4],
     pub(super) fog: [f32; 4],
+    pub(super) environment: [f32; 4],
+    pub(super) irradiance: [[f32; 4]; 9],
     pub(super) directional: [DirectionalUniform; MAX_DIRECTIONAL],
     pub(super) point: [PointUniform; MAX_POINT],
     pub(super) shadow_matrices: [[[f32; 4]; 4]; MAX_SHADOW_LAYERS],
@@ -75,6 +78,11 @@ pub(super) struct Shared {
     pub(super) pipelines: RefCell<HashMap<PipelineKey, wgpu::RenderPipeline>>,
     pub(super) shadow_view_layout: wgpu::BindGroupLayout,
     pub(super) shadow_sampler: wgpu::Sampler,
+    pub(super) environment_sampler: wgpu::Sampler,
+    /// Bound while a scene has no environment.
+    pub(super) no_environment: GpuTexture,
+    sky_pipeline_layout: wgpu::PipelineLayout,
+    sky_pipelines: RefCell<HashMap<(wgpu::TextureFormat, u32), wgpu::RenderPipeline>>,
     shadow_pipeline_layout: wgpu::PipelineLayout,
     shadow_shader: wgpu::ShaderModule,
     shadow_pipeline: OnceCell<wgpu::RenderPipeline>,
@@ -136,6 +144,22 @@ impl Shared {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
@@ -214,6 +238,19 @@ impl Shared {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
+        let environment_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("whisker-scene environment"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        let no_environment = upload_cube(gpu, 1, &[vec![[0, 0, 0, half(1.0)]; 6]]);
+        let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("whisker-scene sky"),
+            bind_group_layouts: &[Some(&frame_layout)],
+            immediate_size: 0,
+        });
         let white = upload_texture(gpu, 1, 1, &[255; 4], false);
         let flat_normal = upload_texture(gpu, 1, 1, &[128, 128, 255, 255], false);
         Shared {
@@ -228,10 +265,64 @@ impl Shared {
             pipelines: RefCell::new(HashMap::new()),
             shadow_view_layout,
             shadow_sampler,
+            environment_sampler,
+            no_environment,
+            sky_pipeline_layout,
+            sky_pipelines: RefCell::new(HashMap::new()),
             shadow_pipeline_layout,
             shadow_shader,
             shadow_pipeline: OnceCell::new(),
         }
+    }
+
+    /// Fills the background with the environment, behind everything drawn after it.
+    pub(super) fn sky_pipeline(
+        &self,
+        gpu: &Gpu,
+        format: wgpu::TextureFormat,
+        samples: u32,
+    ) -> wgpu::RenderPipeline {
+        self.sky_pipelines
+            .borrow_mut()
+            .entry((format, samples))
+            .or_insert_with(|| {
+                gpu.device
+                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("whisker-scene sky"),
+                        layout: Some(&self.sky_pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: &self.shader,
+                            entry_point: Some("vs_sky"),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        fragment: Some(wgpu::FragmentState {
+                            module: &self.shader,
+                            entry_point: Some("fs_sky"),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format,
+                                blend: None,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        primitive: Default::default(),
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: DEPTH_FORMAT,
+                            depth_write_enabled: Some(false),
+                            depth_compare: Some(wgpu::CompareFunction::Always),
+                            stencil: Default::default(),
+                            bias: Default::default(),
+                        }),
+                        multisample: wgpu::MultisampleState {
+                            count: samples,
+                            ..Default::default()
+                        },
+                        multiview_mask: None,
+                        cache: None,
+                    })
+            })
+            .clone()
     }
 
     /// Renders casters' depth from a light, culling no faces so open and inside-out meshes cast too.

@@ -15,8 +15,8 @@ use whisker::{Callback, Children, Signal, Style};
 use whisker_surface::{FrameInfo, SurfaceView};
 
 use crate::core::{
-    Fog, FrameSubscription, Geometry, Light, Material, Node, Projection, Scene, Shadow, TapHandler,
-    ToneMapping, Transform, rotation_toward,
+    Environment, Fog, FrameSubscription, Geometry, Light, Material, Node, Projection, Scene,
+    Shadow, TapHandler, ToneMapping, Transform, rotation_toward,
 };
 use crate::model::{AnimationOptions, AnimationPlayer, Model};
 use crate::raycast::SceneHit;
@@ -94,6 +94,13 @@ pub fn scene_view(
     #[prop(default = 1.0.into())]
     exposure: Signal<f32>,
     #[prop(default = None.into())] fog: Signal<Option<Fog>>,
+    /// Lights and reflects in every surface the light arriving from all around.
+    #[prop(default = None.into())]
+    environment: Signal<Option<Environment>>,
+    #[prop(default = 1.0.into())] environment_intensity: Signal<f32>,
+    /// Draws the environment behind the scene in place of `background`.
+    #[prop(default = false.into())]
+    environment_background: Signal<bool>,
     /// Shares a scene built with the imperative API; a new one is created otherwise.
     scene: Option<Scene>,
     /// Called for a tap that no `on_tap` of the node hit, or its ancestors, handled; `None` when
@@ -133,6 +140,10 @@ pub fn scene_view(
     effect(move || target.set_tone_mapping(tone_mapping.get(), exposure.get()));
     let target = scene.clone();
     effect(move || target.set_fog(fog.get()));
+    let target = scene.clone();
+    effect(move || target.set_environment(environment.get(), environment_intensity.get()));
+    let target = scene.clone();
+    effect(move || target.set_environment_background(environment_background.get()));
     provide_context(SceneContext {
         parent: scene.root(),
         scene,

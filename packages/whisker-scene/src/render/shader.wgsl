@@ -30,6 +30,7 @@ struct PointLight {
 
 struct Frame {
     view_proj: mat4x4<f32>,
+    inverse_view_proj: mat4x4<f32>,
     camera_position: vec4<f32>,
     camera_forward: vec4<f32>,
     ambient: vec4<f32>,
@@ -45,6 +46,10 @@ struct Frame {
     fog_color: vec4<f32>,
     // x 0 none, 1 linear from y to z, 2 exponential with density y.
     fog: vec4<f32>,
+    // x intensity, y 1 when there is an environment, z its last mip level.
+    environment: vec4<f32>,
+    // The environment's irradiance over π as spherical harmonics, already scaled by its intensity.
+    irradiance: array<vec4<f32>, 9>,
     directional: array<DirectionalLight, 4>,
     point: array<PointLight, 16>,
     shadow_matrices: array<mat4x4<f32>, MAX_SHADOW_LAYERS>,
@@ -67,6 +72,8 @@ struct Draw {
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var shadow_maps: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
+@group(0) @binding(3) var environment_map: texture_cube<f32>;
+@group(0) @binding(4) var environment_sampler: sampler;
 @group(1) @binding(0) var<uniform> draw: Draw;
 @group(2) @binding(0) var base_texture: texture_2d<f32>;
 @group(2) @binding(1) var metallic_roughness_texture: texture_2d<f32>;
@@ -273,6 +280,61 @@ fn fog_amount(world: vec3<f32>) -> f32 {
     return 0.0;
 }
 
+fn environment_irradiance(n: vec3<f32>) -> vec3<f32> {
+    let c = frame.irradiance;
+    return c[0].rgb + c[1].rgb * n.y + c[2].rgb * n.z + c[3].rgb * n.x
+        + c[4].rgb * (n.x * n.y) + c[5].rgb * (n.y * n.z) + c[6].rgb * (3.0 * n.z * n.z - 1.0)
+        + c[7].rgb * (n.x * n.z) + c[8].rgb * (n.x * n.x - n.y * n.y);
+}
+
+// Karis' analytic fit of the split-sum BRDF integral: the scale and bias applied to F0.
+fn environment_brdf(roughness: f32, n_dot_v: f32) -> vec2<f32> {
+    let r = roughness * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+    let a004 = min(r.x * r.x, exp2(-9.28 * n_dot_v)) * r.x + r.y;
+    return vec2(-1.04, 1.04) * a004 + r.zw;
+}
+
+fn environment_light(n: vec3<f32>, v: vec3<f32>, base: vec3<f32>, metallic: f32, roughness: f32) -> vec3<f32> {
+    let brdf = environment_brdf(roughness, max(dot(n, v), 1e-4));
+    let specular = mix(vec3(0.04), base, metallic) * brdf.x + brdf.y;
+    let lod = roughness * frame.environment.z;
+    let reflected = textureSampleLevel(environment_map, environment_sampler, reflect(-v, n), lod).rgb;
+    let diffuse = environment_irradiance(n) * base * (1.0 - metallic) * (vec3(1.0) - specular);
+    return diffuse + reflected * frame.environment.x * specular;
+}
+
+// Clamps and encodes a final linear color for the target.
+fn output(linear: vec3<f32>) -> vec3<f32> {
+    let color = clamp(linear, vec3(0.0), vec3(1.0));
+    if frame.counts.z == 1u {
+        return encode_srgb(color);
+    }
+    return color;
+}
+
+struct SkyOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) ndc: vec2<f32>,
+};
+
+@vertex
+fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOut {
+    let ndc = vec2(f32((index << 1u) & 2u), f32(index & 2u)) * 2.0 - 1.0;
+    var out: SkyOut;
+    out.clip = vec4(ndc, 1.0, 1.0);
+    out.ndc = ndc;
+    return out;
+}
+
+@fragment
+fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
+    let near = frame.inverse_view_proj * vec4(in.ndc, 0.0, 1.0);
+    let far = frame.inverse_view_proj * vec4(in.ndc, 1.0, 1.0);
+    let direction = far.xyz / far.w - near.xyz / near.w;
+    let radiance = textureSampleLevel(environment_map, environment_sampler, direction, 0.0).rgb;
+    return vec4(output(tone_map(radiance * frame.environment.x)), 1.0);
+}
+
 fn encode_srgb(linear: vec3<f32>) -> vec3<f32> {
     let low = linear * 12.92;
     let high = 1.055 * pow(linear, vec3(1.0 / 2.4)) - 0.055;
@@ -316,6 +378,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         let roughness = clamp(draw.params.y * metal_rough.g, 0.0, 1.0);
         let ambient = frame.ambient.rgb + mix(frame.ground.rgb, frame.sky.rgb, n.y * 0.5 + 0.5);
         color = ambient * base.rgb * occlusion + draw.emissive.rgb * glow;
+        if frame.environment.y > 0.5 {
+            color += environment_light(n, v, base.rgb, metallic, roughness) * occlusion;
+        }
         let receive = draw.alpha.z > 0.5;
         let directional = min(frame.counts.x, MAX_DIRECTIONAL);
         let lights = directional + min(frame.counts.y, MAX_POINT);
@@ -348,9 +413,5 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         }
     }
     color = mix(tone_map(color), frame.fog_color.rgb, fog_amount(in.world));
-    color = clamp(color, vec3(0.0), vec3(1.0));
-    if frame.counts.z == 1u {
-        color = encode_srgb(color);
-    }
-    return vec4(color, alpha);
+    return vec4(output(color), alpha);
 }
