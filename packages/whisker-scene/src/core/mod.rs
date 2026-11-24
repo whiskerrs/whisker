@@ -29,6 +29,10 @@ pub(crate) struct SceneInner {
     root: Node,
     background: Cell<Color>,
     ambient: Cell<(Color, f32)>,
+    hemisphere: Cell<(Color, Color, f32)>,
+    tone_mapping: Cell<ToneMapping>,
+    exposure: Cell<f32>,
+    fog: Cell<Option<Fog>>,
     active_camera: RefCell<Option<Node>>,
     surfaces: RefCell<Vec<WeakSurface>>,
     frame_callbacks: RefCell<Vec<(u64, FrameCallback)>>,
@@ -50,6 +54,10 @@ impl Scene {
             root: root.clone(),
             background: Cell::new(Color::rgb(0, 0, 0)),
             ambient: Cell::new((Color::rgb(255, 255, 255), 0.0)),
+            hemisphere: Cell::new((Color::rgb(255, 255, 255), Color::rgb(0, 0, 0), 0.0)),
+            tone_mapping: Cell::new(ToneMapping::None),
+            exposure: Cell::new(1.0),
+            fog: Cell::new(None),
             active_camera: RefCell::new(None),
             surfaces: RefCell::new(Vec::new()),
             frame_callbacks: RefCell::new(Vec::new()),
@@ -70,6 +78,26 @@ impl Scene {
 
     pub fn set_ambient_light(&self, color: Color, intensity: f32) {
         self.inner.ambient.set((color, intensity));
+        self.inner.request_frame();
+    }
+
+    /// Light from every direction, `sky` from above blending into `ground` from below, added to
+    /// the ambient light.
+    pub fn set_hemisphere_light(&self, sky: Color, ground: Color, intensity: f32) {
+        self.inner.hemisphere.set((sky, ground, intensity));
+        self.inner.request_frame();
+    }
+
+    /// How lit colors, scaled by `exposure`, are mapped into the displayable range.
+    pub fn set_tone_mapping(&self, tone_mapping: ToneMapping, exposure: f32) {
+        self.inner.tone_mapping.set(tone_mapping);
+        self.inner.exposure.set(exposure);
+        self.inner.request_frame();
+    }
+
+    /// Fades surfaces into a color with distance from the camera.
+    pub fn set_fog(&self, fog: Option<Fog>) {
+        self.inner.fog.set(fog);
         self.inner.request_frame();
     }
 
@@ -190,6 +218,42 @@ impl SceneInner {
     pub(crate) fn active_camera(&self) -> Option<Node> {
         self.active_camera.borrow().clone()
     }
+
+    pub(crate) fn hemisphere(&self) -> (Color, Color, f32) {
+        self.hemisphere.get()
+    }
+
+    pub(crate) fn tone_mapping(&self) -> (ToneMapping, f32) {
+        (self.tone_mapping.get(), self.exposure.get())
+    }
+
+    pub(crate) fn fog(&self) -> Option<Fog> {
+        self.fog.get()
+    }
+}
+
+/// How lit colors are mapped into the range a display shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ToneMapping {
+    /// Colors past white are clipped.
+    #[default]
+    None,
+    Reinhard,
+    /// The ACES filmic curve, with more contrast and saturated highlights.
+    Aces,
+    /// The AgX curve, which desaturates highlights toward white as they brighten.
+    AgX,
+}
+
+/// Fades surfaces into `color` with distance from the camera.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Fog {
+    /// No fog nearer than `near`, rising evenly to full fog at `far`.
+    Linear { color: Color, near: f32, far: f32 },
+    /// Fog that thickens as `1 - exp(-(density · distance)²)`.
+    Exponential { color: Color, density: f32 },
 }
 
 /// One node of a [`Scene`]: a transform with an optional mesh, light, or camera.
@@ -654,6 +718,16 @@ pub enum Light {
         color: Color,
         intensity: f32,
         range: f32,
+        shadow: Option<Shadow>,
+    },
+    /// A point light limited to a cone along the node's -Z axis, full inside `inner_angle` and
+    /// fading out by `outer_angle`, both measured in radians from the axis.
+    Spot {
+        color: Color,
+        intensity: f32,
+        range: f32,
+        inner_angle: f32,
+        outer_angle: f32,
         shadow: Option<Shadow>,
     },
 }

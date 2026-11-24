@@ -5,7 +5,7 @@ use std::f32::consts::FRAC_PI_2;
 use glam::{Mat4, Vec3};
 use whisker_wgpu::{Gpu, wgpu};
 
-use super::collect::Collected;
+use super::collect::{Collected, Cone};
 use super::resources::{deformed_vertices, mesh};
 use super::visibility::{Frustum, visible, world_sphere};
 use super::{Draw, MAX_DIRECTIONAL, MAX_POINT, SceneRenderer};
@@ -38,8 +38,10 @@ pub(super) struct Cascades {
     pub(super) shadow: Shadow,
 }
 
+/// Six cube faces for a point light, or one layer for a spot light.
 pub(super) struct PointFaces {
     pub(super) first: usize,
+    pub(super) spot: bool,
     pub(super) shadow: Shadow,
 }
 
@@ -113,13 +115,24 @@ pub(super) fn plan(collected: &Collected, eye: Eye, max_size: u32) -> ShadowPlan
     }
     for light in point {
         let faces = light.shadow.and_then(|shadow| {
-            if plan.layers.len() + FACES.len() > MAX_SHADOW_LAYERS {
+            let needed = if light.cone.is_some() { 1 } else { FACES.len() };
+            if plan.layers.len() + needed > MAX_SHADOW_LAYERS {
                 return None;
             }
             let first = plan.layers.len();
-            plan.layers
-                .extend(face_matrices(light.position, light.range));
-            Some(PointFaces { first, shadow })
+            match light.cone {
+                Some(cone) => plan
+                    .layers
+                    .push(spot_matrix(light.position, light.range, cone)),
+                None => plan
+                    .layers
+                    .extend(face_matrices(light.position, light.range)),
+            }
+            Some(PointFaces {
+                first,
+                spot: light.cone.is_some(),
+                shadow,
+            })
         });
         plan.point.push(faces);
     }
@@ -168,13 +181,16 @@ fn slice_corners(eye: Eye, near: f32, far: f32) -> [Vec3; 8] {
     corners
 }
 
-fn light_view(toward: Vec3) -> Mat4 {
-    let up = if toward.y.abs() > 0.99 {
+fn light_up(direction: Vec3) -> Vec3 {
+    if direction.y.abs() > 0.99 {
         Vec3::Z
     } else {
         Vec3::Y
-    };
-    Mat4::look_to_rh(Vec3::ZERO, -toward, up)
+    }
+}
+
+fn light_view(toward: Vec3) -> Mat4 {
+    Mat4::look_to_rh(Vec3::ZERO, -toward, light_up(toward))
 }
 
 /// Fits one cascade around a view slice, returning its view-projection and texel size.
@@ -221,11 +237,21 @@ pub(super) fn cascade_matrix(
     (projection * view, texel)
 }
 
+fn local_near(range: f32) -> f32 {
+    (range * 0.01).clamp(1e-3, 0.05)
+}
+
 fn face_matrices(position: Vec3, range: f32) -> [Mat4; 6] {
     let range = range.max(1e-3);
-    let near = (range * 0.01).clamp(1e-3, 0.05);
-    let projection = Mat4::perspective_rh(FRAC_PI_2, 1.0, near, range);
+    let projection = Mat4::perspective_rh(FRAC_PI_2, 1.0, local_near(range), range);
     FACES.map(|(direction, up)| projection * Mat4::look_to_rh(position, direction, up))
+}
+
+pub(super) fn spot_matrix(position: Vec3, range: f32, cone: Cone) -> Mat4 {
+    let range = range.max(1e-3);
+    let fov = (cone.outer_angle * 2.0).clamp(0.01, 3.0);
+    let projection = Mat4::perspective_rh(fov, 1.0, local_near(range), range);
+    projection * Mat4::look_to_rh(position, cone.direction, light_up(cone.direction))
 }
 
 pub(super) struct ShadowMaps {

@@ -17,7 +17,7 @@ pub(crate) use collect::{Collected, Draw, camera_for, collect};
 pub(crate) use pipeline::translucent;
 pub(crate) use resources::{DeformBuffer, GpuMesh, GpuTexture};
 
-use crate::core::{Scene, linear_rgba, srgb_rgba};
+use crate::core::{Fog, Scene, SceneInner, ToneMapping, linear_rgba, srgb_rgba};
 use collect::{pick_camera, radiance};
 use pipeline::{
     DirectionalUniform, DrawUniform, FrameUniform, PipelineKey, PointUniform, Shared, double_sided,
@@ -204,7 +204,7 @@ impl Renderer for SceneRenderer {
         self.prepare_shadow_maps(gpu, &plan);
         let view = camera_world.inverse();
         let view_proj = projection.to_matrix(aspect) * view;
-        self.write_frame_uniform(gpu, &collected, &plan, view_proj, eye, inner.ambient());
+        self.write_frame_uniform(gpu, &collected, &plan, view_proj, eye, inner);
         let order = draw_order(&collected.draws, view, &Frustum::new(view_proj));
         self.write_draw_uniforms(gpu, &collected.draws);
 
@@ -230,8 +230,22 @@ impl SceneRenderer {
         plan: &ShadowPlan,
         view_proj: Mat4,
         eye: Eye,
-        (ambient_color, ambient_intensity): (Color, f32),
+        inner: &SceneInner,
     ) {
+        let (ambient_color, ambient_intensity) = inner.ambient();
+        let (sky, ground, hemisphere) = inner.hemisphere();
+        let (tone_mapping, exposure) = inner.tone_mapping();
+        let tone_mapping = match tone_mapping {
+            ToneMapping::None => 0.0,
+            ToneMapping::Reinhard => 1.0,
+            ToneMapping::Aces => 2.0,
+            ToneMapping::AgX => 3.0,
+        };
+        let (fog_color, fog) = match inner.fog() {
+            None => (Color::rgb(0, 0, 0), [0.0; 4]),
+            Some(Fog::Linear { color, near, far }) => (color, [1.0, near, far, 0.0]),
+            Some(Fog::Exponential { color, density }) => (color, [2.0, density, 0.0, 0.0]),
+        };
         let mut uniform = FrameUniform {
             view_proj: view_proj.to_cols_array_2d(),
             camera_position: eye
@@ -246,6 +260,11 @@ impl SceneRenderer {
                 .extend(0.0)
                 .to_array(),
             ambient: radiance(ambient_color, ambient_intensity),
+            sky: radiance(sky, hemisphere),
+            ground: radiance(ground, hemisphere),
+            tone: [exposure, tone_mapping, 0.0, 0.0],
+            fog_color: linear_rgba(fog_color),
+            fog,
             counts: [
                 collected.directional.len().min(MAX_DIRECTIONAL) as u32,
                 collected.point.len().min(MAX_POINT) as u32,
@@ -281,12 +300,27 @@ impl SceneRenderer {
         }
         for (index, light) in collected.point.iter().take(MAX_POINT).enumerate() {
             let faces = plan.point.get(index).and_then(Option::as_ref);
+            let (direction, scale, offset) = match light.cone {
+                Some(cone) => {
+                    let (inner, outer) = (cone.inner_angle.cos(), cone.outer_angle.cos());
+                    let scale = 1.0 / (inner - outer).max(1e-4);
+                    (cone.direction, scale, -outer * scale)
+                }
+                None => (Vec3::ZERO, 0.0, 1.0),
+            };
+            let [r, g, b, _] = light.radiance;
             uniform.point[index] = PointUniform {
                 position: light.position.extend(light.range).to_array(),
-                color: light.radiance,
+                color: [r, g, b, offset],
                 shadow: faces.map_or([-1.0, 0.0, 0.0, 0.0], |f| {
-                    [f.first as f32, 0.0, f.shadow.bias, f.shadow.softness]
+                    [
+                        f.first as f32,
+                        f32::from(u8::from(f.spot)),
+                        f.shadow.bias,
+                        f.shadow.softness,
+                    ]
                 }),
+                direction: direction.extend(scale).to_array(),
             };
         }
         for (slot, matrix) in uniform.shadow_matrices.iter_mut().zip(&plan.layers) {

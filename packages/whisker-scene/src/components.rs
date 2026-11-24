@@ -15,8 +15,8 @@ use whisker::{Callback, Children, Signal, Style};
 use whisker_surface::{FrameInfo, SurfaceView};
 
 use crate::core::{
-    FrameSubscription, Geometry, Light, Material, Node, Projection, Scene, Shadow, TapHandler,
-    Transform, rotation_toward,
+    Fog, FrameSubscription, Geometry, Light, Material, Node, Projection, Scene, Shadow, TapHandler,
+    ToneMapping, Transform, rotation_toward,
 };
 use crate::model::{AnimationOptions, AnimationPlayer, Model};
 use crate::raycast::SceneHit;
@@ -89,6 +89,11 @@ fn bind_transform(
 pub fn scene_view(
     style: Style,
     #[prop(default = Color::rgb(0, 0, 0).into())] background: Signal<Color>,
+    #[prop(default = ToneMapping::None.into())] tone_mapping: Signal<ToneMapping>,
+    /// Scales lit colors before tone mapping.
+    #[prop(default = 1.0.into())]
+    exposure: Signal<f32>,
+    #[prop(default = None.into())] fog: Signal<Option<Fog>>,
     /// Shares a scene built with the imperative API; a new one is created otherwise.
     scene: Option<Scene>,
     /// Called for a tap that no `on_tap` of the node hit, or its ancestors, handled; `None` when
@@ -124,6 +129,10 @@ pub fn scene_view(
     };
     let target = scene.clone();
     effect(move || target.set_background(background.get()));
+    let target = scene.clone();
+    effect(move || target.set_tone_mapping(tone_mapping.get(), exposure.get()));
+    let target = scene.clone();
+    effect(move || target.set_fog(fog.get()));
     provide_context(SceneContext {
         parent: scene.root(),
         scene,
@@ -370,6 +379,59 @@ pub fn point_light(
             range: range.get(),
             shadow: shadow.get(),
         }));
+    });
+    create_phantom_element()
+}
+
+/// A point light narrowed to a cone along `direction`, full inside `inner_angle` and fading out by
+/// `outer_angle`, both in radians from the cone's axis.
+#[component]
+pub fn spot_light(
+    #[prop(default = Color::rgb(255, 255, 255).into())] color: Signal<Color>,
+    #[prop(default = 1.0.into())] intensity: Signal<f32>,
+    #[prop(default = 10.0.into())] range: Signal<f32>,
+    #[prop(default = Vec3::ZERO.into())] position: Signal<Vec3>,
+    #[prop(default = Vec3::NEG_Y.into())] direction: Signal<Vec3>,
+    #[prop(default = 0.0.into())] inner_angle: Signal<f32>,
+    #[prop(default = std::f32::consts::FRAC_PI_4.into())] outer_angle: Signal<f32>,
+    #[prop(default = None.into())] shadow: Signal<Option<Shadow>>,
+) -> Element {
+    let (_, node) = mount_node("SpotLight");
+    let target = node.clone();
+    effect(move || {
+        target.set_transform(Transform {
+            translation: position.get(),
+            rotation: rotation_toward(direction.get(), Vec3::Y),
+            scale: Vec3::ONE,
+        });
+    });
+    effect(move || {
+        node.set_light(Some(Light::Spot {
+            color: color.get(),
+            intensity: intensity.get(),
+            range: range.get(),
+            inner_angle: inner_angle.get(),
+            outer_angle: outer_angle.get(),
+            shadow: shadow.get(),
+        }));
+    });
+    create_phantom_element()
+}
+
+/// Light from every direction, `sky_color` from above blending into `ground_color` from below.
+#[component]
+pub fn hemisphere_light(
+    #[prop(default = Color::rgb(255, 255, 255).into())] sky_color: Signal<Color>,
+    #[prop(default = Color::rgb(80, 80, 80).into())] ground_color: Signal<Color>,
+    #[prop(default = 0.5.into())] intensity: Signal<f32>,
+) -> Element {
+    let scene = scene_context("HemisphereLight").scene;
+    let target = scene.clone();
+    effect(move || {
+        target.set_hemisphere_light(sky_color.get(), ground_color.get(), intensity.get())
+    });
+    on_cleanup(move || {
+        scene.set_hemisphere_light(Color::rgb(255, 255, 255), Color::rgb(0, 0, 0), 0.0)
     });
     create_phantom_element()
 }

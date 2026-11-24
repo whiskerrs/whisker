@@ -8,7 +8,8 @@ use whisker_wgpu::{Gpu, Renderer, wgpu};
 use super::pipeline::SHARED;
 use super::*;
 use crate::core::{
-    Geometry, Light, Material, Node, Projection, Scene, Shadow, StandardMaterial, Transform,
+    Fog, Geometry, Light, Material, Node, Projection, Scene, Shadow, StandardMaterial, ToneMapping,
+    Transform,
 };
 
 #[test]
@@ -405,5 +406,146 @@ fn a_shadowing_point_light_darkens_the_floor_under_a_mesh() {
         let lit = floor_pixel(&pixels, view_proj, 2.5, 0.0);
         assert!(shadowed[0] < 20, "shadowed {shadowed:?}");
         assert!(lit[0] > 150, "lit {lit:?}");
+    });
+}
+
+fn spot(at: Vec3, outer_angle: f32, shadow: Option<Shadow>) -> Node {
+    let light = Node::new();
+    light.set_transform(Transform {
+        translation: at,
+        rotation: crate::core::rotation_toward(Vec3::NEG_Y, Vec3::Y),
+        scale: Vec3::ONE,
+    });
+    light.set_light(Some(Light::Spot {
+        color: Color::rgb(255, 255, 255),
+        intensity: 9.0,
+        range: 20.0,
+        inner_angle: outer_angle * 0.8,
+        outer_angle,
+        shadow,
+    }));
+    light
+}
+
+#[test]
+fn a_spot_light_lights_only_inside_its_cone() {
+    with_gpu(|gpu| {
+        let (scene, _, caster, view_proj) =
+            shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::Y * 1.5);
+        caster.remove_from_parent();
+        scene.root().add_child(&spot(Vec3::Y * 3.0, 0.4, None));
+        let pixels = render(gpu, scene);
+        let inside = floor_pixel(&pixels, view_proj, 0.5, 0.0);
+        let outside = floor_pixel(&pixels, view_proj, 2.5, 0.0);
+        assert!(inside[0] > 200, "inside {inside:?}");
+        assert_eq!(outside, [0, 0, 0, 255]);
+    });
+}
+
+#[test]
+fn a_shadowing_spot_light_darkens_the_floor_under_a_mesh() {
+    with_gpu(|gpu| {
+        let (scene, _, caster, view_proj) =
+            shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::Y * 1.5);
+        caster.set_transform(Transform {
+            translation: Vec3::Y * 1.5,
+            scale: Vec3::splat(0.4),
+            ..Transform::IDENTITY
+        });
+        scene.root().add_child(&spot(
+            Vec3::new(-1.0, 3.0, 0.0),
+            0.9,
+            Some(Shadow {
+                map_size: 256,
+                ..Shadow::default()
+            }),
+        ));
+        let pixels = render(gpu, scene);
+        // The cube at x 0 casts toward +x, twice as far out as it is from the light.
+        let shadowed = floor_pixel(&pixels, view_proj, 1.0, 0.0);
+        let lit = floor_pixel(&pixels, view_proj, -1.0, 0.8);
+        assert!(shadowed[0] < 20, "shadowed {shadowed:?}");
+        assert!(lit[0] > 150, "lit {lit:?}");
+    });
+}
+
+#[test]
+fn a_hemisphere_light_shades_by_facing() {
+    with_gpu(|gpu| {
+        let (scene, _, caster, view_proj) =
+            shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::Y * 1.5);
+        caster.remove_from_parent();
+        scene.set_hemisphere_light(Color::rgb(255, 0, 0), Color::rgb(0, 0, 255), 1.0);
+        let up = floor_pixel(&render(gpu, scene), view_proj, 1.0, 0.0);
+        assert!(up[0] > 200 && up[2] < 20, "{up:?}");
+    });
+}
+
+/// The floor's brightness under a sun of `intensity` straight above, with `tone_mapping`.
+fn toned(gpu: &Gpu, tone_mapping: ToneMapping, exposure: f32, intensity: f32) -> u8 {
+    let (scene, _, caster, view_proj) = shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::Y * 1.5);
+    caster.remove_from_parent();
+    let light = Node::new();
+    light.set_transform(Transform {
+        rotation: crate::core::rotation_toward(Vec3::NEG_Y, Vec3::Z),
+        ..Transform::IDENTITY
+    });
+    light.set_light(Some(Light::Directional {
+        color: Color::rgb(255, 255, 255),
+        intensity,
+        shadow: None,
+    }));
+    scene.root().add_child(&light);
+    scene.set_tone_mapping(tone_mapping, exposure);
+    floor_pixel(&render(gpu, scene), view_proj, 1.0, 0.0)[0]
+}
+
+#[test]
+fn tone_mapping_rolls_off_highlights_instead_of_clipping() {
+    with_gpu(|gpu| {
+        assert_eq!(toned(gpu, ToneMapping::None, 1.0, 4.0), 255);
+        assert_eq!(
+            toned(gpu, ToneMapping::None, 0.25, 4.0),
+            toned(gpu, ToneMapping::None, 1.0, 1.0)
+        );
+        // 4 / (1 + 4) is 0.8 linear, 231 encoded.
+        let reinhard = toned(gpu, ToneMapping::Reinhard, 1.0, 4.0);
+        assert!((229..=233).contains(&reinhard), "{reinhard}");
+        for curve in [ToneMapping::Aces, ToneMapping::AgX] {
+            let (dim, bright) = (toned(gpu, curve, 1.0, 0.5), toned(gpu, curve, 1.0, 4.0));
+            assert!(dim < bright && bright < 255, "{curve:?} {dim} {bright}");
+        }
+    });
+}
+
+#[test]
+fn fog_fades_distant_surfaces_into_its_color() {
+    with_gpu(|gpu| {
+        let scene = Scene::new();
+        let mesh = Node::new();
+        mesh.set_mesh(Some((
+            Geometry::cuboid(Vec3::ONE),
+            Material::Unlit {
+                color: Color::rgb(255, 0, 0),
+            },
+        )));
+        scene.root().add_child(&mesh);
+        let gray = Color::rgb(128, 128, 128);
+        scene.set_fog(Some(Fog::Linear {
+            color: gray,
+            near: 0.0,
+            far: 1.0,
+        }));
+        assert_eq!(
+            pixel(&render(gpu, scene.clone()), SIZE / 2, SIZE / 2),
+            [128, 128, 128, 255]
+        );
+
+        scene.set_fog(Some(Fog::Exponential {
+            color: gray,
+            density: 0.01,
+        }));
+        let thin = pixel(&render(gpu, scene), SIZE / 2, SIZE / 2);
+        assert!(thin[0] > 240 && thin[1] < 20, "{thin:?}");
     });
 }

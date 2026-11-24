@@ -22,12 +22,12 @@ mod raycast;
 mod render;
 
 pub use components::{
-    AmbientLight, DirectionalLight, Group, Mesh, ModelView, PerspectiveCamera, PointLight,
-    SceneView, use_frame, use_scene,
+    AmbientLight, DirectionalLight, Group, HemisphereLight, Mesh, ModelView, PerspectiveCamera,
+    PointLight, SceneView, SpotLight, use_frame, use_scene,
 };
 pub use core::{
-    AlphaMode, Geometry, Light, Material, Node, Projection, Scene, Shadow, StandardMaterial,
-    Texture, TextureError, TextureTransform, Transform,
+    AlphaMode, Fog, Geometry, Light, Material, Node, Projection, Scene, Shadow, StandardMaterial,
+    Texture, TextureError, TextureTransform, ToneMapping, Transform,
 };
 pub use model::{AnimationOptions, AnimationPlayer, Model, ModelError};
 pub use raycast::{Ray, SceneHit};
