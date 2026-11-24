@@ -103,6 +103,8 @@ class SurfaceModule final : public whisker::Module {
           view.Prop("surface", [](SurfaceView& surface, const whisker::Value& value) {
             surface.SetSurface(value.AsString().value_or(""));
           });
+          view.Prop("wheel", [](SurfaceView&, const whisker::Value&) {});
+          view.Events({"wheel"});
         });
   }
 };
