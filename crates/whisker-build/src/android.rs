@@ -199,7 +199,8 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     cmd.arg("rustc")
         .args(["--target", triple])
         .args(["-p", b.package])
-        .args(["--crate-type", crate_type]);
+        .args(["--crate-type", crate_type])
+        .arg("--message-format=json-render-diagnostics");
     if let Some(flag) = b.profile.cargo_flag() {
         cmd.arg(flag);
     }
@@ -273,13 +274,22 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         crate::ui::OperationKind::Compile,
         format!("{} ({triple})", b.package),
     );
-    let status = cargo_step
-        .pipe(&mut cmd)
+    let (status, messages) = cargo_step
+        .pipe_collecting_json(&mut cmd)
         .with_context(|| format!("spawn cargo for {triple}"))?;
     if !status.success() {
         cargo_step.fail(status.to_string());
         return Err(anyhow!("cargo build failed ({status}) for {triple}"));
     }
+    crate::gc::record_and_sweep(
+        &crate::gc::BuildScope {
+            workspace_root: b.workspace_root,
+            triple,
+            profile_dir: b.profile.dir_name(),
+            variant: crate_type,
+        },
+        &messages,
+    );
     cargo_step.done(match (before, so_mtime(&so_path)) {
         (None, Some(_)) => "linked",
         (Some(b), Some(a)) if a > b => "relinked",

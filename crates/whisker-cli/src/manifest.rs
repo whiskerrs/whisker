@@ -179,7 +179,7 @@ impl ResolvedManifest {
     }
 }
 
-fn application_manifest(cargo_toml_override: Option<&Path>) -> Result<PathBuf> {
+pub(crate) fn application_manifest(cargo_toml_override: Option<&Path>) -> Result<PathBuf> {
     let cargo_toml = match cargo_toml_override {
         Some(p) => p.to_path_buf(),
         None => {

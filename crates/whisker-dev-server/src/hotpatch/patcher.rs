@@ -117,6 +117,8 @@ impl Patcher {
         let original_cache = HotpatchModuleCache::from_path(original_binary)
             .with_context(|| format!("parse original binary {}", original_binary.display()))?;
         let patch_out_dir = workspace_root.join("target/.whisker/patches");
+        // Thin-build incremental state only pays off within one session and otherwise grows without bound.
+        let _ = std::fs::remove_dir_all(patch_out_dir.join("incremental"));
         let rustc_path = current_rustc();
         Ok(Self::new(
             package,

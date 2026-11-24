@@ -38,6 +38,7 @@ use clap::{Parser, Subcommand};
 
 pub mod build;
 pub mod build_dispatch;
+pub mod clean;
 pub mod credential;
 pub mod doctor;
 pub mod fmt;
@@ -127,6 +128,12 @@ enum Command {
     /// (`rustfmt.overrideCommand = ["whisker", "fmt", "--stdin"]`).
     Fmt(fmt::FmtArgs),
 
+    /// Remove build artifacts no recent whisker build of any workspace
+    /// sharing the target directory still uses. Builds already do this
+    /// after each success; run it after deleting an app or with `--all`
+    /// to drop this workspace's whisker state too.
+    Clean(clean::CleanArgs),
+
     /// (internal) Cross-compile the user crate into
     /// `WhiskerDriver.framework`. Invoked by the generated Xcode
     /// project's Run Script Phase, not by users.
@@ -169,6 +176,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Command::Submit(a) => submit::run(a),
         Command::Store(a) => store::run(a),
         Command::Fmt(a) => fmt::run(a),
+        Command::Clean(a) => clean::run(a),
         Command::BuildIos(a) => build_dispatch::run_ios(a),
         Command::BuildAndroid(a) => build_dispatch::run_android(a),
         Command::Modules(a) => build_dispatch::run_modules(a),
@@ -185,6 +193,15 @@ mod tests {
         S: Into<std::ffi::OsString> + Clone,
     {
         Cli::try_parse_from(args)
+    }
+
+    #[test]
+    fn parses_clean_all() {
+        let cli = parse(["whisker", "clean", "--all"]).unwrap();
+        match cli.command {
+            Command::Clean(a) => assert!(a.all),
+            other => panic!("expected Clean, got {other:?}"),
+        }
     }
 
     #[test]

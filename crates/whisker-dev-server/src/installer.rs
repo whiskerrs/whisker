@@ -557,6 +557,8 @@ async fn ios_install_and_launch(
         // Whisker's codegen plugin and compiler macros have separate trust prompts that headless builds cannot answer.
         .arg("-skipPackagePluginValidation")
         .arg("-skipMacroValidation")
+        // The dev loop never opens the project in Xcode, so its index store is dead weight on disk.
+        .arg("COMPILER_INDEX_STORE_ENABLE=NO")
         // The generic destination otherwise requests every Simulator slice, forcing an extra Rust target install.
         .arg(format!(
             "ARCHS={}",
