@@ -1,5 +1,96 @@
 //! Heavy work off the UI thread, or on the web, in short slices between which the page can draw.
 
+use std::sync::Arc;
+
+use crate::geo::TileId;
+use crate::style::{GeoJsonOptions, Layer, SourceKind};
+use crate::tiles::geojson::GeoJsonIndex;
+use crate::tiles::{TileContent, process, vector_content};
+
+/// Makes a tile from its source's bytes: on a worker thread, or on the web in a Web Worker,
+/// falling back to slices of the page's own thread where no Worker can run.
+pub(crate) async fn tile(
+    id: TileId,
+    kind: SourceKind,
+    bytes: Vec<u8>,
+    layers: Arc<Vec<Arc<Layer>>>,
+    indices: Vec<usize>,
+    max_zoom: u8,
+) -> Option<TileContent> {
+    #[cfg(target_arch = "wasm32")]
+    let bytes = match crate::worker::tile(id, &kind, bytes, &layers, &indices, max_zoom).await {
+        Ok(content) => return content,
+        Err(bytes) => bytes,
+    };
+    run(move || process(id, &kind, &bytes, &layers, &indices, max_zoom)).await
+}
+
+/// A GeoJSON source's index: on the page, or in the Web Worker that built it.
+#[derive(Clone)]
+pub(crate) enum GeoJson {
+    Local(Arc<GeoJsonIndex>),
+    #[cfg(target_arch = "wasm32")]
+    Remote(std::rc::Rc<crate::worker::RemoteIndex>),
+}
+
+/// Indexes the GeoJSON `text` for cutting into tiles; `None` when it does not parse.
+pub(crate) async fn geojson_index(text: Vec<u8>, options: GeoJsonOptions) -> Option<GeoJson> {
+    #[cfg(target_arch = "wasm32")]
+    let (text, options) = match crate::worker::geojson_index(text, options) {
+        Ok(remote) => return Some(GeoJson::Remote(std::rc::Rc::new(remote))),
+        Err(back) => back,
+    };
+    let index = run(move || {
+        let data = serde_json::from_slice(&text).ok()?;
+        Some(Arc::new(GeoJsonIndex::new(&data, options)))
+    })
+    .await?;
+    Some(GeoJson::Local(index))
+}
+
+/// Cuts tile `id` from `index` and makes it with the style's layers.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(clippy::infallible_destructuring_match)
+)]
+pub(crate) async fn geojson_tile(
+    index: GeoJson,
+    id: TileId,
+    layers: Arc<Vec<Arc<Layer>>>,
+    indices: Vec<usize>,
+    max_zoom: u8,
+) -> Option<TileContent> {
+    let local = match index {
+        GeoJson::Local(index) => index,
+        #[cfg(target_arch = "wasm32")]
+        GeoJson::Remote(remote) => {
+            match crate::worker::geojson_tile(&remote, id, &layers, &indices, max_zoom).await {
+                Ok(content) => return content,
+                Err(()) => remote.local().await?,
+            }
+        }
+    };
+    run(move || {
+        let layer = local.tile(id);
+        Some(vector_content(
+            id,
+            Arc::new(vec![layer]),
+            &layers,
+            &indices,
+            max_zoom,
+        ))
+    })
+    .await
+}
+
+/// Tells the Workers about a style's layers, which tile jobs then name.
+pub(crate) fn register_layers(layers: &Arc<Vec<Arc<Layer>>>, json: &serde_json::Value) {
+    #[cfg(target_arch = "wasm32")]
+    crate::worker::register_layers(layers, json);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (layers, json);
+}
+
 /// Runs `job` on a worker thread, or on the web, once the current slice of work has yielded.
 pub(crate) async fn run<T, F>(job: F) -> T
 where

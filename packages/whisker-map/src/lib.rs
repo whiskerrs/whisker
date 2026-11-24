@@ -31,7 +31,11 @@ mod symbols;
 mod text;
 mod tiles;
 mod value;
+#[cfg(any(target_arch = "wasm32", test))]
+mod wire;
 mod work;
+#[cfg(target_arch = "wasm32")]
+mod worker;
 
 pub use camera::{MAX_PITCH, MAX_ZOOM, MIN_ZOOM, MapCamera};
 pub use components::{MapView, Marker};

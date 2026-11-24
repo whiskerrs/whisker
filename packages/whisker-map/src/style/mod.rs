@@ -242,6 +242,8 @@ pub enum MapProjection {
 pub(crate) struct Style {
     pub sources: HashMap<String, Source>,
     pub layers: Vec<Arc<Layer>>,
+    /// The `layers` array the layers were parsed from.
+    pub layers_json: Json,
     pub glyphs: Option<String>,
     pub sprite: Vec<(String, String)>,
     pub projection: MapProjection,
@@ -281,17 +283,8 @@ impl Style {
                     .collect()
             })
             .unwrap_or_default();
-        let layers = json
-            .get("layers")
-            .and_then(Json::as_array)
-            .map(|layers| {
-                layers
-                    .iter()
-                    .filter_map(parse_layer)
-                    .map(Arc::new)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let layers_json = json.get("layers").cloned().unwrap_or(Json::Null);
+        let layers = parse_layers(&layers_json);
         let sprite = match json.get("sprite") {
             Some(Json::String(url)) => vec![("default".to_string(), url.clone())],
             Some(Json::Array(items)) => items
@@ -338,6 +331,7 @@ impl Style {
         Style {
             sources,
             layers,
+            layers_json,
             glyphs: json
                 .get("glyphs")
                 .and_then(Json::as_str)
@@ -347,6 +341,19 @@ impl Style {
             light,
         }
     }
+}
+
+/// The layers of a style's `layers` array that this crate can draw, in order.
+pub(crate) fn parse_layers(json: &Json) -> Vec<Arc<Layer>> {
+    json.as_array()
+        .map(|layers| {
+            layers
+                .iter()
+                .filter_map(parse_layer)
+                .map(Arc::new)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_layer(json: &Json) -> Option<Layer> {

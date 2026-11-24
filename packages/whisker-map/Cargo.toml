@@ -31,7 +31,7 @@ ureq = "2"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window", "Request", "RequestInit", "Response", "Headers", "WorkerGlobalScope"] }
+web-sys = { version = "0.3", features = ["Window", "Request", "RequestInit", "Response", "Headers", "WorkerGlobalScope", "Blob", "BlobPropertyBag", "DedicatedWorkerGlobalScope", "Document", "Element", "MessageEvent", "Url", "Worker", "WorkerOptions", "WorkerType", "console"] }
 
 [dev-dependencies]
 pollster = "0.4"

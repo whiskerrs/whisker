@@ -522,6 +522,9 @@ struct GpuTile {
     raster: Option<wgpu::BindGroup>,
 }
 
+/// How long a frame may spend putting newly made tiles on the GPU, after its first.
+const UPLOAD_BUDGET: web_time::Duration = web_time::Duration::from_millis(4);
+
 fn gpu_tile<'a>(gpu: &Gpu, shared: &Shared, tile: &'a LoadedTile) -> std::cell::Ref<'a, GpuTile> {
     if tile.gpu.borrow().is_none() {
         let mut meshes = HashMap::new();
@@ -779,8 +782,30 @@ impl MapRenderer {
         });
     }
 
-    /// The tiles each source draws this frame, ancestors before descendants.
-    fn collect_tiles(view: &View, style: &StyleState) -> TileSet {
+    /// The tiles each source draws this frame, ancestors before descendants; a tile not yet on the
+    /// GPU is uploaded within [`UPLOAD_BUDGET`], or else its ancestors or children stand in for it.
+    fn collect_tiles(
+        gpu: &Gpu,
+        shared: &Shared,
+        map: &MapInner,
+        view: &View,
+        style: &StyleState,
+    ) -> TileSet {
+        let deadline = web_time::Instant::now() + UPLOAD_BUDGET;
+        let mut uploaded = false;
+        let mut deferred = false;
+        let mut ready = |tile: &LoadedTile| {
+            if tile.gpu.borrow().is_some() {
+                return true;
+            }
+            if uploaded && web_time::Instant::now() >= deadline {
+                deferred = true;
+                return false;
+            }
+            drop(gpu_tile(gpu, shared, tile));
+            uploaded = true;
+            true
+        };
         let zoom = view.zoom();
         let mut tiles_by_source = HashMap::new();
         for (id, source) in &style.sources {
@@ -792,10 +817,13 @@ impl MapRenderer {
             } else {
                 view.covering_tiles(z, min_z, 400)
             };
-            let mut tiles = source.tiles_for(&wanted);
+            let mut tiles = source.tiles_for(&wanted, &mut ready);
             tiles.truncate(254);
             source.evict();
             tiles_by_source.insert(id.clone(), (z, tiles));
+        }
+        if deferred {
+            map.keep_drawing();
         }
         tiles_by_source
     }
@@ -1092,7 +1120,7 @@ impl Renderer for MapRenderer {
 
         let mut rec = match &style {
             Some(style) => {
-                let tiles = Self::collect_tiles(&view, style);
+                let tiles = Self::collect_tiles(gpu, &shared, &map, &view, style);
                 self.labels
                     .prepare(gpu, &shared, &map, &view, style, &tiles);
                 let rec = self.record(gpu, &view, style, &tiles);
