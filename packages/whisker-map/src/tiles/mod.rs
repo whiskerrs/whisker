@@ -19,10 +19,39 @@ pub(crate) enum TileContent {
     Vector {
         buckets: Vec<Bucket>,
         symbols: Vec<crate::symbols::SymbolFeature>,
-        layers: Arc<Vec<mvt::Layer>>,
+        features: Features,
     },
     Raster(Image),
     Dem(Dem),
+}
+
+/// A vector tile's decoded features, which taps search.
+pub(crate) struct Features {
+    decoded: std::cell::OnceCell<Arc<Vec<mvt::Layer>>>,
+    /// The MVT the features decode from, when they were made elsewhere and not sent along.
+    encoded: Vec<u8>,
+}
+
+impl Features {
+    pub fn decoded(layers: Arc<Vec<mvt::Layer>>) -> Features {
+        Features {
+            decoded: std::cell::OnceCell::from(layers),
+            encoded: Vec::new(),
+        }
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub fn encoded(bytes: Vec<u8>) -> Features {
+        Features {
+            decoded: std::cell::OnceCell::new(),
+            encoded: bytes,
+        }
+    }
+
+    pub fn layers(&self) -> &Arc<Vec<mvt::Layer>> {
+        self.decoded
+            .get_or_init(|| Arc::new(mvt::decode(&self.encoded).unwrap_or_default()))
+    }
 }
 
 pub(crate) struct Image {
@@ -151,15 +180,14 @@ impl TileSource {
                         return None;
                     }
                 };
-                crate::work::run(move || process(id, &kind, &bytes, &layers, &indices, max_zoom))
-                    .await
+                crate::work::tile(id, kind, bytes, layers, indices, max_zoom).await
             }))
         }));
         (self.on_change)();
     }
 
     /// Cuts this source's tiles from `index`, replacing any tiles made from earlier data.
-    pub fn set_geojson(self: &Rc<Self>, index: Arc<geojson::GeoJsonIndex>) {
+    pub fn set_geojson(self: &Rc<Self>, index: crate::work::GeoJson) {
         let weak = Rc::downgrade(self);
         self.tiles.borrow_mut().clear();
         self.set_loader(Rc::new(move |id| {
@@ -168,19 +196,9 @@ impl TileSource {
             let indices = source.layer_indices.borrow().clone();
             let max_zoom = source.source.borrow().max_zoom;
             let index = index.clone();
-            Some(Box::pin(async move {
-                crate::work::run(move || {
-                    let layer = index.tile(id);
-                    Some(vector_content(
-                        id,
-                        Arc::new(vec![layer]),
-                        &layers,
-                        &indices,
-                        max_zoom,
-                    ))
-                })
-                .await
-            }))
+            Some(Box::pin(crate::work::geojson_tile(
+                index, id, layers, indices, max_zoom,
+            )))
         }));
         (self.on_change)();
     }
@@ -235,8 +253,13 @@ impl TileSource {
         x1 >= west && x0 <= east && y1 >= south && y0 <= north
     }
 
-    /// The loaded tiles to draw for `wanted`, borrowing ancestors and children while some load.
-    pub fn tiles_for(self: &Rc<Self>, wanted: &[PlacedTile]) -> Vec<(PlacedTile, Rc<LoadedTile>)> {
+    /// The loaded tiles to draw for `wanted`, borrowing ancestors and children while some load or
+    /// are not yet `ready` to draw.
+    pub fn tiles_for(
+        self: &Rc<Self>,
+        wanted: &[PlacedTile],
+        ready: &mut dyn FnMut(&LoadedTile) -> bool,
+    ) -> Vec<(PlacedTile, Rc<LoadedTile>)> {
         if !self.ready.get() {
             return Vec::new();
         }
@@ -248,7 +271,7 @@ impl TileSource {
                 continue;
             }
             self.request(placed.id);
-            if let Some(tile) = self.loaded(placed.id) {
+            if let Some(tile) = self.loaded(placed.id, ready) {
                 if seen.insert(*placed) {
                     chosen.push((*placed, tile));
                 }
@@ -257,7 +280,7 @@ impl TileSource {
             // Children first: they were drawn a moment ago when zooming out.
             let mut covered = false;
             for child in placed.id.children() {
-                if let Some(tile) = self.loaded(child) {
+                if let Some(tile) = self.loaded(child, ready) {
                     let p = PlacedTile {
                         id: child,
                         wrap: placed.wrap,
@@ -274,7 +297,7 @@ impl TileSource {
                     break;
                 };
                 ancestor = parent;
-                if let Some(tile) = self.loaded(ancestor) {
+                if let Some(tile) = self.loaded(ancestor, ready) {
                     let p = PlacedTile {
                         id: ancestor,
                         wrap: placed.wrap,
@@ -298,14 +321,21 @@ impl TileSource {
         chosen
     }
 
-    fn loaded(&self, id: TileId) -> Option<Rc<LoadedTile>> {
-        let mut tiles = self.tiles.borrow_mut();
-        let entry = tiles.get_mut(&id)?;
-        entry.used = self.frame.get();
-        match &entry.state {
-            TileState::Loaded(tile) => Some(tile.clone()),
-            _ => None,
-        }
+    fn loaded(
+        &self,
+        id: TileId,
+        ready: &mut dyn FnMut(&LoadedTile) -> bool,
+    ) -> Option<Rc<LoadedTile>> {
+        let tile = {
+            let mut tiles = self.tiles.borrow_mut();
+            let entry = tiles.get_mut(&id)?;
+            entry.used = self.frame.get();
+            match &entry.state {
+                TileState::Loaded(tile) => tile.clone(),
+                _ => return None,
+            }
+        };
+        ready(&tile).then_some(tile)
     }
 
     fn request(self: &Rc<Self>, id: TileId) {
@@ -358,7 +388,7 @@ impl TileSource {
             };
             let kind = source.kind.clone();
             let max_zoom = source.max_zoom;
-            crate::work::run(move || process(id, &kind, &bytes, &layers, &indices, max_zoom)).await
+            crate::work::tile(id, kind, bytes, layers, indices, max_zoom).await
         })
     }
 
@@ -527,7 +557,7 @@ pub(crate) fn vector_content(
     TileContent::Vector {
         buckets,
         symbols,
-        layers: decoded,
+        features: Features::decoded(decoded),
     }
 }
 

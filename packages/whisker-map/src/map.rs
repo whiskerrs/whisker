@@ -17,7 +17,6 @@ use crate::render::{PlacedLabel, TileSet};
 use crate::sprite::SpriteStore;
 use crate::style::{GeoJsonOptions, Layer, Light, MapProjection, MapStyle, SourceKind, Style};
 use crate::text::GlyphStore;
-use crate::tiles::geojson::GeoJsonIndex;
 use crate::tiles::pmtiles::Archive;
 use crate::tiles::{TileSource, log};
 
@@ -348,6 +347,7 @@ impl MapInner {
 
     fn install_style(self: &Rc<Self>, style: Style, base: Option<&str>) {
         let layers = Arc::new(style.layers);
+        crate::work::register_layers(&layers, &style.layers_json);
         let weak = Rc::downgrade(self);
         let on_change: Rc<dyn Fn()> = Rc::new(move || {
             if let Some(map) = weak.upgrade() {
@@ -481,15 +481,9 @@ impl StyleEdit {
 fn load_geojson(source: &Rc<TileSource>, data: serde_json::Value, options: GeoJsonOptions) {
     let weak = Rc::downgrade(source);
     whisker::spawn_local(async move {
-        let data = match data.as_str() {
+        let text = match data.as_str() {
             Some(url) => match crate::net::fetch(url.to_string(), None).await {
-                Ok(Some(bytes)) => match serde_json::from_slice(&bytes) {
-                    Ok(data) => data,
-                    Err(error) => {
-                        log(&format!("whisker-map: GeoJSON {url}: {error}"));
-                        return;
-                    }
-                },
+                Ok(Some(bytes)) => bytes,
                 Ok(None) => {
                     log(&format!("whisker-map: GeoJSON {url} not found"));
                     return;
@@ -499,9 +493,12 @@ fn load_geojson(source: &Rc<TileSource>, data: serde_json::Value, options: GeoJs
                     return;
                 }
             },
-            None => data,
+            None => data.to_string().into_bytes(),
         };
-        let index = crate::work::run(move || Arc::new(GeoJsonIndex::new(&data, options))).await;
+        let Some(index) = crate::work::geojson_index(text, options).await else {
+            log("whisker-map: GeoJSON does not parse");
+            return;
+        };
         if let Some(source) = weak.upgrade() {
             source.set_geojson(index);
         }

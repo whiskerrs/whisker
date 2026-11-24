@@ -65,11 +65,12 @@ pub(crate) fn features_at(
             continue;
         }
         let TileContent::Vector {
-            symbols, layers, ..
+            symbols, features, ..
         } = &label.tile.content
         else {
             continue;
         };
+        let layers = features.layers();
         let Some(symbol) = symbols.get(label.symbol) else {
             continue;
         };
@@ -109,9 +110,10 @@ pub(crate) fn features_at(
         };
         if layer.kind == LayerKind::FillExtrusion {
             for (placed, tile) in source_tiles.iter().filter(|(p, _)| p.id.z == *ideal) {
-                let TileContent::Vector { layers, .. } = &tile.content else {
+                let TileContent::Vector { features, .. } = &tile.content else {
                     continue;
                 };
+                let layers = features.layers();
                 let Some(source_layer) = layers
                     .iter()
                     .find(|l| l.name == layer.source_layer.as_deref().unwrap_or(GEOJSON_LAYER))
@@ -159,9 +161,10 @@ pub(crate) fn features_at(
         else {
             continue;
         };
-        let TileContent::Vector { layers, .. } = &tile.content else {
+        let TileContent::Vector { features, .. } = &tile.content else {
             continue;
         };
+        let layers = features.layers();
         let Some(source_layer) = layers
             .iter()
             .find(|l| l.name == layer.source_layer.as_deref().unwrap_or(GEOJSON_LAYER))
