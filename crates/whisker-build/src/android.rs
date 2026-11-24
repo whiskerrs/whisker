@@ -228,6 +228,9 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         "-C".to_string(),
         "link-arg=-Wl,-z,max-page-size=16384".to_string(),
     ]);
+    if crate_type == "dylib" {
+        cmd.arg(crate::capture::SAVE_TEMPS);
+    }
 
     cmd.env(format!("CC_{triple_env}"), &b.toolchain.clang);
     cmd.env(format!("CXX_{triple_env}"), &b.toolchain.clang_cpp);
@@ -467,8 +470,7 @@ pub fn stage_jni_libs(
 /// envelope `cargo_build_dylib` would apply directly. The env vars
 /// inherit naturally to the gradle plugin's `whisker build-android`
 /// subprocess and then to cargo, so the gradle-built `.so` picks up
-/// the same `-Csave-temps` / `-Cdebug-assertions=on` / `--export-dynamic`
-/// flags. Without this the gradle-built `.so` lacks `--export-dynamic`
+/// the same `-Cdebug-assertions=on` / `--export-dynamic` flags. Without this the gradle-built `.so` lacks `--export-dynamic`
 /// and the patch dylib dlopen fails with `cannot locate symbol` for any
 /// inter-crate reference (`whisker_audio::runtime::NEXT_ID` in practice).
 pub fn run_gradle_assemble(

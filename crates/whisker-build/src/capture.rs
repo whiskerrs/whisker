@@ -63,7 +63,7 @@ pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
 /// dependency, so their fat build uses `RUSTC_WRAPPER` while retaining the
 /// same linker and codegen flags.
 pub fn capture_env_vars_all_crates(c: &CaptureShims) -> Vec<(String, String)> {
-    capture_env_vars(c)
+    envelope(c, c.target_triple.as_deref(), true)
         .into_iter()
         .map(|(key, value)| {
             if key == "RUSTC_WORKSPACE_WRAPPER" {
@@ -83,9 +83,25 @@ pub fn capture_env_vars_all_crates(c: &CaptureShims) -> Vec<(String, String)> {
 /// [`capture_env_vars`] instead leaves the other slices without the
 /// rustflags below, so hot-reload dispatch on them silently keeps
 /// running the old code.
+///
+/// `-Csave-temps` is left out: it leaves every crate's intermediates on disk,
+/// and only the final link needs them, so mobile and macOS builds pass
+/// [`SAVE_TEMPS`] to the user crate alone.
 pub fn capture_env_vars_for_triple(
     c: &CaptureShims,
     triple_override: Option<&str>,
+) -> Vec<(String, String)> {
+    envelope(c, triple_override, false)
+}
+
+/// Keeps the temp dir holding the version script and bridge-static archive
+/// the captured linker argv references; without it that argv is unreplayable.
+pub const SAVE_TEMPS: &str = "-Csave-temps=y";
+
+fn envelope(
+    c: &CaptureShims,
+    triple_override: Option<&str>,
+    save_temps_everywhere: bool,
 ) -> Vec<(String, String)> {
     let mut out = vec![
         (
@@ -107,12 +123,7 @@ pub fn capture_env_vars_for_triple(
     ];
 
     let shim = c.linker_shim.to_string_lossy().to_string();
-    // Three flags every fat build needs for hot reload to work:
-    //
-    // `-Csave-temps=y` keeps rustc's temp dir — holding the version
-    // script and bridge-static archive the captured linker argv
-    // references — alive past the build, without which that argv is
-    // unreplayable.
+    // Flags every fat build needs for hot reload to work:
     //
     // `-Wl,--export-dynamic` puts the cdylib's internal symbols in its
     // dynamic-symbol table. The patch dylib resolves `std::fmt`,
@@ -146,20 +157,24 @@ pub fn capture_env_vars_for_triple(
     // closure, so the `HotFunction::call_it` / `call_as_ptr` symbol the
     // JumpTable is keyed on is missing or mangled differently from the
     // patch's — lookups miss and the component keeps running old code.
-    let save_temps = if triple_override.is_some_and(|triple| triple.starts_with("wasm32-")) {
+    let flags = if triple_override.is_some_and(|triple| triple.starts_with("wasm32-")) {
         // Keep the raw symbol/linking sections and make every callable
         // function reachable through an extensible indirect table. The Web
         // patch transformer consumes these before wasm-bindgen strips them.
-        "-Csave-temps=y -Cdebug-assertions=on -Copt-level=0 \
+        "-Cdebug-assertions=on -Copt-level=0 \
          -Clink-arg=--no-gc-sections -Clink-arg=--growable-table \
          -Clink-arg=--export-table -Clink-arg=--export-memory \
          -Clink-arg=--emit-relocs -Clink-arg=--export=__stack_pointer \
          -Clink-arg=--export=__heap_base -Clink-arg=--export=__data_end"
             .to_string()
     } else {
-        format!("-Csave-temps=y -Cdebug-assertions=on -Copt-level=0 {export_dynamic}")
+        format!("-Cdebug-assertions=on -Copt-level=0 {export_dynamic}")
     };
-    let save_temps = save_temps.as_str();
+    let flags = if save_temps_everywhere {
+        format!("{SAVE_TEMPS} {flags}")
+    } else {
+        flags
+    };
     match triple_override {
         Some(triple) => {
             out.push((target_linker_env_var(triple), shim));
@@ -169,7 +184,7 @@ pub fn capture_env_vars_for_triple(
                 rustflags.push_str(&prior);
                 rustflags.push(' ');
             }
-            rustflags.push_str(save_temps);
+            rustflags.push_str(&flags);
             out.push((target_rustflags_env_var(triple), rustflags));
         }
         None => {
@@ -179,7 +194,7 @@ pub fn capture_env_vars_for_triple(
                 rustflags.push_str(&prior);
                 rustflags.push(' ');
             }
-            rustflags.push_str(&format!("-Clinker={shim} {save_temps}"));
+            rustflags.push_str(&format!("-Clinker={shim} {flags}"));
             out.push(("RUSTFLAGS".into(), rustflags));
         }
     }
@@ -312,6 +327,23 @@ mod tests {
         assert!(rustflags.contains("-Clink-arg=/OPT:NOREF"));
         assert!(rustflags.contains("-Clink-arg=/INCREMENTAL:NO"));
         assert!(!rustflags.contains("-Wl,"));
+    }
+
+    #[test]
+    fn per_triple_capture_leaves_save_temps_to_the_final_crate() {
+        let vars = capture_env_vars(&shim_for_triple(Some("aarch64-apple-ios-sim")));
+        assert!(!vars.iter().any(|(_, v)| v.contains("save-temps")));
+    }
+
+    #[test]
+    fn all_crates_capture_keeps_save_temps_in_rustflags() {
+        let vars = capture_env_vars_all_crates(&shim_for_triple(Some("x86_64-unknown-linux-gnu")));
+        let rustflags = vars
+            .iter()
+            .find(|(k, _)| k == "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS")
+            .map(|(_, v)| v.as_str())
+            .unwrap();
+        assert!(rustflags.contains(SAVE_TEMPS));
     }
 
     #[test]

@@ -197,6 +197,7 @@ impl Builder {
         let workspace_root = self.workspace_root.clone();
         let package = self.package.clone();
         let features = self.features.clone();
+        let capture = self.capture.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {
             let built_products = workspace_root
                 .join("target/.whisker/ios-derived")
@@ -209,6 +210,7 @@ impl Builder {
                     platform: "iphonesimulator",
                     archs: &[whisker_build::ios::host_simulator_arch()],
                     features: &features,
+                    capture: capture.as_ref(),
                 },
                 &built_products,
             )?;

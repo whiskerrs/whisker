@@ -180,6 +180,7 @@ pub fn run_ios(args: IosArgs) -> Result<()> {
             platform: &args.platform,
             archs: &archs,
             features: &args.features,
+            capture: None,
         },
         &args.built_products_dir,
     )

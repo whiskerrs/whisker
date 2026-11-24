@@ -83,6 +83,16 @@ wired in (`prepare_hot_reload_capture` in `lib.rs`):
 - `-C linker=whisker-linker-shim` — records each linker invocation's
   argv (keyed by output basename) to the linker-args cache, then
   forwards to the real linker.
+- The envelope also adds `-Cdebug-assertions=on -Copt-level=0` and the
+  export-dynamic link flag to every crate of the target triple.
+  `-Csave-temps` is different: only the user crate's final link is ever
+  replayed, so Android, iOS and macOS pass it to that crate alone
+  (`cargo rustc -- -Csave-temps=y`) instead of leaving every
+  dependency's intermediates on disk. Linux, Windows and Web, which
+  build the user crate as a dependency of the generated host, keep it in
+  `RUSTFLAGS`. The dev-server's own iOS compile runs inside the same
+  envelope as xcodebuild's Build Phase, so the two share one set of
+  dependency artifacts.
 
 After that build completes the caches are populated, and
 `Patcher::initialize` (`hotpatch/patcher.rs`) reads them plus the
