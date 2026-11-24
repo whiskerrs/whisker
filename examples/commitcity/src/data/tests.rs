@@ -22,9 +22,26 @@ fn dates_round_trip_through_unix_days() {
 }
 
 #[test]
-fn parses_a_bundled_snapshot() {
-    let year = parse(include_str!("../../assets/snapshots/torvalds.json")).unwrap();
-    assert_eq!(year.user, "torvalds");
+fn parses_a_year_of_calendar_days() {
+    let days = (0..367)
+        .map(|i| {
+            let date = Date::from_unix_days(20_415 + i);
+            format!(
+                r#"{{"date":"{}-{:02}-{:02}","count":{}}}"#,
+                date.year,
+                date.month,
+                date.day,
+                i * 7 % 13
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let year = parse(&format!(
+        r#"{{"user":"octocat","total":0,"days":[{days}]}}"#
+    ))
+    .unwrap();
+    assert_eq!(year.user, "octocat");
+    assert_eq!(year.days.len(), 367);
     assert_eq!(year.offset, year.days[0].date.weekday as usize);
     assert!(year.days.windows(2).all(|w| w[0].date < w[1].date));
     assert_eq!(

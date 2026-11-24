@@ -2,32 +2,7 @@
 
 use crate::data::{self, Year};
 
-/// Users with a bundled snapshot, shown as presets and used when whisker.rs is unreachable.
-pub const PRESETS: [(&str, &str); 5] = [
-    ("itome", include_str!("../assets/snapshots/itome.json")),
-    (
-        "torvalds",
-        include_str!("../assets/snapshots/torvalds.json"),
-    ),
-    ("dtolnay", include_str!("../assets/snapshots/dtolnay.json")),
-    (
-        "sindresorhus",
-        include_str!("../assets/snapshots/sindresorhus.json"),
-    ),
-    (
-        "yyx990803",
-        include_str!("../assets/snapshots/yyx990803.json"),
-    ),
-];
-
 const API: &str = "https://whisker.rs/api/github/contributions/";
-
-pub fn snapshot(user: &str) -> Option<Year> {
-    let (_, json) = PRESETS
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(user))?;
-    data::parse(json).ok()
-}
 
 /// The login part of `input`, which may also be a profile URL or start with `@`.
 pub fn login(input: &str) -> Result<String, String> {
@@ -48,10 +23,7 @@ pub fn login(input: &str) -> Result<String, String> {
 
 pub async fn year(input: String) -> Result<Year, String> {
     let user = login(&input)?;
-    match get(format!("{API}{user}")).await {
-        Ok(body) => data::parse(&body),
-        Err(error) => snapshot(&user).ok_or(error),
-    }
+    data::parse(&get(format!("{API}{user}")).await?)
 }
 
 fn status_error(status: u16) -> String {

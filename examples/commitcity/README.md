@@ -15,7 +15,7 @@ generated from a fixed noise seed in `src/land.rs`.
 - Tap a building, or scrub the calendar at the bottom, to see that day.
 - **Walk the year** strolls down the street from the first week to the last;
   **Overview** returns to the whole town.
-- Type any GitHub username, or one of the presets, to build their town.
+- Type any GitHub username to build their town.
 
 ## Run
 
@@ -32,14 +32,7 @@ Contribution counts come from
 calendar on the user's GitHub profile, so only public contributions count and
 no token is needed. It answers
 `{"user": "...", "total": 1234, "days": [{"date": "2026-11-24", "count": 3}, ...]}`.
-The presets ship with snapshots in `assets/snapshots/`, so the first town
-appears immediately and a preset still renders when the API is unreachable. To
-refresh them:
-
-```sh
-cd tools
-python3 -I snapshot.py itome torvalds dtolnay sindresorhus yyx990803
-```
+The town starts empty and rises once the calendar arrives.
 
 ## Models
 

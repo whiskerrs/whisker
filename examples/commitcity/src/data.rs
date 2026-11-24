@@ -38,6 +38,19 @@ pub struct Streak {
 }
 
 impl Year {
+    /// A town with no lots yet, shown until the first calendar arrives.
+    pub fn empty(user: String) -> Year {
+        Year {
+            user,
+            days: Vec::new(),
+            offset: 0,
+            total: 0,
+            busiest_day: None,
+            busiest_week: None,
+            longest_streak: None,
+        }
+    }
+
     pub fn weeks(&self) -> usize {
         (self.days.len() + self.offset).div_ceil(7)
     }

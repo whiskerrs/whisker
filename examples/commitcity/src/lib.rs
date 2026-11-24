@@ -213,7 +213,7 @@ fn calendar(
     width: Signal<f32>,
 ) -> Element {
     const GAP: f32 = 2.0;
-    let pitch = computed(move || width.get() / year.with(Year::weeks) as f32);
+    let pitch = computed(move || width.get() / year.with(Year::weeks).max(1) as f32);
     let pick = move |event: TouchEvent| {
         let Some(at) = event.offset else { return };
         let pitch = pitch.get_untracked();
@@ -274,7 +274,7 @@ fn calendar(
 
 #[whisker::main]
 pub fn app() -> Element {
-    let year = signal(fetch::snapshot(DEFAULT_USER).expect("bundled snapshot"));
+    let year = signal(Year::empty(DEFAULT_USER.to_string()));
     let draft = RwSignal::new(DEFAULT_USER.to_string());
     let request = signal(DEFAULT_USER.to_string());
     let loading = signal(true);
@@ -412,8 +412,8 @@ pub fn app() -> Element {
                 .color(ink::faded())
                 .style(whisker::css::BorderStyle::Solid),
         );
-    let link = move |active: bool| {
-        caps(11.0, if active { ink::paper() } else { ink::faded() })
+    let link = || {
+        caps(11.0, ink::faded())
             .padding_top(px(6))
             .padding_bottom(px(6))
             .margin_right(px(14))
@@ -482,9 +482,6 @@ pub fn app() -> Element {
                     .top(px(insets.get().top as f32 + 18.0))
                     .left(px(20))
                     .right(px(20))
-                    .display_flex()
-                    .flex_direction(if wide.get() { FlexDirection::Row } else { FlexDirection::Column })
-                    .justify_content(JustifyContent::SpaceBetween)
             })) {
                 View(style: Css::new().display_flex().flex_direction(FlexDirection::Column)) {
                     Text(style: caps(11.0, ink::vermilion()), value: "COMMIT CITY")
@@ -498,29 +495,12 @@ pub fn app() -> Element {
                             on_submit: move |input: String| build(input),
                         )
                     }
-                    Text(style: serif(15.0).color(ink::faded()).margin_top(px(4)), value: summary)
+                    Show(when: move || year.with(|y| !y.days.is_empty())) {
+                        Text(style: serif(15.0).color(ink::faded()).margin_top(px(4)), value: summary)
+                    }
                     Show(when: move || !status.get().is_empty()) {
                         Text(style: text(13.0, ink::vermilion()).margin_top(px(4)), value: status)
                     }
-                }
-                View(style: computed(move || row().margin_top(px(if wide.get() { 0.0 } else { 10.0 })).flex_wrap(whisker::css::FlexWrap::Wrap))) {
-                    ForEach(
-                        each: move || fetch::PRESETS.iter().map(|(name, _)| name.to_string()).collect::<Vec<_>>(),
-                        key: |name: &String| name.clone(),
-                        children: move |name: ReadSignal<String>| {
-                            let name = name.get_untracked();
-                            let shown = name.clone();
-                            let tapped = name.clone();
-                            render! {
-                                View(on_tap: move |_| build(tapped.clone())) {
-                                    Text(
-                                        style: computed(move || link(year.with(|y| y.user.eq_ignore_ascii_case(&shown)))),
-                                        value: format!("@{}", name.to_uppercase()),
-                                    )
-                                }
-                            }
-                        },
-                    )
                 }
             }
 
@@ -557,10 +537,10 @@ pub fn app() -> Element {
                     View(style: row().margin_top(px(10)).justify_content(JustifyContent::SpaceBetween)) {
                         View(style: row()) {
                             View(on_tap: move |_| { selected.set(None); orbit.overview(); }) {
-                                Text(style: link(false), value: "OVERVIEW")
+                                Text(style: link(), value: "OVERVIEW")
                             }
                             View(on_tap: move |_| walk()) {
-                                Text(style: link(false), value: "WALK THE YEAR")
+                                Text(style: link(), value: "WALK THE YEAR")
                             }
                         }
                         Show(when: move || wide.get()) {
