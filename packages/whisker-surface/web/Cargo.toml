@@ -1,6 +1,6 @@
 [package]
 name = "whisker-surface-web"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,6 +8,6 @@ repository.workspace = true
 description = "Web Host implementation for whisker-surface."
 
 [dependencies]
-whisker-surface = { path = "..", version = "0.1.0" }
-whisker-web = { path = "../../../platforms/web", version = "0.19.1" }
+whisker-surface = { path = "..", version = "0.1.1" }
+whisker-web = { path = "../../../platforms/web", version = "0.19.2" }
 web-sys = { version = "0.3", features = ["AddEventListenerOptions", "Document", "Element", "Event", "EventTarget", "HtmlCanvasElement", "MouseEvent", "WheelEvent", "Window"] }
