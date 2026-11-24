@@ -6,7 +6,7 @@ use glam::{Mat4, Vec3};
 use whisker_wgpu::{Gpu, wgpu};
 
 use super::collect::{Collected, Cone};
-use super::resources::{deformed_vertices, mesh};
+use super::resources::bind_mesh;
 use super::visibility::{Frustum, visible, world_sphere};
 use super::{Draw, MAX_DIRECTIONAL, MAX_POINT, SceneRenderer};
 use crate::core::{Projection, Shadow};
@@ -354,14 +354,9 @@ impl SceneRenderer {
                 if !draw.cast_shadow || !visible(draw, &frustum) {
                     continue;
                 }
-                let mesh = mesh(gpu, &draw.geometry);
-                if mesh.count == 0 {
+                let Some((count, instances)) = bind_mesh(gpu, &shared, &mut pass, draw) else {
                     continue;
-                }
-                let deformed = draw
-                    .deform
-                    .as_ref()
-                    .map(|deform| deformed_vertices(gpu, deform));
+                };
                 let offset = (index as u64 * self.draw_stride) as u32;
                 pass.set_bind_group(1, &self.draw_bind_group, &[offset]);
                 pass.set_bind_group(
@@ -369,12 +364,7 @@ impl SceneRenderer {
                     self.materials.bind_group(gpu, &shared, &draw.material),
                     &[],
                 );
-                match &deformed {
-                    Some(buffer) => pass.set_vertex_buffer(0, buffer.slice(..)),
-                    None => pass.set_vertex_buffer(0, mesh.vertices.slice(..)),
-                }
-                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.count, 0, 0..1);
+                pass.draw_indexed(0..count, 0, 0..instances);
             }
         }
     }

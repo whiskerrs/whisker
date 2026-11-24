@@ -38,7 +38,12 @@ pub(crate) fn world_sphere(draw: &Draw) -> Option<(Vec3, f32)> {
     if draw.deform.is_some() {
         return None;
     }
-    let (center, radius) = draw.geometry.bounds();
+    let mut sphere = draw.geometry.bounds();
+    if let Some(instances) = &draw.instances {
+        let key = draw.geometry.data() as *const _ as usize;
+        sphere = instances.bounds(key, sphere);
+    }
+    let (center, radius) = sphere;
     let scale = [draw.model.x_axis, draw.model.y_axis, draw.model.z_axis]
         .iter()
         .map(|axis| axis.xyz().length())

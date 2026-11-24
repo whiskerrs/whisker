@@ -42,6 +42,8 @@ pub struct SceneHit {
     pub uv: Vec2,
     /// Index of the hit triangle in the mesh.
     pub triangle: u32,
+    /// Index of the hit instance, for a node drawn with [`Instances`](crate::Instances).
+    pub instance: Option<u32>,
 }
 
 impl Scene {
@@ -70,60 +72,84 @@ impl Scene {
     /// Every visible mesh the ray meets, nearest first.
     pub fn raycast(&self, ray: Ray) -> Vec<SceneHit> {
         let mut hits = Vec::new();
-        visit(&self.root(), Mat4::IDENTITY, &ray, &mut hits);
+        let eye = crate::render::camera_for(self)
+            .0
+            .transform_point3(Vec3::ZERO);
+        visit(&self.root(), Mat4::IDENTITY, eye, &ray, &mut hits);
         hits.sort_by(|a, b| a.distance.total_cmp(&b.distance));
         // A ray through an edge or corner meets every triangle sharing it.
-        hits.dedup_by(|b, a| a.node == b.node && (b.distance - a.distance).abs() < 1e-5);
+        hits.dedup_by(|b, a| {
+            a.node == b.node && a.instance == b.instance && (b.distance - a.distance).abs() < 1e-5
+        });
         hits
     }
 }
 
-fn visit(node: &Node, parent: Mat4, ray: &Ray, hits: &mut Vec<SceneHit>) {
+fn visit(node: &Node, parent: Mat4, eye: Vec3, ray: &Ray, hits: &mut Vec<SceneHit>) {
     if !node.visible() {
         return;
     }
     let world = parent * node.transform().to_matrix();
+    if !crate::render::within_distance(node, world, eye) {
+        return;
+    }
     if let Some((geometry, _)) = node.mesh() {
-        match node.deform() {
-            Some(deform) => {
-                deform.update(&geometry);
-                let space = if deform.is_skinned() {
-                    Mat4::IDENTITY
-                } else {
-                    world
-                };
-                deform.with_vertices(|vertices| {
-                    let indices = &geometry.data().indices;
-                    let local = local_ray(ray, space);
-                    for (triangle, corners) in indices.chunks_exact(3).enumerate() {
-                        if let Some(hit) = hit_triangle(&local, vertices, corners) {
-                            push_hit(hits, node, ray, space, vertices, corners, triangle, hit);
-                        }
-                    }
-                });
-            }
-            None => {
-                let local = local_ray(ray, world);
-                let data = geometry.data();
-                let bvh = data.bvh.get_or_init(|| Bvh::build(&geometry));
-                bvh.each_hit(&local, &data.vertices, &data.indices, |triangle, hit| {
-                    let corners = &data.indices[triangle * 3..triangle * 3 + 3];
-                    push_hit(
-                        hits,
-                        node,
-                        ray,
-                        world,
-                        &data.vertices,
-                        corners,
-                        triangle,
-                        hit,
-                    );
-                });
+        let instances = node.instances();
+        let transforms = instances
+            .as_ref()
+            .map_or(&[Mat4::IDENTITY][..], |i| i.transforms());
+        for (index, transform) in transforms.iter().enumerate() {
+            let first = hits.len();
+            hit_mesh(node, &geometry, world * *transform, ray, hits);
+            if instances.is_some() {
+                for hit in &mut hits[first..] {
+                    hit.instance = Some(index as u32);
+                }
             }
         }
     }
     for child in node.children() {
-        visit(&child, world, ray, hits);
+        visit(&child, world, eye, ray, hits);
+    }
+}
+
+fn hit_mesh(node: &Node, geometry: &Geometry, world: Mat4, ray: &Ray, hits: &mut Vec<SceneHit>) {
+    match node.deform() {
+        Some(deform) => {
+            deform.update(geometry);
+            let space = if deform.is_skinned() {
+                Mat4::IDENTITY
+            } else {
+                world
+            };
+            deform.with_vertices(|vertices| {
+                let indices = &geometry.data().indices;
+                let local = local_ray(ray, space);
+                for (triangle, corners) in indices.chunks_exact(3).enumerate() {
+                    if let Some(hit) = hit_triangle(&local, vertices, corners) {
+                        push_hit(hits, node, ray, space, vertices, corners, triangle, hit);
+                    }
+                }
+            });
+        }
+        None => {
+            let local = local_ray(ray, world);
+            let data = geometry.data();
+            let bvh = data.bvh.get_or_init(|| Bvh::build(geometry));
+            bvh.each_hit(&local, &data.vertices, &data.indices, |triangle, hit| {
+                let corners = &data.indices[triangle * 3..triangle * 3 + 3];
+                push_hit(
+                    hits,
+                    node,
+                    ray,
+                    world,
+                    &data.vertices,
+                    corners,
+                    triangle,
+                    hit,
+                );
+            });
+        }
     }
 }
 
@@ -163,6 +189,7 @@ fn push_hit(
         normal,
         uv,
         triangle: triangle as u32,
+        instance: None,
     });
 }
 

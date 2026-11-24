@@ -19,6 +19,10 @@ struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(4) color: vec4<f32>,
+    @location(5) instance_x: vec4<f32>,
+    @location(6) instance_y: vec4<f32>,
+    @location(7) instance_z: vec4<f32>,
+    @location(8) instance_w: vec4<f32>,
 };
 
 struct VertexOut {
@@ -30,7 +34,8 @@ struct VertexOut {
 @vertex
 fn vs(in: VertexIn) -> VertexOut {
     var out: VertexOut;
-    out.clip = light_view_proj * draw.model * vec4(in.position, 1.0);
+    let instance = mat4x4(in.instance_x, in.instance_y, in.instance_z, in.instance_w);
+    out.clip = light_view_proj * draw.model * instance * vec4(in.position, 1.0);
     let uv = vec3(in.uv, 1.0);
     out.uv = vec2(dot(draw.uv_x.xyz, uv), dot(draw.uv_y.xyz, uv));
     out.alpha = draw.base_color.a * in.color.a;

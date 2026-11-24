@@ -8,9 +8,9 @@ use glam::Mat4;
 use whisker_wgpu::{Gpu, wgpu};
 
 use super::post::PostShared;
-use super::resources::{GpuTexture, half, upload_cube, upload_texture};
+use super::resources::{GpuTexture, half, instance_buffer, upload_cube, upload_texture};
 use super::shadow::{MAX_SHADOW_LAYERS, SHADOW_FORMAT};
-use super::{DEPTH_FORMAT, MAX_DIRECTIONAL, MAX_POINT};
+use super::{DEPTH_FORMAT, MAX_DIRECTIONAL};
 use crate::core::{AlphaMode, Material, TextureTransform, linear_rgba, srgb_rgba};
 
 #[repr(C)]
@@ -31,7 +31,6 @@ pub(super) struct FrameUniform {
     pub(super) environment: [f32; 4],
     pub(super) irradiance: [[f32; 4]; 9],
     pub(super) directional: [DirectionalUniform; MAX_DIRECTIONAL],
-    pub(super) point: [PointUniform; MAX_POINT],
     pub(super) shadow_matrices: [[[f32; 4]; 4]; MAX_SHADOW_LAYERS],
 }
 
@@ -75,6 +74,8 @@ pub(super) struct Shared {
     pub(super) shader: wgpu::ShaderModule,
     pub(super) sampler: wgpu::Sampler,
     pub(super) white: GpuTexture,
+    /// The instance buffer of draws without instances.
+    pub(super) one_instance: wgpu::Buffer,
     pub(super) flat_normal: GpuTexture,
     pub(super) pipelines: RefCell<HashMap<PipelineKey, wgpu::RenderPipeline>>,
     pub(super) shadow_view_layout: wgpu::BindGroupLayout,
@@ -163,6 +164,16 @@ impl Shared {
                     binding: 4,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                     count: None,
                 },
             ],
@@ -266,6 +277,7 @@ impl Shared {
             shader,
             sampler,
             white,
+            one_instance: instance_buffer(gpu, &[Mat4::IDENTITY]),
             flat_normal,
             pipelines: RefCell::new(HashMap::new()),
             shadow_view_layout,
@@ -367,7 +379,7 @@ impl Shared {
                     module: &self.shadow_shader,
                     entry_point: Some("vs"),
                     compilation_options: Default::default(),
-                    buffers: &[Some(vertex_layout())],
+                    buffers: &[Some(vertex_layout()), Some(instance_layout())],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &self.shadow_shader,
@@ -409,7 +421,7 @@ impl Shared {
                             module: &self.shader,
                             entry_point: Some("vs"),
                             compilation_options: Default::default(),
-                            buffers: &[Some(vertex_layout())],
+                            buffers: &[Some(vertex_layout()), Some(instance_layout())],
                         },
                         fragment: Some(wgpu::FragmentState {
                             module: &self.shader,
@@ -460,6 +472,21 @@ fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: size_of::<crate::core::Vertex>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &ATTRIBUTES,
+    }
+}
+
+/// One transform per instance, as four columns.
+fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+        5 => Float32x4,
+        6 => Float32x4,
+        7 => Float32x4,
+        8 => Float32x4,
+    ];
+    wgpu::VertexBufferLayout {
+        array_stride: size_of::<Mat4>() as u64,
+        step_mode: wgpu::VertexStepMode::Instance,
         attributes: &ATTRIBUTES,
     }
 }

@@ -4,6 +4,7 @@
 //! long as they stay mounted.
 
 use std::cell::{Cell, RefCell};
+use std::ops::Range;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -15,8 +16,8 @@ use whisker::{Callback, Children, Signal, Style};
 use whisker_surface::{FrameInfo, SurfaceView};
 
 use crate::core::{
-    Environment, Fog, FrameSubscription, Geometry, Light, Material, Node, PostProcessing,
-    Projection, Scene, Shadow, TapHandler, ToneMapping, Transform, rotation_toward,
+    Environment, Fog, FrameSubscription, Geometry, Instances, Light, Material, Node,
+    PostProcessing, Projection, Scene, Shadow, TapHandler, ToneMapping, Transform, rotation_toward,
 };
 use crate::model::{AnimationOptions, AnimationPlayer, Model};
 use crate::raycast::SceneHit;
@@ -168,10 +169,14 @@ pub fn group(
     #[prop(default = Quat::IDENTITY.into())] rotation: Signal<Quat>,
     #[prop(default = Vec3::ONE.into())] scale: Signal<Vec3>,
     #[prop(default = true.into())] visible: Signal<bool>,
+    /// Camera distances from the group's origin at which it shows.
+    #[prop(default = None.into())]
+    visible_distance: Signal<Option<Range<f32>>>,
     children: Children,
 ) -> Element {
     let (context, node) = mount_node("Group");
     bind_transform(&node, position, rotation, scale, visible);
+    bind_distance(&node, visible_distance);
     provide_context(SceneContext {
         scene: context.scene,
         parent: node,
@@ -191,15 +196,24 @@ pub fn mesh(
     #[prop(default = true.into())] visible: Signal<bool>,
     #[prop(default = true.into())] cast_shadow: Signal<bool>,
     #[prop(default = true.into())] receive_shadow: Signal<bool>,
+    /// Draws the mesh once per transform, each relative to this mesh's own.
+    #[prop(default = None.into())]
+    instances: Signal<Option<Instances>>,
+    /// Camera distances from the mesh's origin at which it shows.
+    #[prop(default = None.into())]
+    visible_distance: Signal<Option<Range<f32>>>,
     /// Called when a tap on the enclosing `SceneView` hits this mesh first.
     on_tap: Option<Callback<SceneHit>>,
 ) -> Element {
     let (_, node) = mount_node("Mesh");
     bind_transform(&node, position, rotation, scale, visible);
     bind_shadow(&node, cast_shadow, receive_shadow);
+    bind_distance(&node, visible_distance);
     bind_tap(&node, on_tap);
     let target = node.clone();
     effect(move || target.set_mesh(Some((geometry.get(), material.get()))));
+    let target = node.clone();
+    effect(move || target.set_instances(instances.get()));
     create_phantom_element()
 }
 
@@ -208,6 +222,11 @@ fn bind_shadow(node: &Node, cast: Signal<bool>, receive: Signal<bool>) {
     effect(move || target.set_cast_shadow(cast.get()));
     let target = node.clone();
     effect(move || target.set_receive_shadow(receive.get()));
+}
+
+fn bind_distance(node: &Node, range: Signal<Option<Range<f32>>>) {
+    let target = node.clone();
+    effect(move || target.set_visible_distance(range.get()));
 }
 
 fn bind_tap(node: &Node, on_tap: Option<Callback<SceneHit>>) {
@@ -236,6 +255,9 @@ pub fn model_view(
     >,
     #[prop(default = true.into())] cast_shadow: Signal<bool>,
     #[prop(default = true.into())] receive_shadow: Signal<bool>,
+    /// Camera distances from the model's origin at which it shows.
+    #[prop(default = None.into())]
+    visible_distance: Signal<Option<Range<f32>>>,
     /// Called when a tap on the enclosing `SceneView` hits a part of this model first;
     /// [`SceneHit::node`] is the part.
     on_tap: Option<Callback<SceneHit>>,
@@ -243,6 +265,7 @@ pub fn model_view(
     let (context, node) = mount_node("ModelView");
     bind_transform(&node, position, rotation, scale, visible);
     bind_shadow(&node, cast_shadow, receive_shadow);
+    bind_distance(&node, visible_distance);
     bind_tap(&node, on_tap);
     let player = signal(None::<AnimationPlayer>);
     let parent = node.clone();

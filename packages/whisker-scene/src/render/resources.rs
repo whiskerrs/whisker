@@ -6,12 +6,72 @@ use std::rc::Rc;
 use whisker_wgpu::{Gpu, wgpu};
 
 use super::pipeline::{Shared, TEXTURE_SLOTS};
-use crate::core::{CUBE_LEVELS, CUBE_SIZE, Deform, Environment, Geometry, Material, Texture};
+use glam::Mat4;
+
+use super::Draw;
+use crate::core::{
+    CUBE_LEVELS, CUBE_SIZE, Deform, Environment, Geometry, Instances, Material, Texture,
+};
 
 pub(crate) struct GpuMesh {
     pub(super) vertices: wgpu::Buffer,
     pub(super) indices: wgpu::Buffer,
     pub(super) count: u32,
+}
+
+pub(crate) struct InstanceBuffer {
+    buffer: wgpu::Buffer,
+}
+
+pub(super) fn instance_buffer(gpu: &Gpu, transforms: &[Mat4]) -> wgpu::Buffer {
+    let columns: Vec<[f32; 16]> = transforms.iter().map(Mat4::to_cols_array).collect();
+    let bytes: &[u8] = bytemuck::cast_slice(&columns);
+    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("whisker-scene instances"),
+        size: (bytes.len() as u64).max(64),
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    gpu.queue.write_buffer(&buffer, 0, bytes);
+    buffer
+}
+
+fn instances<'a>(gpu: &Gpu, instances: &'a Instances) -> &'a wgpu::Buffer {
+    &instances
+        .data()
+        .gpu
+        .get_or_init(|| InstanceBuffer {
+            buffer: instance_buffer(gpu, instances.transforms()),
+        })
+        .buffer
+}
+
+/// Binds `draw`'s vertex, instance and index buffers, returning its index and instance counts, or
+/// `None` when it draws nothing.
+pub(super) fn bind_mesh(
+    gpu: &Gpu,
+    shared: &Shared,
+    pass: &mut wgpu::RenderPass<'_>,
+    draw: &Draw,
+) -> Option<(u32, u32)> {
+    let mesh = mesh(gpu, &draw.geometry);
+    let count = draw
+        .instances
+        .as_ref()
+        .map_or(1, |instances| instances.transforms().len() as u32);
+    if mesh.count == 0 || count == 0 {
+        return None;
+    }
+    match &draw.deform {
+        Some(deform) => pass.set_vertex_buffer(0, deformed_vertices(gpu, deform).slice(..)),
+        None => pass.set_vertex_buffer(0, mesh.vertices.slice(..)),
+    }
+    match &draw.instances {
+        Some(draw_instances) => pass.set_vertex_buffer(1, instances(gpu, draw_instances).slice(..)),
+        None => pass.set_vertex_buffer(1, shared.one_instance.slice(..)),
+    }
+    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+    Some((mesh.count, count))
 }
 
 /// A vertex buffer holding one node's deformed vertices.
