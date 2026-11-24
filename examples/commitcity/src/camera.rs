@@ -1,5 +1,7 @@
 //! A free orbit camera over the town: drag to pan, twist or right-drag to turn, pinch or scroll to zoom.
 
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
+
 use whisker::prelude::*;
 use whisker_scene::math::{Vec2, Vec3};
 
@@ -8,14 +10,22 @@ const MAX_DISTANCE: f32 = 260.0;
 const MIN_PITCH: f32 = 0.08;
 const MAX_PITCH: f32 = 1.45;
 
+/// Where a fly-to is heading.
+#[derive(Clone, Copy, PartialEq)]
+struct Goal {
+    target: Vec3,
+    distance: f32,
+    pitch: f32,
+    yaw: Option<f32>,
+}
+
 #[derive(Clone, Copy)]
 pub struct Orbit {
     pub target: RwSignal<Vec3>,
     pub yaw: RwSignal<f32>,
     pub pitch: RwSignal<f32>,
     pub distance: RwSignal<f32>,
-    /// Where a fly-to is heading: target, distance and pitch.
-    goal: RwSignal<Option<(Vec3, f32, f32)>>,
+    goal: RwSignal<Option<Goal>>,
     /// Pan speed left over from the last drag, in world units per second.
     drift: RwSignal<Vec2>,
     /// The x a tour has reached and the x it ends at.
@@ -104,11 +114,23 @@ impl Orbit {
     pub fn fly_to(self, target: Vec3, distance: f32, pitch: f32) {
         self.tour.set(None);
         self.drift.set(Vec2::ZERO);
-        self.goal.set(Some((target, distance, pitch)));
+        self.goal.set(Some(Goal {
+            target,
+            distance,
+            pitch,
+            yaw: None,
+        }));
     }
 
     pub fn overview(self) {
-        self.fly_to(Vec3::new(0.0, 0.0, -6.0), 64.0, 0.5);
+        self.tour.set(None);
+        self.drift.set(Vec2::ZERO);
+        self.goal.set(Some(Goal {
+            target: Vec3::new(0.0, 0.0, -6.0),
+            distance: 64.0,
+            pitch: 0.5,
+            yaw: Some(0.32),
+        }));
     }
 
     pub fn start_tour(self, from: f32, to: f32) {
@@ -123,18 +145,29 @@ impl Orbit {
             let x = x + delta * 2.6;
             let target = Vec3::new(x.min(end), 0.0, crate::city::STREET_Z);
             let ease = (delta * 2.0).min(1.0);
+            let yaw = self.yaw.get_untracked();
+            let street_view = turn_toward(yaw, -FRAC_PI_2);
             self.target
                 .set(self.target.get_untracked().lerp(target, ease));
             self.distance
-                .set(lerp(self.distance.get_untracked(), 7.5, ease));
-            self.pitch.set(lerp(self.pitch.get_untracked(), 0.22, ease));
-            self.yaw
-                .set(lerp(self.yaw.get_untracked(), 0.55, ease * 0.5));
+                .set(lerp(self.distance.get_untracked(), 8.0, ease));
+            self.pitch.set(lerp(self.pitch.get_untracked(), 0.36, ease));
+            self.yaw.set(lerp(yaw, yaw + street_view, ease));
             self.tour.set((x < end).then_some((x, end)));
             return;
         }
-        if let Some((target, distance, pitch)) = self.goal.get_untracked() {
+        if let Some(Goal {
+            target,
+            distance,
+            pitch,
+            yaw,
+        }) = self.goal.get_untracked()
+        {
             let ease = (delta * 3.0).min(1.0);
+            if let Some(yaw) = yaw {
+                let now = self.yaw.get_untracked();
+                self.yaw.set(lerp(now, now + turn_toward(now, yaw), ease));
+            }
             let t = self.target.get_untracked().lerp(target, ease);
             self.target.set(t);
             self.distance
@@ -153,6 +186,11 @@ impl Orbit {
             self.drift.set(drift * (1.0 - (delta * 4.0).min(1.0)));
         }
     }
+}
+
+/// The shortest signed turn from yaw `from` to yaw `to`.
+fn turn_toward(from: f32, to: f32) -> f32 {
+    (to - from + PI).rem_euclid(TAU) - PI
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -202,9 +240,7 @@ impl Pointers {
                 }
                 let angle0 = (b0 - a0).y.atan2((b0 - a0).x);
                 let angle = (*b - *a).y.atan2((*b - *a).x);
-                let twist = (angle - angle0 + std::f32::consts::PI)
-                    .rem_euclid(std::f32::consts::TAU)
-                    - std::f32::consts::PI;
+                let twist = (angle - angle0 + PI).rem_euclid(TAU) - PI;
                 let center_delta = (*a + *b) / 2.0 - (a0 + b0) / 2.0;
                 orbit.turn(twist, center_delta.y * 0.003);
                 self.velocity = Vec2::ZERO;
@@ -272,7 +308,7 @@ pub fn apply_keyboard(orbit: Orbit, delta: f32) {
     });
 }
 
-/// Feeds the page's wheel and key events into [`KEYBOARD`].
+/// Feeds the page's wheel and key events into [`KEYBOARD`] and keeps right-drags from opening the context menu.
 #[cfg(target_arch = "wasm32")]
 pub fn listen_to_page() {
     use wasm_bindgen::JsCast;
@@ -318,6 +354,10 @@ pub fn listen_to_page() {
                 .retain(|held| !held.eq_ignore_ascii_case(&key) && held != &key)
         });
     });
+    let menu =
+        Closure::<dyn FnMut(web_sys::Event)>::new(|event: web_sys::Event| event.prevent_default());
+    let _ = window.add_event_listener_with_callback("contextmenu", menu.as_ref().unchecked_ref());
+    menu.forget();
     let blur = Closure::<dyn FnMut()>::new(|| KEYBOARD.with_borrow_mut(|k| k.held.clear()));
     let _ = window.add_event_listener_with_callback("keydown", down.as_ref().unchecked_ref());
     let _ = window.add_event_listener_with_callback("keyup", up.as_ref().unchecked_ref());

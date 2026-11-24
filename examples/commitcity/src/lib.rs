@@ -25,8 +25,8 @@ use whisker_input::{AutoCapitalize, Input};
 use whisker_safe_area::safe_area_insets;
 use whisker_scene::math::{Vec2, Vec3};
 use whisker_scene::{
-    AmbientOcclusion, Bloom, DirectionalLight, Environment, Fog, HemisphereLight,
-    PerspectiveCamera, PostProcessing, SceneHit, SceneView, Shadow, ToneMapping, use_frame,
+    Bloom, DirectionalLight, Environment, Fog, HemisphereLight, PerspectiveCamera, PostProcessing,
+    SceneHit, SceneView, Shadow, ToneMapping, use_frame,
 };
 
 use crate::camera::{Orbit, Pointers};
@@ -426,12 +426,12 @@ pub fn app() -> Element {
                     background: haze,
                     tone_mapping: ToneMapping::AgX,
                     exposure: 1.35,
-                    fog: Some(Fog::Exponential { color: haze, density: 0.0042 }),
+                    fog: Some(Fog::Exponential { color: haze, density: 0.0026 }),
                     environment: Some(Environment::gradient(Color::hex(0x9db4cf), haze, Color::hex(0x4d5a35))),
                     environment_intensity: 0.8,
                     post_processing: PostProcessing {
                         bloom: Some(Bloom::default()),
-                        ambient_occlusion: Some(AmbientOcclusion { radius: 1.2, intensity: 1.0 }),
+                        ambient_occlusion: None,
                         fxaa: true,
                         ..PostProcessing::default()
                     },
@@ -458,7 +458,6 @@ pub fn app() -> Element {
     };
     on_pointer(stage, move |phase, event| match phase {
         Phase::Down => {
-            set_pointer_capture(stage, event.pointer_id);
             let turning = event.pointer_type == "mouse" && event.buttons & 2 != 0;
             pointers.update(|p| p.press(event.pointer_id, point(&event), turning));
         }
@@ -466,7 +465,6 @@ pub fn app() -> Element {
             pointers.update(|p| p.moved(orbit, event.pointer_id, point(&event), event.timestamp));
         }
         Phase::Up => {
-            release_pointer_capture(stage, event.pointer_id);
             pointers.update(|p| p.release(orbit, event.pointer_id, event.timestamp));
         }
     });
