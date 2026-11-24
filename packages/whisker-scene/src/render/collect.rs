@@ -4,7 +4,8 @@ use glam::{Mat4, Vec3};
 use std::rc::Rc;
 
 use crate::core::{
-    Deform, Geometry, Light, Material, Node, Projection, Scene, Shadow, Transform, linear_rgba,
+    Deform, Geometry, Instances, Light, Material, Node, Projection, Scene, Shadow, Transform,
+    linear_rgba,
 };
 
 /// One mesh to draw.
@@ -13,6 +14,7 @@ pub(crate) struct Draw {
     pub(crate) geometry: Geometry,
     pub(crate) material: Material,
     pub(crate) deform: Option<Rc<Deform>>,
+    pub(crate) instances: Option<Instances>,
     pub(crate) cast_shadow: bool,
     pub(crate) receive_shadow: bool,
 }
@@ -47,20 +49,29 @@ pub(crate) struct Collected {
     pub(crate) draws: Vec<Draw>,
     pub(crate) directional: Vec<DirectionalLight>,
     pub(crate) point: Vec<PointLight>,
-    pub(crate) cameras: Vec<(Node, Mat4, Projection)>,
 }
 
-pub(crate) fn collect(root: &Node) -> Collected {
+/// What the tree draws as seen from `eye`, a world-space camera position.
+pub(crate) fn collect(root: &Node, eye: Vec3) -> Collected {
     let mut collected = Collected::default();
-    visit(root, Mat4::IDENTITY, (true, true), &mut collected);
+    visit(root, Mat4::IDENTITY, eye, (true, true), &mut collected);
     collected
 }
 
-fn visit(node: &Node, parent: Mat4, (cast, receive): (bool, bool), out: &mut Collected) {
+/// Whether `node`, placed at `world`, shows from `eye` given its visible distance.
+pub(crate) fn within_distance(node: &Node, world: Mat4, eye: Vec3) -> bool {
+    node.visible_distance()
+        .is_none_or(|range| range.contains(&world.transform_point3(Vec3::ZERO).distance(eye)))
+}
+
+fn visit(node: &Node, parent: Mat4, eye: Vec3, (cast, receive): (bool, bool), out: &mut Collected) {
     if !node.visible() {
         return;
     }
     let world = parent * node.transform().to_matrix();
+    if !within_distance(node, world, eye) {
+        return;
+    }
     let (cast, receive) = (cast && node.cast_shadow(), receive && node.receive_shadow());
     if let Some((geometry, material)) = node.mesh() {
         let deform = node.deform();
@@ -73,6 +84,7 @@ fn visit(node: &Node, parent: Mat4, (cast, receive): (bool, bool), out: &mut Col
             geometry,
             material,
             deform,
+            instances: node.instances(),
             cast_shadow: cast,
             receive_shadow: receive,
         });
@@ -127,11 +139,8 @@ fn visit(node: &Node, parent: Mat4, (cast, receive): (bool, bool), out: &mut Col
         }
         None => {}
     }
-    if let Some(projection) = node.camera() {
-        out.cameras.push((node.clone(), world, projection));
-    }
     for child in node.children() {
-        visit(&child, world, (cast, receive), out);
+        visit(&child, world, eye, (cast, receive), out);
     }
 }
 

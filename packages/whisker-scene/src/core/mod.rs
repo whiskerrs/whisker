@@ -4,10 +4,12 @@ mod color;
 mod deform;
 mod environment;
 mod geometry;
+mod instances;
 mod post;
 mod texture;
 
 use std::cell::{Cell, RefCell};
+use std::ops::Range;
 use std::rc::{Rc, Weak};
 
 use glam::{Mat3, Quat, Vec2, Vec3};
@@ -16,6 +18,7 @@ use whisker_surface::{FrameInfo, Surface, WeakSurface};
 
 pub use environment::Environment;
 pub use geometry::Geometry;
+pub use instances::Instances;
 pub use post::{AmbientOcclusion, Bloom, DepthOfField, PostProcessing};
 pub use texture::{Texture, TextureError};
 
@@ -321,6 +324,8 @@ struct NodeInner {
     cast_shadow: Cell<bool>,
     receive_shadow: Cell<bool>,
     mesh: RefCell<Option<(Geometry, Material)>>,
+    mesh_instances: RefCell<Option<Instances>>,
+    visible_distance: Cell<Option<(f32, f32)>>,
     light: Cell<Option<Light>>,
     camera: Cell<Option<Projection>>,
     name: RefCell<Option<String>>,
@@ -366,6 +371,8 @@ impl Node {
                 cast_shadow: Cell::new(true),
                 receive_shadow: Cell::new(true),
                 mesh: RefCell::new(None),
+                mesh_instances: RefCell::new(None),
+                visible_distance: Cell::new(None),
                 light: Cell::new(None),
                 camera: Cell::new(None),
                 name: RefCell::new(None),
@@ -440,6 +447,22 @@ impl Node {
         self.inner.visible.get()
     }
 
+    /// Hides this node and everything under it while the camera's distance from the node's origin
+    /// is outside `range`.
+    pub fn set_visible_distance(&self, range: Option<Range<f32>>) {
+        self.inner
+            .visible_distance
+            .set(range.map(|range| (range.start, range.end)));
+        self.invalidate();
+    }
+
+    pub fn visible_distance(&self) -> Option<Range<f32>> {
+        self.inner
+            .visible_distance
+            .get()
+            .map(|(start, end)| start..end)
+    }
+
     /// Whether meshes in this subtree block shadowing lights; false anywhere above wins.
     pub fn set_cast_shadow(&self, cast: bool) {
         self.inner.cast_shadow.set(cast);
@@ -467,6 +490,16 @@ impl Node {
 
     pub fn mesh(&self) -> Option<(Geometry, Material)> {
         self.inner.mesh.borrow().clone()
+    }
+
+    /// Draws this node's mesh once per instance instead of once.
+    pub fn set_instances(&self, instances: Option<Instances>) {
+        *self.inner.mesh_instances.borrow_mut() = instances;
+        self.invalidate();
+    }
+
+    pub fn instances(&self) -> Option<Instances> {
+        self.inner.mesh_instances.borrow().clone()
     }
 
     pub fn set_light(&self, light: Option<Light>) {

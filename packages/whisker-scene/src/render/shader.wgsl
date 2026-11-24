@@ -1,5 +1,5 @@
 const MAX_DIRECTIONAL: u32 = 4u;
-const MAX_POINT: u32 = 16u;
+const MAX_POINT: u32 = 256u;
 const MAX_SHADOW_LAYERS: u32 = 16u;
 const PI: f32 = 3.14159265;
 
@@ -52,7 +52,6 @@ struct Frame {
     // The environment's irradiance over π as spherical harmonics, already scaled by its intensity.
     irradiance: array<vec4<f32>, 9>,
     directional: array<DirectionalLight, 4>,
-    point: array<PointLight, 16>,
     shadow_matrices: array<mat4x4<f32>, MAX_SHADOW_LAYERS>,
 };
 
@@ -75,6 +74,8 @@ struct Draw {
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(0) @binding(3) var environment_map: texture_cube<f32>;
 @group(0) @binding(4) var environment_sampler: sampler;
+// One point light per row, its fields in the row's four texels.
+@group(0) @binding(5) var point_lights: texture_2d<f32>;
 @group(1) @binding(0) var<uniform> draw: Draw;
 @group(2) @binding(0) var base_texture: texture_2d<f32>;
 @group(2) @binding(1) var metallic_roughness_texture: texture_2d<f32>;
@@ -89,6 +90,10 @@ struct VertexIn {
     @location(2) uv: vec2<f32>,
     @location(3) tangent: vec4<f32>,
     @location(4) color: vec4<f32>,
+    @location(5) instance_x: vec4<f32>,
+    @location(6) instance_y: vec4<f32>,
+    @location(7) instance_z: vec4<f32>,
+    @location(8) instance_w: vec4<f32>,
 };
 
 struct VertexOut {
@@ -100,16 +105,25 @@ struct VertexOut {
     @location(4) color: vec4<f32>,
 };
 
+// The cofactor matrix, which transforms normals like the inverse transpose up to a positive scale.
+fn normal_matrix(m: mat3x3<f32>) -> mat3x3<f32> {
+    let cofactor = mat3x3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
+    return cofactor * sign(determinant(m));
+}
+
 @vertex
 fn vs(in: VertexIn) -> VertexOut {
-    let world = draw.model * vec4(in.position, 1.0);
+    let instance = mat4x4(in.instance_x, in.instance_y, in.instance_z, in.instance_w);
+    let model = draw.model * instance;
+    let world = model * vec4(in.position, 1.0);
     var out: VertexOut;
     out.clip = frame.view_proj * world;
     out.world = world.xyz;
-    out.normal = (draw.normal * vec4(in.normal, 0.0)).xyz;
+    let instance_normal = normal_matrix(mat3x3(instance[0].xyz, instance[1].xyz, instance[2].xyz)) * in.normal;
+    out.normal = (draw.normal * vec4(instance_normal, 0.0)).xyz;
     let uv = vec3(in.uv, 1.0);
     out.uv = vec2(dot(draw.uv_x.xyz, uv), dot(draw.uv_y.xyz, uv));
-    out.tangent = vec4((draw.model * vec4(in.tangent.xyz, 0.0)).xyz, in.tangent.w);
+    out.tangent = vec4((model * vec4(in.tangent.xyz, 0.0)).xyz, in.tangent.w);
     out.color = in.color;
     return out;
 }
@@ -348,10 +362,20 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
                     lit = directional_shadow(light, in.world, geometric);
                 }
             } else {
-                let light = frame.point[i - directional];
-                let to_light = light.position.xyz - in.world;
+                let row = i32(i - directional);
+                let position = textureLoad(point_lights, vec2(0, row), 0);
+                let to_light = position.xyz - in.world;
                 let distance2 = max(dot(to_light, to_light), 1e-4);
-                let range = max(light.position.w, 1e-4);
+                let range = max(position.w, 1e-4);
+                if distance2 >= range * range {
+                    continue;
+                }
+                let light = PointLight(
+                    position,
+                    textureLoad(point_lights, vec2(1, row), 0),
+                    textureLoad(point_lights, vec2(2, row), 0),
+                    textureLoad(point_lights, vec2(3, row), 0),
+                );
                 let window = clamp(1.0 - pow(distance2 / (range * range), 2.0), 0.0, 1.0);
                 l = normalize(to_light);
                 let cone = clamp(dot(-l, light.direction.xyz) * light.direction.w + light.color.w, 0.0, 1.0);

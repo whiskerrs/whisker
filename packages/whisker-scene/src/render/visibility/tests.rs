@@ -38,6 +38,7 @@ fn draw(at: Vec3, color: Color) -> Draw {
         geometry: Geometry::cuboid(Vec3::ONE),
         material: Material::Unlit { color },
         deform: None,
+        instances: None,
         cast_shadow: true,
         receive_shadow: true,
     }
