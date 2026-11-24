@@ -52,6 +52,9 @@ pub(crate) struct SceneInner {
 
 pub(crate) type FrameCallback = Rc<RefCell<dyn FnMut(&FrameInfo)>>;
 
+/// Receives the view-projection matrix and logical size of every frame a surface draws.
+pub(crate) type DrawHook = Rc<dyn Fn(glam::Mat4, Vec2)>;
+
 impl Default for Scene {
     fn default() -> Self {
         Self::new()
@@ -144,9 +147,15 @@ impl Scene {
 
     /// A surface that draws this scene; several surfaces may show one scene.
     pub fn surface(&self) -> Surface {
+        self.surface_with(None)
+    }
+
+    pub(crate) fn surface_with(&self, on_draw: Option<DrawHook>) -> Surface {
         let scene = self.clone();
         let surface = whisker_wgpu::surface(move |gpu, format| {
-            crate::render::SceneRenderer::new(gpu, format, scene)
+            let mut renderer = crate::render::SceneRenderer::new(gpu, format, scene);
+            renderer.on_draw = on_draw;
+            renderer
         });
         if !self.inner.frame_callbacks.borrow().is_empty() {
             surface.set_continuous(true);

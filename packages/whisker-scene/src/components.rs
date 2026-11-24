@@ -1,14 +1,15 @@
 //! Components that build a [`Scene`] from `render!`.
 //!
-//! Only [`SceneView`] creates an element on screen; the others add a [`Node`] to the scene for as
-//! long as they stay mounted.
+//! Only [`SceneView`] and [`SceneAnchor`] create elements on screen; the others add a [`Node`] to
+//! the scene for as long as they stay mounted.
 
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 use std::time::Duration;
 
-use glam::{Quat, Vec2, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3};
+use whisker::css::PositionKind;
 use whisker::event::TouchEvent;
 use whisker::prelude::*;
 use whisker::runtime::view::{Element, create_phantom_element};
@@ -16,16 +17,18 @@ use whisker::{Callback, Children, Signal, Style};
 use whisker_surface::{FrameInfo, SurfaceView};
 
 use crate::core::{
-    Environment, Fog, FrameSubscription, Geometry, Instances, Light, Material, Node,
+    DrawHook, Environment, Fog, FrameSubscription, Geometry, Instances, Light, Material, Node,
     PostProcessing, Projection, Scene, Shadow, TapHandler, ToneMapping, Transform, rotation_toward,
 };
 use crate::model::{AnimationOptions, AnimationPlayer, Model};
-use crate::raycast::SceneHit;
+use crate::raycast::{SceneHit, project};
 
 #[derive(Clone)]
 struct SceneContext {
     scene: Scene,
     parent: Node,
+    /// The view-projection matrix and logical size of the enclosing view's last frame.
+    view: RwSignal<Option<(Mat4, Vec2)>>,
 }
 
 fn scene_context(component: &str) -> SceneContext {
@@ -111,7 +114,14 @@ pub fn scene_view(
     children: Children,
 ) -> Element {
     let scene = scene.clone().unwrap_or_default();
-    let surface = scene.surface();
+    let view = signal(None::<(Mat4, Vec2)>);
+    let on_draw: DrawHook = Rc::new(move |view_proj, size| {
+        let drawn = Some((view_proj, size));
+        if view.try_get_untracked().is_some_and(|last| last != drawn) {
+            view.try_set(drawn);
+        }
+    });
+    let surface = scene.surface_with(Some(on_draw));
     let picked = scene.clone();
     let tap = move |event: TouchEvent| {
         let (Some(offset), Some(size)) = (event.offset, event.size) else {
@@ -151,12 +161,52 @@ pub fn scene_view(
     provide_context(SceneContext {
         parent: scene.root(),
         scene,
+        view,
     });
     let fill: Style = Css::new().width(percent(100)).height(percent(100)).into();
     let projected = children.clone();
     render! {
         View(style: style.clone(), on_tap: tap) {
             SurfaceView(surface: surface, style: fill)
+            Fragment { { projected() } }
+        }
+    }
+}
+
+/// Places ordinary UI over the point `position` of the enclosing [`SceneView`], such as a label
+/// above an object.
+///
+/// `position` is in world space, even inside a [`Group`]. The children are laid out in an
+/// absolutely positioned box whose top-left corner sits on the projected point, drawn above the
+/// scene; the box is hidden while the point is behind the camera or outside its near and far
+/// range. It follows the camera, the view's size and `position` as they change, without making
+/// the scene draw continuously.
+///
+/// ```ignore
+/// SceneView(style: stage) {
+///     PerspectiveCamera(position: Vec3::new(0.0, 2.0, 6.0))
+///     SceneAnchor(position: Vec3::new(0.0, 2.0, 0.0)) {
+///         Text(value: "Keep")
+///     }
+/// }
+/// ```
+#[component]
+pub fn scene_anchor(position: Signal<Vec3>, children: Children) -> Element {
+    let view = scene_context("SceneAnchor").view;
+    let point = computed(move || {
+        view.get()
+            .and_then(|(view_proj, size)| project(view_proj, position.get(), size))
+    });
+    let style = Style::DynamicTyped(Rc::new(move || {
+        let anchor = Css::new().position(PositionKind::Absolute);
+        match point.get() {
+            Some(point) => anchor.left(px(point.x)).top(px(point.y)),
+            None => anchor.display_none(),
+        }
+    }));
+    let projected = children.clone();
+    render! {
+        View(style: style) {
             Fragment { { projected() } }
         }
     }
@@ -180,6 +230,7 @@ pub fn group(
     provide_context(SceneContext {
         scene: context.scene,
         parent: node,
+        view: context.view,
     });
     let projected = children.clone();
     render! { Fragment { { projected() } } }

@@ -10,7 +10,7 @@ mod visibility;
 use std::rc::Rc;
 use std::time::Duration;
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use whisker::css::Color;
 use whisker_surface::{FrameInfo, SurfaceSize};
 use whisker_wgpu::{Gpu, Renderer, wgpu};
@@ -19,7 +19,9 @@ pub(crate) use collect::{Collected, Draw, camera_for, collect, within_distance};
 pub(crate) use pipeline::{material_source, translucent};
 pub(crate) use resources::{DeformBuffer, GpuMesh, GpuTexture, InstanceBuffer};
 
-use crate::core::{CUBE_LEVELS, Environment, Fog, Scene, SceneInner, linear_rgba, srgb_rgba};
+use crate::core::{
+    CUBE_LEVELS, DrawHook, Environment, Fog, Scene, SceneInner, linear_rgba, srgb_rgba,
+};
 use collect::radiance;
 use pipeline::{
     DirectionalUniform, DrawUniform, FrameUniform, PipelineKey, PointUniform, Shared, double_sided,
@@ -60,6 +62,7 @@ pub(crate) struct SceneRenderer {
     draw_capacity: u64,
     staging: Vec<u8>,
     size: (u32, u32),
+    scale: f32,
     attachments: Option<Attachments>,
     materials: MaterialCache,
     shadow_maps: ShadowMaps,
@@ -74,6 +77,7 @@ pub(crate) struct SceneRenderer {
     /// Point and spot lights, one row of four texels each.
     light_texture: wgpu::Texture,
     light_view: wgpu::TextureView,
+    pub(crate) on_draw: Option<DrawHook>,
 }
 
 impl SceneRenderer {
@@ -159,6 +163,7 @@ impl SceneRenderer {
             draw_capacity: 16,
             staging: Vec::new(),
             size: (1, 1),
+            scale: 1.0,
             attachments: None,
             materials: MaterialCache::default(),
             shadow_maps,
@@ -172,6 +177,7 @@ impl SceneRenderer {
             started: None,
             light_texture,
             light_view,
+            on_draw: None,
         }
     }
 
@@ -253,6 +259,7 @@ impl SceneRenderer {
 impl Renderer for SceneRenderer {
     fn resize(&mut self, _gpu: &Gpu, size: SurfaceSize) {
         self.size = (size.width.max(1), size.height.max(1));
+        self.scale = if size.scale > 0.0 { size.scale } else { 1.0 };
     }
 
     fn render(&mut self, gpu: &Gpu, target: &wgpu::TextureView, frame: FrameInfo) {
@@ -274,6 +281,12 @@ impl Renderer for SceneRenderer {
         };
         let view = camera_world.inverse();
         let view_proj = projection.to_matrix(aspect) * view;
+        if let Some(on_draw) = &self.on_draw {
+            on_draw(
+                view_proj,
+                Vec2::new(self.size.0 as f32, self.size.1 as f32) / self.scale,
+            );
+        }
         let frustum = Frustum::new(view_proj);
         collected
             .point
