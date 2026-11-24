@@ -26,8 +26,8 @@ pub use components::{
     SceneView, use_frame, use_scene,
 };
 pub use core::{
-    AlphaMode, Geometry, Light, Material, Node, Projection, Scene, StandardMaterial, Texture,
-    TextureError, TextureTransform, Transform,
+    AlphaMode, Geometry, Light, Material, Node, Projection, Scene, Shadow, StandardMaterial,
+    Texture, TextureError, TextureTransform, Transform,
 };
 pub use model::{AnimationOptions, AnimationPlayer, Model, ModelError};
 pub use raycast::{Ray, SceneHit};

@@ -1,6 +1,6 @@
 //! The forward pass: its uniforms, bind group layouts and pipelines.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -8,6 +8,7 @@ use glam::Mat4;
 use whisker_wgpu::{Gpu, wgpu};
 
 use super::resources::{GpuTexture, upload_texture};
+use super::shadow::{MAX_SHADOW_LAYERS, SHADOW_FORMAT};
 use super::{DEPTH_FORMAT, MAX_DIRECTIONAL, MAX_POINT};
 use crate::core::{AlphaMode, Material, TextureTransform, linear_rgba, srgb_rgba};
 
@@ -16,10 +17,31 @@ use crate::core::{AlphaMode, Material, TextureTransform, linear_rgba, srgb_rgba}
 pub(super) struct FrameUniform {
     pub(super) view_proj: [[f32; 4]; 4],
     pub(super) camera_position: [f32; 4],
+    pub(super) camera_forward: [f32; 4],
     pub(super) ambient: [f32; 4],
     pub(super) counts: [u32; 4],
-    pub(super) directional: [[[f32; 4]; 2]; MAX_DIRECTIONAL],
-    pub(super) point: [[[f32; 4]; 2]; MAX_POINT],
+    pub(super) shadow: [f32; 4],
+    pub(super) directional: [DirectionalUniform; MAX_DIRECTIONAL],
+    pub(super) point: [PointUniform; MAX_POINT],
+    pub(super) shadow_matrices: [[[f32; 4]; 4]; MAX_SHADOW_LAYERS],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub(super) struct DirectionalUniform {
+    pub(super) direction: [f32; 4],
+    pub(super) color: [f32; 4],
+    pub(super) shadow: [f32; 4],
+    pub(super) splits: [f32; 4],
+    pub(super) texel: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub(super) struct PointUniform {
+    pub(super) position: [f32; 4],
+    pub(super) color: [f32; 4],
+    pub(super) shadow: [f32; 4],
 }
 
 #[repr(C)]
@@ -45,6 +67,11 @@ pub(super) struct Shared {
     pub(super) white: GpuTexture,
     pub(super) flat_normal: GpuTexture,
     pub(super) pipelines: RefCell<HashMap<PipelineKey, wgpu::RenderPipeline>>,
+    pub(super) shadow_view_layout: wgpu::BindGroupLayout,
+    pub(super) shadow_sampler: wgpu::Sampler,
+    shadow_pipeline_layout: wgpu::PipelineLayout,
+    shadow_shader: wgpu::ShaderModule,
+    shadow_pipeline: OnceCell<wgpu::RenderPipeline>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -87,7 +114,25 @@ impl Shared {
         };
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("whisker-scene frame"),
-            entries: &[uniform(false, size_of::<FrameUniform>())],
+            entries: &[
+                uniform(false, size_of::<FrameUniform>()),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
         });
         let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("whisker-scene draw"),
@@ -137,6 +182,32 @@ impl Shared {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
+        let shadow_view_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("whisker-scene shadow view"),
+                entries: &[uniform(true, size_of::<[[f32; 4]; 4]>())],
+            });
+        let shadow_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("whisker-scene shadow"),
+                bind_group_layouts: &[
+                    Some(&shadow_view_layout),
+                    Some(&draw_layout),
+                    Some(&texture_layout),
+                ],
+                immediate_size: 0,
+            });
+        let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("whisker-scene shadow"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shadow.wgsl").into()),
+        });
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("whisker-scene shadow"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
         let white = upload_texture(gpu, 1, 1, &[255; 4], false);
         let flat_normal = upload_texture(gpu, 1, 1, &[128, 128, 255, 255], false);
         Shared {
@@ -149,7 +220,50 @@ impl Shared {
             white,
             flat_normal,
             pipelines: RefCell::new(HashMap::new()),
+            shadow_view_layout,
+            shadow_sampler,
+            shadow_pipeline_layout,
+            shadow_shader,
+            shadow_pipeline: OnceCell::new(),
         }
+    }
+
+    /// Renders casters' depth from a light, culling no faces so open and inside-out meshes cast too.
+    pub(super) fn shadow_pipeline(&self, gpu: &Gpu) -> &wgpu::RenderPipeline {
+        self.shadow_pipeline.get_or_init(|| {
+            gpu.device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("whisker-scene shadow"),
+                    layout: Some(&self.shadow_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &self.shadow_shader,
+                        entry_point: Some("vs"),
+                        compilation_options: Default::default(),
+                        buffers: &[Some(vertex_layout())],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &self.shadow_shader,
+                        entry_point: Some("fs"),
+                        compilation_options: Default::default(),
+                        targets: &[],
+                    }),
+                    primitive: Default::default(),
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: SHADOW_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        stencil: Default::default(),
+                        bias: wgpu::DepthBiasState {
+                            constant: 2,
+                            slope_scale: 2.0,
+                            clamp: 0.0,
+                        },
+                    }),
+                    multisample: Default::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+        })
     }
 
     pub(super) fn pipeline(&self, gpu: &Gpu, key: PipelineKey) -> wgpu::RenderPipeline {
@@ -172,17 +286,7 @@ impl Shared {
                             module: &self.shader,
                             entry_point: Some("vs"),
                             compilation_options: Default::default(),
-                            buffers: &[Some(wgpu::VertexBufferLayout {
-                                array_stride: size_of::<crate::core::Vertex>() as u64,
-                                step_mode: wgpu::VertexStepMode::Vertex,
-                                attributes: &wgpu::vertex_attr_array![
-                                    0 => Float32x3,
-                                    1 => Float32x3,
-                                    2 => Float32x2,
-                                    3 => Float32x4,
-                                    4 => Float32x4,
-                                ],
-                            })],
+                            buffers: &[Some(vertex_layout())],
                         },
                         fragment: Some(wgpu::FragmentState {
                             module: &self.shader,
@@ -222,6 +326,21 @@ impl Shared {
     }
 }
 
+fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x3,
+        2 => Float32x2,
+        3 => Float32x4,
+        4 => Float32x4,
+    ];
+    wgpu::VertexBufferLayout {
+        array_stride: size_of::<crate::core::Vertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &ATTRIBUTES,
+    }
+}
+
 pub(super) fn draw_buffer(
     gpu: &Gpu,
     shared: &Shared,
@@ -249,7 +368,7 @@ pub(super) fn draw_buffer(
     (buffer, bind_group)
 }
 
-pub(super) fn draw_uniform(model: Mat4, material: &Material) -> DrawUniform {
+pub(super) fn draw_uniform(model: Mat4, material: &Material, receive_shadow: bool) -> DrawUniform {
     let normal = model.inverse().transpose();
     let identity = TextureTransform::default().rows();
     let (base_color, emissive, params, uv_rows, alpha) = match material {
@@ -277,6 +396,8 @@ pub(super) fn draw_uniform(model: Mat4, material: &Material) -> DrawUniform {
             )
         }
     };
+    let mut alpha = alpha;
+    alpha[2] = f32::from(u8::from(receive_shadow));
     DrawUniform {
         model: model.to_cols_array_2d(),
         normal: normal.to_cols_array_2d(),

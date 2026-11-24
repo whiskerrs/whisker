@@ -3,6 +3,7 @@
 mod collect;
 mod pipeline;
 mod resources;
+mod shadow;
 mod visibility;
 
 use std::rc::Rc;
@@ -19,9 +20,11 @@ pub(crate) use resources::{DeformBuffer, GpuMesh, GpuTexture};
 use crate::core::{Scene, linear_rgba, srgb_rgba};
 use collect::{pick_camera, radiance};
 use pipeline::{
-    DrawUniform, FrameUniform, PipelineKey, Shared, double_sided, draw_buffer, draw_uniform, shared,
+    DirectionalUniform, DrawUniform, FrameUniform, PipelineKey, PointUniform, Shared, double_sided,
+    draw_buffer, draw_uniform, shared,
 };
 use resources::{MaterialCache, deformed_vertices, mesh};
+use shadow::{Eye, MAX_SHADOW_LAYERS, ShadowMaps, ShadowPlan};
 use visibility::{Frustum, Ordered, draw_order};
 
 const MAX_DIRECTIONAL: usize = 4;
@@ -51,6 +54,10 @@ pub(crate) struct SceneRenderer {
     size: (u32, u32),
     attachments: Option<Attachments>,
     materials: MaterialCache,
+    shadow_maps: ShadowMaps,
+    shadow_view_buffer: wgpu::Buffer,
+    shadow_view_bind_group: wgpu::BindGroup,
+    shadow_view_stride: u64,
 }
 
 impl SceneRenderer {
@@ -73,17 +80,30 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let frame_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("whisker-scene frame"),
-            layout: &shared.frame_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: frame_buffer.as_entire_binding(),
-            }],
-        });
+        let shadow_maps = ShadowMaps::new(gpu, 1, 1);
+        let frame_bind_group = frame_bind_group(gpu, &shared, &frame_buffer, &shadow_maps);
         let alignment = u64::from(gpu.device.limits().min_uniform_buffer_offset_alignment);
         let draw_stride = (size_of::<DrawUniform>() as u64).next_multiple_of(alignment);
         let (draw_buffer, draw_bind_group) = draw_buffer(gpu, &shared, draw_stride, 16);
+        let shadow_view_stride = (size_of::<Mat4>() as u64).next_multiple_of(alignment);
+        let shadow_view_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("whisker-scene shadow views"),
+            size: shadow_view_stride * MAX_SHADOW_LAYERS as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let shadow_view_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("whisker-scene shadow views"),
+            layout: &shared.shadow_view_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &shadow_view_buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(size_of::<Mat4>() as u64),
+                }),
+            }],
+        });
         SceneRenderer {
             scene,
             shared,
@@ -100,7 +120,20 @@ impl SceneRenderer {
             size: (1, 1),
             attachments: None,
             materials: MaterialCache::default(),
+            shadow_maps,
+            shadow_view_buffer,
+            shadow_view_bind_group,
+            shadow_view_stride,
         }
+    }
+
+    fn prepare_shadow_maps(&mut self, gpu: &Gpu, plan: &ShadowPlan) {
+        if self.shadow_maps.fits(plan) {
+            return;
+        }
+        self.shadow_maps = ShadowMaps::new(gpu, plan.size, plan.layers.len());
+        self.frame_bind_group =
+            frame_bind_group(gpu, &self.shared, &self.frame_buffer, &self.shadow_maps);
     }
 
     fn prepare_attachments(&mut self, gpu: &Gpu) {
@@ -158,17 +191,22 @@ impl Renderer for SceneRenderer {
         }
         let (camera_world, projection) = pick_camera(inner.active_camera(), &collected.cameras);
         let aspect = self.size.0 as f32 / self.size.1 as f32;
+        let eye = Eye {
+            world: camera_world,
+            projection,
+            aspect,
+        };
+        let plan = shadow::plan(
+            &collected,
+            eye,
+            gpu.device.limits().max_texture_dimension_2d,
+        );
+        self.prepare_shadow_maps(gpu, &plan);
         let view = camera_world.inverse();
         let view_proj = projection.to_matrix(aspect) * view;
-        self.write_frame_uniform(
-            gpu,
-            &collected,
-            view_proj,
-            camera_world.transform_point3(Vec3::ZERO),
-            inner.ambient(),
-        );
+        self.write_frame_uniform(gpu, &collected, &plan, view_proj, eye, inner.ambient());
         let order = draw_order(&collected.draws, view, &Frustum::new(view_proj));
-        self.write_draw_uniforms(gpu, &collected.draws, &order);
+        self.write_draw_uniforms(gpu, &collected.draws);
 
         let clear = self.clear_color(inner.background());
         self.prepare_attachments(gpu);
@@ -177,6 +215,7 @@ impl Renderer for SceneRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("whisker-scene"),
             });
+        self.encode_shadows(gpu, &mut encoder, &collected.draws, &plan);
         self.encode_forward(gpu, &mut encoder, target, &collected.draws, &order, clear);
         gpu.queue.submit([encoder.finish()]);
         self.materials.sweep();
@@ -188,13 +227,24 @@ impl SceneRenderer {
         &self,
         gpu: &Gpu,
         collected: &Collected,
+        plan: &ShadowPlan,
         view_proj: Mat4,
-        camera_position: Vec3,
+        eye: Eye,
         (ambient_color, ambient_intensity): (Color, f32),
     ) {
         let mut uniform = FrameUniform {
             view_proj: view_proj.to_cols_array_2d(),
-            camera_position: camera_position.extend(1.0).to_array(),
+            camera_position: eye
+                .world
+                .transform_point3(Vec3::ZERO)
+                .extend(1.0)
+                .to_array(),
+            camera_forward: eye
+                .world
+                .transform_vector3(Vec3::NEG_Z)
+                .normalize_or(Vec3::NEG_Z)
+                .extend(0.0)
+                .to_array(),
             ambient: radiance(ambient_color, ambient_intensity),
             counts: [
                 collected.directional.len().min(MAX_DIRECTIONAL) as u32,
@@ -202,22 +252,53 @@ impl SceneRenderer {
                 u32::from(self.encode_srgb),
                 0,
             ],
-            directional: [[[0.0; 4]; 2]; MAX_DIRECTIONAL],
-            point: [[[0.0; 4]; 2]; MAX_POINT],
+            shadow: [1.0 / self.shadow_maps.size as f32, 0.0, 0.0, 0.0],
+            directional: [DirectionalUniform::default(); MAX_DIRECTIONAL],
+            point: [PointUniform::default(); MAX_POINT],
+            shadow_matrices: [[[0.0; 4]; 4]; MAX_SHADOW_LAYERS],
         };
-        for (slot, (toward, color)) in uniform.directional.iter_mut().zip(&collected.directional) {
-            *slot = [toward.extend(0.0).to_array(), *color];
+        for (index, light) in collected
+            .directional
+            .iter()
+            .take(MAX_DIRECTIONAL)
+            .enumerate()
+        {
+            let cascades = plan.directional.get(index).and_then(Option::as_ref);
+            uniform.directional[index] = DirectionalUniform {
+                direction: light.toward.extend(0.0).to_array(),
+                color: light.radiance,
+                shadow: cascades.map_or([-1.0, 0.0, 0.0, 0.0], |c| {
+                    [
+                        c.first as f32,
+                        c.count as f32,
+                        c.shadow.bias,
+                        c.shadow.softness,
+                    ]
+                }),
+                splits: cascades.map_or([0.0; 4], |c| c.splits),
+                texel: cascades.map_or([0.0; 4], |c| c.texel),
+            };
         }
-        for (slot, (position, range, color)) in uniform.point.iter_mut().zip(&collected.point) {
-            *slot = [position.extend(*range).to_array(), *color];
+        for (index, light) in collected.point.iter().take(MAX_POINT).enumerate() {
+            let faces = plan.point.get(index).and_then(Option::as_ref);
+            uniform.point[index] = PointUniform {
+                position: light.position.extend(light.range).to_array(),
+                color: light.radiance,
+                shadow: faces.map_or([-1.0, 0.0, 0.0, 0.0], |f| {
+                    [f.first as f32, 0.0, f.shadow.bias, f.shadow.softness]
+                }),
+            };
+        }
+        for (slot, matrix) in uniform.shadow_matrices.iter_mut().zip(&plan.layers) {
+            *slot = matrix.to_cols_array_2d();
         }
         gpu.queue
             .write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&uniform));
     }
 
-    /// Writes one uniform per ordered draw, at the dynamic offset of its slot in `order`.
-    fn write_draw_uniforms(&mut self, gpu: &Gpu, draws: &[Draw], order: &[Ordered]) {
-        let count = order.len() as u64;
+    /// Writes one uniform per draw, at the dynamic offset of the draw's index.
+    fn write_draw_uniforms(&mut self, gpu: &Gpu, draws: &[Draw]) {
+        let count = draws.len() as u64;
         if count > self.draw_capacity {
             let capacity = count.next_power_of_two();
             (self.draw_buffer, self.draw_bind_group) =
@@ -226,10 +307,9 @@ impl SceneRenderer {
         }
         self.staging.clear();
         self.staging.resize((self.draw_stride * count) as usize, 0);
-        for (slot, ordered) in order.iter().enumerate() {
-            let draw = &draws[ordered.index];
-            let offset = slot * self.draw_stride as usize;
-            let uniform = draw_uniform(draw.model, &draw.material);
+        for (index, draw) in draws.iter().enumerate() {
+            let offset = index * self.draw_stride as usize;
+            let uniform = draw_uniform(draw.model, &draw.material, draw.receive_shadow);
             let bytes = bytemuck::bytes_of(&uniform);
             self.staging[offset..offset + bytes.len()].copy_from_slice(bytes);
         }
@@ -292,12 +372,13 @@ impl SceneRenderer {
             ..Default::default()
         });
         pass.set_bind_group(0, &self.frame_bind_group, &[]);
-        for (slot, ordered) in order.iter().enumerate() {
+        for ordered in order {
             let Draw {
                 model,
                 geometry,
                 material,
                 deform,
+                ..
             } = &draws[ordered.index];
             let mesh = mesh(gpu, geometry);
             if mesh.count == 0 {
@@ -314,7 +395,7 @@ impl SceneRenderer {
                     mirrored: model.determinant() < 0.0,
                 },
             ));
-            let offset = (slot as u64 * self.draw_stride) as u32;
+            let offset = (ordered.index as u64 * self.draw_stride) as u32;
             pass.set_bind_group(1, &self.draw_bind_group, &[offset]);
             pass.set_bind_group(2, self.materials.bind_group(gpu, &shared, material), &[]);
             match &deformed {
@@ -325,6 +406,32 @@ impl SceneRenderer {
             pass.draw_indexed(0..mesh.count, 0, 0..1);
         }
     }
+}
+
+fn frame_bind_group(
+    gpu: &Gpu,
+    shared: &Shared,
+    buffer: &wgpu::Buffer,
+    shadow_maps: &ShadowMaps,
+) -> wgpu::BindGroup {
+    gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("whisker-scene frame"),
+        layout: &shared.frame_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&shadow_maps.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&shared.shadow_sampler),
+            },
+        ],
+    })
 }
 
 #[cfg(test)]

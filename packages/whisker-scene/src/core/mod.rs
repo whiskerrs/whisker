@@ -214,6 +214,8 @@ struct NodeInner {
     scene: RefCell<Weak<SceneInner>>,
     transform: Cell<Transform>,
     visible: Cell<bool>,
+    cast_shadow: Cell<bool>,
+    receive_shadow: Cell<bool>,
     mesh: RefCell<Option<(Geometry, Material)>>,
     light: Cell<Option<Light>>,
     camera: Cell<Option<Projection>>,
@@ -257,6 +259,8 @@ impl Node {
                 scene: RefCell::new(Weak::new()),
                 transform: Cell::new(Transform::IDENTITY),
                 visible: Cell::new(true),
+                cast_shadow: Cell::new(true),
+                receive_shadow: Cell::new(true),
                 mesh: RefCell::new(None),
                 light: Cell::new(None),
                 camera: Cell::new(None),
@@ -330,6 +334,26 @@ impl Node {
 
     pub fn visible(&self) -> bool {
         self.inner.visible.get()
+    }
+
+    /// Whether meshes in this subtree block shadowing lights; false anywhere above wins.
+    pub fn set_cast_shadow(&self, cast: bool) {
+        self.inner.cast_shadow.set(cast);
+        self.invalidate();
+    }
+
+    pub fn cast_shadow(&self) -> bool {
+        self.inner.cast_shadow.get()
+    }
+
+    /// Whether meshes in this subtree are darkened by shadows; false anywhere above wins.
+    pub fn set_receive_shadow(&self, receive: bool) {
+        self.inner.receive_shadow.set(receive);
+        self.invalidate();
+    }
+
+    pub fn receive_shadow(&self) -> bool {
+        self.inner.receive_shadow.get()
     }
 
     pub fn set_mesh(&self, mesh: Option<(Geometry, Material)>) {
@@ -512,6 +536,7 @@ pub(crate) fn rotation_toward(direction: Vec3, up: Vec3) -> Quat {
 
 /// How a mesh's surface responds to light.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Material {
     /// A flat color that ignores lights.
     Unlit {
@@ -616,18 +641,52 @@ impl TextureTransform {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Light {
     /// Parallel rays along the node's -Z axis, like sunlight.
-    Directional { color: Color, intensity: f32 },
+    Directional {
+        color: Color,
+        intensity: f32,
+        shadow: Option<Shadow>,
+    },
     /// Light from the node's position that fades out by `range`.
     Point {
         color: Color,
         intensity: f32,
         range: f32,
+        shadow: Option<Shadow>,
     },
 }
 
+/// Shadows a light casts from meshes onto other meshes.
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shadow {
+    /// Width and height in texels of each shadow map; a point light renders six.
+    pub map_size: u32,
+    /// How many maps, `1..=4`, split a directional light's `distance`, finest nearest the camera.
+    pub cascades: u32,
+    /// How far from the camera a directional light's shadows reach.
+    pub distance: f32,
+    /// Blur radius of shadow edges in texels.
+    pub softness: f32,
+    /// How far, in texels, surfaces are pushed toward the light before testing, against acne.
+    pub bias: f32,
+}
+
+impl Default for Shadow {
+    fn default() -> Self {
+        Shadow {
+            map_size: 1024,
+            cascades: 3,
+            distance: 50.0,
+            softness: 1.0,
+            bias: 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Projection {
     /// `fov_y` is the vertical field of view in radians.
     Perspective { fov_y: f32, near: f32, far: f32 },
