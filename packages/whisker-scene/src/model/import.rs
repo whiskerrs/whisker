@@ -226,7 +226,11 @@ fn light(light: gltf::khr_lights_punctual::Light<'_>) -> Light {
     let color = linear_color([r, g, b, 1.0]);
     let intensity = light.intensity();
     match light.kind() {
-        Kind::Directional => Light::Directional { color, intensity },
+        Kind::Directional => Light::Directional {
+            color,
+            intensity,
+            shadow: None,
+        },
         // Spot cones are not modeled; their light spreads like a point light's.
         Kind::Point | Kind::Spot { .. } => Light::Point {
             color,
@@ -235,6 +239,7 @@ fn light(light: gltf::khr_lights_punctual::Light<'_>) -> Light {
             range: light
                 .range()
                 .unwrap_or_else(|| (intensity * 2000.0).sqrt().max(1.0)),
+            shadow: None,
         },
     }
 }

@@ -15,8 +15,8 @@ use whisker::{Callback, Children, Signal, Style};
 use whisker_surface::{FrameInfo, SurfaceView};
 
 use crate::core::{
-    FrameSubscription, Geometry, Light, Material, Node, Projection, Scene, TapHandler, Transform,
-    rotation_toward,
+    FrameSubscription, Geometry, Light, Material, Node, Projection, Scene, Shadow, TapHandler,
+    Transform, rotation_toward,
 };
 use crate::model::{AnimationOptions, AnimationPlayer, Model};
 use crate::raycast::SceneHit;
@@ -166,15 +166,25 @@ pub fn mesh(
     #[prop(default = Quat::IDENTITY.into())] rotation: Signal<Quat>,
     #[prop(default = Vec3::ONE.into())] scale: Signal<Vec3>,
     #[prop(default = true.into())] visible: Signal<bool>,
+    #[prop(default = true.into())] cast_shadow: Signal<bool>,
+    #[prop(default = true.into())] receive_shadow: Signal<bool>,
     /// Called when a tap on the enclosing `SceneView` hits this mesh first.
     on_tap: Option<Callback<SceneHit>>,
 ) -> Element {
     let (_, node) = mount_node("Mesh");
     bind_transform(&node, position, rotation, scale, visible);
+    bind_shadow(&node, cast_shadow, receive_shadow);
     bind_tap(&node, on_tap);
     let target = node.clone();
     effect(move || target.set_mesh(Some((geometry.get(), material.get()))));
     create_phantom_element()
+}
+
+fn bind_shadow(node: &Node, cast: Signal<bool>, receive: Signal<bool>) {
+    let target = node.clone();
+    effect(move || target.set_cast_shadow(cast.get()));
+    let target = node.clone();
+    effect(move || target.set_receive_shadow(receive.get()));
 }
 
 fn bind_tap(node: &Node, on_tap: Option<Callback<SceneHit>>) {
@@ -201,12 +211,15 @@ pub fn model_view(
     #[prop(default = AnimationOptions::default().into())] animation_options: Signal<
         AnimationOptions,
     >,
+    #[prop(default = true.into())] cast_shadow: Signal<bool>,
+    #[prop(default = true.into())] receive_shadow: Signal<bool>,
     /// Called when a tap on the enclosing `SceneView` hits a part of this model first;
     /// [`SceneHit::node`] is the part.
     on_tap: Option<Callback<SceneHit>>,
 ) -> Element {
     let (context, node) = mount_node("ModelView");
     bind_transform(&node, position, rotation, scale, visible);
+    bind_shadow(&node, cast_shadow, receive_shadow);
     bind_tap(&node, on_tap);
     let player = signal(None::<AnimationPlayer>);
     let parent = node.clone();
@@ -316,6 +329,7 @@ pub fn directional_light(
     #[prop(default = Color::rgb(255, 255, 255).into())] color: Signal<Color>,
     #[prop(default = 1.0.into())] intensity: Signal<f32>,
     #[prop(default = Vec3::new(-0.5, -1.0, -0.3).into())] direction: Signal<Vec3>,
+    #[prop(default = None.into())] shadow: Signal<Option<Shadow>>,
 ) -> Element {
     let (_, node) = mount_node("DirectionalLight");
     let target = node.clone();
@@ -329,6 +343,7 @@ pub fn directional_light(
         node.set_light(Some(Light::Directional {
             color: color.get(),
             intensity: intensity.get(),
+            shadow: shadow.get(),
         }));
     });
     create_phantom_element()
@@ -341,6 +356,9 @@ pub fn point_light(
     #[prop(default = 1.0.into())] intensity: Signal<f32>,
     #[prop(default = 10.0.into())] range: Signal<f32>,
     #[prop(default = Vec3::ZERO.into())] position: Signal<Vec3>,
+    /// Rendered as six maps, so it costs six times a directional light's single cascade.
+    #[prop(default = None.into())]
+    shadow: Signal<Option<Shadow>>,
 ) -> Element {
     let (_, node) = mount_node("PointLight");
     let target = node.clone();
@@ -350,6 +368,7 @@ pub fn point_light(
             color: color.get(),
             intensity: intensity.get(),
             range: range.get(),
+            shadow: shadow.get(),
         }));
     });
     create_phantom_element()

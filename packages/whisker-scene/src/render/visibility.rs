@@ -32,17 +32,22 @@ impl Frustum {
     }
 }
 
-fn visible(draw: &Draw, frustum: &Frustum) -> bool {
+/// A sphere around the draw in world space, or `None` when it cannot be bounded.
+pub(crate) fn world_sphere(draw: &Draw) -> Option<(Vec3, f32)> {
     // Skinned and morphed vertices move away from the rest pose the bounds describe.
     if draw.deform.is_some() {
-        return true;
+        return None;
     }
     let (center, radius) = draw.geometry.bounds();
     let scale = [draw.model.x_axis, draw.model.y_axis, draw.model.z_axis]
         .iter()
         .map(|axis| axis.xyz().length())
         .fold(0.0, f32::max);
-    frustum.intersects_sphere(draw.model.transform_point3(center), radius * scale)
+    Some((draw.model.transform_point3(center), radius * scale))
+}
+
+pub(crate) fn visible(draw: &Draw, frustum: &Frustum) -> bool {
+    world_sphere(draw).is_none_or(|(center, radius)| frustum.intersects_sphere(center, radius))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

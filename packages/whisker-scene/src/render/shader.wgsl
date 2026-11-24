@@ -1,27 +1,40 @@
 const MAX_DIRECTIONAL: u32 = 4u;
 const MAX_POINT: u32 = 16u;
+const MAX_SHADOW_LAYERS: u32 = 16u;
 const PI: f32 = 3.14159265;
 
 struct DirectionalLight {
     // Unit vector from the surface toward the light.
     direction: vec4<f32>,
     color: vec4<f32>,
+    // x first shadow layer or -1, y cascade count, z bias, w softness.
+    shadow: vec4<f32>,
+    // The view depth each cascade reaches.
+    splits: vec4<f32>,
+    // World size of a texel in each cascade.
+    texel: vec4<f32>,
 };
 
 struct PointLight {
     // xyz position, w range.
     position: vec4<f32>,
     color: vec4<f32>,
+    // x first of six shadow layers or -1, z bias, w softness.
+    shadow: vec4<f32>,
 };
 
 struct Frame {
     view_proj: mat4x4<f32>,
     camera_position: vec4<f32>,
+    camera_forward: vec4<f32>,
     ambient: vec4<f32>,
     // x directional count, y point count, z 1 when the target needs sRGB-encoded output.
     counts: vec4<u32>,
+    // x 1 / shadow map size.
+    shadow: vec4<f32>,
     directional: array<DirectionalLight, 4>,
     point: array<PointLight, 16>,
+    shadow_matrices: array<mat4x4<f32>, MAX_SHADOW_LAYERS>,
 };
 
 struct Draw {
@@ -34,11 +47,13 @@ struct Draw {
     // Rows of the 2×3 texture-coordinate transform.
     uv_x: vec4<f32>,
     uv_y: vec4<f32>,
-    // x 0 opaque, 1 mask, 2 blend; y mask cutoff.
+    // x 0 opaque, 1 mask, 2 blend; y mask cutoff; z 1 when shadows darken it.
     alpha: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
+@group(0) @binding(1) var shadow_maps: texture_depth_2d_array;
+@group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(1) @binding(0) var<uniform> draw: Draw;
 @group(2) @binding(0) var base_texture: texture_2d<f32>;
 @group(2) @binding(1) var metallic_roughness_texture: texture_2d<f32>;
@@ -110,6 +125,70 @@ fn shade(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, radiance: vec3<f32>, base: ve
     return (diffuse + specular) * radiance * (PI * n_dot_l);
 }
 
+// The lit fraction of a 3×3 neighborhood, each tap itself a filtered 2×2 comparison.
+fn filtered_shadow(layer: i32, clip: vec3<f32>, softness: f32) -> f32 {
+    let uv = vec2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+    if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) || clip.z > 1.0 {
+        return 1.0;
+    }
+    let step = frame.shadow.x * softness;
+    var lit = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let offset = vec2(f32(x), f32(y)) * step;
+            lit += textureSampleCompareLevel(shadow_maps, shadow_sampler, uv + offset, layer, clip.z);
+        }
+    }
+    return lit / 9.0;
+}
+
+fn directional_shadow(light: DirectionalLight, world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let count = i32(light.shadow.y);
+    if light.shadow.x < 0.0 || count == 0 {
+        return 1.0;
+    }
+    let depth = dot(world - frame.camera_position.xyz, frame.camera_forward.xyz);
+    var cascade = count;
+    for (var c = 0; c < count; c++) {
+        if depth < light.splits[c] {
+            cascade = c;
+            break;
+        }
+    }
+    if cascade == count {
+        return 1.0;
+    }
+    let offset = normal * light.texel[cascade] * light.shadow.z;
+    let layer = i32(light.shadow.x) + cascade;
+    let clip = frame.shadow_matrices[layer] * vec4(world + offset, 1.0);
+    let lit = filtered_shadow(layer, clip.xyz, light.shadow.w);
+    let reach = light.splits[count - 1];
+    let fade = clamp((reach - depth) / (reach * 0.1), 0.0, 1.0);
+    return mix(1.0, lit, fade);
+}
+
+fn point_shadow(light: PointLight, world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if light.shadow.x < 0.0 {
+        return 1.0;
+    }
+    let distance = length(world - light.position.xyz);
+    // A face spans 90°, so a texel at this distance is 2·distance / size wide.
+    let offset = normal * 2.0 * distance * frame.shadow.x * light.shadow.z;
+    let v = world + offset - light.position.xyz;
+    let a = abs(v);
+    var face: i32;
+    if a.x >= a.y && a.x >= a.z {
+        face = select(1, 0, v.x > 0.0);
+    } else if a.y >= a.z {
+        face = select(3, 2, v.y > 0.0);
+    } else {
+        face = select(5, 4, v.z > 0.0);
+    }
+    let layer = i32(light.shadow.x) + face;
+    let clip = frame.shadow_matrices[layer] * vec4(world + offset, 1.0);
+    return filtered_shadow(layer, clip.xyz / clip.w, light.shadow.w);
+}
+
 fn encode_srgb(linear: vec3<f32>) -> vec3<f32> {
     let low = linear * 12.92;
     let high = 1.055 * pow(linear, vec3(1.0 / 2.4)) - 0.055;
@@ -152,16 +231,21 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         let metallic = clamp(draw.params.x * metal_rough.b, 0.0, 1.0);
         let roughness = clamp(draw.params.y * metal_rough.g, 0.0, 1.0);
         color = frame.ambient.rgb * base.rgb * occlusion + draw.emissive.rgb * glow;
+        let receive = draw.alpha.z > 0.5;
         let directional = min(frame.counts.x, MAX_DIRECTIONAL);
         let lights = directional + min(frame.counts.y, MAX_POINT);
         // Calling shade() from two loops loses the device on WARP, Windows' software adapter.
         for (var i = 0u; i < lights; i++) {
             var l: vec3<f32>;
             var radiance: vec3<f32>;
+            var lit = 1.0;
             if i < directional {
                 let light = frame.directional[i];
                 l = light.direction.xyz;
                 radiance = light.color.rgb;
+                if receive {
+                    lit = directional_shadow(light, in.world, geometric);
+                }
             } else {
                 let light = frame.point[i - directional];
                 let to_light = light.position.xyz - in.world;
@@ -170,8 +254,11 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
                 let window = clamp(1.0 - pow(distance2 / (range * range), 2.0), 0.0, 1.0);
                 l = normalize(to_light);
                 radiance = light.color.rgb * window * window / max(distance2, 0.01);
+                if receive {
+                    lit = point_shadow(light, in.world, geometric);
+                }
             }
-            color += shade(n, v, l, radiance, base.rgb, metallic, roughness);
+            color += shade(n, v, l, radiance * lit, base.rgb, metallic, roughness);
         }
     }
     color = clamp(color, vec3(0.0), vec3(1.0));

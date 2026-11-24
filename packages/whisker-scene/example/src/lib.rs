@@ -9,7 +9,7 @@ use whisker::runtime::view::Element;
 use whisker_scene::math::{Quat, Vec2, Vec3};
 use whisker_scene::{
     AmbientLight, DirectionalLight, Geometry, Group, Material, Mesh, PerspectiveCamera, PointLight,
-    SceneView, StandardMaterial, use_frame,
+    SceneView, Shadow, StandardMaterial, use_frame,
 };
 
 fn standard(color: Color, metallic: f32, roughness: f32) -> Material {
@@ -94,7 +94,7 @@ pub fn app() -> Element {
             SceneView(style: stage, background: Color::hex(0x1b1d24)) {
                 PerspectiveCamera(position: Vec3::new(0.0, 2.2, 4.5), look_at: Vec3::new(0.0, 0.3, 0.0))
                 AmbientLight(intensity: 0.15)
-                DirectionalLight(intensity: 0.9, direction: Vec3::new(-0.4, -1.0, -0.6))
+                DirectionalLight(intensity: 0.9, direction: Vec3::new(-0.4, -1.0, -0.6), shadow: Some(Shadow::default()))
                 OrbitingLight()
                 Mesh(
                     geometry: floor,

@@ -4,7 +4,7 @@ use glam::{Mat4, Vec3};
 use std::rc::Rc;
 
 use crate::core::{
-    Deform, Geometry, Light, Material, Node, Projection, Scene, Transform, linear_rgba,
+    Deform, Geometry, Light, Material, Node, Projection, Scene, Shadow, Transform, linear_rgba,
 };
 
 /// One mesh to draw.
@@ -13,28 +13,45 @@ pub(crate) struct Draw {
     pub(crate) geometry: Geometry,
     pub(crate) material: Material,
     pub(crate) deform: Option<Rc<Deform>>,
+    pub(crate) cast_shadow: bool,
+    pub(crate) receive_shadow: bool,
+}
+
+pub(crate) struct DirectionalLight {
+    /// Unit vector from a surface toward the light.
+    pub(crate) toward: Vec3,
+    pub(crate) radiance: [f32; 4],
+    pub(crate) shadow: Option<Shadow>,
+}
+
+pub(crate) struct PointLight {
+    pub(crate) position: Vec3,
+    pub(crate) range: f32,
+    pub(crate) radiance: [f32; 4],
+    pub(crate) shadow: Option<Shadow>,
 }
 
 /// What one frame draws, gathered from the node tree.
 #[derive(Default)]
 pub(crate) struct Collected {
     pub(crate) draws: Vec<Draw>,
-    pub(crate) directional: Vec<(Vec3, [f32; 4])>,
-    pub(crate) point: Vec<(Vec3, f32, [f32; 4])>,
+    pub(crate) directional: Vec<DirectionalLight>,
+    pub(crate) point: Vec<PointLight>,
     pub(crate) cameras: Vec<(Node, Mat4, Projection)>,
 }
 
 pub(crate) fn collect(root: &Node) -> Collected {
     let mut collected = Collected::default();
-    visit(root, Mat4::IDENTITY, &mut collected);
+    visit(root, Mat4::IDENTITY, (true, true), &mut collected);
     collected
 }
 
-fn visit(node: &Node, parent: Mat4, out: &mut Collected) {
+fn visit(node: &Node, parent: Mat4, (cast, receive): (bool, bool), out: &mut Collected) {
     if !node.visible() {
         return;
     }
     let world = parent * node.transform().to_matrix();
+    let (cast, receive) = (cast && node.cast_shadow(), receive && node.receive_shadow());
     if let Some((geometry, material)) = node.mesh() {
         let deform = node.deform();
         let model = match &deform {
@@ -46,23 +63,34 @@ fn visit(node: &Node, parent: Mat4, out: &mut Collected) {
             geometry,
             material,
             deform,
+            cast_shadow: cast,
+            receive_shadow: receive,
         });
     }
     match node.light() {
-        Some(Light::Directional { color, intensity }) => {
-            let toward = -world.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::Y);
-            out.directional.push((toward, radiance(color, intensity)));
+        Some(Light::Directional {
+            color,
+            intensity,
+            shadow,
+        }) => {
+            out.directional.push(DirectionalLight {
+                toward: -world.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::Y),
+                radiance: radiance(color, intensity),
+                shadow,
+            });
         }
         Some(Light::Point {
             color,
             intensity,
             range,
+            shadow,
         }) => {
-            out.point.push((
-                world.transform_point3(Vec3::ZERO),
+            out.point.push(PointLight {
+                position: world.transform_point3(Vec3::ZERO),
                 range,
-                radiance(color, intensity),
-            ));
+                radiance: radiance(color, intensity),
+                shadow,
+            });
         }
         None => {}
     }
@@ -70,7 +98,7 @@ fn visit(node: &Node, parent: Mat4, out: &mut Collected) {
         out.cameras.push((node.clone(), world, projection));
     }
     for child in node.children() {
-        visit(&child, world, out);
+        visit(&child, world, (cast, receive), out);
     }
 }
 
