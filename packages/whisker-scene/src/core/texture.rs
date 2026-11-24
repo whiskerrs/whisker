@@ -20,7 +20,7 @@ pub(crate) struct TextureData {
 
 /// Why [`Texture::decode`] failed.
 #[derive(Debug)]
-pub struct TextureError(image::ImageError);
+pub struct TextureError(pub(crate) image::ImageError);
 
 impl std::fmt::Display for TextureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

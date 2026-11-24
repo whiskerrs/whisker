@@ -2,6 +2,7 @@
 
 mod color;
 mod deform;
+mod environment;
 mod geometry;
 mod texture;
 
@@ -12,11 +13,13 @@ use glam::{Mat3, Quat, Vec2, Vec3};
 use whisker::css::Color;
 use whisker_surface::{FrameInfo, Surface, WeakSurface};
 
+pub use environment::Environment;
 pub use geometry::Geometry;
 pub use texture::{Texture, TextureError};
 
 pub(crate) use color::{linear_rgba, srgb_rgba};
 pub(crate) use deform::Deform;
+pub(crate) use environment::{CUBE_LEVELS, CUBE_SIZE};
 pub(crate) use geometry::{MorphTarget, Vertex, generate_tangents};
 
 /// A tree of nodes that one or more surfaces draw.
@@ -33,6 +36,8 @@ pub(crate) struct SceneInner {
     tone_mapping: Cell<ToneMapping>,
     exposure: Cell<f32>,
     fog: Cell<Option<Fog>>,
+    environment: RefCell<Option<(Environment, f32)>>,
+    environment_background: Cell<bool>,
     active_camera: RefCell<Option<Node>>,
     surfaces: RefCell<Vec<WeakSurface>>,
     frame_callbacks: RefCell<Vec<(u64, FrameCallback)>>,
@@ -58,6 +63,8 @@ impl Scene {
             tone_mapping: Cell::new(ToneMapping::None),
             exposure: Cell::new(1.0),
             fog: Cell::new(None),
+            environment: RefCell::new(None),
+            environment_background: Cell::new(false),
             active_camera: RefCell::new(None),
             surfaces: RefCell::new(Vec::new()),
             frame_callbacks: RefCell::new(Vec::new()),
@@ -98,6 +105,18 @@ impl Scene {
     /// Fades surfaces into a color with distance from the camera.
     pub fn set_fog(&self, fog: Option<Fog>) {
         self.inner.fog.set(fog);
+        self.inner.request_frame();
+    }
+
+    /// Lights surfaces with light from every direction, scaled by `intensity`, and reflects it.
+    pub fn set_environment(&self, environment: Option<Environment>, intensity: f32) {
+        *self.inner.environment.borrow_mut() = environment.map(|e| (e, intensity));
+        self.inner.request_frame();
+    }
+
+    /// Draws the environment behind the scene in place of the background color.
+    pub fn set_environment_background(&self, shown: bool) {
+        self.inner.environment_background.set(shown);
         self.inner.request_frame();
     }
 
@@ -229,6 +248,14 @@ impl SceneInner {
 
     pub(crate) fn fog(&self) -> Option<Fog> {
         self.fog.get()
+    }
+
+    pub(crate) fn environment(&self) -> Option<(Environment, f32)> {
+        self.environment.borrow().clone()
+    }
+
+    pub(crate) fn environment_background(&self) -> bool {
+        self.environment_background.get()
     }
 }
 

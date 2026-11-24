@@ -17,13 +17,15 @@ pub(crate) use collect::{Collected, Draw, camera_for, collect};
 pub(crate) use pipeline::translucent;
 pub(crate) use resources::{DeformBuffer, GpuMesh, GpuTexture};
 
-use crate::core::{Fog, Scene, SceneInner, ToneMapping, linear_rgba, srgb_rgba};
+use crate::core::{
+    CUBE_LEVELS, Environment, Fog, Scene, SceneInner, ToneMapping, linear_rgba, srgb_rgba,
+};
 use collect::{pick_camera, radiance};
 use pipeline::{
     DirectionalUniform, DrawUniform, FrameUniform, PipelineKey, PointUniform, Shared, double_sided,
     draw_buffer, draw_uniform, shared,
 };
-use resources::{MaterialCache, deformed_vertices, mesh};
+use resources::{MaterialCache, deformed_vertices, environment_cube, mesh};
 use shadow::{Eye, MAX_SHADOW_LAYERS, ShadowMaps, ShadowPlan};
 use visibility::{Frustum, Ordered, draw_order};
 
@@ -58,6 +60,7 @@ pub(crate) struct SceneRenderer {
     shadow_view_buffer: wgpu::Buffer,
     shadow_view_bind_group: wgpu::BindGroup,
     shadow_view_stride: u64,
+    bound_environment: Option<Environment>,
 }
 
 impl SceneRenderer {
@@ -81,7 +84,13 @@ impl SceneRenderer {
             mapped_at_creation: false,
         });
         let shadow_maps = ShadowMaps::new(gpu, 1, 1);
-        let frame_bind_group = frame_bind_group(gpu, &shared, &frame_buffer, &shadow_maps);
+        let frame_bind_group = frame_bind_group(
+            gpu,
+            &shared,
+            &frame_buffer,
+            &shadow_maps,
+            &shared.no_environment,
+        );
         let alignment = u64::from(gpu.device.limits().min_uniform_buffer_offset_alignment);
         let draw_stride = (size_of::<DrawUniform>() as u64).next_multiple_of(alignment);
         let (draw_buffer, draw_bind_group) = draw_buffer(gpu, &shared, draw_stride, 16);
@@ -124,16 +133,36 @@ impl SceneRenderer {
             shadow_view_buffer,
             shadow_view_bind_group,
             shadow_view_stride,
+            bound_environment: None,
         }
     }
 
-    fn prepare_shadow_maps(&mut self, gpu: &Gpu, plan: &ShadowPlan) {
-        if self.shadow_maps.fits(plan) {
+    /// Rebuilds the frame bind group when the shadow maps or the environment it binds change.
+    fn prepare_frame_bindings(
+        &mut self,
+        gpu: &Gpu,
+        plan: &ShadowPlan,
+        environment: Option<&Environment>,
+    ) {
+        let maps_fit = self.shadow_maps.fits(plan);
+        if maps_fit && self.bound_environment.as_ref() == environment {
             return;
         }
-        self.shadow_maps = ShadowMaps::new(gpu, plan.size, plan.layers.len());
-        self.frame_bind_group =
-            frame_bind_group(gpu, &self.shared, &self.frame_buffer, &self.shadow_maps);
+        if !maps_fit {
+            self.shadow_maps = ShadowMaps::new(gpu, plan.size, plan.layers.len());
+        }
+        self.bound_environment = environment.cloned();
+        let cube = match environment {
+            Some(environment) => environment_cube(gpu, environment),
+            None => &self.shared.no_environment,
+        };
+        self.frame_bind_group = frame_bind_group(
+            gpu,
+            &self.shared,
+            &self.frame_buffer,
+            &self.shadow_maps,
+            cube,
+        );
     }
 
     fn prepare_attachments(&mut self, gpu: &Gpu) {
@@ -201,14 +230,19 @@ impl Renderer for SceneRenderer {
             eye,
             gpu.device.limits().max_texture_dimension_2d,
         );
-        self.prepare_shadow_maps(gpu, &plan);
+        let environment = inner.environment();
+        self.prepare_frame_bindings(gpu, &plan, environment.as_ref().map(|(e, _)| e));
+        let sky = environment.is_some() && inner.environment_background();
         let view = camera_world.inverse();
         let view_proj = projection.to_matrix(aspect) * view;
         self.write_frame_uniform(gpu, &collected, &plan, view_proj, eye, inner);
         let order = draw_order(&collected.draws, view, &Frustum::new(view_proj));
         self.write_draw_uniforms(gpu, &collected.draws);
 
-        let clear = self.clear_color(inner.background());
+        let backdrop = Backdrop {
+            clear: self.clear_color(inner.background()),
+            sky,
+        };
         self.prepare_attachments(gpu);
         let mut encoder = gpu
             .device
@@ -216,7 +250,14 @@ impl Renderer for SceneRenderer {
                 label: Some("whisker-scene"),
             });
         self.encode_shadows(gpu, &mut encoder, &collected.draws, &plan);
-        self.encode_forward(gpu, &mut encoder, target, &collected.draws, &order, clear);
+        self.encode_forward(
+            gpu,
+            &mut encoder,
+            target,
+            &collected.draws,
+            &order,
+            backdrop,
+        );
         gpu.queue.submit([encoder.finish()]);
         self.materials.sweep();
     }
@@ -246,8 +287,24 @@ impl SceneRenderer {
             Some(Fog::Linear { color, near, far }) => (color, [1.0, near, far, 0.0]),
             Some(Fog::Exponential { color, density }) => (color, [2.0, density, 0.0, 0.0]),
         };
+        let (environment, irradiance) = match inner.environment() {
+            Some((environment, intensity)) => {
+                let mut irradiance = [[0.0; 4]; 9];
+                for (slot, c) in irradiance
+                    .iter_mut()
+                    .zip(environment.data().baked().irradiance)
+                {
+                    *slot = (c * intensity).extend(0.0).to_array();
+                }
+                ([intensity, 1.0, (CUBE_LEVELS - 1) as f32, 0.0], irradiance)
+            }
+            None => ([0.0; 4], [[0.0; 4]; 9]),
+        };
         let mut uniform = FrameUniform {
             view_proj: view_proj.to_cols_array_2d(),
+            inverse_view_proj: view_proj.inverse().to_cols_array_2d(),
+            environment,
+            irradiance,
             camera_position: eye
                 .world
                 .transform_point3(Vec3::ZERO)
@@ -369,7 +426,7 @@ impl SceneRenderer {
         target: &wgpu::TextureView,
         draws: &[Draw],
         order: &[Ordered],
-        clear: wgpu::Color,
+        backdrop: Backdrop,
     ) {
         let shared = self.shared.clone();
         let (format, samples) = (self.format, self.samples);
@@ -387,7 +444,7 @@ impl SceneRenderer {
                 depth_slice: None,
                 resolve_target,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear),
+                    load: wgpu::LoadOp::Clear(backdrop.clear),
                     store: if resolve_target.is_some() {
                         wgpu::StoreOp::Discard
                     } else {
@@ -406,6 +463,10 @@ impl SceneRenderer {
             ..Default::default()
         });
         pass.set_bind_group(0, &self.frame_bind_group, &[]);
+        if backdrop.sky {
+            pass.set_pipeline(&shared.sky_pipeline(gpu, format, samples));
+            pass.draw(0..3, 0..1);
+        }
         for ordered in order {
             let Draw {
                 model,
@@ -442,11 +503,18 @@ impl SceneRenderer {
     }
 }
 
+/// What the forward pass draws behind the scene: the clear color, then the sky when shown.
+struct Backdrop {
+    clear: wgpu::Color,
+    sky: bool,
+}
+
 fn frame_bind_group(
     gpu: &Gpu,
     shared: &Shared,
     buffer: &wgpu::Buffer,
     shadow_maps: &ShadowMaps,
+    environment: &GpuTexture,
 ) -> wgpu::BindGroup {
     gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("whisker-scene frame"),
@@ -463,6 +531,14 @@ fn frame_bind_group(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::Sampler(&shared.shadow_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&environment.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(&shared.environment_sampler),
             },
         ],
     })

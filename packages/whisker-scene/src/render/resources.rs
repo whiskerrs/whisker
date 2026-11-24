@@ -6,7 +6,7 @@ use std::rc::Rc;
 use whisker_wgpu::{Gpu, wgpu};
 
 use super::pipeline::{Shared, TEXTURE_SLOTS};
-use crate::core::{Deform, Geometry, Material, Texture};
+use crate::core::{CUBE_LEVELS, CUBE_SIZE, Deform, Environment, Geometry, Material, Texture};
 
 pub(crate) struct GpuMesh {
     pub(super) vertices: wgpu::Buffer,
@@ -74,6 +74,92 @@ pub(super) fn upload_texture(
         view: texture.create_view(&Default::default()),
     }
 }
+
+/// The environment's prefiltered cube, uploaded on first use.
+pub(super) fn environment_cube<'a>(gpu: &Gpu, environment: &'a Environment) -> &'a GpuTexture {
+    let data = environment.data();
+    data.gpu.get_or_init(|| {
+        let levels: Vec<Vec<[u16; 4]>> = data
+            .baked()
+            .levels
+            .iter()
+            .map(|level| {
+                level
+                    .iter()
+                    .map(|c| [half(c.x), half(c.y), half(c.z), half(1.0)])
+                    .collect()
+            })
+            .collect();
+        upload_cube(gpu, CUBE_SIZE, &levels)
+    })
+}
+
+/// A cube with `levels` of six faces each, halving from `size`, as RGBA16 floats.
+pub(super) fn upload_cube(gpu: &Gpu, size: u32, levels: &[Vec<[u16; 4]>]) -> GpuTexture {
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("whisker-scene environment"),
+        size: wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 6,
+        },
+        mip_level_count: levels.len() as u32,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    for (level, texels) in levels.iter().enumerate() {
+        let side = (size >> level).max(1);
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(texels),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(side * 8),
+                rows_per_image: Some(side),
+            },
+            wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 6,
+            },
+        );
+    }
+    GpuTexture {
+        view: texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::Cube),
+            ..Default::default()
+        }),
+    }
+}
+
+/// `value` as an IEEE half float, rounded toward zero and saturating at the largest finite half.
+pub(super) fn half(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let magnitude = value.abs();
+    if magnitude.is_nan() {
+        return sign | 0x7e00;
+    }
+    if magnitude >= 65504.0 {
+        return sign | 0x7bff;
+    }
+    if magnitude < 6.103_515_6e-5 {
+        return sign | (magnitude / 5.960_464_5e-8) as u16;
+    }
+    let exponent = ((bits >> 23) & 0xff) as i32 - 127 + 15;
+    let mantissa = (bits >> 13) & 0x3ff;
+    sign | ((exponent as u16) << 10) | mantissa as u16
+}
+
+const _: () = assert!(CUBE_LEVELS <= CUBE_SIZE.trailing_zeros() + 1);
 
 /// The image and each half-size level below it, averaged 2×2, down to 1×1.
 fn mip_chain(
