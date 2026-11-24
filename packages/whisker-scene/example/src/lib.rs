@@ -1,7 +1,7 @@
 //! `whisker-scene` example app.
 //!
 //! A lit scene written as components: a turning group of shapes over a floor, an orbiting point
-//! light, and a toggle that mounts and unmounts one of the shapes.
+//! light labelled with a [`SceneAnchor`], and a toggle that mounts and unmounts one of the shapes.
 
 use whisker::css::{FlexDirection, FontWeight, Overflow};
 use whisker::prelude::*;
@@ -9,7 +9,7 @@ use whisker::runtime::view::Element;
 use whisker_scene::math::{Quat, Vec2, Vec3};
 use whisker_scene::{
     AmbientLight, DirectionalLight, Geometry, Group, Material, Mesh, PerspectiveCamera, PointLight,
-    SceneView, Shadow, StandardMaterial, use_frame,
+    SceneAnchor, SceneView, Shadow, StandardMaterial, use_frame,
 };
 
 fn standard(color: Color, metallic: f32, roughness: f32) -> Material {
@@ -44,6 +44,10 @@ fn orbiting_light() -> Element {
         let t = frame.timestamp.as_secs_f32() * 1.3;
         position.set(Vec3::new(2.0 * t.cos(), 1.5, 2.0 * t.sin()));
     });
+    let label = Css::new()
+        .color(Color::hex(0xffc896))
+        .font_size(px(12))
+        .margin_left(px(6));
     render! {
         Fragment {
             PointLight(color: Color::rgb(255, 170, 90), intensity: 3.0, range: 6.0, position: position)
@@ -52,6 +56,9 @@ fn orbiting_light() -> Element {
                 material: Material::Unlit { color: Color::rgb(255, 200, 150) },
                 position: position,
             )
+            SceneAnchor(position: position) {
+                Text(style: label.clone(), value: "light")
+            }
         }
     }
 }

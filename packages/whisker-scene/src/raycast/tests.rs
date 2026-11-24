@@ -47,6 +47,50 @@ fn rays_from_the_view_pass_through_the_projected_point() {
 }
 
 #[test]
+fn view_points_round_trip_with_rays_from_the_view() {
+    let projections = [
+        Projection::Perspective {
+            fov_y: 50f32.to_radians(),
+            near: 0.1,
+            far: 20.0,
+        },
+        Projection::Orthographic {
+            height: 4.0,
+            near: 0.1,
+            far: 20.0,
+        },
+    ];
+    for projection in projections {
+        let scene = Scene::new();
+        let camera = Node::new();
+        camera.set_transform(Transform::looking_at(
+            Vec3::new(1.0, 2.0, 6.0),
+            Vec3::ZERO,
+            Vec3::Y,
+        ));
+        camera.set_camera(Some(projection));
+        scene.root().add_child(&camera);
+        let size = Vec2::new(400.0, 300.0);
+
+        let target = Vec3::new(0.7, -0.4, 0.5);
+        let point = scene.view_point(target, size).unwrap();
+        let ray = scene.ray_from_view(point, size).unwrap();
+        let along = (target - ray.origin).dot(ray.direction);
+        assert!(ray.at(along).abs_diff_eq(target, 1e-4), "{projection:?}");
+
+        let point = Vec2::new(90.0, 220.0);
+        let ray = scene.ray_from_view(point, size).unwrap();
+        let back = scene.view_point(ray.at(3.0), size).unwrap();
+        assert!(back.abs_diff_eq(point, 1e-2), "{projection:?} {back}");
+
+        let behind = Vec3::new(1.0, 2.0, 6.0) + Vec3::new(1.0, 2.0, 6.0).normalize();
+        assert_eq!(scene.view_point(behind, size), None, "{projection:?}");
+        assert_eq!(scene.view_point(Vec3::new(-3.0, -6.0, -18.0), size), None);
+        assert_eq!(scene.view_point(target, Vec2::new(0.0, 300.0)), None);
+    }
+}
+
+#[test]
 fn hits_come_nearest_first_and_skip_hidden_meshes() {
     let scene = Scene::new();
     let far = mesh_at(Geometry::cuboid(Vec3::ONE), Vec3::new(0.0, 0.0, -5.0));

@@ -69,6 +69,23 @@ impl Scene {
         })
     }
 
+    /// Where `world` appears in a view `size` wide and high, measured from its top-left corner in
+    /// the same units, as seen from the camera this scene is drawn from.
+    ///
+    /// The inverse of [`Scene::ray_from_view`]. Points outside the view's edges are still
+    /// returned; `None` means the point is behind the camera or outside its near and far range.
+    pub fn view_point(&self, world: Vec3, size: Vec2) -> Option<Vec2> {
+        if size.x <= 0.0 || size.y <= 0.0 {
+            return None;
+        }
+        let (camera, projection) = crate::render::camera_for(self);
+        project(
+            projection.to_matrix(size.x / size.y) * camera.inverse(),
+            world,
+            size,
+        )
+    }
+
     /// Every visible mesh the ray meets, nearest first.
     pub fn raycast(&self, ray: Ray) -> Vec<SceneHit> {
         let mut hits = Vec::new();
@@ -83,6 +100,21 @@ impl Scene {
         });
         hits
     }
+}
+
+pub(crate) fn project(view_proj: Mat4, world: Vec3, size: Vec2) -> Option<Vec2> {
+    let clip = view_proj * world.extend(1.0);
+    if clip.w <= 0.0 {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    if !(0.0..=1.0).contains(&ndc.z) || !ndc.is_finite() {
+        return None;
+    }
+    Some(Vec2::new(
+        (ndc.x + 1.0) / 2.0 * size.x,
+        (1.0 - ndc.y) / 2.0 * size.y,
+    ))
 }
 
 fn visit(node: &Node, parent: Mat4, eye: Vec3, ray: &Ray, hits: &mut Vec<SceneHit>) {
