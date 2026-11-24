@@ -6,6 +6,10 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
+    // A module's Web Worker instantiates this same wasm, and must not start the app.
+    if web_sys::window().is_none() {
+        return Ok(());
+    }
     whisker_web::run_with_application_hash(
         whisker_web::WebAppConfig::new(
             web_sys::window().and_then(|window| window.document())

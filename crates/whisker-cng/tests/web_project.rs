@@ -36,7 +36,7 @@ fn base() -> WebProjectInputs {
         project: *project,
         app_crate_dir: None,
         cargo_selection: Default::default(),
-        template_version: 16,
+        template_version: 17,
     }
 }
 fn path(v: &str) -> ProjectPath {

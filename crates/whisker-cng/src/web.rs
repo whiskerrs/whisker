@@ -66,7 +66,7 @@ pub fn inputs_from(
         user_crate_path,
         whisker_web_dependency,
         element_modules: Vec::new(),
-        template_version: 16,
+        template_version: 17,
         cargo_selection: crate::CargoSelection::default(),
     })
 }
@@ -228,7 +228,7 @@ mod tests {
             user_crate_path: PathBuf::from("/tmp/hello"),
             whisker_web_dependency: "{ path = \"/tmp/whisker/platforms/web\" }".into(),
             element_modules: Vec::new(),
-            template_version: 16,
+            template_version: 17,
             cargo_selection: crate::CargoSelection::default(),
         }
     }
