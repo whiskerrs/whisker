@@ -3,13 +3,23 @@
 //! Only [`SceneView`] creates an element on screen; the others add a [`Node`] to the scene for as
 //! long as they stay mounted.
 
-use glam::{Quat, Vec3};
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::time::Duration;
+
+use glam::{Quat, Vec2, Vec3};
+use whisker::event::TouchEvent;
 use whisker::prelude::*;
 use whisker::runtime::view::{Element, create_phantom_element};
-use whisker::{Children, Signal, Style};
+use whisker::{Callback, Children, Signal, Style};
 use whisker_surface::{FrameInfo, SurfaceView};
 
-use crate::core::{Geometry, Light, Material, Node, Projection, Scene, Transform, rotation_toward};
+use crate::core::{
+    FrameSubscription, Geometry, Light, Material, Node, Projection, Scene, TapHandler, Transform,
+    rotation_toward,
+};
+use crate::model::{AnimationOptions, AnimationPlayer, Model};
+use crate::raycast::SceneHit;
 
 #[derive(Clone)]
 struct SceneContext {
@@ -81,10 +91,37 @@ pub fn scene_view(
     #[prop(default = Color::rgb(0, 0, 0).into())] background: Signal<Color>,
     /// Shares a scene built with the imperative API; a new one is created otherwise.
     scene: Option<Scene>,
+    /// Called for a tap that no `on_tap` of the node hit, or its ancestors, handled; `None` when
+    /// the tap hit nothing.
+    on_tap: Option<Callback<Option<SceneHit>>>,
     children: Children,
 ) -> Element {
     let scene = scene.clone().unwrap_or_default();
     let surface = scene.surface();
+    let picked = scene.clone();
+    let tap = move |event: TouchEvent| {
+        let (Some(offset), Some(size)) = (event.offset, event.size) else {
+            return;
+        };
+        let point = Vec2::new(offset.x as f32, offset.y as f32);
+        let size = Vec2::new(size.width as f32, size.height as f32);
+        let hit = picked
+            .ray_from_view(point, size)
+            .and_then(|ray| picked.raycast(ray).into_iter().next());
+        if let Some(hit) = &hit {
+            let mut node = Some(hit.node.clone());
+            while let Some(current) = node {
+                if let Some(handler) = current.on_tap() {
+                    handler(hit.clone());
+                    return;
+                }
+                node = current.parent();
+            }
+        }
+        if let Some(on_tap) = on_tap {
+            on_tap.run(hit);
+        }
+    };
     let target = scene.clone();
     effect(move || target.set_background(background.get()));
     provide_context(SceneContext {
@@ -94,7 +131,7 @@ pub fn scene_view(
     let fill: Style = Css::new().width(percent(100)).height(percent(100)).into();
     let projected = children.clone();
     render! {
-        View(style: style.clone()) {
+        View(style: style.clone(), on_tap: tap) {
             SurfaceView(surface: surface, style: fill)
             Fragment { { projected() } }
         }
@@ -129,12 +166,100 @@ pub fn mesh(
     #[prop(default = Quat::IDENTITY.into())] rotation: Signal<Quat>,
     #[prop(default = Vec3::ONE.into())] scale: Signal<Vec3>,
     #[prop(default = true.into())] visible: Signal<bool>,
+    /// Called when a tap on the enclosing `SceneView` hits this mesh first.
+    on_tap: Option<Callback<SceneHit>>,
 ) -> Element {
     let (_, node) = mount_node("Mesh");
     bind_transform(&node, position, rotation, scale, visible);
+    bind_tap(&node, on_tap);
     let target = node.clone();
     effect(move || target.set_mesh(Some((geometry.get(), material.get()))));
     create_phantom_element()
+}
+
+fn bind_tap(node: &Node, on_tap: Option<Callback<SceneHit>>) {
+    let Some(on_tap) = on_tap else {
+        return;
+    };
+    let handler: TapHandler = Rc::new(move |hit| on_tap.run(hit));
+    node.set_on_tap(Some(handler));
+    let node = node.clone();
+    on_cleanup(move || node.set_on_tap(None));
+}
+
+/// A glTF model, placed anew for this component and animated with its clips.
+#[component]
+pub fn model_view(
+    model: Signal<Model>,
+    #[prop(default = Vec3::ZERO.into())] position: Signal<Vec3>,
+    #[prop(default = Quat::IDENTITY.into())] rotation: Signal<Quat>,
+    #[prop(default = Vec3::ONE.into())] scale: Signal<Vec3>,
+    #[prop(default = true.into())] visible: Signal<bool>,
+    /// The clip to play, by name; the model rests in its default pose while `None`.
+    #[prop(default = None.into())]
+    animation: Signal<Option<String>>,
+    #[prop(default = AnimationOptions::default().into())] animation_options: Signal<
+        AnimationOptions,
+    >,
+    /// Called when a tap on the enclosing `SceneView` hits a part of this model first;
+    /// [`SceneHit::node`] is the part.
+    on_tap: Option<Callback<SceneHit>>,
+) -> Element {
+    let (context, node) = mount_node("ModelView");
+    bind_transform(&node, position, rotation, scale, visible);
+    bind_tap(&node, on_tap);
+    let player = signal(None::<AnimationPlayer>);
+    let parent = node.clone();
+    effect(move || {
+        for child in parent.children() {
+            child.remove_from_parent();
+        }
+        let root = model.get().instantiate();
+        parent.add_child(&root);
+        player.set(AnimationPlayer::new(&root));
+    });
+    let driver = Rc::new(AnimationDriver::default());
+    let scene = context.scene;
+    effect(move || {
+        let (clip, options) = (animation.get(), animation_options.get());
+        let Some(player) = player.get() else {
+            return;
+        };
+        match &clip {
+            Some(clip) => {
+                player.play(clip, options);
+            }
+            None => player.stop(options.fade),
+        }
+        driver.run(&scene, player);
+    });
+    create_phantom_element()
+}
+
+/// Advances an [`AnimationPlayer`] every frame while it has clips playing or fading out.
+#[derive(Default)]
+pub(crate) struct AnimationDriver {
+    subscription: Rc<RefCell<Option<FrameSubscription>>>,
+}
+
+impl AnimationDriver {
+    pub(crate) fn run(&self, scene: &Scene, player: AnimationPlayer) {
+        let slot = Rc::downgrade(&self.subscription);
+        let last: Cell<Option<Duration>> = Cell::new(None);
+        let subscription = scene.on_frame(move |frame| {
+            let delta = last.replace(Some(frame.timestamp)).map_or(0.0, |previous| {
+                frame.timestamp.saturating_sub(previous).as_secs_f32()
+            });
+            // A long gap, such as a backgrounded app, resumes instead of skipping ahead.
+            player.update(delta.min(0.25));
+            if !player.is_playing()
+                && let Some(slot) = slot.upgrade()
+            {
+                slot.borrow_mut().take();
+            }
+        });
+        *self.subscription.borrow_mut() = Some(subscription);
+    }
 }
 
 /// The viewpoint the scene is drawn from.

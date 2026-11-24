@@ -9,7 +9,8 @@ use whisker_surface::{FrameInfo, SurfaceSize};
 use whisker_wgpu::{Gpu, Renderer, wgpu};
 
 use crate::core::{
-    Geometry, Light, Material, Node, Projection, Scene, Texture, Transform, linear_rgba, srgb_rgba,
+    AlphaMode, Deform, Geometry, Light, Material, Node, Projection, Scene, Texture,
+    TextureTransform, Transform, linear_rgba, srgb_rgba,
 };
 
 const MAX_DIRECTIONAL: usize = 4;
@@ -23,8 +24,13 @@ pub(crate) struct GpuMesh {
     count: u32,
 }
 
+/// A vertex buffer holding one node's deformed vertices.
+pub(crate) struct DeformBuffer {
+    buffer: wgpu::Buffer,
+}
+
 pub(crate) struct GpuTexture {
-    bind_group: wgpu::BindGroup,
+    view: wgpu::TextureView,
 }
 
 #[repr(C)]
@@ -46,6 +52,8 @@ struct DrawUniform {
     base_color: [f32; 4],
     emissive: [f32; 4],
     params: [f32; 4],
+    uv_rows: [[f32; 4]; 2],
+    alpha: [f32; 4],
 }
 
 /// Device-wide objects shared by every scene surface.
@@ -57,8 +65,22 @@ struct Shared {
     shader: wgpu::ShaderModule,
     sampler: wgpu::Sampler,
     white: GpuTexture,
-    pipelines: RefCell<HashMap<(wgpu::TextureFormat, u32, bool), wgpu::RenderPipeline>>,
+    flat_normal: GpuTexture,
+    pipelines: RefCell<HashMap<PipelineKey, wgpu::RenderPipeline>>,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    format: wgpu::TextureFormat,
+    samples: u32,
+    blend: bool,
+    double_sided: bool,
+    /// Draws with a mirroring transform, whose triangles wind the other way.
+    mirrored: bool,
+}
+
+/// The texture slots of the shader's material bind group, in binding order.
+const TEXTURE_SLOTS: usize = 5;
 
 thread_local! {
     static SHARED: RefCell<Option<Rc<Shared>>> = const { RefCell::new(None) };
@@ -93,26 +115,27 @@ impl Shared {
             label: Some("whisker-scene draw"),
             entries: &[uniform(true, size_of::<DrawUniform>())],
         });
+        let mut texture_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..TEXTURE_SLOTS as u32)
+            .map(|binding| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            })
+            .collect();
+        texture_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: TEXTURE_SLOTS as u32,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("whisker-scene texture"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            label: Some("whisker-scene material"),
+            entries: &texture_entries,
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("whisker-scene"),
@@ -133,9 +156,11 @@ impl Shared {
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
-        let white = upload_texture(gpu, &texture_layout, &sampler, 1, 1, &[255; 4]);
+        let white = upload_texture(gpu, 1, 1, &[255; 4], false);
+        let flat_normal = upload_texture(gpu, 1, 1, &[128, 128, 255, 255], false);
         Shared {
             frame_layout,
             draw_layout,
@@ -144,20 +169,22 @@ impl Shared {
             shader,
             sampler,
             white,
+            flat_normal,
             pipelines: RefCell::new(HashMap::new()),
         }
     }
 
-    fn pipeline(
-        &self,
-        gpu: &Gpu,
-        format: wgpu::TextureFormat,
-        samples: u32,
-        blend: bool,
-    ) -> wgpu::RenderPipeline {
+    fn pipeline(&self, gpu: &Gpu, key: PipelineKey) -> wgpu::RenderPipeline {
+        let PipelineKey {
+            format,
+            samples,
+            blend,
+            double_sided,
+            mirrored,
+        } = key;
         self.pipelines
             .borrow_mut()
-            .entry((format, samples, blend))
+            .entry(key)
             .or_insert_with(|| {
                 gpu.device
                     .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -174,6 +201,8 @@ impl Shared {
                                     0 => Float32x3,
                                     1 => Float32x3,
                                     2 => Float32x2,
+                                    3 => Float32x4,
+                                    4 => Float32x4,
                                 ],
                             })],
                         },
@@ -188,7 +217,12 @@ impl Shared {
                             })],
                         }),
                         primitive: wgpu::PrimitiveState {
-                            cull_mode: Some(wgpu::Face::Back),
+                            cull_mode: (!double_sided).then_some(wgpu::Face::Back),
+                            front_face: if mirrored {
+                                wgpu::FrontFace::Cw
+                            } else {
+                                wgpu::FrontFace::Ccw
+                            },
                             ..Default::default()
                         },
                         depth_stencil: Some(wgpu::DepthStencilState {
@@ -210,60 +244,80 @@ impl Shared {
     }
 }
 
-fn upload_texture(
-    gpu: &Gpu,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
-    width: u32,
-    height: u32,
-    pixels: &[u8],
-) -> GpuTexture {
-    let size = wgpu::Extent3d {
-        width,
-        height,
-        depth_or_array_layers: 1,
-    };
+fn upload_texture(gpu: &Gpu, width: u32, height: u32, pixels: &[u8], srgb: bool) -> GpuTexture {
+    let levels = mip_chain(width, height, pixels);
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("whisker-scene texture"),
-        size,
-        mip_level_count: 1,
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: levels.len() as u32,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format: if srgb {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        },
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    gpu.queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        pixels,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(width * 4),
-            rows_per_image: Some(height),
-        },
-        size,
-    );
-    let view = texture.create_view(&Default::default());
-    let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("whisker-scene texture"),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
+    for (level, (w, h, pixels)) in levels.iter().enumerate() {
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
             },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
+            pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(*h),
             },
-        ],
-    });
-    GpuTexture { bind_group }
+            wgpu::Extent3d {
+                width: *w,
+                height: *h,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    GpuTexture {
+        view: texture.create_view(&Default::default()),
+    }
+}
+
+/// The image and each half-size level below it, averaged 2×2, down to 1×1.
+fn mip_chain(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+) -> Vec<(u32, u32, std::borrow::Cow<'_, [u8]>)> {
+    let mut levels = vec![(width, height, std::borrow::Cow::Borrowed(pixels))];
+    while let Some((w, h, src)) = levels.last()
+        && (*w > 1 || *h > 1)
+    {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut next = vec![0u8; (nw * nh * 4) as usize];
+        for y in 0..nh {
+            for x in 0..nw {
+                for c in 0..4 {
+                    let mut sum = 0u32;
+                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let sx = (x * 2 + dx).min(w - 1);
+                        let sy = (y * 2 + dy).min(h - 1);
+                        sum += u32::from(src[((sy * w + sx) * 4 + c) as usize]);
+                    }
+                    next[((y * nw + x) * 4 + c) as usize] = (sum / 4) as u8;
+                }
+            }
+        }
+        levels.push((nw, nh, std::borrow::Cow::Owned(next)));
+    }
+    levels
 }
 
 fn mesh<'a>(gpu: &Gpu, geometry: &'a Geometry) -> &'a GpuMesh {
@@ -299,27 +353,132 @@ fn mesh<'a>(gpu: &Gpu, geometry: &'a Geometry) -> &'a GpuMesh {
     })
 }
 
-fn texture<'a>(gpu: &Gpu, shared: &'a Shared, texture: Option<&'a Texture>) -> &'a GpuTexture {
-    let Some(texture) = texture else {
-        return &shared.white;
-    };
+/// The buffer of `deform`'s current vertices, rewritten when they changed since its last upload.
+fn deformed_vertices(gpu: &Gpu, deform: &Deform) -> wgpu::Buffer {
+    let mut slot = deform.gpu.borrow_mut();
+    let version = deform.version.get();
+    let size = deform.with_vertices(|vertices| std::mem::size_of_val(vertices) as u64);
+    if slot
+        .as_ref()
+        .is_none_or(|(buffer, _)| buffer.buffer.size() < size.max(4))
+    {
+        let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("whisker-scene deformed vertices"),
+            size: size.next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT).max(4),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        *slot = Some((DeformBuffer { buffer }, u64::MAX));
+    }
+    let (buffer, uploaded) = slot.as_mut().expect("created above");
+    if *uploaded != version {
+        deform.with_vertices(|vertices| {
+            gpu.queue
+                .write_buffer(&buffer.buffer, 0, bytemuck::cast_slice(vertices));
+        });
+        *uploaded = version;
+    }
+    buffer.buffer.clone()
+}
+
+fn texture<'a>(gpu: &Gpu, texture: &'a Texture, srgb: bool) -> &'a GpuTexture {
     let data = texture.data();
-    data.gpu.get_or_init(|| {
-        upload_texture(
-            gpu,
-            &shared.texture_layout,
-            &shared.sampler,
-            data.width,
-            data.height,
-            &data.pixels,
-        )
-    })
+    let cell = if srgb { &data.srgb } else { &data.linear };
+    cell.get_or_init(|| upload_texture(gpu, data.width, data.height, &data.pixels, srgb))
+}
+
+/// The textures a material binds, in shader slot order, with whether each is read as sRGB.
+fn material_textures(material: &Material) -> [(Option<&Texture>, bool); TEXTURE_SLOTS] {
+    match material {
+        Material::Unlit { .. } => [
+            (None, true),
+            (None, false),
+            (None, false),
+            (None, true),
+            (None, false),
+        ],
+        Material::Standard(m) => [
+            (m.base_color_texture.as_ref(), true),
+            (m.metallic_roughness_texture.as_ref(), false),
+            (m.normal_texture.as_ref(), false),
+            (m.emissive_texture.as_ref(), true),
+            (m.occlusion_texture.as_ref(), false),
+        ],
+    }
+}
+
+type MaterialKey = [usize; TEXTURE_SLOTS];
+
+/// Material bind groups keyed by their textures, kept while some draw of the last frame used them.
+#[derive(Default)]
+struct MaterialCache {
+    entries: HashMap<MaterialKey, (wgpu::BindGroup, Vec<Texture>, bool)>,
+}
+
+impl MaterialCache {
+    fn bind_group(&mut self, gpu: &Gpu, shared: &Shared, material: &Material) -> &wgpu::BindGroup {
+        let slots = material_textures(material);
+        let key: MaterialKey = slots
+            .map(|(texture, _)| texture.map_or(0, |texture| Rc::as_ptr(texture.rc()) as usize));
+        let entry = self.entries.entry(key).or_insert_with(|| {
+            let views: Vec<&wgpu::TextureView> = slots
+                .iter()
+                .enumerate()
+                .map(|(slot, (texture, srgb))| match texture {
+                    Some(texture) => &texture_view(gpu, texture, *srgb).view,
+                    None if slot == 2 => &shared.flat_normal.view,
+                    None => &shared.white.view,
+                })
+                .collect();
+            let mut entries: Vec<wgpu::BindGroupEntry> = views
+                .iter()
+                .enumerate()
+                .map(|(binding, view)| wgpu::BindGroupEntry {
+                    binding: binding as u32,
+                    resource: wgpu::BindingResource::TextureView(view),
+                })
+                .collect();
+            entries.push(wgpu::BindGroupEntry {
+                binding: TEXTURE_SLOTS as u32,
+                resource: wgpu::BindingResource::Sampler(&shared.sampler),
+            });
+            let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("whisker-scene material"),
+                layout: &shared.texture_layout,
+                entries: &entries,
+            });
+            let kept = slots
+                .iter()
+                .filter_map(|(texture, _)| texture.cloned())
+                .collect();
+            (bind_group, kept, false)
+        });
+        entry.2 = true;
+        &entry.0
+    }
+
+    /// Drops the bind groups no draw used since the last call.
+    fn sweep(&mut self) {
+        self.entries.retain(|_, (_, _, used)| std::mem::take(used));
+    }
+}
+
+fn texture_view<'a>(gpu: &Gpu, texture: &'a Texture, srgb: bool) -> &'a GpuTexture {
+    self::texture(gpu, texture, srgb)
+}
+
+/// One mesh to draw.
+pub(crate) struct Draw {
+    pub(crate) model: Mat4,
+    pub(crate) geometry: Geometry,
+    pub(crate) material: Material,
+    pub(crate) deform: Option<Rc<Deform>>,
 }
 
 /// What one frame draws, gathered from the node tree.
 #[derive(Default)]
 pub(crate) struct Collected {
-    pub(crate) draws: Vec<(Mat4, Geometry, Material)>,
+    pub(crate) draws: Vec<Draw>,
     pub(crate) directional: Vec<(Vec3, [f32; 4])>,
     pub(crate) point: Vec<(Vec3, f32, [f32; 4])>,
     pub(crate) cameras: Vec<(Node, Mat4, Projection)>,
@@ -337,7 +496,17 @@ fn visit(node: &Node, parent: Mat4, out: &mut Collected) {
     }
     let world = parent * node.transform().to_matrix();
     if let Some((geometry, material)) = node.mesh() {
-        out.draws.push((world, geometry, material));
+        let deform = node.deform();
+        let model = match &deform {
+            Some(deform) if deform.is_skinned() => Mat4::IDENTITY,
+            _ => world,
+        };
+        out.draws.push(Draw {
+            model,
+            geometry,
+            material,
+            deform,
+        });
     }
     match node.light() {
         Some(Light::Directional { color, intensity }) => {
@@ -368,6 +537,35 @@ fn visit(node: &Node, parent: Mat4, out: &mut Collected) {
 fn radiance(color: whisker::css::Color, intensity: f32) -> [f32; 4] {
     let [r, g, b, _] = linear_rgba(color);
     [r * intensity, g * intensity, b * intensity, 0.0]
+}
+
+/// The camera `scene` is drawn from: its active camera, else the first in the tree, else a default.
+pub(crate) fn camera_for(scene: &Scene) -> (Mat4, Projection) {
+    let mut cameras = Vec::new();
+    find_cameras(&scene.root(), Mat4::IDENTITY, &mut cameras);
+    pick_camera(scene.inner().active_camera(), &cameras)
+}
+
+fn find_cameras(node: &Node, parent: Mat4, out: &mut Vec<(Node, Mat4, Projection)>) {
+    if !node.visible() {
+        return;
+    }
+    let world = parent * node.transform().to_matrix();
+    if let Some(projection) = node.camera() {
+        out.push((node.clone(), world, projection));
+    }
+    for child in node.children() {
+        find_cameras(&child, world, out);
+    }
+}
+
+fn pick_camera(active: Option<Node>, cameras: &[(Node, Mat4, Projection)]) -> (Mat4, Projection) {
+    cameras
+        .iter()
+        .find(|(node, _, _)| Some(node) == active.as_ref())
+        .or(cameras.first())
+        .map(|(_, world, projection)| (*world, *projection))
+        .unwrap_or_else(default_camera)
 }
 
 fn default_camera() -> (Mat4, Projection) {
@@ -403,6 +601,7 @@ pub(crate) struct SceneRenderer {
     staging: Vec<u8>,
     size: (u32, u32),
     attachments: Option<Attachments>,
+    materials: MaterialCache,
 }
 
 impl SceneRenderer {
@@ -451,6 +650,7 @@ impl SceneRenderer {
             staging: Vec::new(),
             size: (1, 1),
             attachments: None,
+            materials: MaterialCache::default(),
         }
     }
 
@@ -521,13 +721,31 @@ fn draw_buffer(
 
 fn draw_uniform(model: Mat4, material: &Material) -> DrawUniform {
     let normal = model.inverse().transpose();
-    let (base_color, emissive, params) = match material {
-        Material::Unlit { color } => (linear_rgba(*color), [0.0; 4], [0.0, 1.0, 1.0, 0.0]),
-        Material::Standard(standard) => (
-            linear_rgba(standard.base_color),
-            linear_rgba(standard.emissive),
-            [standard.metallic, standard.roughness, 0.0, 0.0],
+    let identity = TextureTransform::default().rows();
+    let (base_color, emissive, params, uv_rows, alpha) = match material {
+        Material::Unlit { color } => (
+            linear_rgba(*color),
+            [0.0; 4],
+            [0.0, 1.0, 1.0, 0.0],
+            identity,
+            [ALPHA_BLEND, 0.0, 0.0, 0.0],
         ),
+        Material::Standard(standard) => {
+            let [r, g, b, _] = linear_rgba(standard.emissive);
+            let k = standard.emissive_intensity;
+            let (mode, cutoff) = match standard.alpha_mode {
+                AlphaMode::Opaque => (ALPHA_OPAQUE, 0.0),
+                AlphaMode::Mask(cutoff) => (ALPHA_MASK, cutoff),
+                AlphaMode::Blend => (ALPHA_BLEND, 0.0),
+            };
+            (
+                linear_rgba(standard.base_color),
+                [r * k, g * k, b * k, 0.0],
+                [standard.metallic, standard.roughness, 0.0, 0.0],
+                standard.texture_transform.rows(),
+                [mode, cutoff, 0.0, 0.0],
+            )
+        }
     };
     DrawUniform {
         model: model.to_cols_array_2d(),
@@ -535,22 +753,31 @@ fn draw_uniform(model: Mat4, material: &Material) -> DrawUniform {
         base_color,
         emissive,
         params,
+        uv_rows,
+        alpha,
     }
 }
 
-fn base_texture(material: &Material) -> Option<&Texture> {
+const ALPHA_OPAQUE: f32 = 0.0;
+const ALPHA_MASK: f32 = 1.0;
+const ALPHA_BLEND: f32 = 2.0;
+
+pub(crate) fn translucent(material: &Material) -> bool {
     match material {
-        Material::Unlit { .. } => None,
-        Material::Standard(standard) => standard.base_color_texture.as_ref(),
+        Material::Unlit { color } => srgb_rgba(*color)[3] < 1.0,
+        Material::Standard(standard) => {
+            standard.alpha_mode == AlphaMode::Blend
+                && (srgb_rgba(standard.base_color)[3] < 1.0
+                    || standard
+                        .base_color_texture
+                        .as_ref()
+                        .is_some_and(|texture| texture.data().translucent))
+        }
     }
 }
 
-fn translucent(material: &Material) -> bool {
-    let color = match material {
-        Material::Unlit { color } => *color,
-        Material::Standard(standard) => standard.base_color,
-    };
-    srgb_rgba(color)[3] < 1.0
+fn double_sided(material: &Material) -> bool {
+    matches!(material, Material::Standard(standard) if standard.double_sided)
 }
 
 impl Renderer for SceneRenderer {
@@ -563,15 +790,12 @@ impl Renderer for SceneRenderer {
         let inner = scene.inner();
         inner.run_frame_callbacks(&frame);
         let collected = collect(inner.root());
-
-        let active = inner.active_camera();
-        let (camera_world, projection) = collected
-            .cameras
-            .iter()
-            .find(|(node, _, _)| Some(node) == active.as_ref())
-            .or(collected.cameras.first())
-            .map(|(_, world, projection)| (*world, *projection))
-            .unwrap_or_else(default_camera);
+        for draw in &collected.draws {
+            if let Some(deform) = &draw.deform {
+                deform.update(&draw.geometry);
+            }
+        }
+        let (camera_world, projection) = pick_camera(inner.active_camera(), &collected.cameras);
         let aspect = self.size.0 as f32 / self.size.1 as f32;
         let view = camera_world.inverse();
         let view_proj = projection.to_matrix(aspect) * view;
@@ -603,13 +827,13 @@ impl Renderer for SceneRenderer {
         // Opaque draws first; translucent ones after, farthest first.
         let mut order: Vec<usize> = (0..collected.draws.len()).collect();
         let depth = |index: usize| {
-            let center = collected.draws[index].0.transform_point3(Vec3::ZERO);
+            let center = collected.draws[index].model.transform_point3(Vec3::ZERO);
             (view * center.extend(1.0)).z
         };
         let blended: Vec<bool> = collected
             .draws
             .iter()
-            .map(|(_, _, material)| translucent(material))
+            .map(|draw| translucent(&draw.material))
             .collect();
         order.sort_by(|&a, &b| {
             blended[a].cmp(&blended[b]).then_with(|| match blended[a] {
@@ -628,9 +852,9 @@ impl Renderer for SceneRenderer {
         self.staging.clear();
         self.staging.resize((self.draw_stride * count) as usize, 0);
         for (slot, &index) in order.iter().enumerate() {
-            let (model, _, material) = &collected.draws[index];
+            let draw = &collected.draws[index];
             let offset = slot * self.draw_stride as usize;
-            let uniform = draw_uniform(*model, material);
+            let uniform = draw_uniform(draw.model, &draw.material);
             let bytes = bytemuck::bytes_of(&uniform);
             self.staging[offset..offset + bytes.len()].copy_from_slice(bytes);
         }
@@ -640,8 +864,6 @@ impl Renderer for SceneRenderer {
 
         let shared = self.shared.clone();
         let (format, samples) = (self.format, self.samples);
-        let opaque_pipeline = shared.pipeline(gpu, format, samples, false);
-        let blend_pipeline = shared.pipeline(gpu, format, samples, true);
         let clear = {
             let rgba = if self.encode_srgb {
                 srgb_rgba(inner.background())
@@ -696,29 +918,40 @@ impl Renderer for SceneRenderer {
             });
             pass.set_bind_group(0, &self.frame_bind_group, &[]);
             for (slot, &index) in order.iter().enumerate() {
-                let (_, geometry, material) = &collected.draws[index];
+                let Draw {
+                    model,
+                    geometry,
+                    material,
+                    deform,
+                } = &collected.draws[index];
                 let mesh = mesh(gpu, geometry);
                 if mesh.count == 0 {
                     continue;
                 }
-                pass.set_pipeline(if blended[index] {
-                    &blend_pipeline
-                } else {
-                    &opaque_pipeline
-                });
+                let deformed = deform.as_ref().map(|deform| deformed_vertices(gpu, deform));
+                pass.set_pipeline(&shared.pipeline(
+                    gpu,
+                    PipelineKey {
+                        format,
+                        samples,
+                        blend: blended[index],
+                        double_sided: double_sided(material),
+                        mirrored: model.determinant() < 0.0,
+                    },
+                ));
                 let offset = (slot as u64 * self.draw_stride) as u32;
                 pass.set_bind_group(1, &self.draw_bind_group, &[offset]);
-                pass.set_bind_group(
-                    2,
-                    &texture(gpu, &shared, base_texture(material)).bind_group,
-                    &[],
-                );
-                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_bind_group(2, self.materials.bind_group(gpu, &shared, material), &[]);
+                match &deformed {
+                    Some(buffer) => pass.set_vertex_buffer(0, buffer.slice(..)),
+                    None => pass.set_vertex_buffer(0, mesh.vertices.slice(..)),
+                }
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.count, 0, 0..1);
             }
         }
         gpu.queue.submit([encoder.finish()]);
+        self.materials.sweep();
     }
 }
 
