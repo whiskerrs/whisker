@@ -91,6 +91,41 @@ fn view_points_round_trip_with_rays_from_the_view() {
 }
 
 #[test]
+fn orthographic_rays_run_parallel_to_the_view_direction() {
+    let scene = Scene::new();
+    let camera = Node::new();
+    let transform = Transform::looking_at(Vec3::new(1.0, 2.0, 6.0), Vec3::ZERO, Vec3::Y);
+    camera.set_transform(transform);
+    camera.set_camera(Some(Projection::Orthographic {
+        height: 4.0,
+        near: 0.1,
+        far: 100.0,
+    }));
+    scene.root().add_child(&camera);
+    let size = Vec2::new(400.0, 300.0);
+    let forward = transform.rotation * Vec3::NEG_Z;
+    let up = transform.rotation * Vec3::Y;
+    let center = scene.ray_from_view(size / 2.0, size).unwrap();
+    let top = scene.ray_from_view(Vec2::new(200.0, 0.0), size).unwrap();
+    assert!(center.direction.abs_diff_eq(forward, 1e-5), "{center:?}");
+    assert!(top.direction.abs_diff_eq(forward, 1e-5), "{top:?}");
+    assert!(
+        (top.origin - center.origin).abs_diff_eq(up * 2.0, 1e-4),
+        "{top:?}"
+    );
+    let along = (Vec3::ZERO - center.origin).dot(center.direction);
+    assert!(center.at(along).abs_diff_eq(Vec3::ZERO, 1e-4));
+    let target = mesh_at(Geometry::sphere(0.3, 16), up * 1.8);
+    scene.root().add_child(&target);
+    let hit = scene
+        .raycast(top)
+        .into_iter()
+        .next()
+        .expect("hits the sphere");
+    assert_eq!(hit.node, target);
+}
+
+#[test]
 fn hits_come_nearest_first_and_skip_hidden_meshes() {
     let scene = Scene::new();
     let far = mesh_at(Geometry::cuboid(Vec3::ONE), Vec3::new(0.0, 0.0, -5.0));
