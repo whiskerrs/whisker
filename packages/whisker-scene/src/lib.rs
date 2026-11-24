@@ -22,8 +22,8 @@ mod raycast;
 mod render;
 
 pub use components::{
-    AmbientLight, DirectionalLight, Group, HemisphereLight, Mesh, ModelView, PerspectiveCamera,
-    PointLight, SceneAnchor, SceneView, SpotLight, use_frame, use_scene,
+    AmbientLight, DirectionalLight, Group, HemisphereLight, Mesh, ModelView, OrthographicCamera,
+    PerspectiveCamera, PointLight, SceneAnchor, SceneView, SpotLight, use_frame, use_scene,
 };
 pub use core::{
     AlphaMode, AmbientOcclusion, Bloom, CustomMaterial, DepthOfField, Environment, Fog, Geometry,

@@ -386,7 +386,46 @@ pub fn perspective_camera(
     #[prop(default = Vec3::ZERO.into())] look_at: Signal<Vec3>,
     #[prop(default = true.into())] active: Signal<bool>,
 ) -> Element {
-    let (context, node) = mount_node("PerspectiveCamera");
+    mount_camera("PerspectiveCamera", position, look_at, active, move || {
+        Projection::Perspective {
+            fov_y: fov_y.get(),
+            near: near.get(),
+            far: far.get(),
+        }
+    })
+}
+
+/// A viewpoint without perspective, where objects keep their size at any distance.
+///
+/// With several cameras, the last one to become `active` is used.
+#[component]
+pub fn orthographic_camera(
+    /// Visible height in scene units; the width follows the view's aspect ratio.
+    #[prop(default = 10.0.into())]
+    height: Signal<f32>,
+    #[prop(default = 0.1.into())] near: Signal<f32>,
+    #[prop(default = 1000.0.into())] far: Signal<f32>,
+    #[prop(default = Vec3::new(0.0, 0.0, 5.0).into())] position: Signal<Vec3>,
+    #[prop(default = Vec3::ZERO.into())] look_at: Signal<Vec3>,
+    #[prop(default = true.into())] active: Signal<bool>,
+) -> Element {
+    mount_camera("OrthographicCamera", position, look_at, active, move || {
+        Projection::Orthographic {
+            height: height.get(),
+            near: near.get(),
+            far: far.get(),
+        }
+    })
+}
+
+fn mount_camera(
+    component: &str,
+    position: Signal<Vec3>,
+    look_at: Signal<Vec3>,
+    active: Signal<bool>,
+    projection: impl Fn() -> Projection + 'static,
+) -> Element {
+    let (context, node) = mount_node(component);
     let target = node.clone();
     effect(move || {
         target.set_transform(Transform::looking_at(
@@ -396,13 +435,7 @@ pub fn perspective_camera(
         ));
     });
     let target = node.clone();
-    effect(move || {
-        target.set_camera(Some(Projection::Perspective {
-            fov_y: fov_y.get(),
-            near: near.get(),
-            far: far.get(),
-        }));
-    });
+    effect(move || target.set_camera(Some(projection())));
     let (scene, target) = (context.scene.clone(), node.clone());
     effect(move || {
         if active.get() {
