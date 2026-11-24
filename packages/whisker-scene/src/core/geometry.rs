@@ -18,6 +18,7 @@ pub(crate) struct GeometryData {
     pub(crate) morph_targets: Vec<MorphTarget>,
     pub(crate) gpu: OnceCell<crate::render::GpuMesh>,
     pub(crate) bvh: OnceCell<crate::raycast::Bvh>,
+    bounds: OnceCell<(Vec3, f32)>,
 }
 
 /// Per-vertex offsets that a morph weight blends in; empty when the target leaves that attribute.
@@ -205,12 +206,33 @@ impl Geometry {
                 morph_targets,
                 gpu: OnceCell::new(),
                 bvh: OnceCell::new(),
+                bounds: OnceCell::new(),
             }),
         }
     }
 
     pub(crate) fn data(&self) -> &GeometryData {
         &self.data
+    }
+
+    /// The center and radius of a sphere enclosing every rest-pose vertex.
+    pub(crate) fn bounds(&self) -> (Vec3, f32) {
+        *self.data.bounds.get_or_init(|| {
+            let mut points = self.data.vertices.iter().map(|v| Vec3::from(v.position));
+            let Some(first) = points.next() else {
+                return (Vec3::ZERO, 0.0);
+            };
+            let (min, max) = points.fold((first, first), |(min, max), p| (min.min(p), max.max(p)));
+            let center = (min + max) / 2.0;
+            let radius = self
+                .data
+                .vertices
+                .iter()
+                .map(|v| Vec3::from(v.position).distance_squared(center))
+                .fold(0.0, f32::max)
+                .sqrt();
+            (center, radius)
+        })
     }
 }
 
@@ -287,6 +309,27 @@ mod tests {
         });
         assert_eq!(max, Vec3::new(1.0, 2.0, 3.0));
         assert_eq!((data.vertices.len(), data.indices.len()), (24, 36));
+    }
+
+    #[test]
+    fn bounds_enclose_every_vertex_around_the_box_center() {
+        let shifted = Geometry::from_vertices(
+            vec![
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(3.0, 0.0, 0.0),
+                Vec3::new(3.0, 2.0, 0.0),
+            ],
+            vec![Vec3::Z; 3],
+            None,
+            vec![0, 1, 2],
+        );
+        let (center, radius) = shifted.bounds();
+        assert_eq!(center, Vec3::new(2.0, 1.0, 0.0));
+        assert!((radius - 2f32.sqrt()).abs() < 1e-6, "{radius}");
+        assert_eq!(
+            Geometry::from_vertices(vec![], vec![], None, vec![]).bounds(),
+            (Vec3::ZERO, 0.0)
+        );
     }
 
     #[test]
