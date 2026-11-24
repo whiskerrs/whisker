@@ -7,7 +7,9 @@ use whisker::css::{FlexDirection, FontWeight};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
-use whisker_map::{LatLng, MapCamera, MapProjection, MapRef, MapStyle, MapTap, MapView, Marker};
+use whisker_map::{
+    LatLng, MapCamera, MapProjection, MapRef, MapStyle, MapTap, MapView, Marker, RenderedQuery,
+};
 use whisker_safe_area::safe_area_insets;
 
 const TOKYO_STATION: LatLng = LatLng::new(35.6812, 139.7671);
@@ -250,6 +252,38 @@ pub fn app() -> Element {
             .unwrap_or("");
         let text = format!("{} {name}", layers.join(", "));
         tapped.set(text);
+        let cluster = tap.features.iter().find_map(|f| {
+            let id = f.properties.get("cluster_id")?.as_u64()?;
+            let at = f.geometry.get("coordinates")?.as_array()?;
+            Some((id, LatLng::new(at[1].as_f64()?, at[0].as_f64()?)))
+        });
+        if let Some((id, center)) = cluster {
+            whisker::spawn_local(async move {
+                if let Some(zoom) = map_ref.cluster_expansion_zoom("points", id).await {
+                    let target = MapCamera {
+                        center,
+                        zoom,
+                        ..camera.get_untracked()
+                    };
+                    map_ref.ease_to(target, Duration::from_millis(500));
+                }
+            });
+        }
+    };
+    let settled = signal(String::new());
+    let on_idle = move || {
+        let shown = map_ref.query_rendered_features(
+            None,
+            RenderedQuery {
+                layers: Some(vec!["clusters".into(), "point".into()]),
+                ..Default::default()
+            },
+        );
+        let clusters = shown.iter().filter(|f| f.layer == "clusters").count();
+        settled.set(format!(
+            "{clusters} clusters, {} points",
+            shown.len() - clusters
+        ));
     };
     let page = Css::new()
         .flex_grow(1.0)
@@ -280,7 +314,8 @@ pub fn app() -> Element {
                         )
                     }),
                 )
-                Text(style: label, value: computed(move || tapped.get()))
+                Text(style: label.clone(), value: computed(move || tapped.get()))
+                Text(style: label, value: computed(move || settled.get()))
                 Text(
                     style: button(),
                     value: "Tokyo",
@@ -326,6 +361,7 @@ pub fn app() -> Element {
                 camera: camera,
                 style: map,
                 on_tap: on_tap,
+                on_idle: on_idle,
                 map_ref: map_ref,
             ) {
                 Marker(position: TOKYO_STATION) { View(style: pin()) }

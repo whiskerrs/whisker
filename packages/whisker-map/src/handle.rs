@@ -11,7 +11,9 @@ use crate::animation::{Animation, FlyPath, Motion};
 use crate::camera::MapCamera;
 use crate::geo::LatLng;
 use crate::map::{MapInner, StyleEdit};
+use crate::query::{Keep, MapFeature, RenderedQuery, ScreenArea, SourceQuery};
 use crate::style::MapProjection;
+use crate::tiles::geojson::ClusterQuery;
 
 /// Passed as a `MapView`'s `map_ref:`, it reaches that map once it is mounted. Style and data
 /// changes made before then wait for the map; camera moves and queries do nothing.
@@ -130,4 +132,87 @@ impl MapRef {
     pub fn to_latlng(&self, x: f64, y: f64) -> Option<LatLng> {
         self.map()?.view().unproject(DVec2::new(x, y))
     }
+
+    /// The features drawn in `area`, or anywhere on the map when it is `None`, topmost first.
+    pub fn query_rendered_features(
+        &self,
+        area: Option<ScreenArea>,
+        options: RenderedQuery,
+    ) -> Vec<MapFeature> {
+        let Some(map) = self.map() else {
+            return Vec::new();
+        };
+        let keep = Keep::new(options.layers, options.filter.as_ref());
+        map.query_rendered(area, &keep)
+    }
+
+    /// The features of `source` in the tiles the map is drawing, whether or not a layer shows
+    /// them; a feature that crosses tiles comes once per tile.
+    pub fn query_source_features(&self, source: &str, options: SourceQuery) -> Vec<MapFeature> {
+        let Some(map) = self.map() else {
+            return Vec::new();
+        };
+        let keep = Keep::new(None, options.filter.as_ref());
+        map.query_source(source, options.source_layer.as_deref(), &keep)
+    }
+
+    /// The zoom at which the cluster `cluster_id` of the GeoJSON source `source` splits apart.
+    pub async fn cluster_expansion_zoom(&self, source: &str, cluster_id: u64) -> Option<f64> {
+        self.cluster(source, ClusterQuery::ExpansionZoom(cluster_id))
+            .await
+            .as_f64()
+    }
+
+    /// The points and clusters the cluster `cluster_id` splits into one zoom further in.
+    pub async fn cluster_children(&self, source: &str, cluster_id: u64) -> Vec<MapFeature> {
+        features(
+            source,
+            self.cluster(source, ClusterQuery::Children(cluster_id))
+                .await,
+        )
+    }
+
+    /// The points inside the cluster `cluster_id`, skipping `offset` and returning at most
+    /// `limit`.
+    pub async fn cluster_leaves(
+        &self,
+        source: &str,
+        cluster_id: u64,
+        limit: usize,
+        offset: usize,
+    ) -> Vec<MapFeature> {
+        let query = ClusterQuery::Leaves {
+            id: cluster_id,
+            limit,
+            offset,
+        };
+        features(source, self.cluster(source, query).await)
+    }
+
+    async fn cluster(&self, source: &str, query: ClusterQuery) -> serde_json::Value {
+        let Some(index) = self.map().and_then(|map| map.geojson(source)) else {
+            return serde_json::Value::Null;
+        };
+        crate::work::geojson_cluster(index, query).await
+    }
+}
+
+fn features(source: &str, json: serde_json::Value) -> Vec<MapFeature> {
+    let serde_json::Value::Array(items) = json else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .map(|mut item| MapFeature {
+            layer: String::new(),
+            source: source.to_string(),
+            source_layer: None,
+            id: item["id"].as_u64(),
+            properties: match item["properties"].take() {
+                serde_json::Value::Object(properties) => properties,
+                _ => serde_json::Map::new(),
+            },
+            geometry: item["geometry"].take(),
+        })
+        .collect()
 }

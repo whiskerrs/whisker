@@ -111,6 +111,11 @@ pub(crate) struct TileSource {
     frame: Cell<u64>,
     in_flight: Cell<usize>,
     pub ready: Cell<bool>,
+    /// Set when the source cannot load, so the map stops waiting on it.
+    failed: Cell<bool>,
+    /// Counts each tile that finishes loading and each new data set.
+    pub data_version: Cell<u64>,
+    geojson: RefCell<Option<crate::work::GeoJson>>,
     on_change: Rc<dyn Fn()>,
     loader: RefCell<Option<Loader>>,
 }
@@ -132,6 +137,8 @@ impl TileSource {
             .map(|(i, _)| i)
             .collect();
         let ready = !source.tiles.is_empty();
+        let failed =
+            !ready && source.url.is_none() && !matches!(source.kind, SourceKind::GeoJson { .. });
         Rc::new(TileSource {
             id,
             definition: source.clone(),
@@ -142,6 +149,9 @@ impl TileSource {
             frame: Cell::new(0),
             in_flight: Cell::new(0),
             ready: Cell::new(ready),
+            failed: Cell::new(failed),
+            data_version: Cell::new(0),
+            geojson: RefCell::new(None),
             on_change,
             loader: RefCell::new(None),
         })
@@ -190,6 +200,8 @@ impl TileSource {
     pub fn set_geojson(self: &Rc<Self>, index: crate::work::GeoJson) {
         let weak = Rc::downgrade(self);
         self.tiles.borrow_mut().clear();
+        *self.geojson.borrow_mut() = Some(index.clone());
+        self.data_version.set(self.data_version.get() + 1);
         self.set_loader(Rc::new(move |id| {
             let source = weak.upgrade()?;
             let layers = source.layers.borrow().clone();
@@ -200,6 +212,21 @@ impl TileSource {
                 index, id, layers, indices, max_zoom,
             )))
         }));
+        (self.on_change)();
+    }
+
+    /// The index this GeoJSON source's tiles are cut from, once its data has loaded.
+    pub fn geojson(&self) -> Option<crate::work::GeoJson> {
+        self.geojson.borrow().clone()
+    }
+
+    /// Whether the source is set up, or has failed to, and no tile it asked for is still loading.
+    pub fn is_loaded(&self) -> bool {
+        (self.ready.get() || self.failed.get()) && self.in_flight.get() == 0
+    }
+
+    pub fn fail(&self) {
+        self.failed.set(true);
         (self.on_change)();
     }
 
@@ -427,6 +454,7 @@ fn finish(weak: &Weak<TileSource>, id: TileId, content: Option<TileContent>) {
     if let Some(entry) = source.tiles.borrow_mut().get_mut(&id) {
         entry.state = state;
     }
+    source.data_version.set(source.data_version.get() + 1);
     (source.on_change)();
 }
 

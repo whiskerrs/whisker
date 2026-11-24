@@ -7,7 +7,7 @@ use glam::DVec2;
 use serde_json::Value as Json;
 
 use super::mvt::{Feature, GeometryKind, Layer, TilePoint, signed_area};
-use crate::geo::{LatLng, TileId, mercator};
+use crate::geo::{LatLng, TileId, mercator, unmercator};
 use crate::style::GeoJsonOptions;
 use crate::value::Value;
 
@@ -40,6 +40,48 @@ struct Node {
     count: usize,
     /// The input point's index when `count` is 1, else the cluster's id.
     id: u64,
+    /// For a cluster, the nodes it merged, as indices into the level one zoom past its own.
+    children: Vec<usize>,
+}
+
+/// A question about a cluster of a GeoJSON source, as MapLibre's `GeoJSONSource` asks it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ClusterQuery {
+    ExpansionZoom(u64),
+    Children(u64),
+    Leaves {
+        id: u64,
+        limit: usize,
+        offset: usize,
+    },
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+impl ClusterQuery {
+    pub fn to_json(self) -> Json {
+        match self {
+            ClusterQuery::ExpansionZoom(id) => serde_json::json!(["expansion", id]),
+            ClusterQuery::Children(id) => serde_json::json!(["children", id]),
+            ClusterQuery::Leaves { id, limit, offset } => {
+                serde_json::json!(["leaves", id, limit, offset])
+            }
+        }
+    }
+
+    pub fn from_json(json: &Json) -> Option<ClusterQuery> {
+        let items = json.as_array()?;
+        let n = |i: usize| items.get(i).and_then(Json::as_u64);
+        Some(match items.first()?.as_str()? {
+            "expansion" => ClusterQuery::ExpansionZoom(n(1)?),
+            "children" => ClusterQuery::Children(n(1)?),
+            "leaves" => ClusterQuery::Leaves {
+                id: n(1)?,
+                limit: n(2)? as usize,
+                offset: n(3)? as usize,
+            },
+            _ => return None,
+        })
+    }
 }
 
 /// A GeoJSON source's features, ready to be cut into any tile.
@@ -145,6 +187,122 @@ impl GeoJsonIndex {
     }
 }
 
+impl GeoJsonIndex {
+    /// The answer to `query` as JSON: a zoom for `ExpansionZoom`, else an array of GeoJSON
+    /// features; `null` when the source has no such cluster.
+    pub fn cluster(&self, query: ClusterQuery) -> Json {
+        match query {
+            ClusterQuery::ExpansionZoom(mut id) => {
+                let mut zoom = id & 31;
+                loop {
+                    let Some(children) = self.children(id) else {
+                        return Json::Null;
+                    };
+                    zoom += 1;
+                    match children.as_slice() {
+                        [only] if only.count > 1 => id = only.id,
+                        _ => return serde_json::json!(zoom),
+                    }
+                }
+            }
+            ClusterQuery::Children(id) => match self.children(id) {
+                Some(children) => children.iter().map(|node| self.node_json(node)).collect(),
+                None => Json::Null,
+            },
+            ClusterQuery::Leaves { id, limit, offset } => {
+                let Some(children) = self.children(id) else {
+                    return Json::Null;
+                };
+                let mut leaves = Vec::new();
+                let mut skipped = 0;
+                self.leaves(children, limit, offset, &mut skipped, &mut leaves);
+                Json::Array(leaves)
+            }
+        }
+    }
+
+    /// The nodes cluster `id` merged, or `None` when no level holds it.
+    fn children(&self, id: u64) -> Option<Vec<Node>> {
+        let zoom = (id & 31) as usize;
+        let node = self
+            .levels
+            .get(zoom)?
+            .iter()
+            .find(|n| n.count > 1 && n.id == id)?;
+        Some(
+            node.children
+                .iter()
+                .filter_map(|&i| match self.levels.get(zoom + 1) {
+                    Some(level) => level.get(i).cloned(),
+                    None => self.points.get(i).map(|item| Node {
+                        position: point_of(item),
+                        count: 1,
+                        id: i as u64,
+                        children: Vec::new(),
+                    }),
+                })
+                .collect(),
+        )
+    }
+
+    fn leaves(
+        &self,
+        nodes: Vec<Node>,
+        limit: usize,
+        offset: usize,
+        skipped: &mut usize,
+        out: &mut Vec<Json>,
+    ) {
+        for node in nodes {
+            if out.len() >= limit {
+                return;
+            }
+            if node.count > 1 {
+                if *skipped + node.count <= offset {
+                    *skipped += node.count;
+                } else if let Some(children) = self.children(node.id) {
+                    self.leaves(children, limit, offset, skipped, out);
+                }
+            } else if *skipped < offset {
+                *skipped += 1;
+            } else {
+                out.push(self.node_json(&node));
+            }
+        }
+    }
+
+    /// A point as its GeoJSON feature, or a cluster as the feature its tiles draw.
+    fn node_json(&self, node: &Node) -> Json {
+        let (id, properties, position) = if node.count > 1 {
+            (Some(node.id), cluster_properties(node), node.position)
+        } else {
+            let item = &self.points[node.id as usize];
+            (item.id, (*item.properties).clone(), point_of(item))
+        };
+        let place = unmercator(position.x, position.y);
+        let properties: serde_json::Map<String, Json> = properties
+            .iter()
+            .map(|(k, v)| (k.to_string(), crate::query::json(v)))
+            .collect();
+        let mut feature = serde_json::json!({
+            "type": "Feature",
+            "properties": properties,
+            "geometry": {"type": "Point", "coordinates": [place.lng, place.lat]},
+        });
+        if let Some(id) = id {
+            feature["id"] = serde_json::json!(id);
+        }
+        feature
+    }
+}
+
+fn point_of(item: &Item) -> DVec2 {
+    match &item.shape {
+        Shape::Points(p) => p[0],
+        _ => DVec2::ZERO,
+    }
+}
+
 fn cluster_properties(node: &Node) -> HashMap<Arc<str>, Value> {
     let count = node.count;
     let abbreviated = if count >= 10_000 {
@@ -177,6 +335,7 @@ fn cluster(points: &[Item], options: &GeoJsonOptions) -> Vec<Vec<Node>> {
                 position: p[0],
                 count: 1,
                 id: i as u64,
+                children: Vec::new(),
             }),
             _ => None,
         })
@@ -220,10 +379,12 @@ fn cluster(points: &[Item], options: &GeoJsonOptions) -> Vec<Vec<Node>> {
                 weighted += level[j].position * level[j].count as f64;
             }
             next_id += 1;
+            neighbors.insert(0, i);
             merged.push(Node {
                 position: weighted / count as f64,
                 count,
                 id: (next_id << 5) | z as u64,
+                children: neighbors,
             });
         }
         levels[z] = merged.clone();
@@ -606,6 +767,65 @@ mod tests {
                 .features
                 .iter()
                 .all(|f| f.property("cluster").is_none())
+        );
+    }
+
+    #[test]
+    fn a_cluster_answers_for_its_children_leaves_and_expansion_zoom() {
+        let points: Vec<Json> = (0..10)
+            .map(|i| serde_json::json!({"type": "Feature", "id": i, "properties": {"n": i}, "geometry": {"type": "Point", "coordinates": [139.7 + f64::from(i) * 0.001, 35.68]}}))
+            .collect();
+        let data = serde_json::json!({"type": "FeatureCollection", "features": points});
+        let index = GeoJsonIndex::new(&data, options(true));
+        let id = index.levels[0][0].id;
+
+        let zoom = index
+            .cluster(ClusterQuery::ExpansionZoom(id))
+            .as_u64()
+            .unwrap();
+        let children = index.cluster(ClusterQuery::Children(id));
+        let children = children.as_array().unwrap();
+        assert!(children.len() > 1);
+        assert!(
+            index.levels[zoom as usize - 1]
+                .iter()
+                .any(|n| n.count == 10)
+        );
+        assert!(index.levels[zoom as usize].iter().all(|n| n.count < 10));
+        let total: u64 = children
+            .iter()
+            .map(|c| c["properties"]["point_count"].as_u64().unwrap_or(1))
+            .sum();
+        assert_eq!(total, 10);
+
+        let leaves = |limit, offset| {
+            index
+                .cluster(ClusterQuery::Leaves { id, limit, offset })
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f["properties"]["n"].as_u64().unwrap())
+                .collect::<Vec<_>>()
+        };
+        let mut all = leaves(100, 0);
+        assert_eq!(leaves(3, 2), all[2..5]);
+        all.sort();
+        assert_eq!(all, (0..10).collect::<Vec<_>>());
+        assert_eq!(index.cluster(ClusterQuery::Children(id + 32)), Json::Null);
+        assert_eq!(
+            ClusterQuery::from_json(
+                &ClusterQuery::Leaves {
+                    id,
+                    limit: 3,
+                    offset: 2
+                }
+                .to_json()
+            ),
+            Some(ClusterQuery::Leaves {
+                id,
+                limit: 3,
+                offset: 2
+            })
         );
     }
 

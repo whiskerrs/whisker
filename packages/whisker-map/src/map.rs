@@ -11,8 +11,9 @@ use whisker_wgpu::wgpu;
 
 use crate::animation::{Animation, clamp_center, normalize_bearing};
 use crate::camera::{MAX_PITCH, MAX_ZOOM, MIN_ZOOM, MapCamera, View, min_zoom};
+use crate::events::{MapEvents, MapSourceData};
 use crate::geo::LatLng;
-use crate::query::MapTap;
+use crate::query::{Keep, MapFeature, MapTap, ScreenArea};
 use crate::render::{PlacedLabel, TileSet};
 use crate::sprite::SpriteStore;
 use crate::style::{GeoJsonOptions, Layer, Light, MapProjection, MapStyle, SourceKind, Style};
@@ -60,12 +61,21 @@ pub(crate) struct MapInner {
     busy: Cell<bool>,
     /// The app's projection, which wins over the style's.
     projection: Cell<Option<MapProjection>>,
+    events: RefCell<MapEvents>,
+    /// The camera the last frame drew, to tell when a move has ended.
+    drawn_camera: Cell<MapCamera>,
+    moving: Cell<bool>,
+    idle: Cell<bool>,
+    touching: Cell<bool>,
+    /// Each source's `data_version` as of the last frame.
+    seen_data: RefCell<HashMap<String, u64>>,
 }
 
 impl MapInner {
     pub fn new(camera: MapCamera) -> Rc<MapInner> {
+        let camera = clamp_camera(camera, MIN_ZOOM);
         Rc::new(MapInner {
-            camera: Cell::new(clamp_camera(camera, MIN_ZOOM)),
+            camera: Cell::new(camera),
             camera_signal: Cell::new(None),
             size: Cell::new(SurfaceSize {
                 width: 1,
@@ -83,7 +93,24 @@ impl MapInner {
             drawn: RefCell::new((HashMap::new(), Vec::new())),
             busy: Cell::new(false),
             projection: Cell::new(None),
+            events: RefCell::new(MapEvents::default()),
+            drawn_camera: Cell::new(camera),
+            moving: Cell::new(false),
+            idle: Cell::new(false),
+            touching: Cell::new(false),
+            seen_data: RefCell::new(HashMap::new()),
         })
+    }
+
+    pub fn set_events(&self, events: MapEvents) {
+        *self.events.borrow_mut() = events;
+    }
+
+    /// Records whether a finger or button is down on the map, which holds back `on_move_end`.
+    pub fn set_touching(&self, touching: bool) {
+        if self.touching.replace(touching) && !touching {
+            self.request_frame();
+        }
     }
 
     /// Applies `edit` to the style, now or once the style has loaded.
@@ -128,7 +155,7 @@ impl MapInner {
         let features = match self.style() {
             Some(style) => {
                 let drawn = self.drawn.borrow();
-                crate::query::features_at(&view, &style, &drawn.0, &drawn.1, point)
+                crate::query::features_at(&view, &style, &drawn.0, &drawn.1, point, &Keep::all())
             }
             None => Vec::new(),
         };
@@ -138,6 +165,43 @@ impl MapInner {
             y: point.y,
             features,
         }
+    }
+
+    /// The features the last frame drew in `area`, or on the whole map when it is `None`.
+    pub fn query_rendered(&self, area: Option<ScreenArea>, keep: &Keep) -> Vec<MapFeature> {
+        let Some(style) = self.style() else {
+            return Vec::new();
+        };
+        let view = self.view();
+        let drawn = self.drawn.borrow();
+        let (min, max) = match area {
+            Some(ScreenArea::Point(x, y)) => {
+                let point = DVec2::new(x, y);
+                return crate::query::features_at(&view, &style, &drawn.0, &drawn.1, point, keep);
+            }
+            Some(ScreenArea::Box(a, b)) => (
+                DVec2::new(a[0].min(b[0]), a[1].min(b[1])),
+                DVec2::new(a[0].max(b[0]), a[1].max(b[1])),
+            ),
+            None => (DVec2::ZERO, DVec2::new(view.width, view.height)),
+        };
+        crate::query::features_in(&view, &style, &drawn.0, &drawn.1, min, max, keep)
+    }
+
+    /// The features of `source` in the tiles the last frame drew.
+    pub fn query_source(
+        &self,
+        source: &str,
+        source_layer: Option<&str>,
+        keep: &Keep,
+    ) -> Vec<MapFeature> {
+        let zoom = self.view().zoom();
+        crate::query::source_features(&self.drawn.borrow().0, source, source_layer, keep, zoom)
+    }
+
+    /// The index a GeoJSON source's tiles are cut from, once its data has loaded.
+    pub fn geojson(&self, source: &str) -> Option<crate::work::GeoJson> {
+        self.style()?.sources.get(source)?.geojson()
     }
 
     pub fn set_surface(&self, surface: WeakSurface) {
@@ -284,10 +348,15 @@ impl MapInner {
             .iter()
             .filter_map(Weak::upgrade)
             .collect();
+        // Markers more than half the map past an edge are hidden and stop following the camera.
+        let (margin_x, margin_y) = (view.width / 2.0, view.height / 2.0);
         for marker in markers {
             let screen = view
                 .project(marker.position.get())
-                .filter(|p| p.x.is_finite() && p.y.is_finite())
+                .filter(|p| {
+                    (-margin_x..=view.width + margin_x).contains(&p.x)
+                        && (-margin_y..=view.height + margin_y).contains(&p.y)
+                })
                 .map(|p| (p.x as f32, p.y as f32));
             let changed = match (marker.screen.get_untracked(), screen) {
                 (Some(a), Some(b)) => (a.0 - b.0).abs() > 0.01 || (a.1 - b.1).abs() > 0.01,
@@ -297,8 +366,73 @@ impl MapInner {
                 marker.screen.set(screen);
             }
         }
-        if self.animation.borrow().is_some() || self.busy.get() {
+        let animating = self.animation.borrow().is_some();
+        let moved = self.drawn_camera.replace(self.camera.get()) != self.camera.get();
+        self.report(moved, animating);
+        if animating || moved || self.busy.get() {
             self.request_frame();
+        }
+    }
+
+    /// Calls the app's event callbacks for what this frame changed, once the frame is done.
+    fn report(&self, moved: bool, animating: bool) {
+        let events = self.events.borrow().clone();
+        let mut calls: Vec<Box<dyn FnOnce()>> = Vec::new();
+        if moved {
+            self.moving.set(true);
+        } else if self.moving.get() && !animating && !self.touching.get() {
+            self.moving.set(false);
+            if let Some(callback) = events.move_end.clone() {
+                calls.push(Box::new(move || (callback.0)()));
+            }
+        }
+        let mut loaded = true;
+        if let Some(style) = self.style() {
+            let mut seen = self.seen_data.borrow_mut();
+            seen.retain(|id, _| style.sources.contains_key(id));
+            for (id, source) in &style.sources {
+                let source_loaded = source.is_loaded();
+                if !source.layer_indices.borrow().is_empty() {
+                    loaded &= source_loaded;
+                }
+                let version = source.data_version.get();
+                match seen.get_mut(id) {
+                    Some(seen) if *seen == version => continue,
+                    Some(seen) => *seen = version,
+                    None => {
+                        seen.insert(id.clone(), version);
+                    }
+                }
+                if let Some(callback) = events.source_data.clone() {
+                    let data = MapSourceData {
+                        source: id.clone(),
+                        loaded: source_loaded,
+                    };
+                    calls.push(Box::new(move || (callback.0)(data)));
+                }
+            }
+            loaded &= !style.sprites.is_loading()
+                && style
+                    .glyphs
+                    .as_ref()
+                    .is_none_or(|glyphs| !glyphs.is_loading());
+        } else {
+            loaded = false;
+        }
+        let quiet = loaded && !self.moving.get() && !animating && !self.busy.get();
+        if quiet
+            && !self.idle.get()
+            && let Some(callback) = events.idle.clone()
+        {
+            calls.push(Box::new(move || (callback.0)()));
+        }
+        self.idle.set(quiet);
+        if !calls.is_empty() {
+            whisker::spawn_local(async move {
+                for call in calls {
+                    call();
+                }
+            });
         }
     }
 
@@ -486,10 +620,12 @@ fn load_geojson(source: &Rc<TileSource>, data: serde_json::Value, options: GeoJs
                 Ok(Some(bytes)) => bytes,
                 Ok(None) => {
                     log(&format!("whisker-map: GeoJSON {url} not found"));
+                    fail(&weak);
                     return;
                 }
                 Err(error) => {
                     log(&format!("whisker-map: GeoJSON {url}: {error}"));
+                    fail(&weak);
                     return;
                 }
             },
@@ -497,6 +633,7 @@ fn load_geojson(source: &Rc<TileSource>, data: serde_json::Value, options: GeoJs
         };
         let Some(index) = crate::work::geojson_index(text, options).await else {
             log("whisker-map: GeoJSON does not parse");
+            fail(&weak);
             return;
         };
         if let Some(source) = weak.upgrade() {
@@ -514,6 +651,7 @@ fn open_pmtiles(source: &Rc<TileSource>, url: String) {
             Ok(archive) => Rc::new(archive),
             Err(error) => {
                 log(&format!("whisker-map: PMTiles {error}"));
+                fail(&weak);
                 return;
             }
         };
@@ -533,10 +671,12 @@ fn fetch_tilejson(source: &Rc<TileSource>, on_change: Rc<dyn Fn()>) {
             Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes),
             Ok(None) => {
                 log(&format!("whisker-map: TileJSON {url} not found"));
+                fail(&weak);
                 return;
             }
             Err(error) => {
                 log(&format!("whisker-map: TileJSON {url}: {error}"));
+                fail(&weak);
                 return;
             }
         };
@@ -544,6 +684,7 @@ fn fetch_tilejson(source: &Rc<TileSource>, on_change: Rc<dyn Fn()>) {
             Ok(json) => json,
             Err(error) => {
                 log(&format!("whisker-map: TileJSON {url}: {error}"));
+                fail(&weak);
                 return;
             }
         };
@@ -554,9 +695,19 @@ fn fetch_tilejson(source: &Rc<TileSource>, on_change: Rc<dyn Fn()>) {
             let base = Some(url.as_str());
             s.tiles = s.tiles.iter().map(|t| resolve_url(base, t)).collect();
         }
-        source.ready.set(!source.source.borrow().tiles.is_empty());
-        on_change();
+        if source.source.borrow().tiles.is_empty() {
+            source.fail();
+        } else {
+            source.ready.set(true);
+            on_change();
+        }
     });
+}
+
+fn fail(source: &Weak<TileSource>) {
+    if let Some(source) = source.upgrade() {
+        source.fail();
+    }
 }
 
 /// Resolves `url` against the document it was found in.
