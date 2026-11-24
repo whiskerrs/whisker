@@ -8,8 +8,8 @@ use whisker_wgpu::{Gpu, Renderer, wgpu};
 use super::pipeline::SHARED;
 use super::*;
 use crate::core::{
-    Environment, Fog, Geometry, Light, Material, Node, Projection, Scene, Shadow, StandardMaterial,
-    ToneMapping, Transform,
+    AmbientOcclusion, Bloom, DepthOfField, Environment, Fog, Geometry, Light, Material, Node,
+    PostProcessing, Projection, Scene, Shadow, StandardMaterial, Texture, ToneMapping, Transform,
 };
 
 #[test]
@@ -95,7 +95,11 @@ const SIZE: u32 = 64;
 
 /// Renders `scene` offscreen and returns its sRGB pixels.
 fn render(gpu: &Gpu, scene: Scene) -> Vec<[u8; 4]> {
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    render_into(gpu, scene, wgpu::TextureFormat::Rgba8UnormSrgb)
+}
+
+/// Renders `scene` into a `format` target, as one first frame.
+fn render_into(gpu: &Gpu, scene: Scene, format: wgpu::TextureFormat) -> Vec<[u8; 4]> {
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -483,6 +487,22 @@ fn a_hemisphere_light_shades_by_facing() {
 
 /// The floor's brightness under a sun of `intensity` straight above, with `tone_mapping`.
 fn toned(gpu: &Gpu, tone_mapping: ToneMapping, exposure: f32, intensity: f32) -> u8 {
+    toned_through(
+        gpu,
+        tone_mapping,
+        exposure,
+        intensity,
+        PostProcessing::default(),
+    )
+}
+
+fn toned_through(
+    gpu: &Gpu,
+    tone_mapping: ToneMapping,
+    exposure: f32,
+    intensity: f32,
+    post_processing: PostProcessing,
+) -> u8 {
     let (scene, _, caster, view_proj) = shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::Y * 1.5);
     caster.remove_from_parent();
     let light = Node::new();
@@ -497,6 +517,7 @@ fn toned(gpu: &Gpu, tone_mapping: ToneMapping, exposure: f32, intensity: f32) ->
     }));
     scene.root().add_child(&light);
     scene.set_tone_mapping(tone_mapping, exposure);
+    scene.set_post_processing(post_processing);
     floor_pixel(&render(gpu, scene), view_proj, 1.0, 0.0)[0]
 }
 
@@ -644,5 +665,220 @@ fn the_environment_can_stand_in_for_the_background() {
         // The default camera looks down -Z, which the environment paints yellow.
         let sky = pixel(&render(gpu, scene), SIZE / 2, SIZE / 2);
         assert!(sky[0] > 200 && sky[1] > 200 && sky[2] < 40, "{sky:?}");
+    });
+}
+
+/// A red cube `size` wide over a blue background, from the default camera.
+fn post_stage(size: f32, post_processing: PostProcessing) -> Scene {
+    let scene = Scene::new();
+    scene.set_background(Color::rgb(0, 0, 255));
+    let mesh = Node::new();
+    mesh.set_mesh(Some((
+        Geometry::cuboid(Vec3::splat(size)),
+        Material::Unlit {
+            color: Color::rgb(255, 0, 0),
+        },
+    )));
+    scene.root().add_child(&mesh);
+    scene.set_post_processing(post_processing);
+    scene
+}
+
+/// The first column right of center that shows the background.
+fn cube_edge(pixels: &[[u8; 4]]) -> u32 {
+    (SIZE / 2..SIZE)
+        .find(|&x| pixel(pixels, x, SIZE / 2)[0] < 128)
+        .unwrap()
+}
+
+#[test]
+fn flat_regions_pass_through_the_post_chain_unchanged() {
+    with_gpu(|gpu| {
+        let pixels = render(
+            gpu,
+            post_stage(
+                1.0,
+                PostProcessing {
+                    fxaa: true,
+                    ..Default::default()
+                },
+            ),
+        );
+        assert_eq!(pixel(&pixels, SIZE / 2, SIZE / 2), [255, 0, 0, 255]);
+        assert_eq!(pixel(&pixels, 0, 0), [0, 0, 255, 255]);
+    });
+}
+
+#[test]
+fn bloom_spreads_bright_surfaces_past_their_edges() {
+    with_gpu(|gpu| {
+        let plain = render(gpu, post_stage(0.5, PostProcessing::default()));
+        let edge = cube_edge(&plain);
+        let bloom = PostProcessing {
+            bloom: Some(Bloom {
+                threshold: 0.5,
+                intensity: 1.0,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let glowing = render(gpu, post_stage(0.5, bloom));
+        let (before, after) = (
+            pixel(&plain, edge + 2, SIZE / 2),
+            pixel(&glowing, edge + 2, SIZE / 2),
+        );
+        assert!(after[0] > before[0] + 20, "{before:?} {after:?}");
+    });
+}
+
+#[test]
+fn depth_of_field_blurs_surfaces_away_from_focus() {
+    with_gpu(|gpu| {
+        let plain = render(gpu, post_stage(1.0, PostProcessing::default()));
+        let edge = cube_edge(&plain);
+        let blur = |focus_distance| PostProcessing {
+            depth_of_field: Some(DepthOfField {
+                focus_distance,
+                focus_range: 0.5,
+                max_blur: 8.0,
+            }),
+            ..Default::default()
+        };
+        let blurred = render(gpu, post_stage(1.0, blur(100.0)));
+        let outside = pixel(&blurred, edge + 1, SIZE / 2);
+        assert!(outside[0] > 40, "{outside:?}");
+        assert_eq!(pixel(&blurred, 0, 0), [0, 0, 255, 255]);
+    });
+}
+
+#[test]
+fn ambient_occlusion_darkens_the_floor_beside_a_mesh() {
+    with_gpu(|gpu| {
+        let floor_at = |occlusion: Option<AmbientOcclusion>| {
+            let (scene, _, _, view_proj) =
+                shadow_stage(Vec3::new(2.0, 4.0, 0.0), 1.2, Vec3::Y * 0.5);
+            scene.set_ambient_light(Color::rgb(255, 255, 255), 0.5);
+            scene.set_post_processing(PostProcessing {
+                ambient_occlusion: occlusion,
+                ..Default::default()
+            });
+            let pixels = render(gpu, scene);
+            (
+                i32::from(floor_pixel(&pixels, view_proj, 0.6, 0.0)[0]),
+                i32::from(floor_pixel(&pixels, view_proj, 3.0, 2.0)[0]),
+            )
+        };
+        let (near, far) = floor_at(None);
+        let (occluded_near, occluded_far) = floor_at(Some(AmbientOcclusion::default()));
+        assert!(occluded_near + 20 < near, "{near} {occluded_near}");
+        assert!(occluded_far + 3 >= far, "{far} {occluded_far}");
+    });
+}
+
+/// A lookup table of `size` slices laid side by side, mapping each color through `map`.
+fn lookup_table(size: u32, map: impl Fn([u32; 3]) -> [u32; 3]) -> Texture {
+    let level = |v: u32| v * 255 / (size - 1);
+    let mut pixels = Vec::new();
+    for g in 0..size {
+        for b in 0..size {
+            for r in 0..size {
+                let [r, g, b] = map([level(r), level(g), level(b)]);
+                pixels.extend([r as u8, g as u8, b as u8, 255]);
+            }
+        }
+    }
+    Texture::from_rgba8(size * size, size, pixels)
+}
+
+#[test]
+fn color_grading_maps_colors_through_the_lookup_table() {
+    with_gpu(|gpu| {
+        let graded = |lut| {
+            render(
+                gpu,
+                post_stage(
+                    1.0,
+                    PostProcessing {
+                        color_grading: Some(lut),
+                        ..Default::default()
+                    },
+                ),
+            )
+        };
+        let identity = graded(lookup_table(16, |c| c));
+        assert_eq!(pixel(&identity, SIZE / 2, SIZE / 2), [255, 0, 0, 255]);
+        assert_eq!(pixel(&identity, 0, 0), [0, 0, 255, 255]);
+        let inverted = graded(lookup_table(16, |c| c.map(|v| 255 - v)));
+        assert_eq!(pixel(&inverted, SIZE / 2, SIZE / 2), [0, 255, 255, 255]);
+    });
+}
+
+#[test]
+fn the_post_chain_tone_maps_from_the_first_frame() {
+    with_gpu(|gpu| {
+        let fxaa = PostProcessing {
+            fxaa: true,
+            ..Default::default()
+        };
+        let direct = toned(gpu, ToneMapping::Reinhard, 1.0, 4.0);
+        let post = toned_through(gpu, ToneMapping::Reinhard, 1.0, 4.0, fxaa);
+        assert!(direct.abs_diff(post) <= 2, "{direct} {post}");
+    });
+}
+
+#[test]
+fn the_post_chain_encodes_for_linear_targets() {
+    with_gpu(|gpu| {
+        for fxaa in [false, true] {
+            let scene = post_stage(
+                1.0,
+                PostProcessing {
+                    fxaa,
+                    color_grading: Some(lookup_table(16, |c| c)),
+                    ..Default::default()
+                },
+            );
+            let pixels = render_into(gpu, scene, wgpu::TextureFormat::Rgba8Unorm);
+            assert_eq!(pixel(&pixels, SIZE / 2, SIZE / 2), [255, 0, 0, 255]);
+            assert_eq!(pixel(&pixels, 0, 0), [0, 0, 255, 255]);
+        }
+    });
+}
+
+#[test]
+fn bloom_picks_up_light_brighter_than_white() {
+    with_gpu(|gpu| {
+        let glowing = |bloom: Option<Bloom>| {
+            let scene = post_stage(
+                0.5,
+                PostProcessing {
+                    bloom,
+                    ..Default::default()
+                },
+            );
+            let mesh = Node::new();
+            mesh.set_mesh(Some((
+                Geometry::cuboid(Vec3::splat(0.5)),
+                Material::Standard(StandardMaterial {
+                    base_color: Color::rgb(0, 0, 0),
+                    emissive: Color::rgb(255, 255, 255),
+                    emissive_intensity: 4.0,
+                    ..Default::default()
+                }),
+            )));
+            scene.root().add_child(&mesh);
+            render(gpu, scene)
+        };
+        let plain = glowing(None);
+        let edge = cube_edge(&plain);
+        let bloomed = glowing(Some(Bloom {
+            intensity: 1.0,
+            ..Default::default()
+        }));
+        let (before, after) = (
+            pixel(&plain, edge + 2, SIZE / 2),
+            pixel(&bloomed, edge + 2, SIZE / 2),
+        );
+        assert!(after[0] > before[0] + 20, "{before:?} {after:?}");
     });
 }

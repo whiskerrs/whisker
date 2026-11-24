@@ -2,6 +2,7 @@
 
 mod collect;
 mod pipeline;
+mod post;
 mod resources;
 mod shadow;
 mod visibility;
@@ -17,14 +18,13 @@ pub(crate) use collect::{Collected, Draw, camera_for, collect};
 pub(crate) use pipeline::translucent;
 pub(crate) use resources::{DeformBuffer, GpuMesh, GpuTexture};
 
-use crate::core::{
-    CUBE_LEVELS, Environment, Fog, Scene, SceneInner, ToneMapping, linear_rgba, srgb_rgba,
-};
+use crate::core::{CUBE_LEVELS, Environment, Fog, Scene, SceneInner, linear_rgba, srgb_rgba};
 use collect::{pick_camera, radiance};
 use pipeline::{
     DirectionalUniform, DrawUniform, FrameUniform, PipelineKey, PointUniform, Shared, double_sided,
     draw_buffer, draw_uniform, shared,
 };
+use post::PostTargets;
 use resources::{MaterialCache, deformed_vertices, environment_cube, mesh};
 use shadow::{Eye, MAX_SHADOW_LAYERS, ShadowMaps, ShadowPlan};
 use visibility::{Frustum, Ordered, draw_order};
@@ -36,6 +36,8 @@ const MSAA_SAMPLES: u32 = 4;
 
 struct Attachments {
     size: (u32, u32),
+    format: wgpu::TextureFormat,
+    samples: u32,
     depth: wgpu::TextureView,
     msaa: Option<wgpu::TextureView>,
 }
@@ -61,6 +63,7 @@ pub(crate) struct SceneRenderer {
     shadow_view_bind_group: wgpu::BindGroup,
     shadow_view_stride: u64,
     bound_environment: Option<Environment>,
+    post: Option<PostTargets>,
 }
 
 impl SceneRenderer {
@@ -97,7 +100,8 @@ impl SceneRenderer {
         let shadow_view_stride = (size_of::<Mat4>() as u64).next_multiple_of(alignment);
         let shadow_view_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("whisker-scene shadow views"),
-            size: shadow_view_stride * MAX_SHADOW_LAYERS as u64,
+            // One slot past the shadow layers holds the camera, for the depth prepass.
+            size: shadow_view_stride * (MAX_SHADOW_LAYERS as u64 + 1),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -134,6 +138,7 @@ impl SceneRenderer {
             shadow_view_bind_group,
             shadow_view_stride,
             bound_environment: None,
+            post: None,
         }
     }
 
@@ -165,16 +170,15 @@ impl SceneRenderer {
         );
     }
 
-    fn prepare_attachments(&mut self, gpu: &Gpu) {
+    fn prepare_attachments(&mut self, gpu: &Gpu, format: wgpu::TextureFormat, samples: u32) {
         if self
             .attachments
             .as_ref()
-            .is_some_and(|a| a.size != self.size)
+            .is_some_and(|a| a.size != self.size || a.format != format || a.samples != samples)
         {
             self.attachments = None;
         }
         let (width, height) = self.size;
-        let (format, samples) = (self.format, self.samples);
         self.attachments.get_or_insert_with(|| {
             let texture = |label, format| {
                 gpu.device
@@ -196,6 +200,8 @@ impl SceneRenderer {
             };
             Attachments {
                 size: (width, height),
+                format,
+                samples,
                 depth: texture("whisker-scene depth", DEPTH_FORMAT),
                 msaa: (samples > 1).then(|| texture("whisker-scene msaa", format)),
             }
@@ -235,6 +241,16 @@ impl Renderer for SceneRenderer {
         let sky = environment.is_some() && inner.environment_background();
         let view = camera_world.inverse();
         let view_proj = projection.to_matrix(aspect) * view;
+        let settings = inner.post_processing();
+        if !settings.active() {
+            self.post = None;
+        } else if self
+            .post
+            .as_ref()
+            .is_none_or(|post| post.size() != self.size)
+        {
+            self.post = Some(PostTargets::new(gpu, self.size));
+        }
         self.write_frame_uniform(gpu, &collected, &plan, view_proj, eye, inner);
         let order = draw_order(&collected.draws, view, &Frustum::new(view_proj));
         self.write_draw_uniforms(gpu, &collected.draws);
@@ -243,21 +259,68 @@ impl Renderer for SceneRenderer {
             clear: self.clear_color(inner.background()),
             sky,
         };
-        self.prepare_attachments(gpu);
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("whisker-scene"),
             });
         self.encode_shadows(gpu, &mut encoder, &collected.draws, &plan);
-        self.encode_forward(
-            gpu,
-            &mut encoder,
-            target,
-            &collected.draws,
-            &order,
-            backdrop,
-        );
+        match self
+            .post
+            .as_ref()
+            .map(|post| (post.scene.clone(), post.format, post.samples))
+        {
+            None => {
+                self.prepare_attachments(gpu, self.format, self.samples);
+                let target = Target {
+                    view: target,
+                    format: self.format,
+                    samples: self.samples,
+                };
+                self.encode_forward(
+                    gpu,
+                    &mut encoder,
+                    target,
+                    &collected.draws,
+                    &order,
+                    backdrop,
+                );
+            }
+            Some((scene_view, format, samples)) => {
+                self.prepare_attachments(gpu, format, samples);
+                let scene_target = Target {
+                    view: &scene_view,
+                    format,
+                    samples,
+                };
+                self.encode_forward(
+                    gpu,
+                    &mut encoder,
+                    scene_target,
+                    &collected.draws,
+                    &order,
+                    backdrop,
+                );
+                if settings.ambient_occlusion.is_some() || settings.depth_of_field.is_some() {
+                    self.encode_depth_prepass(
+                        gpu,
+                        &mut encoder,
+                        &collected.draws,
+                        &order,
+                        view_proj,
+                    );
+                }
+                let projection = projection.to_matrix(aspect);
+                self.encode_post(
+                    gpu,
+                    &mut encoder,
+                    target,
+                    &settings,
+                    projection,
+                    inner.tone_mapping(),
+                );
+            }
+        }
         gpu.queue.submit([encoder.finish()]);
         self.materials.sweep();
     }
@@ -276,12 +339,7 @@ impl SceneRenderer {
         let (ambient_color, ambient_intensity) = inner.ambient();
         let (sky, ground, hemisphere) = inner.hemisphere();
         let (tone_mapping, exposure) = inner.tone_mapping();
-        let tone_mapping = match tone_mapping {
-            ToneMapping::None => 0.0,
-            ToneMapping::Reinhard => 1.0,
-            ToneMapping::Aces => 2.0,
-            ToneMapping::AgX => 3.0,
-        };
+        let tone_mapping = post::tone_curve(tone_mapping);
         let (fog_color, fog) = match inner.fog() {
             None => (Color::rgb(0, 0, 0), [0.0; 4]),
             Some(Fog::Linear { color, near, far }) => (color, [1.0, near, far, 0.0]),
@@ -319,7 +377,12 @@ impl SceneRenderer {
             ambient: radiance(ambient_color, ambient_intensity),
             sky: radiance(sky, hemisphere),
             ground: radiance(ground, hemisphere),
-            tone: [exposure, tone_mapping, 0.0, 0.0],
+            tone: [
+                exposure,
+                tone_mapping,
+                f32::from(u8::from(self.post.is_some())),
+                0.0,
+            ],
             fog_color: linear_rgba(fog_color),
             fog,
             counts: [
@@ -410,7 +473,7 @@ impl SceneRenderer {
     }
 
     fn clear_color(&self, background: Color) -> wgpu::Color {
-        let rgba = if self.encode_srgb {
+        let rgba = if self.encode_srgb && self.post.is_none() {
             srgb_rgba(background)
         } else {
             linear_rgba(background)
@@ -423,13 +486,17 @@ impl SceneRenderer {
         &mut self,
         gpu: &Gpu,
         encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
+        target: Target<'_>,
         draws: &[Draw],
         order: &[Ordered],
         backdrop: Backdrop,
     ) {
         let shared = self.shared.clone();
-        let (format, samples) = (self.format, self.samples);
+        let Target {
+            view: target,
+            format,
+            samples,
+        } = target;
         let Some(attachments) = &self.attachments else {
             return;
         };
@@ -501,6 +568,13 @@ impl SceneRenderer {
             pass.draw_indexed(0..mesh.count, 0, 0..1);
         }
     }
+}
+
+/// The image the forward pass resolves into.
+struct Target<'a> {
+    view: &'a wgpu::TextureView,
+    format: wgpu::TextureFormat,
+    samples: u32,
 }
 
 /// What the forward pass draws behind the scene: the clear color, then the sky when shown.

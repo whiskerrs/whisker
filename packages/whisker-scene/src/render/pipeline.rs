@@ -7,6 +7,7 @@ use std::rc::Rc;
 use glam::Mat4;
 use whisker_wgpu::{Gpu, wgpu};
 
+use super::post::PostShared;
 use super::resources::{GpuTexture, half, upload_cube, upload_texture};
 use super::shadow::{MAX_SHADOW_LAYERS, SHADOW_FORMAT};
 use super::{DEPTH_FORMAT, MAX_DIRECTIONAL, MAX_POINT};
@@ -86,6 +87,8 @@ pub(super) struct Shared {
     shadow_pipeline_layout: wgpu::PipelineLayout,
     shadow_shader: wgpu::ShaderModule,
     shadow_pipeline: OnceCell<wgpu::RenderPipeline>,
+    depth_pipeline: OnceCell<wgpu::RenderPipeline>,
+    post: OnceCell<PostShared>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -201,7 +204,9 @@ impl Shared {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("whisker-scene"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(include_str!("color.wgsl"), include_str!("shader.wgsl")).into(),
+            ),
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("whisker-scene"),
@@ -272,6 +277,8 @@ impl Shared {
             shadow_pipeline_layout,
             shadow_shader,
             shadow_pipeline: OnceCell::new(),
+            depth_pipeline: OnceCell::new(),
+            post: OnceCell::new(),
         }
     }
 
@@ -325,42 +332,61 @@ impl Shared {
             .clone()
     }
 
+    pub(super) fn post(&self, gpu: &Gpu) -> &PostShared {
+        self.post.get_or_init(|| PostShared::new(gpu))
+    }
+
     /// Renders casters' depth from a light, culling no faces so open and inside-out meshes cast too.
     pub(super) fn shadow_pipeline(&self, gpu: &Gpu) -> &wgpu::RenderPipeline {
-        self.shadow_pipeline.get_or_init(|| {
-            gpu.device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("whisker-scene shadow"),
-                    layout: Some(&self.shadow_pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &self.shadow_shader,
-                        entry_point: Some("vs"),
-                        compilation_options: Default::default(),
-                        buffers: &[Some(vertex_layout())],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &self.shadow_shader,
-                        entry_point: Some("fs"),
-                        compilation_options: Default::default(),
-                        targets: &[],
-                    }),
-                    primitive: Default::default(),
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: SHADOW_FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(wgpu::CompareFunction::Less),
-                        stencil: Default::default(),
-                        bias: wgpu::DepthBiasState {
-                            constant: 2,
-                            slope_scale: 2.0,
-                            clamp: 0.0,
-                        },
-                    }),
-                    multisample: Default::default(),
-                    multiview_mask: None,
-                    cache: None,
-                })
-        })
+        let bias = wgpu::DepthBiasState {
+            constant: 2,
+            slope_scale: 2.0,
+            clamp: 0.0,
+        };
+        self.shadow_pipeline
+            .get_or_init(|| self.depth_only(gpu, "whisker-scene shadow", bias))
+    }
+
+    /// Renders the camera's depth for post-processing, unbiased so grazing walls stay in place.
+    pub(super) fn depth_pipeline(&self, gpu: &Gpu) -> &wgpu::RenderPipeline {
+        self.depth_pipeline
+            .get_or_init(|| self.depth_only(gpu, "whisker-scene depth", Default::default()))
+    }
+
+    fn depth_only(
+        &self,
+        gpu: &Gpu,
+        label: &str,
+        bias: wgpu::DepthBiasState,
+    ) -> wgpu::RenderPipeline {
+        gpu.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&self.shadow_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &self.shadow_shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(vertex_layout())],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.shadow_shader,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
+                primitive: Default::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: SHADOW_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    bias,
+                }),
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
     }
 
     pub(super) fn pipeline(&self, gpu: &Gpu, key: PipelineKey) -> wgpu::RenderPipeline {
