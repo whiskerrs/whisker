@@ -1,6 +1,6 @@
 [package]
 name = "whisker-wgpu"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,7 +12,7 @@ categories.workspace = true
 description = "Draw into Whisker surfaces with wgpu, sharing one device across the app."
 
 [dependencies]
-whisker-surface = { path = "../whisker-surface", version = "0.1.0" }
+whisker-surface = { path = "../whisker-surface", version = "0.1.1" }
 wgpu = "30.0.1"
 raw-window-handle = "0.6"
 
