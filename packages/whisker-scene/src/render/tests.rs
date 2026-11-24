@@ -1309,3 +1309,52 @@ fn transmission_sees_through_under_post_processing() {
         assert!(through[0] > 200 && through[2] < 40, "{through:?}");
     });
 }
+
+/// `shadow_stage` seen from `eye` toward `target` through an orthographic camera `height` tall.
+fn orthographic(scene: &Scene, eye: Vec3, target: Vec3, height: f32) -> Mat4 {
+    let camera = scene.root().children()[0].clone();
+    let projection = Projection::Orthographic {
+        height,
+        near: 0.1,
+        far: 20.0,
+    };
+    let transform = Transform::looking_at(eye, target, Vec3::NEG_Z);
+    camera.set_transform(transform);
+    camera.set_camera(Some(projection));
+    projection.to_matrix(1.0) * transform.to_matrix().inverse()
+}
+
+#[test]
+fn orthographic_cameras_get_sun_shadows_and_ambient_occlusion() {
+    with_gpu(|gpu| {
+        let eye = Vec3::new(0.0, 6.0, 0.0);
+        let (scene, _, _, _) = shadow_stage(eye, 1.2, Vec3::Y * 1.5);
+        let view_proj = orthographic(&scene, eye, Vec3::ZERO, 8.0);
+        scene.root().add_child(&sun(Some(SUN_SHADOW)));
+        let pixels = render(gpu, scene);
+        let shadowed = floor_pixel(&pixels, view_proj, -1.5, 0.0);
+        let lit = floor_pixel(&pixels, view_proj, 1.5, 0.0);
+        assert!(shadowed[0] < 20, "shadowed {shadowed:?}");
+        assert!(lit[0] > 200, "lit {lit:?}");
+
+        let floor_at = |occlusion: Option<AmbientOcclusion>| {
+            let eye = Vec3::new(2.0, 4.0, 0.0);
+            let (scene, _, _, _) = shadow_stage(eye, 1.2, Vec3::Y * 0.5);
+            let view_proj = orthographic(&scene, eye, Vec3::new(0.5, 0.0, 0.0), 4.0);
+            scene.set_ambient_light(Color::rgb(255, 255, 255), 0.5);
+            scene.set_post_processing(PostProcessing {
+                ambient_occlusion: occlusion,
+                ..Default::default()
+            });
+            let pixels = render(gpu, scene);
+            (
+                i32::from(floor_pixel(&pixels, view_proj, 0.6, 0.0)[0]),
+                i32::from(floor_pixel(&pixels, view_proj, 3.0, 2.0)[0]),
+            )
+        };
+        let (near, far) = floor_at(None);
+        let (occluded_near, occluded_far) = floor_at(Some(AmbientOcclusion::default()));
+        assert!(occluded_near + 20 < near, "{near} {occluded_near}");
+        assert!(occluded_far + 3 >= far, "{far} {occluded_far}");
+    });
+}
