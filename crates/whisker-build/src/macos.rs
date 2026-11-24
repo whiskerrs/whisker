@@ -111,8 +111,7 @@ pub fn app_executable(app: &Path, project_name: &str) -> PathBuf {
 /// Single-arch Rust dylib the run-script phase compiled; hot patching reads
 /// the running app's symbols from this file.
 pub fn driver_dylib(workspace_root: &Path, package: &str) -> PathBuf {
-    workspace_root
-        .join("target")
+    whisker_cng::cargo_target_dir(workspace_root)
         .join(host_triple())
         .join("release")
         .join(format!("lib{}.dylib", package.replace('-', "_")))

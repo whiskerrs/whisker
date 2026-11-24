@@ -31,9 +31,8 @@ pub fn run(args: Args, no_tui: bool, platform: GenerationTarget) -> Result<()> {
         manifest.config.name.as_deref().unwrap_or(&manifest.package),
         "release",
     );
-    let target = manifest
-        .workspace_root
-        .join("target/.whisker")
+    let target = whisker_build::cargo_target_dir(&manifest.workspace_root)
+        .join(".whisker")
         .join(platform.as_str())
         .join(&manifest.package);
     let artifact = whisker_build::desktop::build_app(&whisker_build::desktop::DesktopBuild {

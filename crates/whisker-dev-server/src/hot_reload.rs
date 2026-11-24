@@ -402,9 +402,7 @@ pub(super) fn original_binary_path(config: &Config) -> Result<PathBuf> {
             // same optimised codegen prod ships, so debug profile is
             // deliberately not used). Android uses Debug; the two
             // platforms can't share this path.
-            let dylib = config
-                .workspace_root
-                .join("target")
+            let dylib = whisker_build::cargo_target_dir(&config.workspace_root)
                 .join(triple)
                 .join("release")
                 .join(&dylib_name);

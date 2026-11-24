@@ -309,9 +309,7 @@ pub fn build_framework_for_xcode_run_script(
         )?;
         s.done("");
         slice_paths.push(
-            inputs
-                .workspace_root
-                .join("target")
+            whisker_cng::cargo_target_dir(inputs.workspace_root)
                 .join(triple)
                 .join("release")
                 .join(&cargo_dylib_name),

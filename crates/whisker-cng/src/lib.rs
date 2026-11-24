@@ -60,6 +60,8 @@ pub mod project_compose;
 #[cfg(feature = "generate")]
 mod render;
 #[cfg(feature = "generate")]
+mod target_dir;
+#[cfg(feature = "generate")]
 pub mod web;
 
 #[cfg(feature = "generate")]
@@ -82,6 +84,8 @@ pub use modules::{
 };
 #[cfg(feature = "generate")]
 pub use project_compose::{ProjectComposition, ProjectEngine, ProjectStep};
+#[cfg(feature = "generate")]
+pub use target_dir::cargo_target_dir;
 #[cfg(feature = "generate")]
 pub use web::{WebInputs, sync as sync_web};
 pub use whisker_config::*;

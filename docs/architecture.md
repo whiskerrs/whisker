@@ -313,6 +313,14 @@ report instead of generating a second time. `whisker doctor` can inspect the las
 completed report without executing user code. Generated packages, reports, and
 build caches under `target/.whisker/` are disposable and are not committed.
 
+Compiled output — the application's own artifacts, the generator and CNG
+plugin builds, and the Web and desktop build trees — goes to Cargo's target
+directory as `cargo metadata` reports it, so `CARGO_TARGET_DIR` or
+`build.target-dir` lets several applications share one. Per-application state
+(hot reload captures and patches, Xcode DerivedData, generation reports) stays
+under the workspace's own `target/.whisker/`, so applications sharing a target
+directory never overwrite each other's.
+
 The tooling has a different lifetime from the shipped UI runtime:
 
 | Tooling crate | Responsibility |
