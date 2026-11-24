@@ -8,6 +8,7 @@ mod shadow;
 mod visibility;
 
 use std::rc::Rc;
+use std::time::Duration;
 
 use glam::{Mat4, Vec3, Vec4};
 use whisker::css::Color;
@@ -69,6 +70,7 @@ pub(crate) struct SceneRenderer {
     post: Option<PostTargets>,
     transmission: Option<TransmissionTarget>,
     time: f32,
+    started: Option<Duration>,
     /// Point and spot lights, one row of four texels each.
     light_texture: wgpu::Texture,
     light_view: wgpu::TextureView,
@@ -167,6 +169,7 @@ impl SceneRenderer {
             post: None,
             transmission: None,
             time: 0.0,
+            started: None,
             light_texture,
             light_view,
         }
@@ -307,7 +310,8 @@ impl Renderer for SceneRenderer {
         {
             self.transmission = Some(TransmissionTarget::new(gpu, &self.shared, self.size));
         }
-        self.time = frame.timestamp.as_secs_f32();
+        let started = *self.started.get_or_insert(frame.timestamp);
+        self.time = frame.timestamp.saturating_sub(started).as_secs_f32();
         self.write_frame_uniform(gpu, &collected, &plan, view_proj, eye, inner);
         self.write_draw_uniforms(gpu, &collected.draws);
 

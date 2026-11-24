@@ -49,7 +49,7 @@ struct Frame {
     fog: vec4<f32>,
     // x intensity, y 1 when there is an environment, z its last mip level.
     environment: vec4<f32>,
-    // x the frame timestamp in seconds, y 1 when transmission_map holds the scene behind.
+    // x seconds since the renderer's first frame, y 1 when transmission_map holds the scene behind.
     time: vec4<f32>,
     // The environment's irradiance over π as spherical harmonics, already scaled by its intensity.
     irradiance: array<vec4<f32>, 9>,
