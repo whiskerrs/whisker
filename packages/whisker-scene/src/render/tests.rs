@@ -95,7 +95,11 @@ const SIZE: u32 = 64;
 
 /// Renders `scene` offscreen and returns its sRGB pixels.
 fn render(gpu: &Gpu, scene: Scene) -> Vec<[u8; 4]> {
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    render_into(gpu, scene, wgpu::TextureFormat::Rgba8UnormSrgb)
+}
+
+/// Renders `scene` into a `format` target, as one first frame.
+fn render_into(gpu: &Gpu, scene: Scene, format: wgpu::TextureFormat) -> Vec<[u8; 4]> {
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -483,6 +487,22 @@ fn a_hemisphere_light_shades_by_facing() {
 
 /// The floor's brightness under a sun of `intensity` straight above, with `tone_mapping`.
 fn toned(gpu: &Gpu, tone_mapping: ToneMapping, exposure: f32, intensity: f32) -> u8 {
+    toned_through(
+        gpu,
+        tone_mapping,
+        exposure,
+        intensity,
+        PostProcessing::default(),
+    )
+}
+
+fn toned_through(
+    gpu: &Gpu,
+    tone_mapping: ToneMapping,
+    exposure: f32,
+    intensity: f32,
+    post_processing: PostProcessing,
+) -> u8 {
     let (scene, _, caster, view_proj) = shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::Y * 1.5);
     caster.remove_from_parent();
     let light = Node::new();
@@ -497,6 +517,7 @@ fn toned(gpu: &Gpu, tone_mapping: ToneMapping, exposure: f32, intensity: f32) ->
     }));
     scene.root().add_child(&light);
     scene.set_tone_mapping(tone_mapping, exposure);
+    scene.set_post_processing(post_processing);
     floor_pixel(&render(gpu, scene), view_proj, 1.0, 0.0)[0]
 }
 
@@ -789,5 +810,75 @@ fn color_grading_maps_colors_through_the_lookup_table() {
         assert_eq!(pixel(&identity, 0, 0), [0, 0, 255, 255]);
         let inverted = graded(lookup_table(16, |c| c.map(|v| 255 - v)));
         assert_eq!(pixel(&inverted, SIZE / 2, SIZE / 2), [0, 255, 255, 255]);
+    });
+}
+
+#[test]
+fn the_post_chain_tone_maps_from_the_first_frame() {
+    with_gpu(|gpu| {
+        let fxaa = PostProcessing {
+            fxaa: true,
+            ..Default::default()
+        };
+        let direct = toned(gpu, ToneMapping::Reinhard, 1.0, 4.0);
+        let post = toned_through(gpu, ToneMapping::Reinhard, 1.0, 4.0, fxaa);
+        assert!(direct.abs_diff(post) <= 2, "{direct} {post}");
+    });
+}
+
+#[test]
+fn the_post_chain_encodes_for_linear_targets() {
+    with_gpu(|gpu| {
+        for fxaa in [false, true] {
+            let scene = post_stage(
+                1.0,
+                PostProcessing {
+                    fxaa,
+                    color_grading: Some(lookup_table(16, |c| c)),
+                    ..Default::default()
+                },
+            );
+            let pixels = render_into(gpu, scene, wgpu::TextureFormat::Rgba8Unorm);
+            assert_eq!(pixel(&pixels, SIZE / 2, SIZE / 2), [255, 0, 0, 255]);
+            assert_eq!(pixel(&pixels, 0, 0), [0, 0, 255, 255]);
+        }
+    });
+}
+
+#[test]
+fn bloom_picks_up_light_brighter_than_white() {
+    with_gpu(|gpu| {
+        let glowing = |bloom: Option<Bloom>| {
+            let scene = post_stage(
+                0.5,
+                PostProcessing {
+                    bloom,
+                    ..Default::default()
+                },
+            );
+            let mesh = Node::new();
+            mesh.set_mesh(Some((
+                Geometry::cuboid(Vec3::splat(0.5)),
+                Material::Standard(StandardMaterial {
+                    base_color: Color::rgb(0, 0, 0),
+                    emissive: Color::rgb(255, 255, 255),
+                    emissive_intensity: 4.0,
+                    ..Default::default()
+                }),
+            )));
+            scene.root().add_child(&mesh);
+            render(gpu, scene)
+        };
+        let plain = glowing(None);
+        let edge = cube_edge(&plain);
+        let bloomed = glowing(Some(Bloom {
+            intensity: 1.0,
+            ..Default::default()
+        }));
+        let (before, after) = (
+            pixel(&plain, edge + 2, SIZE / 2),
+            pixel(&bloomed, edge + 2, SIZE / 2),
+        );
+        assert!(after[0] > before[0] + 20, "{before:?} {after:?}");
     });
 }

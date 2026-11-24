@@ -241,14 +241,6 @@ impl Renderer for SceneRenderer {
         let sky = environment.is_some() && inner.environment_background();
         let view = camera_world.inverse();
         let view_proj = projection.to_matrix(aspect) * view;
-        self.write_frame_uniform(gpu, &collected, &plan, view_proj, eye, inner);
-        let order = draw_order(&collected.draws, view, &Frustum::new(view_proj));
-        self.write_draw_uniforms(gpu, &collected.draws);
-
-        let backdrop = Backdrop {
-            clear: self.clear_color(inner.background()),
-            sky,
-        };
         let settings = inner.post_processing();
         if !settings.active() {
             self.post = None;
@@ -259,6 +251,14 @@ impl Renderer for SceneRenderer {
         {
             self.post = Some(PostTargets::new(gpu, self.size));
         }
+        self.write_frame_uniform(gpu, &collected, &plan, view_proj, eye, inner);
+        let order = draw_order(&collected.draws, view, &Frustum::new(view_proj));
+        self.write_draw_uniforms(gpu, &collected.draws);
+
+        let backdrop = Backdrop {
+            clear: self.clear_color(inner.background()),
+            sky,
+        };
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {

@@ -206,7 +206,10 @@ pub(super) fn scene_format(gpu: &Gpu) -> (wgpu::TextureFormat, u32) {
         wgpu::TextureFormat::Rgba8UnormSrgb
     };
     let multisample = |format| features(format).flags.sample_count_supported(MSAA_SAMPLES);
-    let samples = if multisample(format) && multisample(super::DEPTH_FORMAT) {
+    let resolves = features(format)
+        .flags
+        .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE);
+    let samples = if resolves && multisample(format) && multisample(super::DEPTH_FORMAT) {
         MSAA_SAMPLES
     } else {
         1

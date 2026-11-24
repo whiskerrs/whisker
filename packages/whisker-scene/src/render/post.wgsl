@@ -205,6 +205,7 @@ fn grade(encoded: vec3<f32>) -> vec3<f32> {
 fn fs_composite(in: Out) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
     var color = fetch(in.uv);
+    let alpha = textureSampleLevel(source, linear_sampler, in.uv, 0.0).a;
     if post.focus.w > 0.5 {
         color = depth_of_field(in.uv, pixel);
     }
@@ -220,9 +221,9 @@ fn fs_composite(in: Out) -> @location(0) vec4<f32> {
         encoded = grade(encoded);
     }
     if post.output.x > 0.5 {
-        return vec4(encoded, 1.0);
+        return vec4(encoded, alpha);
     }
-    return vec4(decode_srgb(encoded), 1.0);
+    return vec4(decode_srgb(encoded), alpha);
 }
 
 fn luma(color: vec3<f32>) -> f32 {
@@ -238,6 +239,7 @@ fn fs_fxaa(in: Out) -> @location(0) vec4<f32> {
     let sw = luma(fetch(in.uv + t * vec2(-1.0, 1.0)));
     let se = luma(fetch(in.uv + t * vec2(1.0, 1.0)));
     let middle = fetch(in.uv);
+    let alpha = textureSampleLevel(source, linear_sampler, in.uv, 0.0).a;
     let m = luma(middle);
     let lowest = min(m, min(min(nw, ne), min(sw, se)));
     let highest = max(m, max(max(nw, ne), max(sw, se)));
@@ -256,7 +258,7 @@ fn fs_fxaa(in: Out) -> @location(0) vec4<f32> {
         color = middle;
     }
     if post.output.y > 0.5 {
-        return vec4(color, 1.0);
+        return vec4(color, alpha);
     }
-    return vec4(decode_srgb(color), 1.0);
+    return vec4(decode_srgb(color), alpha);
 }
