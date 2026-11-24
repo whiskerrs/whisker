@@ -335,10 +335,11 @@ fn material_textures(material: &Material) -> [(Option<&Texture>, bool); TEXTURE_
             (m.emissive_texture.as_ref(), true),
             (m.occlusion_texture.as_ref(), false),
         ],
+        Material::Custom(m) => std::array::from_fn(|slot| (m.textures.get(slot), false)),
     }
 }
 
-type MaterialKey = [usize; TEXTURE_SLOTS];
+type MaterialKey = [(usize, bool); TEXTURE_SLOTS];
 
 /// Material bind groups keyed by their textures, kept while some draw of the last frame used them.
 #[derive(Default)]
@@ -354,8 +355,12 @@ impl MaterialCache {
         material: &Material,
     ) -> &wgpu::BindGroup {
         let slots = material_textures(material);
-        let key: MaterialKey = slots
-            .map(|(texture, _)| texture.map_or(0, |texture| Rc::as_ptr(texture.rc()) as usize));
+        let key: MaterialKey = slots.map(|(texture, srgb)| {
+            (
+                texture.map_or(0, |texture| Rc::as_ptr(texture.rc()) as usize),
+                srgb,
+            )
+        });
         let entry = self.entries.entry(key).or_insert_with(|| {
             let views: Vec<&wgpu::TextureView> = slots
                 .iter()

@@ -8,9 +8,9 @@ use whisker_wgpu::{Gpu, Renderer, wgpu};
 use super::pipeline::SHARED;
 use super::*;
 use crate::core::{
-    AmbientOcclusion, Bloom, DepthOfField, Environment, Fog, Geometry, Instances, Light, Material,
-    Node, PostProcessing, Projection, Scene, Shadow, StandardMaterial, Texture, ToneMapping,
-    Transform,
+    AmbientOcclusion, Bloom, CustomMaterial, DepthOfField, Environment, Fog, Geometry, Instances,
+    Light, Material, MaterialShader, Node, PostProcessing, Projection, Scene, Shadow,
+    StandardMaterial, Texture, ToneMapping, Transform,
 };
 
 #[test]
@@ -1078,5 +1078,283 @@ fn lights_out_of_view_leave_the_shadowing_ones_their_maps() {
         let lit = floor_pixel(&pixels, view_proj, 2.5, 0.0);
         assert!(shadowed[0] < 20, "shadowed {shadowed:?}");
         assert!(lit[0] > 150, "lit {lit:?}");
+    });
+}
+
+/// A plane facing up, seen from straight above, lit by a sun at `elevation` radians over the
+/// horizon toward +X.
+fn material_stage(material: StandardMaterial, elevation: f32) -> (Scene, Mat4) {
+    let (scene, floor, caster, view_proj) = shadow_stage(Vec3::new(0.0, 3.0, 0.0), 1.2, Vec3::ZERO);
+    caster.remove_from_parent();
+    floor.set_mesh(Some((
+        Geometry::plane(Vec2::splat(12.0)),
+        Material::Standard(material),
+    )));
+    let light = Node::new();
+    light.set_transform(Transform {
+        rotation: crate::core::rotation_toward(
+            Vec3::new(-elevation.cos(), -elevation.sin(), 0.0),
+            Vec3::Z,
+        ),
+        ..Transform::IDENTITY
+    });
+    light.set_light(Some(Light::Directional {
+        color: Color::rgb(255, 255, 255),
+        intensity: 1.0,
+        shadow: None,
+    }));
+    scene.root().add_child(&light);
+    (scene, view_proj)
+}
+
+const BLACK: Color = Color::rgb(0, 0, 0);
+
+#[test]
+fn a_clearcoat_adds_a_sharp_highlight_over_a_rough_surface() {
+    with_gpu(|gpu| {
+        let center = |clearcoat| {
+            let (scene, _) = material_stage(
+                StandardMaterial {
+                    base_color: BLACK,
+                    roughness: 1.0,
+                    clearcoat,
+                    clearcoat_roughness: 0.1,
+                    ..Default::default()
+                },
+                std::f32::consts::FRAC_PI_2,
+            );
+            pixel(&render(gpu, scene), SIZE / 2, SIZE / 2)[0]
+        };
+        let (plain, coated) = (center(0.0), center(1.0));
+        assert!(coated > plain + 100, "{plain} {coated}");
+    });
+}
+
+#[test]
+fn a_sheen_glows_under_grazing_light() {
+    with_gpu(|gpu| {
+        let center = |sheen_color| {
+            let (scene, _) = material_stage(
+                StandardMaterial {
+                    base_color: BLACK,
+                    roughness: 1.0,
+                    sheen_color,
+                    sheen_roughness: 0.5,
+                    ..Default::default()
+                },
+                0.3,
+            );
+            pixel(&render(gpu, scene), SIZE / 2, SIZE / 2)[0]
+        };
+        let (plain, sheen) = (center(BLACK), center(Color::rgb(255, 255, 255)));
+        assert!(sheen > plain + 30, "{plain} {sheen}");
+    });
+}
+
+/// How many pixels of the row and of the column through the center are lit.
+fn highlight_extent(pixels: &[[u8; 4]]) -> (usize, usize) {
+    let lit = |p: [u8; 4]| p[0] > 60;
+    let row = (0..SIZE)
+        .filter(|&x| lit(pixel(pixels, x, SIZE / 2)))
+        .count();
+    let column = (0..SIZE)
+        .filter(|&y| lit(pixel(pixels, SIZE / 2, y)))
+        .count();
+    (row, column)
+}
+
+#[test]
+fn anisotropy_stretches_highlights_along_one_direction() {
+    with_gpu(|gpu| {
+        let extent = |anisotropy| {
+            let (scene, _) = material_stage(
+                StandardMaterial {
+                    base_color: BLACK,
+                    roughness: 0.4,
+                    anisotropy,
+                    ..Default::default()
+                },
+                std::f32::consts::FRAC_PI_2,
+            );
+            highlight_extent(&render(gpu, scene))
+        };
+        let (row, column) = extent(0.0);
+        assert!(row.abs_diff(column) <= 2, "{row} {column}");
+        let (along, across) = extent(0.9);
+        let (rotated_along, rotated_across) = extent(-0.9);
+        assert!(along.abs_diff(across) > 8, "{along} {across}");
+        assert!(
+            (along > across) != (rotated_along > rotated_across),
+            "{along} {across} {rotated_along} {rotated_across}"
+        );
+    });
+}
+
+/// A red cube behind a pane of `material` facing the default camera, over a blue background.
+fn behind_glass(material: StandardMaterial) -> Scene {
+    let scene = post_stage(1.0, PostProcessing::default());
+    scene.root().children()[0].set_transform(Transform::from_translation(Vec3::NEG_Z * 2.0));
+    let pane = Node::new();
+    pane.set_transform(Transform {
+        translation: Vec3::Z,
+        rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        ..Transform::IDENTITY
+    });
+    pane.set_mesh(Some((
+        Geometry::plane(Vec2::splat(6.0)),
+        Material::Standard(material),
+    )));
+    scene.root().add_child(&pane);
+    scene
+}
+
+#[test]
+fn transmissive_surfaces_show_the_scene_behind_them() {
+    with_gpu(|gpu| {
+        let opaque = render(gpu, behind_glass(StandardMaterial::default()));
+        assert_eq!(pixel(&opaque, SIZE / 2, SIZE / 2), [0, 0, 0, 255]);
+
+        let glass = StandardMaterial {
+            transmission: 1.0,
+            roughness: 0.0,
+            ior: 1.0,
+            ..Default::default()
+        };
+        let pixels = render(gpu, behind_glass(glass));
+        let through = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert!(through[0] > 200 && through[2] < 40, "{through:?}");
+        let background = pixel(&pixels, 2, 2);
+        assert!(background[2] > 200 && background[0] < 40, "{background:?}");
+    });
+}
+
+#[test]
+fn transmission_tints_by_the_base_color() {
+    with_gpu(|gpu| {
+        let glass = StandardMaterial {
+            base_color: Color::rgb(0, 255, 0),
+            transmission: 1.0,
+            roughness: 0.0,
+            ior: 1.0,
+            ..Default::default()
+        };
+        let pixels = render(gpu, behind_glass(glass));
+        let background = pixel(&pixels, 2, 2);
+        assert!(background[2] < 40, "{background:?}");
+    });
+}
+
+fn custom_scene(material: CustomMaterial) -> Scene {
+    let scene = Scene::new();
+    let mesh = Node::new();
+    mesh.set_mesh(Some((
+        Geometry::cuboid(Vec3::ONE),
+        Material::Custom(material),
+    )));
+    scene.root().add_child(&mesh);
+    scene
+}
+
+#[test]
+fn a_custom_material_computes_its_surface_in_wgsl() {
+    with_gpu(|gpu| {
+        let shader = MaterialShader::new(
+            "fn surface(input: SurfaceInput) -> Surface {
+                var s = standard_surface(input);
+                s.base_color = vec4(0.0, 0.0, 0.0, 1.0);
+                s.emissive = draw.custom[0].rgb + textureSample(texture0, material_sampler, input.uv).rgb;
+                return s;
+            }",
+        )
+        .unwrap();
+        let mut material = CustomMaterial::new(shader.clone());
+        material.params[0] = glam::Vec4::new(1.0, 0.0, 0.0, 0.0);
+        material.textures = vec![Texture::from_rgba8(1, 1, vec![0, 0, 255, 255])];
+        let pixels = render(gpu, custom_scene(material));
+        assert_eq!(pixel(&pixels, SIZE / 2, SIZE / 2), [255, 0, 255, 255]);
+
+        let mut other = CustomMaterial::new(shader);
+        other.params[0] = glam::Vec4::new(0.0, 1.0, 0.0, 0.0);
+        other.textures = vec![Texture::from_rgba8(1, 1, vec![0, 0, 0, 255])];
+        let pixels = render(gpu, custom_scene(other));
+        assert_eq!(pixel(&pixels, SIZE / 2, SIZE / 2), [0, 255, 0, 255]);
+    });
+}
+
+#[test]
+fn invalid_material_shaders_are_rejected_with_the_reason() {
+    let missing = MaterialShader::new("fn not_surface() {}").unwrap_err();
+    assert!(missing.to_string().contains("surface"), "{missing}");
+    let typo = MaterialShader::new(
+        "fn surface(input: SurfaceInput) -> Surface { return standard_surface(input) }",
+    )
+    .unwrap_err();
+    assert!(!typo.to_string().is_empty());
+}
+
+#[test]
+fn transmission_sees_through_under_post_processing() {
+    with_gpu(|gpu| {
+        let scene = behind_glass(StandardMaterial {
+            transmission: 1.0,
+            roughness: 0.0,
+            ior: 1.0,
+            ..Default::default()
+        });
+        scene.set_post_processing(PostProcessing {
+            fxaa: true,
+            ..Default::default()
+        });
+        let through = pixel(&render(gpu, scene), SIZE / 2, SIZE / 2);
+        assert!(through[0] > 200 && through[2] < 40, "{through:?}");
+    });
+}
+
+/// `shadow_stage` seen from `eye` toward `target` through an orthographic camera `height` tall.
+fn orthographic(scene: &Scene, eye: Vec3, target: Vec3, height: f32) -> Mat4 {
+    let camera = scene.root().children()[0].clone();
+    let projection = Projection::Orthographic {
+        height,
+        near: 0.1,
+        far: 20.0,
+    };
+    let transform = Transform::looking_at(eye, target, Vec3::NEG_Z);
+    camera.set_transform(transform);
+    camera.set_camera(Some(projection));
+    projection.to_matrix(1.0) * transform.to_matrix().inverse()
+}
+
+#[test]
+fn orthographic_cameras_get_sun_shadows_and_ambient_occlusion() {
+    with_gpu(|gpu| {
+        let eye = Vec3::new(0.0, 6.0, 0.0);
+        let (scene, _, _, _) = shadow_stage(eye, 1.2, Vec3::Y * 1.5);
+        let view_proj = orthographic(&scene, eye, Vec3::ZERO, 8.0);
+        scene.root().add_child(&sun(Some(SUN_SHADOW)));
+        let pixels = render(gpu, scene);
+        let shadowed = floor_pixel(&pixels, view_proj, -1.5, 0.0);
+        let lit = floor_pixel(&pixels, view_proj, 1.5, 0.0);
+        assert!(shadowed[0] < 20, "shadowed {shadowed:?}");
+        assert!(lit[0] > 200, "lit {lit:?}");
+
+        let floor_at = |occlusion: Option<AmbientOcclusion>| {
+            let eye = Vec3::new(2.0, 4.0, 0.0);
+            let (scene, _, _, _) = shadow_stage(eye, 1.2, Vec3::Y * 0.5);
+            let view_proj = orthographic(&scene, eye, Vec3::new(0.5, 0.0, 0.0), 4.0);
+            scene.set_ambient_light(Color::rgb(255, 255, 255), 0.5);
+            scene.set_post_processing(PostProcessing {
+                ambient_occlusion: occlusion,
+                ..Default::default()
+            });
+            let pixels = render(gpu, scene);
+            (
+                i32::from(floor_pixel(&pixels, view_proj, 0.6, 0.0)[0]),
+                i32::from(floor_pixel(&pixels, view_proj, 3.0, 2.0)[0]),
+            )
+        };
+        let (near, far) = floor_at(None);
+        let (occluded_near, occluded_far) = floor_at(Some(AmbientOcclusion::default()));
+        assert!(occluded_near + 20 < near, "{near} {occluded_near}");
+        assert!(occluded_far + 3 >= far, "{far} {occluded_far}");
     });
 }
