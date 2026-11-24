@@ -262,9 +262,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     // whether cargo relinked or no-op'd — the signal that answers "did
     // my change reach native code?" when a stale `.so` is suspected.
     let lib_name = format!("lib{}.so", b.package.replace('-', "_"));
-    let so_path = b
-        .workspace_root
-        .join("target")
+    let so_path = whisker_cng::cargo_target_dir(b.workspace_root)
         .join(triple)
         .join(b.profile.dir_name())
         .join(&lib_name);

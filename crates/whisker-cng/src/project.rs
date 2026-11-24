@@ -149,11 +149,7 @@ pub fn generate_with_selection(
         .arg("--target")
         .arg(crate::generator::host_target()?)
         .arg("--target-dir")
-        .arg(
-            metadata
-                .workspace_root
-                .join("target/.whisker/generator-build"),
-        )
+        .arg(metadata.target_directory.join(".whisker/generator-build"))
         .arg("--")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -272,7 +268,7 @@ pub fn run_store(manifest_path: &Path) -> Result<Option<Vec<u8>>> {
         .arg("--target")
         .arg(crate::generator::host_target()?)
         .arg("--target-dir")
-        .arg(metadata.workspace_root.join("target/.whisker/store-build"))
+        .arg(metadata.target_directory.join(".whisker/store-build"))
         .arg("--")
         .arg("--report-path")
         .arg(&report.0)

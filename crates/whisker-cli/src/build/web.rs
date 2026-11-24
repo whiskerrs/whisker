@@ -36,7 +36,7 @@ pub fn run(args: Args, no_tui: bool) -> Result<()> {
     let dist = sync.gen_dir.join("dist");
     let artifacts = whisker_build::web::build(&whisker_build::web::WebBuild {
         project_dir: sync.gen_dir,
-        target_dir: workspace_root.join("target/.whisker/web"),
+        target_dir: whisker_build::cargo_target_dir(&workspace_root).join(".whisker/web"),
         dist_dir: dist.clone(),
         package: format!("{}-whisker-web", manifest.package),
         profile: Profile::Release,

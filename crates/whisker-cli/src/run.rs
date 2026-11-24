@@ -216,7 +216,7 @@ fn run_inner(
                     .trim_end_matches('/')
             ),
             project_dir: sync.gen_dir.clone(),
-            target_dir: workspace_root.join("target/.whisker/web"),
+            target_dir: whisker_build::cargo_target_dir(&workspace_root).join(".whisker/web"),
             dist_dir: sync.gen_dir.join("dist"),
             generated_package: format!("{}-whisker-web", m.package),
         }),
@@ -226,8 +226,8 @@ fn run_inner(
     let linux = match target {
         Target::Linux => Some(whisker_dev_server::LinuxParams {
             project_dir: sync.gen_dir.clone(),
-            target_dir: workspace_root
-                .join("target/.whisker/linux")
+            target_dir: whisker_build::cargo_target_dir(&workspace_root)
+                .join(".whisker/linux")
                 .join(&m.package),
             generated_package: format!("{}-whisker-linux", m.package),
         }),
@@ -237,8 +237,8 @@ fn run_inner(
     let windows = match target {
         Target::Windows => Some(whisker_dev_server::WindowsParams {
             project_dir: sync.gen_dir.clone(),
-            target_dir: workspace_root
-                .join("target/.whisker/windows")
+            target_dir: whisker_build::cargo_target_dir(&workspace_root)
+                .join(".whisker/windows")
                 .join(&m.package),
             generated_package: format!("{}-whisker-windows", m.package),
         }),

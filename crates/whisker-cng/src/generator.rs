@@ -767,7 +767,7 @@ fn sync_web(
     })
 }
 
-/// Compile plugin executables into the workspace target directory.
+/// Compile plugin executables into the workspace's Cargo target directory.
 ///
 /// Plugins are discovered from the application's selected Cargo graph, so a
 /// plugin crate may be reachable only through an application feature (an
@@ -805,7 +805,7 @@ fn build_discovered_plugins(
             .arg("--target")
             .arg(&host)
             .arg("--target-dir")
-            .arg(workspace_root.join("target"))
+            .arg(crate::cargo_target_dir(workspace_root))
             .arg("--message-format=json-render-diagnostics")
             .current_dir(workspace_root)
             .output()
