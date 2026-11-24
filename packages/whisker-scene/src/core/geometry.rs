@@ -13,7 +13,19 @@ pub struct Geometry {
 pub(crate) struct GeometryData {
     pub(crate) vertices: Vec<Vertex>,
     pub(crate) indices: Vec<u32>,
+    /// Up to four joints per vertex and their weights, for skinning.
+    pub(crate) joints: Option<Vec<([u16; 4], [f32; 4])>>,
+    pub(crate) morph_targets: Vec<MorphTarget>,
     pub(crate) gpu: OnceCell<crate::render::GpuMesh>,
+    pub(crate) bvh: OnceCell<crate::raycast::Bvh>,
+}
+
+/// Per-vertex offsets that a morph weight blends in; empty when the target leaves that attribute.
+#[derive(Clone, Default)]
+pub(crate) struct MorphTarget {
+    pub(crate) positions: Vec<Vec3>,
+    pub(crate) normals: Vec<Vec3>,
+    pub(crate) tangents: Vec<Vec3>,
 }
 
 #[repr(C)]
@@ -22,6 +34,22 @@ pub(crate) struct Vertex {
     pub(crate) position: [f32; 3],
     pub(crate) normal: [f32; 3],
     pub(crate) uv: [f32; 2],
+    /// xyz along increasing u; w is ±1 so that `cross(normal, xyz) * w` runs along increasing v.
+    pub(crate) tangent: [f32; 4],
+    /// Linear RGBA multiplied with the material's base color.
+    pub(crate) color: [f32; 4],
+}
+
+impl Vertex {
+    pub(crate) fn new(position: Vec3, normal: Vec3, uv: Vec2) -> Vertex {
+        Vertex {
+            position: position.to_array(),
+            normal: normal.to_array(),
+            uv: uv.to_array(),
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            color: [1.0; 4],
+        }
+    }
 }
 
 impl PartialEq for Geometry {
@@ -58,11 +86,11 @@ impl Geometry {
             let base = vertices.len() as u32;
             for (su, sv) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
                 let position = (normal + u * su + v * sv) * h;
-                vertices.push(Vertex {
-                    position: position.to_array(),
-                    normal: normal.to_array(),
-                    uv: [(su + 1.0) / 2.0, (1.0 - sv) / 2.0],
-                });
+                vertices.push(Vertex::new(
+                    position,
+                    normal,
+                    Vec2::new((su + 1.0) / 2.0, (1.0 - sv) / 2.0),
+                ));
             }
             indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
         }
@@ -86,11 +114,7 @@ impl Geometry {
                     polar.cos(),
                     polar.sin() * azimuth.cos(),
                 );
-                vertices.push(Vertex {
-                    position: (normal * radius).to_array(),
-                    normal: normal.to_array(),
-                    uv: [u, v],
-                });
+                vertices.push(Vertex::new(normal * radius, normal, Vec2::new(u, v)));
             }
         }
         let mut indices = Vec::with_capacity((around * rings * 6) as usize);
@@ -114,11 +138,7 @@ impl Geometry {
             (hx, -hz, 1.0, 0.0),
             (-hx, -hz, 0.0, 0.0),
         ]
-        .map(|(x, z, u, v)| Vertex {
-            position: [x, 0.0, z],
-            normal: [0.0, 1.0, 0.0],
-            uv: [u, v],
-        })
+        .map(|(x, z, u, v)| Vertex::new(Vec3::new(x, 0.0, z), Vec3::Y, Vec2::new(u, v)))
         .to_vec();
         Geometry::from_parts(vertices, vec![0, 1, 2, 0, 2, 3])
     }
@@ -150,27 +170,83 @@ impl Geometry {
             .iter()
             .zip(&normals)
             .enumerate()
-            .map(|(i, (position, normal))| Vertex {
-                position: position.to_array(),
-                normal: normal.to_array(),
-                uv: uvs.as_ref().map_or([0.0, 0.0], |uvs| uvs[i].to_array()),
+            .map(|(i, (position, normal))| {
+                Vertex::new(
+                    *position,
+                    *normal,
+                    uvs.as_ref().map_or(Vec2::ZERO, |uvs| uvs[i]),
+                )
             })
             .collect();
         Geometry::from_parts(vertices, indices)
     }
 
-    fn from_parts(vertices: Vec<Vertex>, indices: Vec<u32>) -> Geometry {
+    /// Fills in tangents from the texture coordinates.
+    pub(crate) fn from_parts(mut vertices: Vec<Vertex>, indices: Vec<u32>) -> Geometry {
+        generate_tangents(&mut vertices, &indices);
+        Geometry::from_parts_with_tangents(vertices, indices)
+    }
+
+    pub(crate) fn from_parts_with_tangents(vertices: Vec<Vertex>, indices: Vec<u32>) -> Geometry {
+        Geometry::deformable(vertices, indices, None, Vec::new())
+    }
+
+    pub(crate) fn deformable(
+        vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+        joints: Option<Vec<([u16; 4], [f32; 4])>>,
+        morph_targets: Vec<MorphTarget>,
+    ) -> Geometry {
         Geometry {
             data: Rc::new(GeometryData {
                 vertices,
                 indices,
+                joints,
+                morph_targets,
                 gpu: OnceCell::new(),
+                bvh: OnceCell::new(),
             }),
         }
     }
 
     pub(crate) fn data(&self) -> &GeometryData {
         &self.data
+    }
+}
+
+/// Per-vertex tangents averaged from each triangle's texture-coordinate gradient.
+pub(crate) fn generate_tangents(vertices: &mut [Vertex], indices: &[u32]) {
+    let mut along_u = vec![Vec3::ZERO; vertices.len()];
+    let mut along_v = vec![Vec3::ZERO; vertices.len()];
+    for triangle in indices.chunks_exact(3) {
+        let [a, b, c] = [0, 1, 2].map(|i| triangle[i] as usize);
+        let [pa, pb, pc] = [a, b, c].map(|i| Vec3::from(vertices[i].position));
+        let [ua, ub, uc] = [a, b, c].map(|i| Vec2::from(vertices[i].uv));
+        let (e1, e2) = (pb - pa, pc - pa);
+        let (d1, d2) = (ub - ua, uc - ua);
+        let det = d1.x * d2.y - d2.x * d1.y;
+        if det.abs() < 1e-12 {
+            continue;
+        }
+        let r = 1.0 / det;
+        let u = (e1 * d2.y - e2 * d1.y) * r;
+        let v = (e2 * d1.x - e1 * d2.x) * r;
+        for i in [a, b, c] {
+            along_u[i] += u;
+            along_v[i] += v;
+        }
+    }
+    for (i, vertex) in vertices.iter_mut().enumerate() {
+        let normal = Vec3::from(vertex.normal);
+        let tangent = (along_u[i] - normal * normal.dot(along_u[i]))
+            .try_normalize()
+            .unwrap_or_else(|| normal.any_orthonormal_vector());
+        let w = if normal.cross(tangent).dot(along_v[i]) < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        vertex.tangent = tangent.extend(w).to_array();
     }
 }
 

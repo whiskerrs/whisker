@@ -1,7 +1,9 @@
 use std::cell::OnceCell;
 use std::rc::Rc;
 
-/// An sRGB image that materials sample, uploaded to the GPU once and shared.
+/// An RGBA image that materials sample, uploaded to the GPU once and shared.
+///
+/// Color slots read it as sRGB and data slots (normals, roughness, occlusion) as linear.
 #[derive(Clone)]
 pub struct Texture {
     data: Rc<TextureData>,
@@ -11,7 +13,9 @@ pub(crate) struct TextureData {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) pixels: Vec<u8>,
-    pub(crate) gpu: OnceCell<crate::render::GpuTexture>,
+    pub(crate) translucent: bool,
+    pub(crate) srgb: OnceCell<crate::render::GpuTexture>,
+    pub(crate) linear: OnceCell<crate::render::GpuTexture>,
 }
 
 /// Why [`Texture::decode`] failed.
@@ -59,17 +63,20 @@ impl Texture {
             width as usize * height as usize * 4,
             "pixels must be width * height RGBA8 values"
         );
+        let translucent = pixels.chunks_exact(4).any(|pixel| pixel[3] < 255);
         Texture {
             data: Rc::new(TextureData {
                 width,
                 height,
                 pixels,
-                gpu: OnceCell::new(),
+                translucent,
+                srgb: OnceCell::new(),
+                linear: OnceCell::new(),
             }),
         }
     }
 
-    /// Decodes a PNG or JPEG file.
+    /// Decodes a PNG, JPEG or WebP file.
     pub fn decode(bytes: &[u8]) -> Result<Texture, TextureError> {
         let image = image::load_from_memory(bytes)
             .map_err(TextureError)?
@@ -84,6 +91,10 @@ impl Texture {
 
     pub fn height(&self) -> u32 {
         self.data.height
+    }
+
+    pub(crate) fn rc(&self) -> &Rc<TextureData> {
+        &self.data
     }
 
     pub(crate) fn data(&self) -> &TextureData {

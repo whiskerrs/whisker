@@ -1,13 +1,14 @@
 //! The imperative scene graph that the components in the crate root are built on.
 
 mod color;
+mod deform;
 mod geometry;
 mod texture;
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use glam::{Mat3, Quat, Vec3};
+use glam::{Mat3, Quat, Vec2, Vec3};
 use whisker::css::Color;
 use whisker_surface::{FrameInfo, Surface, WeakSurface};
 
@@ -15,7 +16,8 @@ pub use geometry::Geometry;
 pub use texture::{Texture, TextureError};
 
 pub(crate) use color::{linear_rgba, srgb_rgba};
-pub(crate) use geometry::Vertex;
+pub(crate) use deform::Deform;
+pub(crate) use geometry::{MorphTarget, Vertex, generate_tangents};
 
 /// A tree of nodes that one or more surfaces draw.
 #[derive(Clone)]
@@ -196,6 +198,15 @@ pub struct Node {
     inner: Rc<NodeInner>,
 }
 
+#[derive(Clone)]
+pub(crate) struct WeakNode(Weak<NodeInner>);
+
+impl WeakNode {
+    pub(crate) fn upgrade(&self) -> Option<Node> {
+        self.0.upgrade().map(|inner| Node { inner })
+    }
+}
+
 struct NodeInner {
     parent: RefCell<Weak<NodeInner>>,
     children: RefCell<Vec<Node>>,
@@ -206,7 +217,13 @@ struct NodeInner {
     mesh: RefCell<Option<(Geometry, Material)>>,
     light: Cell<Option<Light>>,
     camera: Cell<Option<Projection>>,
+    name: RefCell<Option<String>>,
+    deform: RefCell<Option<Rc<Deform>>>,
+    on_tap: RefCell<Option<TapHandler>>,
+    instance: RefCell<Option<Rc<crate::model::Instance>>>,
 }
+
+pub(crate) type TapHandler = Rc<dyn Fn(crate::raycast::SceneHit)>;
 
 impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
@@ -243,6 +260,10 @@ impl Node {
                 mesh: RefCell::new(None),
                 light: Cell::new(None),
                 camera: Cell::new(None),
+                name: RefCell::new(None),
+                deform: RefCell::new(None),
+                on_tap: RefCell::new(None),
+                instance: RefCell::new(None),
             }),
         }
     }
@@ -337,6 +358,68 @@ impl Node {
 
     pub fn camera(&self) -> Option<Projection> {
         self.inner.camera.get()
+    }
+
+    pub fn set_name(&self, name: Option<String>) {
+        *self.inner.name.borrow_mut() = name;
+    }
+
+    pub fn name(&self) -> Option<String> {
+        self.inner.name.borrow().clone()
+    }
+
+    /// The first node named `name` in this subtree, this node included, searched depth first.
+    pub fn find(&self, name: &str) -> Option<Node> {
+        if self.inner.name.borrow().as_deref() == Some(name) {
+            return Some(self.clone());
+        }
+        self.inner
+            .children
+            .borrow()
+            .iter()
+            .find_map(|child| child.find(name))
+    }
+
+    /// The transform from this node's space to the space of the tree's root.
+    pub(crate) fn world_matrix(&self) -> glam::Mat4 {
+        let local = self.transform().to_matrix();
+        match self.parent() {
+            Some(parent) => parent.world_matrix() * local,
+            None => local,
+        }
+    }
+
+    pub(crate) fn set_deform(&self, deform: Option<Rc<Deform>>) {
+        *self.inner.deform.borrow_mut() = deform;
+        self.invalidate();
+    }
+
+    pub(crate) fn deform(&self) -> Option<Rc<Deform>> {
+        self.inner.deform.borrow().clone()
+    }
+
+    pub(crate) fn set_on_tap(&self, handler: Option<TapHandler>) {
+        *self.inner.on_tap.borrow_mut() = handler;
+    }
+
+    pub(crate) fn on_tap(&self) -> Option<TapHandler> {
+        self.inner.on_tap.borrow().clone()
+    }
+
+    pub(crate) fn set_instance(&self, instance: Option<Rc<crate::model::Instance>>) {
+        *self.inner.instance.borrow_mut() = instance;
+    }
+
+    pub(crate) fn instance(&self) -> Option<Rc<crate::model::Instance>> {
+        self.inner.instance.borrow().clone()
+    }
+
+    pub(crate) fn request_frame(&self) {
+        self.invalidate();
+    }
+
+    pub(crate) fn downgrade(&self) -> WeakNode {
+        WeakNode(Rc::downgrade(&self.inner))
     }
 
     fn detach(&self) {
@@ -443,18 +526,32 @@ impl From<StandardMaterial> for Material {
     }
 }
 
-/// Metallic-roughness physically based shading.
+/// Metallic-roughness physically based shading, as glTF defines it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StandardMaterial {
-    /// Its alpha below 1 draws the mesh translucent.
     pub base_color: Color,
     /// `0.0..=1.0`
     pub metallic: f32,
     /// `0.0..=1.0`
     pub roughness: f32,
     pub emissive: Color,
+    /// Scales `emissive`, allowing light brighter than its color can hold.
+    pub emissive_intensity: f32,
     /// Multiplied with `base_color`.
     pub base_color_texture: Option<Texture>,
+    /// Roughness from its green channel and metalness from its blue, multiplied with the factors.
+    pub metallic_roughness_texture: Option<Texture>,
+    /// A tangent-space normal map.
+    pub normal_texture: Option<Texture>,
+    /// Multiplied with `emissive`.
+    pub emissive_texture: Option<Texture>,
+    /// Ambient occlusion in its red channel, darkening ambient light.
+    pub occlusion_texture: Option<Texture>,
+    /// Applied to the texture coordinates of every texture.
+    pub texture_transform: TextureTransform,
+    pub alpha_mode: AlphaMode,
+    /// Draws back faces too instead of culling them.
+    pub double_sided: bool,
 }
 
 impl Default for StandardMaterial {
@@ -464,8 +561,57 @@ impl Default for StandardMaterial {
             metallic: 0.0,
             roughness: 0.5,
             emissive: Color::rgb(0, 0, 0),
+            emissive_intensity: 1.0,
             base_color_texture: None,
+            metallic_roughness_texture: None,
+            normal_texture: None,
+            emissive_texture: None,
+            occlusion_texture: None,
+            texture_transform: TextureTransform::default(),
+            alpha_mode: AlphaMode::default(),
+            double_sided: false,
         }
+    }
+}
+
+/// How the alpha of a material's base color is used.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum AlphaMode {
+    /// Alpha is ignored.
+    Opaque,
+    /// Drawn where alpha is at least the cutoff and discarded elsewhere.
+    Mask(f32),
+    /// Blended with what is behind wherever alpha is below 1.
+    #[default]
+    Blend,
+}
+
+/// Maps texture coordinates as scale, then rotation in radians, then offset.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextureTransform {
+    pub offset: Vec2,
+    pub rotation: f32,
+    pub scale: Vec2,
+}
+
+impl Default for TextureTransform {
+    fn default() -> Self {
+        TextureTransform {
+            offset: Vec2::ZERO,
+            rotation: 0.0,
+            scale: Vec2::ONE,
+        }
+    }
+}
+
+impl TextureTransform {
+    pub(crate) fn rows(&self) -> [[f32; 4]; 2] {
+        let (sin, cos) = self.rotation.sin_cos();
+        let (sx, sy) = (self.scale.x, self.scale.y);
+        [
+            [cos * sx, sin * sy, self.offset.x, 0.0],
+            [-sin * sx, cos * sy, self.offset.y, 0.0],
+        ]
     }
 }
 

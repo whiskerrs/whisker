@@ -17,16 +17,20 @@
 
 mod components;
 pub mod core;
+mod model;
+mod raycast;
 mod render;
 
 pub use components::{
-    AmbientLight, DirectionalLight, Group, Mesh, PerspectiveCamera, PointLight, SceneView,
-    use_frame, use_scene,
+    AmbientLight, DirectionalLight, Group, Mesh, ModelView, PerspectiveCamera, PointLight,
+    SceneView, use_frame, use_scene,
 };
 pub use core::{
-    Geometry, Light, Material, Node, Projection, Scene, StandardMaterial, Texture, TextureError,
-    Transform,
+    AlphaMode, Geometry, Light, Material, Node, Projection, Scene, StandardMaterial, Texture,
+    TextureError, TextureTransform, Transform,
 };
+pub use model::{AnimationOptions, AnimationPlayer, Model, ModelError};
+pub use raycast::{Ray, SceneHit};
 
 /// The vector types the API takes.
 pub mod math {

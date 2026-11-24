@@ -35,7 +35,7 @@ fn collect_composes_transforms_and_skips_hidden_subtrees() {
     let collected = collect(&root);
     assert_eq!(collected.draws.len(), 1);
     assert_eq!(
-        collected.draws[0].0.transform_point3(Vec3::ZERO),
+        collected.draws[0].model.transform_point3(Vec3::ZERO),
         Vec3::new(1.0, 1.0, 0.0)
     );
 }
