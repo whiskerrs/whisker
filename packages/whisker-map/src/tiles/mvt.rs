@@ -22,6 +22,8 @@ pub(crate) struct Feature {
     pub properties: HashMap<Arc<str>, Value>,
     /// Points, lines, or polygon rings, with each polygon's outer ring before its holes.
     pub geometry: Vec<Vec<TilePoint>>,
+    /// Where each line part starts and ends along its whole line, 0 to 1, when that is known.
+    pub progress: Vec<[f32; 2]>,
 }
 
 impl Feature {
@@ -232,6 +234,7 @@ fn decode_layer(data: &[u8]) -> Result<Layer, DecodeError> {
             kind,
             properties,
             geometry,
+            progress: Vec::new(),
         });
     }
     Ok(Layer {

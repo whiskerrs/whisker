@@ -24,9 +24,11 @@ struct Draw {
     params: vec4<f32>,
     // Line: x gap width, y offset, z blur, w dash count. Circle: x stroke width, y blur.
     extra: vec4<f32>,
-    // Circle stroke color, premultiplied.
+    // Circle stroke color, premultiplied; for patterns, the sprite's texel rectangle in the sheet.
     color2: vec4<f32>,
+    // Patterns: xy the sprite's size in logical pixels, zw the tile's origin in pixels wrapped to it.
     dash0: vec4<f32>,
+    // Extrusion patterns: x tile units per logical pixel.
     dash1: vec4<f32>,
     // The tile's Mercator origin, 0 to 1 across the world, and the size of one tile unit.
     tile: vec4<f32>,
@@ -54,6 +56,15 @@ fn finish(c: vec4<f32>) -> vec4<f32> {
 fn base_color(vertex_color: vec4<f32>) -> vec4<f32> {
     let c = select(draw.color, vertex_color, draw.params.x > 0.5);
     return c * draw.params.y;
+}
+
+// ---- Patterns ----
+
+// The pattern's color at `t`, 0 to 1 across one repeat, premultiplied.
+fn pattern_at(t: vec2<f32>) -> vec4<f32> {
+    let uv = mix(draw.color2.xy, draw.color2.zw, fract(t));
+    let c = textureSampleLevel(tex, tex_sampler, uv, 0.0);
+    return vec4(c.rgb * c.a, c.a);
 }
 
 // ---- Projection ----
@@ -153,6 +164,25 @@ fn fs_fill(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     return finish(color);
 }
 
+struct FillPatternOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    // Logical pixels from a world point where the pattern repeats.
+    @location(0) at: vec2<f32>,
+};
+
+@vertex
+fn vs_fill_pattern(@location(0) pos: vec2<f32>, @location(1) color: vec4<f32>) -> FillPatternOut {
+    var out: FillPatternOut;
+    out.clip = tile_clip(pos);
+    out.at = draw.dash0.zw + pos / draw.params.z;
+    return out;
+}
+
+@fragment
+fn fs_fill_pattern(@location(0) at: vec2<f32>) -> @location(0) vec4<f32> {
+    return finish(pattern_at(at / draw.dash0.xy) * draw.params.y);
+}
+
 // ---- Line ----
 
 struct LineOut {
@@ -160,6 +190,8 @@ struct LineOut {
     @location(0) color: vec4<f32>,
     // x distance along the line in widths, y across it in pixels from the center, z half width.
     @location(1) data: vec3<f32>,
+    // How far along the whole line, 0 to 1.
+    @location(2) progress: f32,
 };
 
 @vertex
@@ -181,6 +213,7 @@ fn vs_line(
     out.clip = tile_clip(p);
     out.color = base_color(color);
     out.data = vec3(data.x / max(width * units, 1e-6), data.y * outset, half);
+    out.progress = data.w;
     return out;
 }
 
@@ -191,8 +224,8 @@ fn dash_at(i: u32) -> f32 {
     return draw.dash1[i - 4u];
 }
 
-@fragment
-fn fs_line(@location(0) color: vec4<f32>, @location(1) data: vec3<f32>) -> @location(0) vec4<f32> {
+// How much of the pixel the line covers, 0 in a dash's gap.
+fn line_coverage(data: vec3<f32>, dashed: bool) -> f32 {
     var alpha = 1.0;
     let across = abs(data.y);
     let gap = draw.extra.x;
@@ -203,7 +236,7 @@ fn fs_line(@location(0) color: vec4<f32>, @location(1) data: vec3<f32>) -> @loca
     }
     alpha *= clamp((data.z - across) / blur + 0.5, 0.0, 1.0);
     let count = u32(draw.extra.w);
-    if count > 1u {
+    if dashed && count > 1u {
         var total = 0.0;
         for (var i = 0u; i < count; i++) {
             total += dash_at(i);
@@ -220,14 +253,48 @@ fn fs_line(@location(0) color: vec4<f32>, @location(1) data: vec3<f32>) -> @loca
                 start = end;
             }
             if !on {
-                discard;
+                return 0.0;
             }
         }
     }
+    return alpha;
+}
+
+@fragment
+fn fs_line(@location(0) color: vec4<f32>, @location(1) data: vec3<f32>) -> @location(0) vec4<f32> {
+    let alpha = line_coverage(data, true);
     if alpha <= 0.0 {
         discard;
     }
     return finish(color * alpha);
+}
+
+// The gradient's colors along the line, premultiplied, 256 texels from start to end.
+@fragment
+fn fs_line_gradient(
+    @location(0) color: vec4<f32>,
+    @location(1) data: vec3<f32>,
+    @location(2) progress: f32,
+) -> @location(0) vec4<f32> {
+    let alpha = line_coverage(data, true);
+    if alpha <= 0.0 {
+        discard;
+    }
+    let u = clamp(progress, 0.0, 1.0) * (255.0 / 256.0) + 0.5 / 256.0;
+    let c = textureSampleLevel(tex, tex_sampler, vec2(u, 0.5), 0.0);
+    return finish(c * draw.params.y * alpha);
+}
+
+// The pattern repeats along the line, scaled so that its height is the line's width.
+@fragment
+fn fs_line_pattern(@location(0) color: vec4<f32>, @location(1) data: vec3<f32>) -> @location(0) vec4<f32> {
+    let alpha = line_coverage(data, false);
+    if alpha <= 0.0 {
+        discard;
+    }
+    let size = draw.dash0.xy;
+    let t = vec2(data.x * size.y / size.x, clamp(data.y / (2.0 * data.z) + 0.5, 0.0, 1.0));
+    return finish(pattern_at(t) * draw.params.y * alpha);
 }
 
 // ---- Circle ----
@@ -315,6 +382,8 @@ struct ExtrusionOut {
     // The depth prepass and the color pass must compute identical depths for the equal test.
     @invariant @builtin(position) clip: vec4<f32>,
     @location(0) color: vec4<f32>,
+    // Logical pixels across a roof from a world point, or along a wall and up it.
+    @location(1) at: vec2<f32>,
 };
 
 @vertex
@@ -353,12 +422,25 @@ fn vs_extrusion(
     let lit = clamp(c.rgb * shade * frame.light_color.rgb, floor, vec3(1.0));
     let a = c.a * draw.params.y;
     out.color = vec4(lit * a, a);
+    let units = draw.dash1.x;
+    let along = dot(pos.xy, vec2(-normal.y, normal.x)) / max(units, 1e-6);
+    out.at = select(vec2(along, -p.z), draw.dash0.zw + pos.xy / max(units, 1e-6), roof);
     return out;
 }
 
 @fragment
 fn fs_extrusion(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     return finish(color);
+}
+
+// `color` is the lighting on a white surface, which tints the pattern.
+@fragment
+fn fs_extrusion_pattern(
+    @location(0) color: vec4<f32>,
+    @location(1) at: vec2<f32>,
+) -> @location(0) vec4<f32> {
+    let p = pattern_at(at / draw.dash0.xy);
+    return finish(vec4(p.rgb * color.rgb, p.a * color.a));
 }
 
 // ---- Atmosphere ----

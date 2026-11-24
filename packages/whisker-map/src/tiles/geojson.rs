@@ -124,6 +124,7 @@ impl GeoJsonIndex {
                         kind: GeometryKind::Point,
                         properties: (*item.properties).clone(),
                         geometry: vec![vec![to_tile(p)]],
+                        progress: Vec::new(),
                     });
                 } else {
                     features.push(Feature {
@@ -131,6 +132,7 @@ impl GeoJsonIndex {
                         kind: GeometryKind::Point,
                         properties: cluster_properties(node),
                         geometry: vec![vec![to_tile(p)]],
+                        progress: Vec::new(),
                     });
                 }
             }
@@ -238,6 +240,7 @@ fn cut(
 ) -> Option<Feature> {
     let inside =
         |p: &DVec2| p.x >= bounds[0] && p.x <= bounds[2] && p.y >= bounds[1] && p.y <= bounds[3];
+    let mut progress = Vec::new();
     let (kind, geometry): (GeometryKind, Vec<Vec<TilePoint>>) = match &item.shape {
         Shape::Points(points) => (
             GeometryKind::Point,
@@ -252,10 +255,14 @@ fn cut(
         Shape::Lines(lines) => {
             let mut out = Vec::new();
             for line in lines {
-                for piece in clip_line(&simplify(line, tolerance), bounds) {
+                let line = simplify(line, tolerance);
+                let total: f64 = line.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+                for (piece, [start, end]) in clip_line(&line, bounds) {
                     let piece = dedup(piece.into_iter().map(to_tile).collect());
                     if piece.len() >= 2 {
                         out.push(piece);
+                        let fraction = |d: f64| if total > 0.0 { (d / total) as f32 } else { 0.0 };
+                        progress.push([fraction(start), fraction(end)]);
                     }
                 }
             }
@@ -292,6 +299,7 @@ fn cut(
         kind,
         properties: (*item.properties).clone(),
         geometry,
+        progress,
     })
 }
 
@@ -342,41 +350,47 @@ fn segment_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
     (a + d * t - p).length()
 }
 
-/// The pieces of `line` inside `bounds`.
-fn clip_line(line: &[DVec2], bounds: [f64; 4]) -> Vec<Vec<DVec2>> {
+/// The pieces of `line` inside `bounds`, each with the distances along `line` it starts and ends at.
+fn clip_line(line: &[DVec2], bounds: [f64; 4]) -> Vec<(Vec<DVec2>, [f64; 2])> {
     let mut pieces = Vec::new();
     let mut current: Vec<DVec2> = Vec::new();
+    let mut span = [0.0; 2];
+    let mut along = 0.0;
     for w in line.windows(2) {
+        let length = (w[1] - w[0]).length();
         match clip_segment(w[0], w[1], bounds) {
-            Some((a, b)) => {
+            Some((a, b, [t0, t1])) => {
                 if current.last() != Some(&a) {
                     if current.len() >= 2 {
-                        pieces.push(std::mem::take(&mut current));
+                        pieces.push((std::mem::take(&mut current), span));
                     }
                     current.clear();
                     current.push(a);
+                    span[0] = along + length * t0;
                 }
                 current.push(b);
+                span[1] = along + length * t1;
                 if b != w[1] {
-                    pieces.push(std::mem::take(&mut current));
+                    pieces.push((std::mem::take(&mut current), span));
                 }
             }
             None => {
                 if current.len() >= 2 {
-                    pieces.push(std::mem::take(&mut current));
+                    pieces.push((std::mem::take(&mut current), span));
                 }
                 current.clear();
             }
         }
+        along += length;
     }
     if current.len() >= 2 {
-        pieces.push(current);
+        pieces.push((current, span));
     }
     pieces
 }
 
 /// Liang–Barsky clipping of one segment.
-fn clip_segment(a: DVec2, b: DVec2, bounds: [f64; 4]) -> Option<(DVec2, DVec2)> {
+fn clip_segment(a: DVec2, b: DVec2, bounds: [f64; 4]) -> Option<(DVec2, DVec2, [f64; 2])> {
     let d = b - a;
     let (mut t0, mut t1) = (0.0f64, 1.0f64);
     for (p, q) in [
@@ -398,7 +412,7 @@ fn clip_segment(a: DVec2, b: DVec2, bounds: [f64; 4]) -> Option<(DVec2, DVec2)> 
             }
         }
     }
-    (t0 <= t1).then(|| (a + d * t0, a + d * t1))
+    (t0 <= t1).then(|| (a + d * t0, a + d * t1, [t0, t1]))
 }
 
 /// Sutherland–Hodgman clipping of a closed ring.
@@ -608,12 +622,13 @@ mod tests {
         );
         assert_eq!(pieces.len(), 2);
         assert_eq!(
-            pieces[0],
+            pieces[0].0,
             vec![
                 DVec2::new(0.0, 0.5),
                 DVec2::new(0.5, 0.5),
                 DVec2::new(0.5, 1.0)
             ]
         );
+        assert_eq!(pieces[0].1, [1.0, 2.0]);
     }
 }

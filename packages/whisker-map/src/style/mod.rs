@@ -397,7 +397,7 @@ fn parse_layer(json: &Json) -> Option<Layer> {
 }
 
 pub(crate) fn property_kind(name: &str) -> Kind {
-    if name.ends_with("-color") {
+    if name.ends_with("-color") || name == "line-gradient" {
         return Kind::Color;
     }
     match name {
