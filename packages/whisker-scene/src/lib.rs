@@ -26,8 +26,9 @@ pub use components::{
     PointLight, SceneView, SpotLight, use_frame, use_scene,
 };
 pub use core::{
-    AlphaMode, Environment, Fog, Geometry, Light, Material, Node, Projection, Scene, Shadow,
-    StandardMaterial, Texture, TextureError, TextureTransform, ToneMapping, Transform,
+    AlphaMode, AmbientOcclusion, Bloom, DepthOfField, Environment, Fog, Geometry, Light, Material,
+    Node, PostProcessing, Projection, Scene, Shadow, StandardMaterial, Texture, TextureError,
+    TextureTransform, ToneMapping, Transform,
 };
 pub use model::{AnimationOptions, AnimationPlayer, Model, ModelError};
 pub use raycast::{Ray, SceneHit};

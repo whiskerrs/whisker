@@ -252,7 +252,7 @@ pub(super) fn deformed_vertices(gpu: &Gpu, deform: &Deform) -> wgpu::Buffer {
     buffer.buffer.clone()
 }
 
-fn texture<'a>(gpu: &Gpu, texture: &'a Texture, srgb: bool) -> &'a GpuTexture {
+pub(super) fn texture<'a>(gpu: &Gpu, texture: &'a Texture, srgb: bool) -> &'a GpuTexture {
     let data = texture.data();
     let cell = if srgb { &data.srgb } else { &data.linear };
     cell.get_or_init(|| upload_texture(gpu, data.width, data.height, &data.pixels, srgb))

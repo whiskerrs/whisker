@@ -4,6 +4,7 @@ mod color;
 mod deform;
 mod environment;
 mod geometry;
+mod post;
 mod texture;
 
 use std::cell::{Cell, RefCell};
@@ -15,6 +16,7 @@ use whisker_surface::{FrameInfo, Surface, WeakSurface};
 
 pub use environment::Environment;
 pub use geometry::Geometry;
+pub use post::{AmbientOcclusion, Bloom, DepthOfField, PostProcessing};
 pub use texture::{Texture, TextureError};
 
 pub(crate) use color::{linear_rgba, srgb_rgba};
@@ -38,6 +40,7 @@ pub(crate) struct SceneInner {
     fog: Cell<Option<Fog>>,
     environment: RefCell<Option<(Environment, f32)>>,
     environment_background: Cell<bool>,
+    post_processing: RefCell<PostProcessing>,
     active_camera: RefCell<Option<Node>>,
     surfaces: RefCell<Vec<WeakSurface>>,
     frame_callbacks: RefCell<Vec<(u64, FrameCallback)>>,
@@ -65,6 +68,7 @@ impl Scene {
             fog: Cell::new(None),
             environment: RefCell::new(None),
             environment_background: Cell::new(false),
+            post_processing: RefCell::new(PostProcessing::default()),
             active_camera: RefCell::new(None),
             surfaces: RefCell::new(Vec::new()),
             frame_callbacks: RefCell::new(Vec::new()),
@@ -117,6 +121,11 @@ impl Scene {
     /// Draws the environment behind the scene in place of the background color.
     pub fn set_environment_background(&self, shown: bool) {
         self.inner.environment_background.set(shown);
+        self.inner.request_frame();
+    }
+
+    pub fn set_post_processing(&self, post_processing: PostProcessing) {
+        *self.inner.post_processing.borrow_mut() = post_processing;
         self.inner.request_frame();
     }
 
@@ -256,6 +265,10 @@ impl SceneInner {
 
     pub(crate) fn environment_background(&self) -> bool {
         self.environment_background.get()
+    }
+
+    pub(crate) fn post_processing(&self) -> PostProcessing {
+        self.post_processing.borrow().clone()
     }
 }
 
