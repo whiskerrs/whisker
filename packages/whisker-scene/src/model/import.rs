@@ -221,6 +221,11 @@ fn linear_color([r, g, b, a]: [f32; 4]) -> Color {
     Color::Rgba(encode(r), encode(g), encode(b), a.clamp(0.0, 1.0))
 }
 
+/// Without a range, the falloff ends where the light drops to a negligible 1/2000.
+fn default_range(intensity: f32) -> f32 {
+    (intensity * 2000.0).sqrt().max(1.0)
+}
+
 fn light(light: gltf::khr_lights_punctual::Light<'_>) -> Light {
     let [r, g, b] = light.color();
     let color = linear_color([r, g, b, 1.0]);
@@ -231,14 +236,21 @@ fn light(light: gltf::khr_lights_punctual::Light<'_>) -> Light {
             intensity,
             shadow: None,
         },
-        // Spot cones are not modeled; their light spreads like a point light's.
-        Kind::Point | Kind::Spot { .. } => Light::Point {
+        Kind::Spot {
+            inner_cone_angle,
+            outer_cone_angle,
+        } => Light::Spot {
             color,
             intensity,
-            // Without a range, the falloff ends where the light drops to a negligible 1/2000.
-            range: light
-                .range()
-                .unwrap_or_else(|| (intensity * 2000.0).sqrt().max(1.0)),
+            range: light.range().unwrap_or_else(|| default_range(intensity)),
+            inner_angle: inner_cone_angle,
+            outer_angle: outer_cone_angle,
+            shadow: None,
+        },
+        Kind::Point => Light::Point {
+            color,
+            intensity,
+            range: light.range().unwrap_or_else(|| default_range(intensity)),
             shadow: None,
         },
     }

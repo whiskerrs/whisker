@@ -19,8 +19,13 @@ pub(super) struct FrameUniform {
     pub(super) camera_position: [f32; 4],
     pub(super) camera_forward: [f32; 4],
     pub(super) ambient: [f32; 4],
+    pub(super) sky: [f32; 4],
+    pub(super) ground: [f32; 4],
     pub(super) counts: [u32; 4],
     pub(super) shadow: [f32; 4],
+    pub(super) tone: [f32; 4],
+    pub(super) fog_color: [f32; 4],
+    pub(super) fog: [f32; 4],
     pub(super) directional: [DirectionalUniform; MAX_DIRECTIONAL],
     pub(super) point: [PointUniform; MAX_POINT],
     pub(super) shadow_matrices: [[[f32; 4]; 4]; MAX_SHADOW_LAYERS],
@@ -42,6 +47,7 @@ pub(super) struct PointUniform {
     pub(super) position: [f32; 4],
     pub(super) color: [f32; 4],
     pub(super) shadow: [f32; 4],
+    pub(super) direction: [f32; 4],
 }
 
 #[repr(C)]

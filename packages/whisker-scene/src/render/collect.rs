@@ -24,11 +24,21 @@ pub(crate) struct DirectionalLight {
     pub(crate) shadow: Option<Shadow>,
 }
 
+/// A point light, or a spot light when it has a cone.
 pub(crate) struct PointLight {
     pub(crate) position: Vec3,
     pub(crate) range: f32,
     pub(crate) radiance: [f32; 4],
     pub(crate) shadow: Option<Shadow>,
+    pub(crate) cone: Option<Cone>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Cone {
+    /// Unit vector the light shines along.
+    pub(crate) direction: Vec3,
+    pub(crate) inner_angle: f32,
+    pub(crate) outer_angle: f32,
 }
 
 /// What one frame draws, gathered from the node tree.
@@ -90,6 +100,29 @@ fn visit(node: &Node, parent: Mat4, (cast, receive): (bool, bool), out: &mut Col
                 range,
                 radiance: radiance(color, intensity),
                 shadow,
+                cone: None,
+            });
+        }
+        Some(Light::Spot {
+            color,
+            intensity,
+            range,
+            inner_angle,
+            outer_angle,
+            shadow,
+        }) => {
+            out.point.push(PointLight {
+                position: world.transform_point3(Vec3::ZERO),
+                range,
+                radiance: radiance(color, intensity),
+                shadow,
+                cone: Some(Cone {
+                    direction: world
+                        .transform_vector3(Vec3::NEG_Z)
+                        .normalize_or(Vec3::NEG_Z),
+                    inner_angle,
+                    outer_angle,
+                }),
             });
         }
         None => {}

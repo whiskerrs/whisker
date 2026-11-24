@@ -15,12 +15,17 @@ struct DirectionalLight {
     texel: vec4<f32>,
 };
 
+// A point light, or a spot light when its cone narrows it.
 struct PointLight {
     // xyz position, w range.
     position: vec4<f32>,
+    // rgb radiance, w cone offset.
     color: vec4<f32>,
-    // x first of six shadow layers or -1, z bias, w softness.
+    // x first shadow layer or -1, y 1 for a spot light's single layer, z bias, w softness.
     shadow: vec4<f32>,
+    // xyz the direction a spot light shines, w cone scale; the cone fades as
+    // clamp(cos θ · scale + offset, 0, 1)², which a scale of 0 and offset of 1 make a point light.
+    direction: vec4<f32>,
 };
 
 struct Frame {
@@ -28,10 +33,18 @@ struct Frame {
     camera_position: vec4<f32>,
     camera_forward: vec4<f32>,
     ambient: vec4<f32>,
+    // Hemisphere light from above and below.
+    sky: vec4<f32>,
+    ground: vec4<f32>,
     // x directional count, y point count, z 1 when the target needs sRGB-encoded output.
     counts: vec4<u32>,
     // x 1 / shadow map size.
     shadow: vec4<f32>,
+    // x exposure, y tone mapping: 0 none, 1 Reinhard, 2 ACES, 3 AgX.
+    tone: vec4<f32>,
+    fog_color: vec4<f32>,
+    // x 0 none, 1 linear from y to z, 2 exponential with density y.
+    fog: vec4<f32>,
     directional: array<DirectionalLight, 4>,
     point: array<PointLight, 16>,
     shadow_matrices: array<mat4x4<f32>, MAX_SHADOW_LAYERS>,
@@ -184,9 +197,80 @@ fn point_shadow(light: PointLight, world: vec3<f32>, normal: vec3<f32>) -> f32 {
     } else {
         face = select(5, 4, v.z > 0.0);
     }
+    if light.shadow.y > 0.5 {
+        face = 0;
+    }
     let layer = i32(light.shadow.x) + face;
     let clip = frame.shadow_matrices[layer] * vec4(world + offset, 1.0);
     return filtered_shadow(layer, clip.xyz / clip.w, light.shadow.w);
+}
+
+// Stephen Hill's fit of the ACES reference rendering and output transforms.
+fn aces(color: vec3<f32>) -> vec3<f32> {
+    let input = mat3x3(
+        vec3(0.59719, 0.07600, 0.02840),
+        vec3(0.35458, 0.90834, 0.13383),
+        vec3(0.04823, 0.01566, 0.83777),
+    );
+    let output = mat3x3(
+        vec3(1.60475, -0.10208, -0.00327),
+        vec3(-0.53108, 1.10813, -0.07276),
+        vec3(-0.07367, -0.00605, 1.07602),
+    );
+    let v = input * color;
+    let a = v * (v + 0.0245786) - 0.000090537;
+    let b = v * (0.983729 * v + 0.4329510) + 0.238081;
+    return output * (a / b);
+}
+
+// Benjamin Wrensch's polynomial fit of Blender's AgX base contrast.
+fn agx(color: vec3<f32>) -> vec3<f32> {
+    let inset = mat3x3(
+        vec3(0.842479062253094, 0.0423282422610123, 0.0423756549057051),
+        vec3(0.0784335999999992, 0.878468636469772, 0.0784336),
+        vec3(0.0792237451477643, 0.0791661274605434, 0.879142973793104),
+    );
+    let outset = mat3x3(
+        vec3(1.19687900512017, -0.0528968517574562, -0.0529716355144438),
+        vec3(-0.0980208811401368, 1.15190312990417, -0.0980434501171241),
+        vec3(-0.0990297440797205, -0.0989611768448433, 1.15107367264116),
+    );
+    let min_ev = -12.47393;
+    let max_ev = 4.026069;
+    var v = inset * color;
+    v = clamp(log2(max(v, vec3(1e-10))), vec3(min_ev), vec3(max_ev));
+    v = (v - min_ev) / (max_ev - min_ev);
+    let v2 = v * v;
+    let v4 = v2 * v2;
+    v = 15.5 * v4 * v2 - 40.14 * v4 * v + 31.96 * v4 - 6.868 * v2 * v + 0.4298 * v2 + 0.1191 * v
+        - 0.00232;
+    v = outset * v;
+    // The curve's output is display-encoded; decoding it lets every mode share the sRGB step.
+    return pow(max(v, vec3(0.0)), vec3(2.2));
+}
+
+fn tone_map(color: vec3<f32>) -> vec3<f32> {
+    let exposed = color * frame.tone.x;
+    let mode = i32(frame.tone.y);
+    if mode == 1 {
+        return exposed / (1.0 + exposed);
+    } else if mode == 2 {
+        return aces(exposed);
+    } else if mode == 3 {
+        return agx(exposed);
+    }
+    return exposed;
+}
+
+fn fog_amount(world: vec3<f32>) -> f32 {
+    let distance = length(world - frame.camera_position.xyz);
+    if frame.fog.x > 1.5 {
+        let d = frame.fog.y * distance;
+        return 1.0 - exp(-d * d);
+    } else if frame.fog.x > 0.5 {
+        return clamp((distance - frame.fog.y) / max(frame.fog.z - frame.fog.y, 1e-4), 0.0, 1.0);
+    }
+    return 0.0;
 }
 
 fn encode_srgb(linear: vec3<f32>) -> vec3<f32> {
@@ -230,7 +314,8 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         let v = normalize(frame.camera_position.xyz - in.world);
         let metallic = clamp(draw.params.x * metal_rough.b, 0.0, 1.0);
         let roughness = clamp(draw.params.y * metal_rough.g, 0.0, 1.0);
-        color = frame.ambient.rgb * base.rgb * occlusion + draw.emissive.rgb * glow;
+        let ambient = frame.ambient.rgb + mix(frame.ground.rgb, frame.sky.rgb, n.y * 0.5 + 0.5);
+        color = ambient * base.rgb * occlusion + draw.emissive.rgb * glow;
         let receive = draw.alpha.z > 0.5;
         let directional = min(frame.counts.x, MAX_DIRECTIONAL);
         let lights = directional + min(frame.counts.y, MAX_POINT);
@@ -253,7 +338,8 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
                 let range = max(light.position.w, 1e-4);
                 let window = clamp(1.0 - pow(distance2 / (range * range), 2.0), 0.0, 1.0);
                 l = normalize(to_light);
-                radiance = light.color.rgb * window * window / max(distance2, 0.01);
+                let cone = clamp(dot(-l, light.direction.xyz) * light.direction.w + light.color.w, 0.0, 1.0);
+                radiance = light.color.rgb * window * window * cone * cone / max(distance2, 0.01);
                 if receive {
                     lit = point_shadow(light, in.world, geometric);
                 }
@@ -261,6 +347,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
             color += shade(n, v, l, radiance * lit, base.rgb, metallic, roughness);
         }
     }
+    color = mix(tone_map(color), frame.fog_color.rgb, fog_amount(in.world));
     color = clamp(color, vec3(0.0), vec3(1.0));
     if frame.counts.z == 1u {
         color = encode_srgb(color);
