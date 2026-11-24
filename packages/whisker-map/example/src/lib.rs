@@ -96,6 +96,45 @@ fn add_points(map_ref: MapRef) {
     );
 }
 
+/// Draws a route around central Tokyo that shades from its start to its end.
+fn add_route(map_ref: MapRef) {
+    map_ref.add_source(
+        "route",
+        serde_json::json!({
+            "type": "geojson",
+            "lineMetrics": true,
+            "data": {
+                "type": "Feature",
+                "properties": {},
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [
+                        [139.7671, 35.6812], [139.7454, 35.6586], [139.7016, 35.6580],
+                        [139.7006, 35.6896], [139.7109, 35.7295], [139.7774, 35.7138],
+                        [139.7671, 35.6812],
+                    ],
+                },
+            },
+        }),
+    );
+    map_ref.add_layer(
+        serde_json::json!({
+            "id": "route",
+            "type": "line",
+            "source": "route",
+            "layout": {"line-cap": "round", "line-join": "round"},
+            "paint": {
+                "line-width": 8,
+                "line-gradient": [
+                    "interpolate", ["linear"], ["line-progress"],
+                    0, "#2563eb", 0.5, "#a855f7", 1, "#ef4444",
+                ],
+            },
+        }),
+        Some("clusters"),
+    );
+}
+
 /// Shades the terrain from AWS's open Terrarium elevation tiles, under the water.
 fn add_relief(map_ref: MapRef) {
     map_ref.add_source(
@@ -193,6 +232,7 @@ pub fn app() -> Element {
     });
     let map_ref = MapRef::new();
     add_points(map_ref);
+    add_route(map_ref);
     let tapped = signal(String::new());
     let globe = signal(false);
     let insets = safe_area_insets();

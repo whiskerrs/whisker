@@ -368,6 +368,7 @@ mod tests {
             kind,
             properties: HashMap::new(),
             geometry,
+            progress: Vec::new(),
         }
     }
 

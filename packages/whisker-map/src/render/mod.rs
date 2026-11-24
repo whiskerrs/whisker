@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use glam::{DMat4, Mat4};
@@ -64,12 +65,16 @@ pub(crate) enum Program {
     Mask,
     Background,
     Fill,
+    FillPattern,
     Line,
+    LinePattern,
+    LineGradient,
     Circle,
     Raster,
     /// Writes the extrusions' depth so that `Extrusion` colors only the surface in front.
     ExtrusionDepth,
     Extrusion,
+    ExtrusionPattern,
     Symbol,
     /// The background on the globe's surface rather than across the screen.
     GlobeBackground,
@@ -269,10 +274,21 @@ impl Shared {
                     size_of::<FillVertex>(),
                     &attrs_fill,
                 ),
-                Program::Line => (
+                Program::FillPattern => (
+                    &self.shader,
+                    "vs_fill_pattern",
+                    "fs_fill_pattern",
+                    size_of::<FillVertex>(),
+                    &attrs_fill,
+                ),
+                Program::Line | Program::LinePattern | Program::LineGradient => (
                     &self.shader,
                     "vs_line",
-                    "fs_line",
+                    match program {
+                        Program::LinePattern => "fs_line_pattern",
+                        Program::LineGradient => "fs_line_gradient",
+                        _ => "fs_line",
+                    },
                     size_of::<LineVertex>(),
                     &attrs_line,
                 ),
@@ -284,10 +300,14 @@ impl Shared {
                     &attrs_circle,
                 ),
                 Program::Raster => (&self.shader, "vs_raster", "fs_raster", 16, &attrs_quad),
-                Program::Extrusion | Program::ExtrusionDepth => (
+                Program::Extrusion | Program::ExtrusionDepth | Program::ExtrusionPattern => (
                     &self.shader,
                     "vs_extrusion",
-                    "fs_extrusion",
+                    if program == Program::ExtrusionPattern {
+                        "fs_extrusion_pattern"
+                    } else {
+                        "fs_extrusion"
+                    },
                     size_of::<ExtrusionVertex>(),
                     &attrs_extrusion,
                 ),
@@ -325,10 +345,14 @@ impl Shared {
                 }
             }
             Program::Fill
+            | Program::FillPattern
             | Program::Line
+            | Program::LinePattern
+            | Program::LineGradient
             | Program::Circle
             | Program::Raster
             | Program::Extrusion
+            | Program::ExtrusionPattern
             | Program::ExtrusionDepth => {
                 let face = stencil_face(wgpu::CompareFunction::Equal, wgpu::StencilOperation::Keep);
                 wgpu::StencilState {
@@ -340,7 +364,10 @@ impl Shared {
             }
             _ => wgpu::StencilState::default(),
         };
-        let depth = matches!(program, Program::Extrusion | Program::ExtrusionDepth);
+        let depth = matches!(
+            program,
+            Program::Extrusion | Program::ExtrusionDepth | Program::ExtrusionPattern
+        );
         gpu.device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("whisker-map"),
@@ -376,7 +403,9 @@ impl Shared {
                     depth_write_enabled: Some(program == Program::ExtrusionDepth),
                     depth_compare: Some(match program {
                         Program::ExtrusionDepth => wgpu::CompareFunction::LessEqual,
-                        Program::Extrusion => wgpu::CompareFunction::Equal,
+                        Program::Extrusion | Program::ExtrusionPattern => {
+                            wgpu::CompareFunction::Equal
+                        }
                         _ => wgpu::CompareFunction::Always,
                     }),
                     stencil,
@@ -632,6 +661,7 @@ pub(crate) enum MeshRef {
 pub(crate) enum TextureRef {
     Tile(Rc<LoadedTile>),
     Labels(usize),
+    Group(wgpu::BindGroup),
 }
 
 pub(crate) struct MapRenderer {
@@ -649,6 +679,8 @@ pub(crate) struct MapRenderer {
     size: SurfaceSize,
     attachments: Option<Attachments>,
     labels: labels::LabelRenderer,
+    /// Each `line-gradient` layer's colors, kept while the layer is in the style.
+    gradients: Vec<(Arc<Layer>, wgpu::BindGroup)>,
 }
 
 fn draw_buffer(
@@ -746,6 +778,7 @@ impl MapRenderer {
             },
             attachments: None,
             labels,
+            gradients: Vec::new(),
         }
     }
 
@@ -857,6 +890,8 @@ impl MapRenderer {
             });
         }
 
+        self.gradients
+            .retain(|(kept, _)| style.layers.iter().any(|layer| Arc::ptr_eq(layer, kept)));
         let mut masked: Option<&str> = None;
         for (index, layer) in style.layers.iter().enumerate() {
             if !layer.shown_at(zoom) {
@@ -935,7 +970,7 @@ impl MapRenderer {
                         let Some((program, _)) = gpu_tile.meshes.get(&index) else {
                             continue;
                         };
-                        let program = *program;
+                        let mut program = *program;
                         drop(gpu_tile);
                         let mut uniform = match program {
                             Program::Fill => fill_uniform(layer, &ctx, matrix),
@@ -944,6 +979,41 @@ impl MapRenderer {
                             Program::Extrusion => extrusion_uniform(layer, &ctx, matrix, view),
                             _ => continue,
                         };
+                        let mut texture = None;
+                        let patterned = match program {
+                            Program::Fill => Some(("fill-pattern", Program::FillPattern)),
+                            Program::Line => Some(("line-pattern", Program::LinePattern)),
+                            Program::Extrusion => {
+                                Some(("fill-extrusion-pattern", Program::ExtrusionPattern))
+                            }
+                            _ => None,
+                        };
+                        if let Some((property, with_pattern)) = patterned
+                            && layer.has(property)
+                        {
+                            // A pattern whose image is not loaded yet draws nothing rather than a color.
+                            let Some((rect, place, sheet)) =
+                                pattern(style, layer, property, &ctx, *placed, zoom)
+                            else {
+                                continue;
+                            };
+                            program = with_pattern;
+                            uniform.color2 = rect;
+                            uniform.dash0 = place;
+                            match program {
+                                Program::FillPattern => uniform.params[2] = units as f32,
+                                Program::ExtrusionPattern => {
+                                    uniform.color = [1.0; 4];
+                                    uniform.params[0] = 0.0;
+                                    uniform.dash1[0] = units as f32;
+                                }
+                                _ => {}
+                            }
+                            texture = Some(TextureRef::Labels(sheet + 1));
+                        } else if program == Program::Line && layer.has("line-gradient") {
+                            program = Program::LineGradient;
+                            texture = Some(TextureRef::Group(self.gradient(gpu, layer)));
+                        }
                         uniform.tile = tile_params(*placed);
                         let uniform = rec.push(uniform);
                         rec.steps.push(Step::Draw {
@@ -951,7 +1021,7 @@ impl MapRenderer {
                             uniform,
                             stencil,
                             mesh: MeshRef::Tile(tile.clone(), index),
-                            texture: None,
+                            texture,
                         });
                     }
                 }
@@ -968,6 +1038,80 @@ impl MapRenderer {
         }
         rec
     }
+
+    /// `layer`'s `line-gradient` across 256 texels, premultiplied.
+    fn gradient(&mut self, gpu: &Gpu, layer: &Arc<Layer>) -> wgpu::BindGroup {
+        if let Some((_, group)) = self.gradients.iter().find(|(l, _)| Arc::ptr_eq(l, layer)) {
+            return group.clone();
+        }
+        let gradient = layer.get("line-gradient");
+        let mut pixels = Vec::with_capacity(256 * 4);
+        for i in 0..256 {
+            let mut ctx = Context::zoom(0.0);
+            ctx.input = Some(f64::from(i) / 255.0);
+            let color = gradient.color(&ctx, Rgba::TRANSPARENT).premultiplied(1.0);
+            pixels.extend(color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8));
+        }
+        let (_, group) = upload_texture(
+            gpu,
+            &self.shared.texture_layout,
+            &self.shared.linear,
+            256,
+            1,
+            &pixels,
+            wgpu::TextureFormat::Rgba8Unorm,
+        );
+        self.gradients.push((layer.clone(), group.clone()));
+        group
+    }
+}
+
+/// Where `property`'s sprite sits in its sheet as a texel rectangle, and its size in logical pixels
+/// with `placed`'s origin wrapped to that size, so that tiles continue each other's repeats.
+fn pattern(
+    style: &StyleState,
+    layer: &Layer,
+    property: &str,
+    ctx: &Context,
+    placed: PlacedTile,
+    zoom: f64,
+) -> Option<([f32; 4], [f32; 4], usize)> {
+    let name = layer.get(property).string(ctx)?;
+    let image = style.sprites.image(&name)?;
+    let sheets = style.sprites.sheets.borrow();
+    let sheet = sheets.get(image.sheet)?;
+    let (width, height) = (sheet.width as f32, sheet.height as f32);
+    // Half a texel in from the edges keeps the linear sampler off the neighbouring sprites.
+    let rect = [
+        (image.x as f32 + 0.5) / width,
+        (image.y as f32 + 0.5) / height,
+        ((image.x + image.width) as f32 - 0.5) / width,
+        ((image.y + image.height) as f32 - 0.5) / height,
+    ];
+    let ratio = f64::from(image.pixel_ratio);
+    let size = [
+        f64::from(image.width) / ratio,
+        f64::from(image.height) / ratio,
+    ];
+    if size[0] <= 0.0 || size[1] <= 0.0 {
+        return None;
+    }
+    let n = f64::from(1u32 << placed.id.z);
+    let tile = 512.0 * 2f64.powf(zoom - f64::from(placed.id.z));
+    let origin = [
+        ((f64::from(placed.id.x) + f64::from(placed.wrap) * n) * tile).rem_euclid(size[0]),
+        (f64::from(placed.id.y) * tile).rem_euclid(size[1]),
+    ];
+    Some((
+        rect,
+        [
+            size[0] as f32,
+            size[1] as f32,
+            origin[0] as f32,
+            origin[1] as f32,
+        ],
+        image.sheet,
+    ))
 }
 
 fn layer_color(layer: &Layer, ctx: &Context, color: &str, opacity: &str) -> ([f32; 4], f32, bool) {
@@ -1278,6 +1422,7 @@ impl Renderer for MapRenderer {
                                     pass.set_bind_group(2, group, &[]);
                                 }
                             }
+                            Some(TextureRef::Group(group)) => pass.set_bind_group(2, group, &[]),
                             None => {}
                         }
                         match mesh {

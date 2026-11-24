@@ -513,9 +513,10 @@ pub(crate) fn vector_content(
         {
             continue;
         }
-        if layer.has("fill-pattern")
-            || layer.has("line-pattern")
-            || layer.has("fill-extrusion-pattern")
+        // Patterns are resolved once per draw, so one that varies by feature cannot be drawn.
+        if ["fill-pattern", "line-pattern", "fill-extrusion-pattern"]
+            .iter()
+            .any(|name| layer.has(name) && layer.get(name).feature_dependent)
         {
             continue;
         }

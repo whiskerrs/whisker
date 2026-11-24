@@ -279,6 +279,7 @@ impl Writer {
                 for part in &feature.geometry {
                     self.pod(part);
                 }
+                self.pod(&feature.progress);
             }
         }
     }
@@ -460,6 +461,7 @@ impl<'a> Reader<'a> {
                     kind,
                     properties,
                     geometry,
+                    progress: self.pod()?,
                 });
             }
             layers.push(Layer {

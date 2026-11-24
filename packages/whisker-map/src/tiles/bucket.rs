@@ -27,7 +27,8 @@ pub(crate) struct LineVertex {
     pub pos: [f32; 2],
     /// Offset from the center line in half widths.
     pub extrude: [f32; 2],
-    /// x distance along the line in tile units, y which side (-1 or 1), z per-feature width or 0, w unused.
+    /// x distance along the line in tile units, y which side (-1 or 1), z per-feature width or 0,
+    /// w how far along the whole line, 0 to 1, for `line-gradient`.
     pub data: [f32; 4],
     pub color: [f32; 4],
 }
@@ -213,13 +214,18 @@ pub(crate) fn build(
                     },
                     color: rgba,
                     width: line_width,
+                    progress: [0.0, 0.0],
                 };
-                for part in &feature.geometry {
+                for (k, part) in feature.geometry.iter().enumerate() {
                     let points: Vec<[f32; 2]> = part
                         .iter()
                         .map(|p| [p[0] as f32 * scale, p[1] as f32 * scale])
                         .collect();
                     let closed = feature.kind == GeometryKind::Polygon;
+                    let style = LineStyle {
+                        progress: feature.progress.get(k).copied().unwrap_or([0.0, 0.0]),
+                        ..style
+                    };
                     line(
                         &mut mesh,
                         &split_at_cells(&points, closed, cell),
@@ -472,11 +478,14 @@ pub(crate) enum Join {
     Round,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct LineStyle {
     pub cap: Cap,
     pub join: Join,
     pub color: [f32; 4],
     pub width: f32,
+    /// Where these points start and end along their whole line, 0 to 1.
+    pub progress: [f32; 2],
 }
 
 type V2 = [f32; 2];
@@ -522,10 +531,18 @@ pub(crate) fn line(mesh: &mut Mesh<LineVertex>, points: &[V2], closed: bool, sty
     }
     let n = pts.len();
     let segments = if closed { n } else { n - 1 };
+    let total: f32 = (0..segments)
+        .map(|i| len(sub(pts[(i + 1) % n], pts[i])))
+        .sum();
     let vertex = |pos: V2, extrude: V2, distance: f32, side: f32| LineVertex {
         pos,
         extrude,
-        data: [distance, side, style.width, 0.0],
+        data: [
+            distance,
+            side,
+            style.width,
+            progress(style, distance, total),
+        ],
         color: style.color,
     };
     let mut distance = 0.0f32;
@@ -632,17 +649,35 @@ pub(crate) fn line(mesh: &mut Mesh<LineVertex>, points: &[V2], closed: bool, sty
     if !closed {
         let first_dir = norm(sub(pts[1], pts[0]));
         let last_dir = norm(sub(pts[n - 1], pts[n - 2]));
-        cap(mesh, pts[0], [-first_dir[0], -first_dir[1]], 0.0, style);
-        cap(mesh, pts[n - 1], last_dir, distance, style);
+        cap(
+            mesh,
+            pts[0],
+            [-first_dir[0], -first_dir[1]],
+            0.0,
+            style,
+            total,
+        );
+        cap(mesh, pts[n - 1], last_dir, distance, style, total);
     }
 }
 
-fn cap(mesh: &mut Mesh<LineVertex>, p: V2, out: V2, distance: f32, style: &LineStyle) {
+fn progress(style: &LineStyle, distance: f32, total: f32) -> f32 {
+    let [start, end] = style.progress;
+    let t = if total > 0.0 { distance / total } else { 0.0 };
+    start + (end - start) * t
+}
+
+fn cap(mesh: &mut Mesh<LineVertex>, p: V2, out: V2, distance: f32, style: &LineStyle, total: f32) {
     let normal = perp(out);
     let vertex = |extrude: V2, side: f32| LineVertex {
         pos: p,
         extrude,
-        data: [distance, side, style.width, 0.0],
+        data: [
+            distance,
+            side,
+            style.width,
+            progress(style, distance, total),
+        ],
         color: style.color,
     };
     match style.cap {
@@ -782,6 +817,7 @@ mod tests {
             join,
             color: [0.0; 4],
             width: 0.0,
+            progress: [0.0, 1.0],
         }
     }
 
@@ -819,6 +855,30 @@ mod tests {
         );
         assert_eq!(mesh.indices.len(), 6);
         assert_eq!(mesh.vertices[3].data[0], 10.0);
+    }
+
+    #[test]
+    fn progress_runs_from_the_parts_start_to_its_end() {
+        let mut mesh = Mesh::default();
+        let style = LineStyle {
+            progress: [0.5, 1.0],
+            ..style(Join::Bevel, Cap::Butt)
+        };
+        line(
+            &mut mesh,
+            &[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+            false,
+            &style,
+        );
+        let at = |distance: f32| {
+            mesh.vertices
+                .iter()
+                .find(|v| v.data[0] == distance)
+                .map(|v| v.data[3])
+        };
+        assert_eq!(at(0.0), Some(0.5));
+        assert_eq!(at(10.0), Some(0.75));
+        assert_eq!(at(20.0), Some(1.0));
     }
 
     #[test]
