@@ -11,7 +11,7 @@ use super::post::PostShared;
 use super::resources::{GpuTexture, half, instance_buffer, upload_cube, upload_texture};
 use super::shadow::{MAX_SHADOW_LAYERS, SHADOW_FORMAT};
 use super::{DEPTH_FORMAT, MAX_DIRECTIONAL};
-use crate::core::{AlphaMode, Material, TextureTransform, linear_rgba, srgb_rgba};
+use crate::core::{AlphaMode, Material, MaterialShader, TextureTransform, linear_rgba, srgb_rgba};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -29,6 +29,7 @@ pub(super) struct FrameUniform {
     pub(super) fog_color: [f32; 4],
     pub(super) fog: [f32; 4],
     pub(super) environment: [f32; 4],
+    pub(super) time: [f32; 4],
     pub(super) irradiance: [[f32; 4]; 9],
     pub(super) directional: [DirectionalUniform; MAX_DIRECTIONAL],
     pub(super) shadow_matrices: [[[f32; 4]; 4]; MAX_SHADOW_LAYERS],
@@ -63,6 +64,10 @@ pub(super) struct DrawUniform {
     pub(super) params: [f32; 4],
     pub(super) uv_rows: [[f32; 4]; 2],
     pub(super) alpha: [f32; 4],
+    pub(super) layers: [f32; 4],
+    pub(super) sheen: [f32; 4],
+    pub(super) anisotropy: [f32; 4],
+    pub(super) custom: [[f32; 4]; 4],
 }
 
 /// Device-wide objects shared by every scene surface.
@@ -83,6 +88,12 @@ pub(super) struct Shared {
     pub(super) environment_sampler: wgpu::Sampler,
     /// Bound while a scene has no environment.
     pub(super) no_environment: GpuTexture,
+    pub(super) transmission_layout: wgpu::BindGroupLayout,
+    pub(super) transmission_sampler: wgpu::Sampler,
+    /// Bound while no transmissive surface needs the scene behind it.
+    pub(super) no_transmission: wgpu::BindGroup,
+    /// Custom material shaders by [`MaterialShader::id`], kept alive so ids stay unique.
+    custom_shaders: RefCell<HashMap<usize, (MaterialShader, wgpu::ShaderModule)>>,
     sky_pipeline_layout: wgpu::PipelineLayout,
     sky_pipelines: RefCell<HashMap<(wgpu::TextureFormat, u32), wgpu::RenderPipeline>>,
     shadow_pipeline_layout: wgpu::PipelineLayout,
@@ -98,6 +109,8 @@ pub(super) struct PipelineKey {
     pub(super) samples: u32,
     pub(super) blend: bool,
     pub(super) double_sided: bool,
+    /// A custom material's shader id, or 0 for the standard one.
+    pub(super) shader: usize,
     /// Draws with a mirroring transform, whose triangles wind the other way.
     pub(super) mirrored: bool,
 }
@@ -133,7 +146,7 @@ impl Shared {
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("whisker-scene frame"),
             entries: &[
-                uniform(false, size_of::<FrameUniform>()),
+                uniform(true, size_of::<FrameUniform>()),
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -204,20 +217,41 @@ impl Shared {
             label: Some("whisker-scene material"),
             entries: &texture_entries,
         });
+        let transmission_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("whisker-scene transmission"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("whisker-scene"),
             bind_group_layouts: &[
                 Some(&frame_layout),
                 Some(&draw_layout),
                 Some(&texture_layout),
+                Some(&transmission_layout),
             ],
             immediate_size: 0,
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("whisker-scene"),
-            source: wgpu::ShaderSource::Wgsl(
-                concat!(include_str!("color.wgsl"), include_str!("shader.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(material_source(include_str!("surface.wgsl")).into()),
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("whisker-scene"),
@@ -268,6 +302,27 @@ impl Shared {
             immediate_size: 0,
         });
         let white = upload_texture(gpu, 1, 1, &[255; 4], false);
+        let transmission_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("whisker-scene transmission"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let black = upload_texture(gpu, 1, 1, &[0, 0, 0, 255], false);
+        let no_transmission = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("whisker-scene no transmission"),
+            layout: &transmission_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&black.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&transmission_sampler),
+                },
+            ],
+        });
         let flat_normal = upload_texture(gpu, 1, 1, &[128, 128, 255, 255], false);
         Shared {
             frame_layout,
@@ -291,7 +346,56 @@ impl Shared {
             shadow_pipeline: OnceCell::new(),
             depth_pipeline: OnceCell::new(),
             post: OnceCell::new(),
+            no_transmission,
+            transmission_layout,
+            transmission_sampler,
+            custom_shaders: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// The pipeline key's shader for `material`, compiling a custom one on first use.
+    pub(super) fn shader_key(&self, gpu: &Gpu, material: &Material) -> usize {
+        let Material::Custom(custom) = material else {
+            return 0;
+        };
+        let id = custom.shader.id();
+        self.custom_shaders
+            .borrow_mut()
+            .entry(id)
+            .or_insert_with(|| {
+                let module = gpu
+                    .device
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("whisker-scene custom material"),
+                        source: wgpu::ShaderSource::Wgsl(
+                            material_source(custom.shader.source()).into(),
+                        ),
+                    });
+                (custom.shader.clone(), module)
+            });
+        id
+    }
+
+    /// Binds `scene`, the opaque scene in linear color, for transmissive surfaces to sample.
+    pub(super) fn transmission_bind_group(
+        &self,
+        gpu: &Gpu,
+        scene: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("whisker-scene transmission"),
+            layout: &self.transmission_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(scene),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.transmission_sampler),
+                },
+            ],
+        })
     }
 
     /// Fills the background with the environment, behind everything drawn after it.
@@ -408,7 +512,12 @@ impl Shared {
             blend,
             double_sided,
             mirrored,
+            shader,
         } = key;
+        let custom = self.custom_shaders.borrow();
+        let module = custom
+            .get(&shader)
+            .map_or(&self.shader, |(_, module)| module);
         self.pipelines
             .borrow_mut()
             .entry(key)
@@ -418,13 +527,13 @@ impl Shared {
                         label: Some("whisker-scene"),
                         layout: Some(&self.pipeline_layout),
                         vertex: wgpu::VertexState {
-                            module: &self.shader,
+                            module,
                             entry_point: Some("vs"),
                             compilation_options: Default::default(),
                             buffers: &[Some(vertex_layout()), Some(instance_layout())],
                         },
                         fragment: Some(wgpu::FragmentState {
-                            module: &self.shader,
+                            module,
                             entry_point: Some("fs"),
                             compilation_options: Default::default(),
                             targets: &[Some(wgpu::ColorTargetState {
@@ -491,6 +600,17 @@ fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
+/// The renderer's shader with `surface`, WGSL defining `fn surface(input: SurfaceInput) -> Surface`.
+pub(crate) fn material_source(surface: &str) -> String {
+    [
+        include_str!("color.wgsl"),
+        include_str!("shader.wgsl"),
+        include_str!("standard.wgsl"),
+        surface,
+    ]
+    .concat()
+}
+
 pub(super) fn draw_buffer(
     gpu: &Gpu,
     shared: &Shared,
@@ -519,64 +639,91 @@ pub(super) fn draw_buffer(
 }
 
 pub(super) fn draw_uniform(model: Mat4, material: &Material, receive_shadow: bool) -> DrawUniform {
-    let normal = model.inverse().transpose();
-    let identity = TextureTransform::default().rows();
-    let (base_color, emissive, params, uv_rows, alpha) = match material {
-        Material::Unlit { color } => (
-            linear_rgba(*color),
-            [0.0; 4],
-            [0.0, 1.0, 1.0, 0.0],
-            identity,
-            [ALPHA_BLEND, 0.0, 0.0, 0.0],
-        ),
+    let alpha_values = |mode: AlphaMode| match mode {
+        AlphaMode::Opaque => [ALPHA_OPAQUE, 0.0, 0.0, 0.0],
+        AlphaMode::Mask(cutoff) => [ALPHA_MASK, cutoff, 0.0, 0.0],
+        AlphaMode::Blend => [ALPHA_BLEND, 0.0, 0.0, 0.0],
+    };
+    let mut uniform = DrawUniform {
+        model: model.to_cols_array_2d(),
+        normal: model.inverse().transpose().to_cols_array_2d(),
+        base_color: [1.0; 4],
+        emissive: [0.0; 4],
+        params: [0.0, 1.0, 0.0, 0.0],
+        uv_rows: TextureTransform::default().rows(),
+        alpha: [ALPHA_BLEND, 0.0, 0.0, 0.0],
+        layers: [0.0, 0.0, 0.0, 1.5],
+        sheen: [0.0; 4],
+        anisotropy: [0.0; 4],
+        custom: [[0.0; 4]; 4],
+    };
+    match material {
+        Material::Unlit { color } => {
+            uniform.base_color = linear_rgba(*color);
+            uniform.params[2] = 1.0;
+        }
         Material::Standard(standard) => {
             let [r, g, b, _] = linear_rgba(standard.emissive);
             let k = standard.emissive_intensity;
-            let (mode, cutoff) = match standard.alpha_mode {
-                AlphaMode::Opaque => (ALPHA_OPAQUE, 0.0),
-                AlphaMode::Mask(cutoff) => (ALPHA_MASK, cutoff),
-                AlphaMode::Blend => (ALPHA_BLEND, 0.0),
-            };
-            (
-                linear_rgba(standard.base_color),
-                [r * k, g * k, b * k, 0.0],
-                [standard.metallic, standard.roughness, 0.0, 0.0],
-                standard.texture_transform.rows(),
-                [mode, cutoff, 0.0, 0.0],
-            )
+            let [sr, sg, sb, _] = linear_rgba(standard.sheen_color);
+            uniform.base_color = linear_rgba(standard.base_color);
+            uniform.emissive = [r * k, g * k, b * k, 0.0];
+            uniform.params = [standard.metallic, standard.roughness, 0.0, 0.0];
+            uniform.uv_rows = standard.texture_transform.rows();
+            uniform.alpha = alpha_values(standard.alpha_mode);
+            uniform.layers = [
+                standard.clearcoat,
+                standard.clearcoat_roughness,
+                standard.transmission,
+                standard.ior,
+            ];
+            uniform.sheen = [sr, sg, sb, standard.sheen_roughness];
+            uniform.anisotropy = [
+                standard.anisotropy,
+                standard.anisotropy_rotation,
+                standard.thickness,
+                0.0,
+            ];
         }
-    };
-    let mut alpha = alpha;
-    alpha[2] = f32::from(u8::from(receive_shadow));
-    DrawUniform {
-        model: model.to_cols_array_2d(),
-        normal: normal.to_cols_array_2d(),
-        base_color,
-        emissive,
-        params,
-        uv_rows,
-        alpha,
+        Material::Custom(custom) => {
+            uniform.alpha = alpha_values(custom.alpha_mode);
+            uniform.custom = custom.params.map(|param| param.to_array());
+        }
     }
+    uniform.alpha[2] = f32::from(u8::from(receive_shadow));
+    uniform
 }
 
 const ALPHA_OPAQUE: f32 = 0.0;
 const ALPHA_MASK: f32 = 1.0;
 const ALPHA_BLEND: f32 = 2.0;
 
+/// Whether `material` is drawn after opaque surfaces, farthest first, over what is behind it.
 pub(crate) fn translucent(material: &Material) -> bool {
     match material {
         Material::Unlit { color } => srgb_rgba(*color)[3] < 1.0,
         Material::Standard(standard) => {
-            standard.alpha_mode == AlphaMode::Blend
-                && (srgb_rgba(standard.base_color)[3] < 1.0
-                    || standard
-                        .base_color_texture
-                        .as_ref()
-                        .is_some_and(|texture| texture.data().translucent))
+            standard.transmission > 0.0
+                || standard.alpha_mode == AlphaMode::Blend
+                    && (srgb_rgba(standard.base_color)[3] < 1.0
+                        || standard
+                            .base_color_texture
+                            .as_ref()
+                            .is_some_and(|texture| texture.data().translucent))
         }
+        Material::Custom(custom) => custom.alpha_mode == AlphaMode::Blend,
     }
 }
 
+/// Whether `material` shows the opaque scene through itself.
+pub(super) fn transmissive(material: &Material) -> bool {
+    matches!(material, Material::Standard(standard) if standard.transmission > 0.0)
+}
+
 pub(super) fn double_sided(material: &Material) -> bool {
-    matches!(material, Material::Standard(standard) if standard.double_sided)
+    match material {
+        Material::Standard(standard) => standard.double_sided,
+        Material::Custom(custom) => custom.double_sided,
+        Material::Unlit { .. } => false,
+    }
 }

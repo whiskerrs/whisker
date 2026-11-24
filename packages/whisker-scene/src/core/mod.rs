@@ -12,7 +12,7 @@ use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::{Rc, Weak};
 
-use glam::{Mat3, Quat, Vec2, Vec3};
+use glam::{Mat3, Quat, Vec2, Vec3, Vec4};
 use whisker::css::Color;
 use whisker_surface::{FrameInfo, Surface, WeakSurface};
 
@@ -680,6 +680,8 @@ pub enum Material {
         color: Color,
     },
     Standard(StandardMaterial),
+    /// Surface inputs computed by a WGSL function of your own, lit like [`Material::Standard`].
+    Custom(CustomMaterial),
 }
 
 impl From<StandardMaterial> for Material {
@@ -714,6 +716,25 @@ pub struct StandardMaterial {
     pub alpha_mode: AlphaMode,
     /// Draws back faces too instead of culling them.
     pub double_sided: bool,
+    /// The strength of a clear glossy layer over the surface, `0.0..=1.0`.
+    pub clearcoat: f32,
+    /// `0.0..=1.0`
+    pub clearcoat_roughness: f32,
+    /// The color of a soft velvet-like sheen at grazing angles; black for none.
+    pub sheen_color: Color,
+    /// `0.0..=1.0`
+    pub sheen_roughness: f32,
+    /// How much light passes through the surface instead of being diffused, `0.0..=1.0`.
+    pub transmission: f32,
+    /// Index of refraction, bending what is seen through a transmissive surface.
+    pub ior: f32,
+    /// How far, in the mesh's units, light travels inside a transmissive surface; 0 for a thin one.
+    pub thickness: f32,
+    /// Stretches highlights along the tangent when positive and across it when negative,
+    /// `-1.0..=1.0`.
+    pub anisotropy: f32,
+    /// Turns the direction of `anisotropy` from the tangent, in radians.
+    pub anisotropy_rotation: f32,
 }
 
 impl Default for StandardMaterial {
@@ -731,6 +752,97 @@ impl Default for StandardMaterial {
             occlusion_texture: None,
             texture_transform: TextureTransform::default(),
             alpha_mode: AlphaMode::default(),
+            double_sided: false,
+            clearcoat: 0.0,
+            clearcoat_roughness: 0.0,
+            sheen_color: Color::rgb(0, 0, 0),
+            sheen_roughness: 0.0,
+            transmission: 0.0,
+            ior: 1.5,
+            thickness: 0.0,
+            anisotropy: 0.0,
+            anisotropy_rotation: 0.0,
+        }
+    }
+}
+
+/// WGSL source defining `fn surface(input: SurfaceInput) -> Surface`, compiled once per value.
+///
+/// The function may call `standard_surface(input)`, read `draw.custom[0..4]` and `frame.time.x`,
+/// and sample `texture0`..`texture4` with `material_sampler`.
+#[derive(Clone)]
+pub struct MaterialShader {
+    source: Rc<str>,
+}
+
+impl MaterialShader {
+    /// Checks the source compiles together with the renderer's shader.
+    pub fn new(source: impl Into<String>) -> Result<MaterialShader, MaterialShaderError> {
+        let source: Rc<str> = Rc::from(source.into());
+        let whole = crate::render::material_source(&source);
+        let module = naga::front::wgsl::parse_str(&whole)
+            .map_err(|error| MaterialShaderError(error.emit_to_string(&whole)))?;
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .map_err(|error| MaterialShaderError(error.emit_to_string(&whole)))?;
+        Ok(MaterialShader { source })
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub(crate) fn id(&self) -> usize {
+        Rc::as_ptr(&self.source) as *const u8 as usize
+    }
+}
+
+impl PartialEq for MaterialShader {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.source, &other.source)
+    }
+}
+
+impl std::fmt::Debug for MaterialShader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MaterialShader").finish_non_exhaustive()
+    }
+}
+
+/// Why a [`MaterialShader`]'s source was rejected.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MaterialShaderError(String);
+
+impl std::fmt::Display for MaterialShaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for MaterialShaderError {}
+
+/// A material whose surface a [`MaterialShader`] computes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CustomMaterial {
+    pub shader: MaterialShader,
+    /// Read in the shader as `draw.custom`.
+    pub params: [Vec4; 4],
+    /// Bound as `texture0`.. in order, at most five, sampled without sRGB decoding.
+    pub textures: Vec<Texture>,
+    pub alpha_mode: AlphaMode,
+    pub double_sided: bool,
+}
+
+impl CustomMaterial {
+    pub fn new(shader: MaterialShader) -> CustomMaterial {
+        CustomMaterial {
+            shader,
+            params: [Vec4::ZERO; 4],
+            textures: Vec::new(),
+            alpha_mode: AlphaMode::Opaque,
             double_sided: false,
         }
     }

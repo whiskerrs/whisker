@@ -49,6 +49,8 @@ struct Frame {
     fog: vec4<f32>,
     // x intensity, y 1 when there is an environment, z its last mip level.
     environment: vec4<f32>,
+    // x the frame timestamp in seconds, y 1 when transmission_map holds the scene behind.
+    time: vec4<f32>,
     // The environment's irradiance over π as spherical harmonics, already scaled by its intensity.
     irradiance: array<vec4<f32>, 9>,
     directional: array<DirectionalLight, 4>,
@@ -67,6 +69,14 @@ struct Draw {
     uv_y: vec4<f32>,
     // x 0 opaque, 1 mask, 2 blend; y mask cutoff; z 1 when shadows darken it.
     alpha: vec4<f32>,
+    // x clearcoat, y clearcoat roughness, z transmission, w index of refraction.
+    layers: vec4<f32>,
+    // rgb sheen color, w sheen roughness.
+    sheen: vec4<f32>,
+    // x anisotropy, y its rotation, z thickness.
+    anisotropy: vec4<f32>,
+    // A custom material's own parameters.
+    custom: array<vec4<f32>, 4>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -77,12 +87,45 @@ struct Draw {
 // One point light per row, its fields in the row's four texels.
 @group(0) @binding(5) var point_lights: texture_2d<f32>;
 @group(1) @binding(0) var<uniform> draw: Draw;
-@group(2) @binding(0) var base_texture: texture_2d<f32>;
-@group(2) @binding(1) var metallic_roughness_texture: texture_2d<f32>;
-@group(2) @binding(2) var normal_texture: texture_2d<f32>;
-@group(2) @binding(3) var emissive_texture: texture_2d<f32>;
-@group(2) @binding(4) var occlusion_texture: texture_2d<f32>;
+// A standard material binds base color, metallic-roughness, normal, emissive and occlusion maps.
+@group(2) @binding(0) var texture0: texture_2d<f32>;
+@group(2) @binding(1) var texture1: texture_2d<f32>;
+@group(2) @binding(2) var texture2: texture_2d<f32>;
+@group(2) @binding(3) var texture3: texture_2d<f32>;
+@group(2) @binding(4) var texture4: texture_2d<f32>;
 @group(2) @binding(5) var material_sampler: sampler;
+// The opaque scene in linear color, which transmissive surfaces show through.
+@group(3) @binding(0) var transmission_map: texture_2d<f32>;
+@group(3) @binding(1) var transmission_sampler: sampler;
+
+struct SurfaceInput {
+    uv: vec2<f32>,
+    world: vec3<f32>,
+    // The interpolated vertex normal, facing the viewer.
+    normal: vec3<f32>,
+    color: vec4<f32>,
+};
+
+struct Surface {
+    // Linear color and alpha.
+    base_color: vec4<f32>,
+    emissive: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    // In tangent space, where z runs along the vertex normal.
+    normal: vec3<f32>,
+    occlusion: f32,
+    clearcoat: f32,
+    clearcoat_roughness: f32,
+    sheen_color: vec3<f32>,
+    sheen_roughness: f32,
+    transmission: f32,
+    ior: f32,
+    thickness: f32,
+    anisotropy: f32,
+    // In tangent space.
+    anisotropy_direction: vec2<f32>,
+};
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -137,27 +180,90 @@ fn distribution(n_dot_h: f32, alpha: f32) -> f32 {
 // Height-correlated Smith visibility, including the 1 / (4 n·l n·v) term.
 fn visibility(n_dot_v: f32, n_dot_l: f32, alpha: f32) -> f32 {
     let a2 = alpha * alpha;
-    let gv = n_dot_l * sqrt(n_dot_v * n_dot_v * (1.0 - a2) + a2);
-    let gl = n_dot_v * sqrt(n_dot_l * n_dot_l * (1.0 - a2) + a2);
-    return 0.5 / max(gv + gl, 1e-5);
+    let view_term = n_dot_l * sqrt(n_dot_v * n_dot_v * (1.0 - a2) + a2);
+    let light_term = n_dot_v * sqrt(n_dot_l * n_dot_l * (1.0 - a2) + a2);
+    return 0.5 / max(view_term + light_term, 1e-5);
 }
 
-fn shade(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, radiance: vec3<f32>, base: vec3<f32>, metallic: f32, roughness: f32) -> vec3<f32> {
-    let n_dot_l = dot(n, l);
-    if n_dot_l <= 0.0 {
-        return vec3(0.0);
+// A surface's lighting inputs in world space.
+struct Shading {
+    n: vec3<f32>,
+    v: vec3<f32>,
+    // The clearcoat's normal, which the normal map does not bend.
+    coat: vec3<f32>,
+    // Along and across the anisotropy direction.
+    t: vec3<f32>,
+    b: vec3<f32>,
+    base: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    clearcoat: f32,
+    clearcoat_roughness: f32,
+    sheen_color: vec3<f32>,
+    sheen_roughness: f32,
+    transmission: f32,
+    anisotropy: f32,
+};
+
+fn anisotropic_distribution(t_dot_h: f32, b_dot_h: f32, n_dot_h: f32, at: f32, ab: f32) -> f32 {
+    let d = vec3(ab * t_dot_h, at * b_dot_h, at * ab * n_dot_h);
+    let w = at * ab / dot(d, d);
+    return at * ab * w * w / PI;
+}
+
+fn anisotropic_visibility(sh: Shading, l: vec3<f32>, n_dot_v: f32, n_dot_l: f32, at: f32, ab: f32) -> f32 {
+    let view_term = n_dot_l * length(vec3(at * dot(sh.t, sh.v), ab * dot(sh.b, sh.v), n_dot_v));
+    let light_term = n_dot_v * length(vec3(at * dot(sh.t, l), ab * dot(sh.b, l), n_dot_l));
+    return 0.5 / max(view_term + light_term, 1e-5);
+}
+
+// Estevez and Kulla's "Charlie" sheen distribution.
+fn sheen_distribution(n_dot_h: f32, roughness: f32) -> f32 {
+    let inverse = 1.0 / max(roughness * roughness, 1e-3);
+    let sin2 = max(1.0 - n_dot_h * n_dot_h, 0.0);
+    return (2.0 + inverse) * pow(sin2, inverse * 0.5) / (2.0 * PI);
+}
+
+// How much a sheen dims the layers under it, from the brightest channel of its color.
+fn sheen_scaling(sheen: vec3<f32>) -> f32 {
+    return 1.0 - max(sheen.r, max(sheen.g, sheen.b)) * 0.157;
+}
+
+fn shade(sh: Shading, l: vec3<f32>, radiance: vec3<f32>) -> vec3<f32> {
+    var result = vec3(0.0);
+    let n_dot_l = dot(sh.n, l);
+    let h = normalize(sh.v + l);
+    if n_dot_l > 0.0 {
+        let n_dot_v = max(dot(sh.n, sh.v), 1e-4);
+        let n_dot_h = max(dot(sh.n, h), 0.0);
+        let v_dot_h = max(dot(sh.v, h), 0.0);
+        let alpha = max(sh.roughness * sh.roughness, 0.002);
+        let f0 = mix(vec3(0.04), sh.base, sh.metallic);
+        let fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - v_dot_h, 5.0);
+        var lobe: f32;
+        if abs(sh.anisotropy) > 1e-3 {
+            let at = max(alpha * (1.0 + sh.anisotropy), 0.002);
+            let ab = max(alpha * (1.0 - sh.anisotropy), 0.002);
+            lobe = anisotropic_distribution(dot(sh.t, h), dot(sh.b, h), n_dot_h, at, ab)
+                * anisotropic_visibility(sh, l, n_dot_v, n_dot_l, at, ab);
+        } else {
+            lobe = distribution(n_dot_h, alpha) * visibility(n_dot_v, n_dot_l, alpha);
+        }
+        let diffuse = (vec3(1.0) - fresnel) * (1.0 - sh.metallic) * (1.0 - sh.transmission) * sh.base / PI;
+        let sheen = sh.sheen_color * sheen_distribution(n_dot_h, sh.sheen_roughness)
+            / (4.0 * (n_dot_l + n_dot_v - n_dot_l * n_dot_v));
+        // Scaled by π so an intensity of 1 lights a white matte surface facing the light fully.
+        result = ((diffuse + fresnel * lobe) * sheen_scaling(sh.sheen_color) + sheen) * (PI * n_dot_l);
     }
-    let h = normalize(v + l);
-    let n_dot_v = max(dot(n, v), 1e-4);
-    let n_dot_h = max(dot(n, h), 0.0);
-    let v_dot_h = max(dot(v, h), 0.0);
-    let alpha = max(roughness * roughness, 0.002);
-    let f0 = mix(vec3(0.04), base, metallic);
-    let fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - v_dot_h, 5.0);
-    let specular = fresnel * distribution(n_dot_h, alpha) * visibility(n_dot_v, n_dot_l, alpha);
-    let diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * base / PI;
-    // Scaled by π so an intensity of 1 lights a white matte surface facing the light fully.
-    return (diffuse + specular) * radiance * (PI * n_dot_l);
+    let coat_n_dot_l = dot(sh.coat, l);
+    if sh.clearcoat > 0.0 && coat_n_dot_l > 0.0 {
+        let coat_fresnel = (0.04 + 0.96 * pow(1.0 - max(dot(sh.v, h), 0.0), 5.0)) * sh.clearcoat;
+        let alpha = max(sh.clearcoat_roughness * sh.clearcoat_roughness, 0.002);
+        // Kelemen's visibility, cheap and close for a smooth layer.
+        let coat = distribution(max(dot(sh.coat, h), 0.0), alpha) * 0.25 / max(dot(l, h) * dot(l, h), 1e-4);
+        result = result * (1.0 - coat_fresnel) + coat_fresnel * coat * PI * coat_n_dot_l;
+    }
+    return result * radiance;
 }
 
 // The lit fraction of a 3×3 neighborhood, each tap itself a filtered 2×2 comparison.
@@ -258,13 +364,52 @@ fn environment_brdf(roughness: f32, n_dot_v: f32) -> vec2<f32> {
     return vec2(-1.04, 1.04) * a004 + r.zw;
 }
 
-fn environment_light(n: vec3<f32>, v: vec3<f32>, base: vec3<f32>, metallic: f32, roughness: f32) -> vec3<f32> {
-    let brdf = environment_brdf(roughness, max(dot(n, v), 1e-4));
-    let specular = mix(vec3(0.04), base, metallic) * brdf.x + brdf.y;
-    let lod = roughness * frame.environment.z;
-    let reflected = textureSampleLevel(environment_map, environment_sampler, reflect(-v, n), lod).rgb;
-    let diffuse = environment_irradiance(n) * base * (1.0 - metallic) * (vec3(1.0) - specular);
-    return diffuse + reflected * frame.environment.x * specular;
+fn environment_light(sh: Shading) -> vec3<f32> {
+    let n_dot_v = max(dot(sh.n, sh.v), 1e-4);
+    var reflect_normal = sh.n;
+    if abs(sh.anisotropy) > 1e-3 {
+        // Bends the reflection toward the stretch, as Filament approximates it.
+        let along = select(sh.t, sh.b, sh.anisotropy >= 0.0);
+        let bent = cross(cross(along, sh.v), along);
+        let stretch = abs(sh.anisotropy) * clamp(5.0 * sh.roughness, 0.0, 1.0);
+        reflect_normal = normalize(mix(sh.n, bent, stretch));
+    }
+    let brdf = environment_brdf(sh.roughness, n_dot_v);
+    let specular = mix(vec3(0.04), sh.base, sh.metallic) * brdf.x + brdf.y;
+    let lod = sh.roughness * frame.environment.z;
+    let reflected = textureSampleLevel(environment_map, environment_sampler, reflect(-sh.v, reflect_normal), lod).rgb;
+    let irradiance = environment_irradiance(sh.n);
+    let diffuse = irradiance * sh.base * (1.0 - sh.metallic) * (1.0 - sh.transmission) * (vec3(1.0) - specular);
+    var color = (diffuse + reflected * frame.environment.x * specular) * sheen_scaling(sh.sheen_color)
+        + sh.sheen_color * irradiance * 0.157;
+    if sh.clearcoat > 0.0 {
+        let coat_n_dot_v = max(dot(sh.coat, sh.v), 1e-4);
+        let coat_fresnel = (0.04 + 0.96 * pow(1.0 - coat_n_dot_v, 5.0)) * sh.clearcoat;
+        let coat_lod = sh.clearcoat_roughness * frame.environment.z;
+        let coat = textureSampleLevel(environment_map, environment_sampler, reflect(-sh.v, sh.coat), coat_lod).rgb;
+        color = color * (1.0 - coat_fresnel) + coat * frame.environment.x * coat_fresnel;
+    }
+    return color;
+}
+
+// What a transmissive surface shows of the opaque scene behind it, bent by refraction.
+fn transmitted(sh: Shading, world: vec3<f32>, ior: f32, thickness: f32) -> vec3<f32> {
+    if frame.time.y < 0.5 {
+        return vec3(0.0);
+    }
+    let refracted = refract(-sh.v, sh.n, 1.0 / max(ior, 1.0));
+    let exit = world + refracted * thickness;
+    let clip = frame.view_proj * vec4(exit, 1.0);
+    let uv = clip.xy / clip.w * vec2(0.5, -0.5) + 0.5;
+    let spread = sh.roughness * sh.roughness * 0.05;
+    var behind = vec3(0.0);
+    for (var i = 0; i < 4; i++) {
+        let angle = f32(i) * 1.5707963 + 0.785398;
+        behind += textureSampleLevel(transmission_map, transmission_sampler, uv + vec2(cos(angle), sin(angle)) * spread, 0.0).rgb;
+    }
+    let n_dot_v = max(dot(sh.n, sh.v), 1e-4);
+    let fresnel = 0.04 + 0.96 * pow(1.0 - n_dot_v, 5.0);
+    return behind * 0.25 * sh.base * sh.transmission * (1.0 - fresnel);
 }
 
 // Fogs, tone maps, clamps and encodes a final linear color for the target.
@@ -308,15 +453,19 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    // Sampled before any branch, since sampling needs uniform control flow.
-    let texel = textureSample(base_texture, material_sampler, in.uv);
-    let metal_rough = textureSample(metallic_roughness_texture, material_sampler, in.uv);
-    let mapped = textureSample(normal_texture, material_sampler, in.uv).xyz * 2.0 - 1.0;
-    let glow = textureSample(emissive_texture, material_sampler, in.uv).rgb;
-    let occlusion = textureSample(occlusion_texture, material_sampler, in.uv).r;
-    let base = draw.base_color * texel * in.color;
+    var geometric = normalize(in.normal);
+    var t = in.tangent.xyz - geometric * dot(geometric, in.tangent.xyz);
+    var b = cross(geometric, t) * in.tangent.w;
+    if !front {
+        geometric = -geometric;
+        t = -t;
+        b = -b;
+    }
+    // Called before any branch, since sampling textures needs uniform control flow.
+    let s = surface(SurfaceInput(in.uv, in.world, geometric, in.color));
+    let base = s.base_color;
     var alpha = base.a;
-    if draw.alpha.x < 0.5 {
+    if draw.alpha.x < 0.5 || s.transmission > 0.0 {
         alpha = 1.0;
     } else if draw.alpha.x < 1.5 {
         if base.a < draw.alpha.y {
@@ -326,25 +475,39 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     }
     var color = base.rgb;
     if draw.params.z < 0.5 {
-        var geometric = normalize(in.normal);
-        var t = in.tangent.xyz - geometric * dot(geometric, in.tangent.xyz);
-        var b = cross(geometric, t) * in.tangent.w;
-        if !front {
-            geometric = -geometric;
-            t = -t;
-            b = -b;
-        }
-        var n = geometric;
         if dot(t, t) > 1e-8 {
-            n = normalize(mat3x3(normalize(t), normalize(b), geometric) * mapped);
+            t = normalize(t);
+            b = normalize(b);
+        } else {
+            t = normalize(cross(select(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), abs(geometric.y) < 0.99), geometric));
+            b = cross(geometric, t);
         }
-        let v = normalize(frame.camera_position.xyz - in.world);
-        let metallic = clamp(draw.params.x * metal_rough.b, 0.0, 1.0);
-        let roughness = clamp(draw.params.y * metal_rough.g, 0.0, 1.0);
+        let n = normalize(mat3x3(t, b, geometric) * s.normal);
+        let along = t * s.anisotropy_direction.x + b * s.anisotropy_direction.y;
+        let across = normalize(cross(n, along));
+        let sh = Shading(
+            n,
+            normalize(frame.camera_position.xyz - in.world),
+            geometric,
+            cross(across, n),
+            across,
+            base.rgb,
+            clamp(s.metallic, 0.0, 1.0),
+            clamp(s.roughness, 0.0, 1.0),
+            clamp(s.clearcoat, 0.0, 1.0),
+            clamp(s.clearcoat_roughness, 0.0, 1.0),
+            s.sheen_color,
+            clamp(s.sheen_roughness, 0.0, 1.0),
+            clamp(s.transmission, 0.0, 1.0),
+            clamp(s.anisotropy, -1.0, 1.0),
+        );
         let ambient = frame.ambient.rgb + mix(frame.ground.rgb, frame.sky.rgb, n.y * 0.5 + 0.5);
-        color = ambient * base.rgb * occlusion + draw.emissive.rgb * glow;
+        color = ambient * base.rgb * s.occlusion * (1.0 - sh.transmission) + s.emissive;
         if frame.environment.y > 0.5 {
-            color += environment_light(n, v, base.rgb, metallic, roughness) * occlusion;
+            color += environment_light(sh) * s.occlusion;
+        }
+        if sh.transmission > 0.0 {
+            color += transmitted(sh, in.world, s.ior, s.thickness);
         }
         let receive = draw.alpha.z > 0.5;
         let directional = min(frame.counts.x, MAX_DIRECTIONAL);
@@ -384,7 +547,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
                     lit = point_shadow(light, in.world, geometric);
                 }
             }
-            color += shade(n, v, l, radiance * lit, base.rgb, metallic, roughness);
+            color += shade(sh, l, radiance * lit);
         }
     }
     return vec4(finish(color, fog_amount(in.world)), alpha);

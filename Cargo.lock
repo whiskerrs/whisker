@@ -6276,6 +6276,7 @@ dependencies = [
  "glam",
  "gltf",
  "image",
+ "naga",
  "pollster",
  "serde_json",
  "whisker",

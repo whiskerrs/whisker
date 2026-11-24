@@ -88,6 +88,14 @@ pub(super) fn import(bytes: &[u8]) -> Result<ModelData, String> {
                     gltf::material::AlphaMode::Blend => AlphaMode::Blend,
                 },
                 double_sided: material.double_sided(),
+                transmission: material
+                    .transmission()
+                    .map_or(0.0, |transmission| transmission.transmission_factor()),
+                ior: material.ior().unwrap_or(1.5),
+                thickness: material
+                    .volume()
+                    .map_or(0.0, |volume| volume.thickness_factor()),
+                ..Default::default()
             })
         })
         .collect();
