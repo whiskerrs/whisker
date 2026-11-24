@@ -236,8 +236,12 @@ pub(super) struct ShadowMaps {
 
 impl ShadowMaps {
     pub(super) fn new(gpu: &Gpu, size: u32, layers: usize) -> ShadowMaps {
-        // GLES makes a single-layer texture a plain 2D one, which an array binding rejects.
-        let layers = layers.max(2) as u32;
+        // GLES makes a single-layer texture a plain 2D one and a square one with a multiple of six
+        // layers a cube map, both of which an array binding rejects.
+        let layers = match layers.max(2) {
+            layers if layers % 6 == 0 => layers + 1,
+            layers => layers,
+        } as u32;
         let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("whisker-scene shadow maps"),
             size: wgpu::Extent3d {
