@@ -1,0 +1,26 @@
+[package]
+name = "whisker-map-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Example app for `whisker-map`: an OpenFreeMap style with a marker."
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = ["whisker-cng/generate"]
+
+[dependencies]
+whisker-cng = { path = "../../../crates/whisker-cng", version = "0.19.0", default-features = false }
+whisker = { workspace = true }
+whisker-map = { path = ".." }
+whisker-safe-area = { path = "../../whisker-safe-area" }
+serde_json = "1"

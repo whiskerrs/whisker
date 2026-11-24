@@ -229,11 +229,14 @@ impl whisker::WhiskerModule for SurfaceModule {
         LinuxModuleDefinition::new()
             .name("whisker-surface:Surface")
             .view(
-                LinuxViewDefinition::new("whisker-surface:Surface", |_| SurfaceWidget::new()).prop(
-                    "surface",
-                    |view, value| view.set_surface(string(value)),
-                    |view| view.set_surface(""),
-                ),
+                LinuxViewDefinition::new("whisker-surface:Surface", |_| SurfaceWidget::new())
+                    .prop(
+                        "surface",
+                        |view, value| view.set_surface(string(value)),
+                        |view| view.set_surface(""),
+                    )
+                    .prop("wheel", |_, _| {}, |_| {})
+                    .event("wheel"),
             )
     }
 }

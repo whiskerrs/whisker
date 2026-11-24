@@ -1010,6 +1010,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "earcutr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79127ed59a85d7687c409e9978547cffb7dc79675355ed22da6b66fd5f6ead01"
+dependencies = [
+ "itertools 0.11.0",
+ "num-traits",
+]
+
+[[package]]
 name = "ecdsa"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2314,6 +2324,15 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
+name = "itertools"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
+dependencies = [
+ "either",
+]
 
 [[package]]
 name = "itertools"
@@ -6068,6 +6087,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-map"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "earcutr",
+ "flate2",
+ "glam",
+ "image",
+ "js-sys",
+ "pollster",
+ "serde_json",
+ "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
+ "whisker",
+ "whisker-style",
+ "whisker-surface",
+ "whisker-wgpu",
+]
+
+[[package]]
+name = "whisker-map-example"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "whisker",
+ "whisker-cng",
+ "whisker-map",
+ "whisker-safe-area",
+]
+
+[[package]]
 name = "whisker-news"
 version = "0.1.0"
 dependencies = [
@@ -6273,6 +6326,7 @@ dependencies = [
 name = "whisker-surface"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "web-sys",
  "whisker",
 ]
