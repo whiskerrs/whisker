@@ -350,10 +350,7 @@ impl Shared {
             | Program::LinePattern
             | Program::LineGradient
             | Program::Circle
-            | Program::Raster
-            | Program::Extrusion
-            | Program::ExtrusionPattern
-            | Program::ExtrusionDepth => {
+            | Program::Raster => {
                 let face = stencil_face(wgpu::CompareFunction::Equal, wgpu::StencilOperation::Keep);
                 wgpu::StencilState {
                     front: face,
@@ -362,6 +359,7 @@ impl Shared {
                     write_mask: 0,
                 }
             }
+            // Extrusions rise past their tile's ground on screen, so the tile mask would cut them.
             _ => wgpu::StencilState::default(),
         };
         let depth = matches!(
