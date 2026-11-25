@@ -2,15 +2,15 @@
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use glam::Mat4;
 use whisker_wgpu::{Gpu, wgpu};
 
-use super::post::PostShared;
+use super::post::{PostShared, PostTargets};
 use super::resources::{GpuTexture, half, instance_buffer, upload_cube, upload_texture};
-use super::shadow::{MAX_SHADOW_LAYERS, SHADOW_FORMAT};
-use super::{DEPTH_FORMAT, MAX_DIRECTIONAL};
+use super::shadow::{MAX_SHADOW_LAYERS, SHADOW_FORMAT, ShadowMaps};
+use super::{Attachments, DEPTH_FORMAT, MAX_DIRECTIONAL, TransmissionTarget};
 use crate::core::{AlphaMode, Material, MaterialShader, TextureTransform, linear_rgba, srgb_rgba};
 
 #[repr(C)]
@@ -101,6 +101,38 @@ pub(super) struct Shared {
     shadow_pipeline: OnceCell<wgpu::RenderPipeline>,
     depth_pipeline: OnceCell<wgpu::RenderPipeline>,
     post: OnceCell<PostShared>,
+    pub(super) shadow_maps: Pool<ShadowMaps>,
+    pub(super) attachments: Pool<Attachments>,
+    pub(super) post_targets: Pool<PostTargets>,
+    pub(super) transmission_targets: Pool<TransmissionTarget>,
+}
+
+/// Per-frame targets every view of a thread reuses, which is sound because each view submits its
+/// frame before the next one encodes.
+pub(super) struct Pool<T>(RefCell<Vec<Weak<T>>>);
+
+impl<T> Default for Pool<T> {
+    fn default() -> Pool<T> {
+        Pool(RefCell::new(Vec::new()))
+    }
+}
+
+impl<T> Pool<T> {
+    pub(super) fn get(&self, fits: impl Fn(&T) -> bool, make: impl FnOnce() -> T) -> Rc<T> {
+        let found = {
+            let mut entries = self.0.borrow_mut();
+            entries.retain(|entry| entry.strong_count() > 0);
+            entries
+                .iter()
+                .filter_map(Weak::upgrade)
+                .find(|item| fits(item))
+        };
+        found.unwrap_or_else(|| {
+            let made = Rc::new(make());
+            self.0.borrow_mut().push(Rc::downgrade(&made));
+            made
+        })
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -350,6 +382,10 @@ impl Shared {
             transmission_layout,
             transmission_sampler,
             custom_shaders: RefCell::new(HashMap::new()),
+            shadow_maps: Pool::default(),
+            attachments: Pool::default(),
+            post_targets: Pool::default(),
+            transmission_targets: Pool::default(),
         }
     }
 

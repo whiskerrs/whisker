@@ -101,6 +101,29 @@ fn render(gpu: &Gpu, scene: Scene) -> Vec<[u8; 4]> {
 
 /// Renders `scene` into a `format` target, as one first frame.
 fn render_into(gpu: &Gpu, scene: Scene, format: wgpu::TextureFormat) -> Vec<[u8; 4]> {
+    let mut renderer = sized_renderer(gpu, scene, format);
+    draw_frame(gpu, &mut renderer, format)
+}
+
+fn sized_renderer(gpu: &Gpu, scene: Scene, format: wgpu::TextureFormat) -> SceneRenderer {
+    let mut renderer = SceneRenderer::new(gpu, format, scene);
+    renderer.resize(
+        gpu,
+        SurfaceSize {
+            width: SIZE,
+            height: SIZE,
+            scale: 1.0,
+        },
+    );
+    renderer
+}
+
+/// Renders one frame of `renderer` into a fresh `format` target and reads it back.
+fn draw_frame(
+    gpu: &Gpu,
+    renderer: &mut SceneRenderer,
+    format: wgpu::TextureFormat,
+) -> Vec<[u8; 4]> {
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -115,15 +138,6 @@ fn render_into(gpu: &Gpu, scene: Scene, format: wgpu::TextureFormat) -> Vec<[u8;
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    let mut renderer = SceneRenderer::new(gpu, format, scene);
-    renderer.resize(
-        gpu,
-        SurfaceSize {
-            width: SIZE,
-            height: SIZE,
-            scale: 1.0,
-        },
-    );
     renderer.render(
         gpu,
         &texture.create_view(&Default::default()),
@@ -348,6 +362,31 @@ fn a_shadowing_sun_darkens_the_floor_behind_a_mesh() {
         let pixels = render(gpu, scene);
         let shadowed = floor_pixel(&pixels, view_proj, -1.5, 0.0);
         let lit = floor_pixel(&pixels, view_proj, 1.5, 0.0);
+        assert!(shadowed[0] < 20, "shadowed {shadowed:?}");
+        assert!(lit[0] > 200, "lit {lit:?}");
+    });
+}
+
+#[test]
+fn views_share_their_frame_targets_without_mixing_frames() {
+    with_gpu(|gpu| {
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let (shaded, _, _, view_proj) = shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::Y * 1.5);
+        shaded.root().add_child(&sun(Some(SUN_SHADOW)));
+        let (clear, _, _, _) = shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::X * 4.0);
+        clear.root().add_child(&sun(Some(SUN_SHADOW)));
+        let mut first = sized_renderer(gpu, shaded, format);
+        let mut second = sized_renderer(gpu, clear, format);
+        draw_frame(gpu, &mut first, format);
+        let clear_pixels = draw_frame(gpu, &mut second, format);
+        let shaded_pixels = draw_frame(gpu, &mut first, format);
+        assert!(Rc::ptr_eq(&first.shadow_maps, &second.shadow_maps));
+        assert!(Rc::ptr_eq(
+            first.attachments.as_ref().unwrap(),
+            second.attachments.as_ref().unwrap()
+        ));
+        let shadowed = floor_pixel(&shaded_pixels, view_proj, -1.5, 0.0);
+        let lit = floor_pixel(&clear_pixels, view_proj, -1.5, 0.0);
         assert!(shadowed[0] < 20, "shadowed {shadowed:?}");
         assert!(lit[0] > 200, "lit {lit:?}");
     });
