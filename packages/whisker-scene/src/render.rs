@@ -104,7 +104,7 @@ impl SceneRenderer {
         });
         let shadow_maps = shared
             .shadow_maps
-            .get(|_| true, || ShadowMaps::new(gpu, 1, 1));
+            .get(|maps| maps.size == 1, || ShadowMaps::new(gpu, 1, 1));
         let light_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("whisker-scene lights"),
             size: wgpu::Extent3d {

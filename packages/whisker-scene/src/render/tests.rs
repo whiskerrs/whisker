@@ -750,6 +750,48 @@ fn flat_regions_pass_through_the_post_chain_unchanged() {
 }
 
 #[test]
+fn views_with_different_post_chains_share_targets_without_mixing_frames() {
+    with_gpu(|gpu| {
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let bloom = || {
+            post_stage(
+                0.5,
+                PostProcessing {
+                    bloom: Some(Bloom {
+                        threshold: 0.5,
+                        intensity: 1.0,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+        };
+        let fxaa = || {
+            post_stage(
+                1.0,
+                PostProcessing {
+                    fxaa: true,
+                    ..Default::default()
+                },
+            )
+        };
+        let bloom_alone = render(gpu, bloom());
+        let fxaa_alone = render(gpu, fxaa());
+        let mut first = sized_renderer(gpu, bloom(), format);
+        let mut second = sized_renderer(gpu, fxaa(), format);
+        draw_frame(gpu, &mut first, format);
+        let fxaa_shared = draw_frame(gpu, &mut second, format);
+        let bloom_shared = draw_frame(gpu, &mut first, format);
+        assert!(Rc::ptr_eq(
+            first.post.as_ref().unwrap(),
+            second.post.as_ref().unwrap()
+        ));
+        assert!(bloom_shared == bloom_alone);
+        assert!(fxaa_shared == fxaa_alone);
+    });
+}
+
+#[test]
 fn bloom_spreads_bright_surfaces_past_their_edges() {
     with_gpu(|gpu| {
         let plain = render(gpu, post_stage(0.5, PostProcessing::default()));
