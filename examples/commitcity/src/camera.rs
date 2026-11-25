@@ -122,14 +122,14 @@ impl Orbit {
             .set((self.distance.get_untracked() * factor).clamp(MIN_DISTANCE, MAX_DISTANCE));
     }
 
-    pub fn fly_to(self, target: Vec3, distance: f32, pitch: f32) {
+    pub fn fly_to(self, target: Vec3, distance: f32, pitch: f32, yaw: Option<f32>) {
         self.tour.set(None);
         self.drift.set(Vec2::ZERO);
         self.goal.set(Some(Goal {
             target,
             distance,
             pitch,
-            yaw: None,
+            yaw,
         }));
         self.awake.set(true);
     }

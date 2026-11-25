@@ -10,6 +10,7 @@ mod fetch;
 mod land;
 mod town;
 
+use std::f32::consts::PI;
 use std::time::Duration;
 
 use whisker::css::{
@@ -326,18 +327,20 @@ pub fn app() -> Element {
         let Some(selection) = selected.get() else {
             return;
         };
-        let target = year.with_untracked(|y| match selection {
-            Selection::Day(i) => city::placement(y, i).0,
-            Selection::Landmark(landmark) => city::landmarks(y)
-                .into_iter()
-                .find(|(l, _)| *l == landmark)
-                .map_or(Vec3::ZERO, |(_, at)| at),
+        year.with_untracked(|y| match selection {
+            Selection::Day(i) => {
+                let at = city::placement(y, i).0;
+                let facing = if at.z < city::STREET_Z { 0.0 } else { PI };
+                orbit.fly_to(at + Vec3::Y * 0.7, 6.0, 0.62, Some(facing + 0.4));
+            }
+            Selection::Landmark(landmark) => {
+                let at = city::landmarks(y)
+                    .into_iter()
+                    .find(|(l, _)| *l == landmark)
+                    .map_or(Vec3::ZERO, |(_, at)| at);
+                orbit.fly_to(at, 24.0, 0.42, None);
+            }
         });
-        let distance = match selection {
-            Selection::Day(_) => 13.0,
-            Selection::Landmark(_) => 24.0,
-        };
-        orbit.fly_to(target, distance, 0.42);
     });
     let walk = move || {
         selected.set(None);

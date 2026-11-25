@@ -4,10 +4,10 @@ use std::f32::consts::{FRAC_PI_2, PI};
 
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_scene::math::{Mat4, Quat, Vec2, Vec3, Vec4};
+use whisker_scene::math::{Mat4, Quat, Vec2, Vec3};
 use whisker_scene::{
-    CustomMaterial, Geometry, Instances, Material, MaterialShader, Mesh, ModelView, SceneHit,
-    StandardMaterial,
+    AlphaMode, CustomMaterial, Geometry, Instances, Material, MaterialShader, Mesh, ModelView,
+    SceneHit, StandardMaterial,
 };
 
 use crate::city::{self, Landmark, Part};
@@ -82,9 +82,8 @@ pub fn matte(color: Color, roughness: f32) -> Material {
     })
 }
 
-/// A rough material tinted `hex` (sRGB) and grained with the tiling detail texture every `1 / scale` units.
-fn textured(hex: u32, scale: f32) -> Material {
-    let linear = |shift: u32| {
+fn linear(hex: u32) -> Vec3 {
+    let channel = |shift: u32| {
         let c = ((hex >> shift) & 0xff) as f32 / 255.0;
         if c <= 0.04045 {
             c / 12.92
@@ -92,9 +91,14 @@ fn textured(hex: u32, scale: f32) -> Material {
             ((c + 0.055) / 1.055).powf(2.4)
         }
     };
+    Vec3::new(channel(16), channel(8), channel(0))
+}
+
+/// A rough material tinted `hex` (sRGB) and grained with the tiling detail texture every `1 / scale` units.
+fn textured(hex: u32, scale: f32) -> Material {
     let shader = MaterialShader::new(GROUND_TINT).expect("tint shader");
     let mut material = CustomMaterial::new(shader);
-    material.params[0] = Vec4::new(linear(16), linear(8), linear(0), scale);
+    material.params[0] = linear(hex).extend(scale);
     material.textures = vec![land::detail_map()];
     Material::Custom(material)
 }
@@ -111,6 +115,48 @@ fn surface(input: SurfaceInput) -> Surface {
 }
 ";
 
+/// Pale paving stones laid in courses along x, drawn procedurally on a flat plane.
+fn paving() -> Material {
+    let shader = MaterialShader::new(PAVING).expect("paving shader");
+    let mut material = CustomMaterial::new(shader);
+    material.params[0] = linear(0xc9c1b0).extend(0.0);
+    material.textures = vec![land::detail_map()];
+    Material::Custom(material)
+}
+
+const PAVING: &str = "
+fn stone_hash(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+fn surface(input: SurfaceInput) -> Surface {
+    var s = standard_surface(input);
+    let size = vec2(0.46, 0.32);
+    let p = input.world.xz / size;
+    let course = floor(p.y);
+    let shift = 0.5 * (course - 2.0 * floor(course * 0.5)) + 0.23 * stone_hash(vec2(course, 7.0));
+    let q = vec2(p.x + shift, p.y);
+    let cell = floor(q);
+    let f = fract(q) - 0.5;
+    let edge = (0.5 - abs(f)) * size;
+    let nearest = min(edge.x, edge.y);
+    let grain = textureSample(texture0, material_sampler, input.world.xz * 1.7).r;
+    let tone = 0.78 + 0.34 * stone_hash(cell);
+    let stone = draw.custom[0].rgb * tone * (0.78 + 0.32 * grain);
+    let joint = smoothstep(0.008, 0.024, nearest);
+    s.base_color = vec4(mix(draw.custom[0].rgb * 0.42, stone, joint), 1.0);
+    let bevel = 1.0 - smoothstep(0.015, 0.06, nearest);
+    let toward = select(vec2(0.0, sign(f.y)), vec2(sign(f.x), 0.0), edge.x < edge.y);
+    s.normal = normalize(vec3(toward * bevel * 0.5, 1.0));
+    s.roughness = 0.88;
+    s.metallic = 0.0;
+    return s;
+}
+";
+
+/// The buildings within this distance of a picked one turn translucent so it stands clear.
+const CLEARING: f32 = 2.2 * city::LOT;
+
 /// One kind of building along the street, drawn as instances of its model.
 #[component]
 fn street_kind(
@@ -120,16 +166,27 @@ fn street_kind(
     rise: Rise,
     selected: RwSignal<Option<Selection>>,
 ) -> Element {
-    let members = computed(move || {
+    let groups = computed(move || {
+        let picked = match selected.get() {
+            Some(Selection::Day(i)) => Some(i),
+            _ => None,
+        };
         year.with(|year| {
-            (0..year.days.len())
-                .filter(|&i| year.days[i].building == kind)
-                .collect::<Vec<_>>()
+            let center = picked.map(|i| city::placement(year, i).0);
+            let (mut solid, mut ghost) = (Vec::new(), Vec::new());
+            for i in (0..year.days.len()).filter(|&i| year.days[i].building == kind) {
+                let near = center.is_some_and(|c| {
+                    picked != Some(i) && city::placement(year, i).0.distance(c) < CLEARING
+                });
+                if near { ghost.push(i) } else { solid.push(i) }
+            }
+            (solid, ghost)
         })
     });
+    let solid = computed(move || groups.with(|g| g.0.clone()));
+    let ghost = computed(move || groups.with(|g| g.1.clone()));
     let local = part.local;
-    let instances = computed(move || {
-        let members = members.get();
+    let place = move |members: Vec<usize>| {
         if members.is_empty() {
             return None;
         }
@@ -156,19 +213,45 @@ fn street_kind(
                 .collect();
             Some(Instances::new(transforms))
         })
-    });
+    };
+    let pick = move |members: ReadSignal<Vec<usize>>| {
+        move |hit: SceneHit| {
+            if let Some(i) = hit
+                .instance
+                .and_then(|n| members.get_untracked().get(n as usize).copied())
+            {
+                selected.set(Some(Selection::Day(i)));
+            }
+        }
+    };
+    let glass = match &part.material {
+        Material::Standard(m) => Material::Standard(StandardMaterial {
+            base_color: Color::rgba(255, 255, 255, 0.15),
+            alpha_mode: AlphaMode::Blend,
+            ..m.clone()
+        }),
+        other => other.clone(),
+    };
+    let geometry = part.geometry.clone();
+    let solid_material = part.material.clone();
     render! {
-        Mesh(
-            geometry: part.geometry.clone(),
-            material: part.material.clone(),
-            instances: instances,
-            visible: computed(move || !members.get().is_empty()),
-            on_tap: move |hit: SceneHit| {
-                if let Some(i) = hit.instance.and_then(|n| members.get_untracked().get(n as usize).copied()) {
-                    selected.set(Some(Selection::Day(i)));
-                }
-            },
-        )
+        Fragment {
+            Mesh(
+                geometry: geometry.clone(),
+                material: solid_material.clone(),
+                instances: computed(move || place(solid.get())),
+                visible: computed(move || !solid.with(Vec::is_empty)),
+                on_tap: pick(solid),
+            )
+            Mesh(
+                geometry: geometry.clone(),
+                material: glass.clone(),
+                instances: computed(move || place(ghost.get())),
+                visible: computed(move || !ghost.with(Vec::is_empty)),
+                cast_shadow: false,
+                on_tap: pick(ghost),
+            )
+        }
     }
 }
 
@@ -215,7 +298,7 @@ pub fn street(year: RwSignal<Year>, rise: Rise, selected: RwSignal<Option<Select
             )
             Mesh(
                 geometry: street,
-                material: textured(0x9a8a70, 0.7),
+                material: paving(),
                 position: Vec3::new(0.0, 0.002, city::STREET_Z),
                 cast_shadow: false,
             )
