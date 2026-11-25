@@ -1,0 +1,37 @@
+[package]
+name = "whisker-commitcity"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "A GitHub user's year of contributions drawn as an Edo-period castle town with whisker-scene."
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = ["whisker-cng/generate"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-cng = { path = "../../crates/whisker-cng", default-features = false }
+whisker-scene = { path = "../../packages/whisker-scene" }
+whisker-surface = { path = "../../packages/whisker-surface" }
+whisker-input = { path = "../../packages/whisker-input" }
+whisker-safe-area = { path = "../../packages/whisker-safe-area" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = "2"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Response", "Event", "WheelEvent", "KeyboardEvent", "AddEventListenerOptions", "Element", "EventTarget"] }
