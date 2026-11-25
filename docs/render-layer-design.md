@@ -5,7 +5,7 @@ that a `whisker-scene` model can stand on a `whisker-map` street, hidden by
 the buildings in front of it and under the labels above it, without either
 crate depending on the other.
 
-> **Status.** Proposal. Nothing here is implemented yet.
+> **Status.** Step 1 (the `whisker-wgpu` contract) is implemented.
 
 ---
 
@@ -90,18 +90,26 @@ pub trait Layer: 'static {
     fn tap(&mut self, _point: [f32; 2], _target: &LayerTarget) -> bool { false }
 }
 
-/// Lets a layer ask its host for frames.
+/// Asks a host's surface for frames on behalf of one layer.
 #[derive(Clone)]
-pub struct LayerHost { /* the host's WeakSurface, plus per-layer continuity */ }
+pub struct LayerHost { /* the host's WeakSurface, plus this handle's continuity vote */ }
 
 impl LayerHost {
+    pub fn new(surface: WeakSurface) -> LayerHost;
+    /// Another handle on the same surface, whose continuous request counts on its own.
+    pub fn separate(&self) -> LayerHost;
     pub fn request_frame(&self);
     pub fn set_continuous(&self, continuous: bool);
 }
 
-/// A shared, type-erased layer, cheap to clone into components.
-#[derive(Clone)]
+/// A shared, type-erased layer, cheap to clone into components. Equal by identity.
+#[derive(Clone, PartialEq)]
 pub struct LayerHandle(Rc<RefCell<dyn Layer>>);
+
+impl LayerHandle {
+    pub fn new(layer: impl Layer) -> LayerHandle;
+    pub fn borrow_mut(&self) -> RefMut<'_, dyn Layer>;
+}
 ```
 
 `view` and `projection` are separate because a lit renderer needs more than
@@ -116,15 +124,16 @@ counter-clockwise, as in a `SceneView`. A host whose own space is mirrored
 
 Rules a host follows:
 
-1. It calls `prepare` for every layer before beginning the pass that `draw`
+1. Its `view` is a similarity: rotation, translation and one uniform scale.
+2. It calls `prepare` for every layer before beginning the pass that `draw`
    runs in. Both run in the same frame, with the same `LayerTarget`.
-2. It does not clear color or depth between its own draws and a layer's.
-3. After `draw` returns, it restores every piece of pass state it relies on:
+3. It does not clear color or depth between its own draws and a layer's.
+4. After `draw` returns, it restores every piece of pass state it relies on:
    pipeline, bind groups, vertex and index buffers, stencil reference, viewport
    and scissor. A layer may leave any of it set. This replaces three.js's
    `resetState()` and is the host's job, not the layer's.
-4. It submits the encoder. A layer never submits.
-5. It holds no borrow of its own state across `prepare`, `draw` or `tap`. A
+5. It submits the encoder. A layer never submits.
+6. It holds no borrow of its own state across `prepare`, `draw` or `tap`. A
    layer may run app code there (frame callbacks, tap handlers) that writes
    signals the host reads; such writes take effect on the host's next frame.
 
@@ -136,8 +145,10 @@ Rules a layer follows:
 2. It never clears, and it draws nothing that is outside its own geometry
    (no sky, no fullscreen background).
 
-`set_continuous` is per layer: the host's surface draws continuously while any
-of its layers asks, or while the host itself does.
+`set_continuous` is per handle: the host's surface draws continuously while
+any `LayerHost` on it asks. The host gives each layer a `separate` handle and
+asks for its own continuous frames through one too, not through the surface,
+or it would turn off a layer's request.
 
 ---
 
@@ -178,9 +189,8 @@ The map builds `view` in `f64` and narrows to `f32` last: the map's eye
 transform, then the anchor's world pixel, then the meters-to-pixels scale,
 with the axis swap. `projection` is the map's perspective alone. Horizontal
 meters scale at the anchor's latitude, so distances on the ground are true;
-heights scale at the camera center's latitude, the factor fill extrusions use,
-so a model and a building of the same height stay level. Precision stays good to centimeters
-across a city. Things far from the anchor drift with Mercator's scale change,
+heights use the same scale, so `view` stays a similarity. Precision stays good
+to centimeters across a city. Things far from the anchor drift with Mercator's scale change,
 the same trade-off Mapbox's three.js example makes. Apps with content spread
 over a country use several anchors.
 
@@ -198,14 +208,16 @@ same factor tiles use.
   style order (or after the last style layer), skipping layers whose anchor is
   behind the globe's horizon.
 - `render` calls `prepare` for each layer before beginning the pass, and runs
-  `draw` when it reaches the step. Labels and markers are drawn after every
-  layer, so they stay on top.
+  `draw` when it reaches the step. Labels are drawn with their symbol layer, in
+  style order, so `before: None` draws over them; markers are views and stay on
+  top.
 - Only fill extrusions write depth (a depth-only prepass, then color with
   `Equal`), so a model drawn after the building layer is hidden behind
   buildings, and one drawn before it hides the buildings behind it. Flat layers
   test with `Always`, so a flat layer drawn after a layer paints over it: the
-  usual place for `before` is the first label or extrusion layer.
-- After a layer draws, the map re-binds group 0 and its current pipeline.
+  usual place for `before` is the first symbol layer after the extrusions.
+- After a layer draws, the map re-binds groups 0 and 2 and forgets its current
+  pipeline.
 
 ### Taps
 
@@ -240,6 +252,10 @@ inside it. A scene may be both shown in a `SceneView` and drawn as a layer.
   pass). The surface path calls both around its own pass; the layer path calls
   them from `Layer::prepare` and `Layer::draw`.
 - `PipelineKey` gains `depth_format`, because the map's depth has a stencil.
+- `view` may carry one uniform scale; the scene divides it out to keep its eye
+  rigid and its distances in scene units.
+- A layer's shadows reach `Shadow::distance`, not clamped to the host's far
+  plane.
 - The camera comes from `LayerTarget::view` and `projection`. Camera nodes in
   the scene are ignored while it is drawn as a layer.
 - Shadow planning fits cascades from the inverse view-projection matrix rather
@@ -267,17 +283,64 @@ other. Map buildings don't cast onto models, since they are not in the scene.
 
 ---
 
+## Spike findings
+
+The spike (branch `spike/render-layer`) drew a `whisker-scene` scene inside the
+`whisker-map` pass on macOS, anchored at Tokyo Station: a platform, a 120 m
+tower, a cone 60 m north and a sphere 60 m east, lit by a shadowed sun.
+
+What held:
+
+- **Matrix split.** `view` = map eye × anchor translation × axis swap and
+  meter scale, built in `f64`; `projection` = the map's perspective alone. North
+  is up and east is right from above.
+- **Winding.** The axis swap and the map's Y flip are two mirrors that cancel, so
+  the scene's counter-clockwise pipelines draw single-sided meshes unchanged.
+- **Depth.** Buildings in front hide the model, labels draw over it, and the
+  model hides what is behind it.
+- **Shadow cascades from the projection matrix.** Unprojecting NDC corners
+  replaces `Projection`'s field of view; the existing shadow tests pass on it.
+
+What changes in the design:
+
+1. **`view` is a similarity: rotation, translation and one uniform scale.**
+   The scene divides the scale out (cube root of the determinant) so its eye is
+   rigid and lighting, fog and shadow distances stay in meters, and folds it into
+   the projection. The map uses the anchor latitude's scale for height too; the
+   mismatch with extrusions is the cosine ratio between anchor and camera
+   center, negligible within a city.
+1. **Shadow reach ignores the host's far plane.** The scene clamps
+   `Shadow::distance` to the camera's far plane and fades shadows over the last
+   tenth of it. The map's far plane sits just past the ground (1.01× its depth
+   looking straight down), so every shadow on the ground faded out. A layer uses
+   `distance` as given.
+2. **Labels are not drawn after every layer.** The map records labels per symbol
+   layer, in style order. In OpenFreeMap Liberty the first symbol layer (61) comes
+   before `building-3d` (84), so a layer inserted before the first label draws
+   before the extrusions, and the translucent buildings in front tint the model.
+   `before: None` draws above every style layer, labels included, as in Mapbox;
+   an app that wants labels on top names the first symbol layer after its
+   extrusions.
+3. **The pipeline cache is keyed by depth format**, since the map's depth has a
+   stencil (`Depth24PlusStencil8`).
+5. **The host resets its pipeline cache after a layer**, along with bind groups
+   0 and 2. The map's step loop tracked the current pipeline in a closure, which
+   had to take it as an argument instead.
+
+Flat layers that come after the layer, such as an app's route line, paint over
+the model, because they test depth with `Always`. This matches Mapbox.
+
+---
+
 ## Open questions
 
-1. **`LayerHandle` vs `Rc<RefCell<dyn Layer>>` in props.** A named type
-   reads better and lets us change the inside later.
-2. **Scale of `pixels_per_meter`.** Is the anchor's latitude enough, or does
+1. **Scale of `pixels_per_meter`.** Is the anchor's latitude enough, or does
    the map need a per-frame rebase when the camera wanders far from the
    anchor? Measure drift on a 10 km scene first.
-3. **Depth precision.** The map's near plane is `height / 50` world pixels. At
+2. **Depth precision.** The map's near plane is `height / 50` world pixels. At
    street level that may be coarse for small models; check z-fighting before
    adding a reversed-Z or a log depth.
-4. **Hit testing through buildings.** `Layer::tap` doesn't know about map
+3. **Hit testing through buildings.** `Layer::tap` doesn't know about map
    extrusions in front of the model. Fine for v1; a host could pass its depth
    at the point later.
 
@@ -285,9 +348,7 @@ other. Map buildings don't cast onto models, since they are not in the scene.
 
 ## Plan
 
-0. Spike, thrown away: draw a scene into an offscreen pass with a map-built
-   `view` and `projection`, to settle the matrix split, the winding and the
-   shadow planning before the API is fixed.
+0. Spike, thrown away (done; see the findings above).
 1. `whisker-wgpu`: `Layer`, `LayerTarget`, `LayerHost`, `LayerHandle`, with a
    test host that draws a layer into an offscreen target.
 2. `whisker-scene`: split the renderer; `Scene::layer()`, `SceneContent`;
