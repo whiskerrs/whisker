@@ -231,14 +231,75 @@ impl Batch {
     }
 }
 
-/// A placed label's paint, resolved for this frame.
-struct Paint {
-    text_color: [f32; 4],
+/// A symbol layer's properties at this frame's zoom.
+struct LayerProps {
+    text_size: f32,
+    icon_size: f32,
+    text_color: Rgba,
     halo_color: [f32; 4],
     halo_width: f32,
     halo_blur: f32,
     text_opacity: f32,
     icon_opacity: f32,
+    text_allow: bool,
+    icon_allow: bool,
+    text_ignore: bool,
+    icon_ignore: bool,
+    text_optional: bool,
+    icon_optional: bool,
+    text_padding: f32,
+    icon_padding: f32,
+    text_follows_line: bool,
+    icon_follows_line: bool,
+    max_angle: f64,
+    icon_anchor: crate::text::Anchor,
+    icon_offset: [f32; 2],
+    icon_rotate: f64,
+}
+
+impl LayerProps {
+    fn new(layer: &Layer, ctx: &Context) -> LayerProps {
+        let offset = layer.get("icon-offset").numbers(ctx);
+        let follows_line =
+            |name: &str| !matches!(layer.get(name).string(ctx).as_deref(), Some("viewport"));
+        LayerProps {
+            text_size: layer.get("text-size").number(ctx, 16.0) as f32,
+            icon_size: layer.get("icon-size").number(ctx, 1.0) as f32,
+            text_color: layer.get("text-color").color(ctx, Rgba::BLACK),
+            halo_color: premultiplied(
+                layer.get("text-halo-color").color(ctx, Rgba::TRANSPARENT),
+                1.0,
+            ),
+            halo_width: layer.get("text-halo-width").number(ctx, 0.0) as f32,
+            halo_blur: layer.get("text-halo-blur").number(ctx, 0.0) as f32,
+            text_opacity: layer.get("text-opacity").number(ctx, 1.0) as f32,
+            icon_opacity: layer.get("icon-opacity").number(ctx, 1.0) as f32,
+            text_allow: layer.get("text-allow-overlap").bool(ctx),
+            icon_allow: layer.get("icon-allow-overlap").bool(ctx),
+            text_ignore: layer.get("text-ignore-placement").bool(ctx),
+            icon_ignore: layer.get("icon-ignore-placement").bool(ctx),
+            text_optional: layer.get("text-optional").bool(ctx),
+            icon_optional: layer.get("icon-optional").bool(ctx),
+            text_padding: layer.get("text-padding").number(ctx, 2.0) as f32,
+            icon_padding: layer
+                .get("icon-padding")
+                .numbers(ctx)
+                .first()
+                .copied()
+                .unwrap_or(2.0) as f32,
+            text_follows_line: follows_line("text-rotation-alignment"),
+            icon_follows_line: follows_line("icon-rotation-alignment"),
+            max_angle: layer.get("text-max-angle").number(ctx, 45.0).to_radians(),
+            icon_anchor: crate::text::Anchor::parse(
+                &layer.get("icon-anchor").string(ctx).unwrap_or_default(),
+            ),
+            icon_offset: [
+                offset.first().copied().unwrap_or(0.0) as f32,
+                offset.get(1).copied().unwrap_or(0.0) as f32,
+            ],
+            icon_rotate: layer.get("icon-rotate").number(ctx, 0.0).to_radians(),
+        }
+    }
 }
 
 /// A label drawn this frame, for finding what a tap hit.
@@ -358,6 +419,7 @@ impl LabelRenderer {
             let Some((ideal, source_tiles)) = tiles.get(source_id) else {
                 continue;
             };
+            let props = LayerProps::new(layer, &ctx);
             let mut batches: HashMap<usize, Batch> = HashMap::new();
             for (tile_placed, tile) in source_tiles.iter().filter(|(p, _)| p.id.z == *ideal) {
                 let TileContent::Vector { symbols, .. } = &tile.content else {
@@ -367,7 +429,7 @@ impl LabelRenderer {
                     if symbol.layer != index {
                         continue;
                     }
-                    for bounds in placer.place(layer, &ctx, *tile_placed, symbol, &mut batches) {
+                    for bounds in placer.place(&props, *tile_placed, symbol, &mut batches) {
                         placed.push(PlacedLabel {
                             bounds,
                             source: source_id.to_string(),
@@ -475,8 +537,7 @@ impl Placer<'_> {
     /// Places each of the symbol's anchors that fits, returning the bounds of those placed.
     fn place(
         &mut self,
-        layer: &Layer,
-        ctx: &Context,
+        props: &LayerProps,
         tile: PlacedTile,
         symbol: &SymbolFeature,
         batches: &mut HashMap<usize, Batch>,
@@ -517,52 +578,12 @@ impl Placer<'_> {
         if shaping.is_none() && icon.is_none() {
             return placed;
         }
-        let text_size = symbol
-            .text_size
-            .unwrap_or_else(|| layer.get("text-size").number(ctx, 16.0) as f32);
+        let text_size = symbol.text_size.unwrap_or(props.text_size);
         let font_scale = text_size / ONE_EM;
-        let icon_size = symbol
-            .icon_size
-            .unwrap_or_else(|| layer.get("icon-size").number(ctx, 1.0) as f32);
-        let paint = Paint {
-            text_color: premultiplied(
-                symbol
-                    .text_color
-                    .unwrap_or_else(|| layer.get("text-color").color(ctx, Rgba::BLACK)),
-                1.0,
-            ),
-            halo_color: premultiplied(
-                layer.get("text-halo-color").color(ctx, Rgba::TRANSPARENT),
-                1.0,
-            ),
-            halo_width: layer.get("text-halo-width").number(ctx, 0.0) as f32,
-            halo_blur: layer.get("text-halo-blur").number(ctx, 0.0) as f32,
-            text_opacity: layer.get("text-opacity").number(ctx, 1.0) as f32,
-            icon_opacity: layer.get("icon-opacity").number(ctx, 1.0) as f32,
-        };
-        let text_allow = layer.get("text-allow-overlap").bool(ctx);
-        let icon_allow = layer.get("icon-allow-overlap").bool(ctx);
-        let text_ignore = layer.get("text-ignore-placement").bool(ctx);
-        let icon_ignore = layer.get("icon-ignore-placement").bool(ctx);
-        let text_optional = layer.get("text-optional").bool(ctx);
-        let icon_optional = layer.get("icon-optional").bool(ctx);
-        let text_padding = layer.get("text-padding").number(ctx, 2.0) as f32;
-        let icon_padding = layer
-            .get("icon-padding")
-            .numbers(ctx)
-            .first()
-            .copied()
-            .unwrap_or(2.0) as f32;
-        let along_path = symbol.along_line
-            && !matches!(
-                layer.get("text-rotation-alignment").string(ctx).as_deref(),
-                Some("viewport")
-            );
-        let icon_follows_line = symbol.along_line
-            && !matches!(
-                layer.get("icon-rotation-alignment").string(ctx).as_deref(),
-                Some("viewport")
-            );
+        let icon_size = symbol.icon_size.unwrap_or(props.icon_size);
+        let text_color = premultiplied(symbol.text_color.unwrap_or(props.text_color), 1.0);
+        let along_path = symbol.along_line && props.text_follows_line;
+        let icon_follows_line = symbol.along_line && props.icon_follows_line;
 
         let anchors = if symbol.line.is_some() {
             let text_length = shaping
@@ -611,19 +632,20 @@ impl Placer<'_> {
             if let Some(shaping) = &shaping {
                 if along_path {
                     let Some(line) = &line_screen else { continue };
-                    let max_angle = (layer.get("text-max-angle").number(ctx, 45.0)).to_radians();
                     match self.along_path(
                         shaping,
                         font_scale,
                         line,
                         anchor.segment,
                         screen,
-                        max_angle,
+                        props.max_angle,
                     ) {
                         Some((quads, boxes)) => {
                             text_quads = quads;
-                            text_boxes =
-                                boxes.into_iter().map(|b| padded(b, text_padding)).collect();
+                            text_boxes = boxes
+                                .into_iter()
+                                .map(|b| padded(b, props.text_padding))
+                                .collect();
                         }
                         None => continue,
                     }
@@ -661,7 +683,7 @@ impl Placer<'_> {
                             x + shaping.right * font_scale,
                             y + shaping.bottom * font_scale,
                         ],
-                        text_padding,
+                        props.text_padding,
                     ));
                 }
             }
@@ -671,17 +693,14 @@ impl Placer<'_> {
             if let Some(image) = icon {
                 let w = image.width as f32 / image.pixel_ratio * icon_size;
                 let h = image.height as f32 / image.pixel_ratio * icon_size;
-                let anchor_name = layer.get("icon-anchor").string(ctx).unwrap_or_default();
-                let a = crate::text::Anchor::parse(&anchor_name);
-                let offset = layer.get("icon-offset").numbers(ctx);
+                let a = props.icon_anchor;
                 let (ox, oy) = (
-                    offset.first().copied().unwrap_or(0.0) as f32 * icon_size,
-                    offset.get(1).copied().unwrap_or(0.0) as f32 * icon_size,
+                    props.icon_offset[0] * icon_size,
+                    props.icon_offset[1] * icon_size,
                 );
                 let x0 = -a.horizontal * w + ox;
                 let y0 = -a.vertical * h + oy;
-                let rotate = layer.get("icon-rotate").number(ctx, 0.0).to_radians()
-                    + if icon_follows_line { line_angle } else { 0.0 };
+                let rotate = props.icon_rotate + if icon_follows_line { line_angle } else { 0.0 };
                 let (sin, cos) = rotate.sin_cos();
                 let corner = |x: f32, y: f32| {
                     let (x, y) = (f64::from(x), f64::from(y));
@@ -715,36 +734,36 @@ impl Placer<'_> {
                             b[3].max(c.y as f32),
                         ]
                     });
-                padded(b, icon_padding)
+                padded(b, props.icon_padding)
             });
 
             let has_text = !text_quads.is_empty();
             let has_icon = icon_quad.is_some();
             let mut place_text =
-                has_text && (text_allow || !text_boxes.iter().any(|b| self.grid.hits(*b)));
+                has_text && (props.text_allow || !text_boxes.iter().any(|b| self.grid.hits(*b)));
             let mut place_icon =
-                has_icon && (icon_allow || !icon_box.is_some_and(|b| self.grid.hits(b)));
+                has_icon && (props.icon_allow || !icon_box.is_some_and(|b| self.grid.hits(b)));
             if has_text && has_icon {
-                if !text_optional && !icon_optional {
+                if !props.text_optional && !props.icon_optional {
                     let both = place_text && place_icon;
                     place_text = both;
                     place_icon = both;
-                } else if !text_optional {
+                } else if !props.text_optional {
                     place_icon = place_icon && place_text;
-                } else if !icon_optional {
+                } else if !props.icon_optional {
                     place_text = place_text && place_icon;
                 }
             }
             if !place_text && !place_icon {
                 continue;
             }
-            if place_text && !text_ignore {
+            if place_text && !props.text_ignore {
                 for b in &text_boxes {
                     self.grid.insert(*b);
                 }
             }
             if place_icon
-                && !icon_ignore
+                && !props.icon_ignore
                 && let Some(b) = icon_box
             {
                 self.grid.insert(b);
@@ -768,7 +787,7 @@ impl Placer<'_> {
                     corners,
                     uv,
                     SymbolVertex {
-                        params: [0.0, 1.0, 0.0, opacity * paint.icon_opacity],
+                        params: [0.0, 1.0, 0.0, opacity * props.icon_opacity],
                         ..Default::default()
                     },
                 );
@@ -777,15 +796,15 @@ impl Placer<'_> {
             if place_text {
                 let batch = batches.entry(0).or_default();
                 let template = SymbolVertex {
-                    color: paint.text_color,
-                    halo: paint.halo_color,
+                    color: text_color,
+                    halo: props.halo_color,
                     params: [
                         1.0,
                         font_scale,
-                        paint.halo_width,
-                        opacity * paint.text_opacity,
+                        props.halo_width,
+                        opacity * props.text_opacity,
                     ],
-                    extra: [paint.halo_blur, 0.0],
+                    extra: [props.halo_blur, 0.0],
                     ..Default::default()
                 };
                 for (corners, uv) in &text_quads {

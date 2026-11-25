@@ -9,12 +9,14 @@
 //! ```
 
 mod device;
+mod layer;
 #[cfg(target_os = "linux")]
 mod linux;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
+pub use layer::{Layer, LayerHandle, LayerHost, LayerTarget};
 pub use wgpu;
 use whisker_surface::{
     FrameInfo, NativeSurface, Surface, SurfaceDelegate, SurfaceSize, WeakSurface,

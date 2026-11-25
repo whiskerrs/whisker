@@ -1488,3 +1488,338 @@ fn orthographic_cameras_get_sun_shadows_and_ambient_occlusion() {
         assert!(occluded_far + 3 >= far, "{far} {occluded_far}");
     });
 }
+
+const HOST_DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
+
+fn layer_target(view: Mat4) -> LayerTarget {
+    LayerTarget {
+        view: view.to_cols_array_2d(),
+        projection: Mat4::perspective_rh(1.0, 1.0, 0.1, 100.0).to_cols_array_2d(),
+        frame: FrameInfo {
+            timestamp: Duration::ZERO,
+        },
+        color_format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        depth_format: HOST_DEPTH,
+        samples: 1,
+        size: (SIZE, SIZE),
+        scale: 1.0,
+    }
+}
+
+/// Draws a blue wall over the host's left half at clip depth `wall`, then `layer`, the way a host
+/// with a stencil depth buffer would, and reads the frame back.
+fn host_frame(
+    gpu: &Gpu,
+    layer: &whisker_wgpu::LayerHandle,
+    target: &LayerTarget,
+    wall: f32,
+) -> Vec<[u8; 4]> {
+    host_pass(gpu, &[layer], target, Some(wall))
+}
+
+/// Prepares every layer, then draws them in order in one pass, as the contract has hosts do.
+fn host_frames(
+    gpu: &Gpu,
+    layers: &[&whisker_wgpu::LayerHandle],
+    target: &LayerTarget,
+) -> Vec<[u8; 4]> {
+    host_pass(gpu, layers, target, None)
+}
+
+fn host_pass(
+    gpu: &Gpu,
+    layers: &[&whisker_wgpu::LayerHandle],
+    target: &LayerTarget,
+    wall: Option<f32>,
+) -> Vec<[u8; 4]> {
+    let texture = |format, usage| {
+        gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | usage,
+            view_formats: &[],
+        })
+    };
+    let color = texture(target.color_format, wgpu::TextureUsages::COPY_SRC);
+    let depth = texture(HOST_DEPTH, wgpu::TextureUsages::empty());
+    let module = gpu
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{
+                        let x = f32(i & 1u); let y = f32((i >> 1u) & 1u);
+                        return vec4(x - 1.0, y * 2.0 - 1.0, {:?}, 1.0);
+                    }}
+                    @fragment fn fs() -> @location(0) vec4<f32> {{ return vec4(0.0, 0.0, 1.0, 1.0); }}",
+                    wall.unwrap_or(0.5)
+                )
+                .into(),
+            ),
+        });
+    let wall_pipeline = gpu
+        .device
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(target.color_format.into())],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: HOST_DEPTH,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    for layer in layers {
+        layer.borrow_mut().prepare(gpu, &mut encoder, target);
+    }
+    {
+        let color_view = color.create_view(&Default::default());
+        let depth_view = depth.create_view(&Default::default());
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Discard,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Discard,
+                }),
+            }),
+            ..Default::default()
+        });
+        if wall.is_some() {
+            pass.set_pipeline(&wall_pipeline);
+            pass.draw(0..4, 0..1);
+        }
+        for layer in layers {
+            layer.borrow_mut().draw(gpu, &mut pass, target);
+        }
+    }
+    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: u64::from(SIZE * SIZE * 4),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_texture_to_buffer(
+        color.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(SIZE * 4),
+                rows_per_image: Some(SIZE),
+            },
+        },
+        color.size(),
+    );
+    gpu.queue.submit([encoder.finish()]);
+    buffer
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, |result| result.unwrap());
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    bytemuck::cast_slice(&buffer.slice(..).get_mapped_range().unwrap()).to_vec()
+}
+
+/// A red unlit cube of side `size` at the origin, with a camera node the layer must ignore.
+fn cube_scene(size: f32) -> Scene {
+    let scene = Scene::new();
+    let mesh = Node::new();
+    mesh.set_mesh(Some((
+        Geometry::cuboid(Vec3::splat(size)),
+        Material::Unlit {
+            color: Color::rgb(255, 0, 0),
+        },
+    )));
+    scene.root().add_child(&mesh);
+    let camera = Node::new();
+    camera.set_camera(Some(Projection::Perspective {
+        fov_y: 1.0,
+        near: 0.1,
+        far: 100.0,
+    }));
+    camera.set_transform(Transform::looking_at(
+        Vec3::new(0.0, 50.0, 0.0),
+        Vec3::ZERO,
+        Vec3::Z,
+    ));
+    scene.root().add_child(&camera);
+    scene
+}
+
+fn front_view() -> Mat4 {
+    Mat4::look_at_rh(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, Vec3::Y)
+}
+
+#[test]
+fn a_layer_draws_into_the_host_pass_against_the_host_depth() {
+    with_gpu(|gpu| {
+        let layer = cube_scene(2.0).layer();
+        let target = layer_target(front_view());
+        let near = host_frame(gpu, &layer, &target, 0.01);
+        let left = SIZE / 2 - 4;
+        let right = SIZE / 2 + 4;
+        let middle = SIZE / 2;
+        assert_eq!(
+            pixel(&near, left, middle),
+            [0, 0, 255, 255],
+            "the nearer wall hides the cube"
+        );
+        assert_eq!(
+            pixel(&near, right, middle),
+            [255, 0, 0, 255],
+            "the cube shows past the wall"
+        );
+        assert_eq!(
+            pixel(&near, SIZE - 1, 0),
+            [0, 0, 0, 255],
+            "the layer leaves the rest alone"
+        );
+        let far = host_frame(gpu, &layer, &target, 0.9999);
+        assert_eq!(
+            pixel(&far, left, middle),
+            [255, 0, 0, 255],
+            "the cube hides the farther wall"
+        );
+        assert_eq!(pixel(&far, 0, middle), [0, 0, 255, 255]);
+    });
+}
+
+#[test]
+fn a_view_with_a_uniform_scale_draws_like_the_scene_scaled_up() {
+    with_gpu(|gpu| {
+        let scaled = cube_scene(0.02).layer();
+        let target = layer_target(front_view() * Mat4::from_scale(Vec3::splat(100.0)));
+        let small = host_frame(gpu, &scaled, &target, 0.9999);
+        let unscaled = cube_scene(2.0).layer();
+        let large = host_frame(gpu, &unscaled, &layer_target(front_view()), 0.9999);
+        assert_eq!(small, large);
+    });
+}
+
+#[test]
+fn a_layer_tap_reaches_the_hit_node_and_reports_whether_one_took_it() {
+    let scene = cube_scene(2.0);
+    let tapped = Rc::new(std::cell::Cell::new(false));
+    let seen = tapped.clone();
+    scene.root().children()[0].set_on_tap(Some(Rc::new(move |_| seen.set(true))));
+    let layer = scene.layer();
+    let target = layer_target(front_view());
+    let center = [SIZE as f32 / 2.0, SIZE as f32 / 2.0];
+    assert!(!layer.borrow_mut().tap([1.0, 1.0], &target));
+    assert!(!tapped.get());
+    assert!(layer.borrow_mut().tap(center, &target));
+    assert!(tapped.get());
+}
+
+/// A white ground 4 wide centered at `x`, lit by a sun slanting toward -X, with a cube one unit
+/// above `caster` when given.
+fn shadowed_ground(x: f32, caster: Option<f32>) -> Scene {
+    let scene = Scene::new();
+    scene.set_ambient_light(Color::rgb(255, 255, 255), 0.1);
+    let add = |geometry: Geometry, at: Vec3| {
+        let node = Node::new();
+        node.set_mesh(Some((
+            geometry,
+            Material::Standard(StandardMaterial {
+                base_color: Color::rgb(255, 255, 255),
+                roughness: 1.0,
+                ..Default::default()
+            }),
+        )));
+        node.set_transform(Transform::from_translation(at));
+        scene.root().add_child(&node);
+    };
+    add(Geometry::plane(Vec2::splat(4.0)), Vec3::new(x, 0.0, 0.0));
+    if let Some(caster) = caster {
+        add(
+            Geometry::cuboid(Vec3::splat(0.5)),
+            Vec3::new(caster, 1.0, 0.0),
+        );
+    }
+    let sun = Node::new();
+    sun.set_light(Some(Light::Directional {
+        color: Color::rgb(255, 255, 255),
+        intensity: 0.5,
+        shadow: Some(Shadow {
+            map_size: 1024,
+            cascades: 1,
+            distance: 50.0,
+            ..Default::default()
+        }),
+    }));
+    sun.set_transform(Transform::looking_at(
+        Vec3::ZERO,
+        Vec3::new(-1.0, -1.0, 0.0),
+        Vec3::Y,
+    ));
+    scene.root().add_child(&sun);
+    scene
+}
+
+#[test]
+fn layers_drawn_in_one_pass_each_keep_their_own_shadows() {
+    with_gpu(|gpu| {
+        let left = shadowed_ground(-2.0, Some(-1.0)).layer();
+        let right = shadowed_ground(2.0, None).layer();
+        let mut target = layer_target(Mat4::look_at_rh(
+            Vec3::new(0.0, 10.0, 0.0),
+            Vec3::ZERO,
+            Vec3::NEG_Z,
+        ));
+        // A far plane just past the ground, as a map's is when looking straight down.
+        target.projection = Mat4::perspective_rh(1.0, 1.0, 0.1, 10.5).to_cols_array_2d();
+        let pixels = host_frames(gpu, &[&left, &right], &target);
+        let column = |x: f32| ((x / (10.0 * 0.5f32.tan()) + 1.0) / 2.0 * SIZE as f32) as u32;
+        let shadowed = pixel(&pixels, column(-2.0), SIZE / 2);
+        let lit = pixel(&pixels, column(-3.6), SIZE / 2);
+        assert!(
+            u32::from(shadowed[0]) + 60 < u32::from(lit[0]),
+            "shadowed {shadowed:?}, lit {lit:?}"
+        );
+    });
+}

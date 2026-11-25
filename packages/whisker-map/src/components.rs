@@ -12,13 +12,14 @@ use whisker::runtime::view::Element;
 use whisker::runtime::view::renderer::{release_pointer_capture, set_pointer_capture};
 use whisker::{Children, RwSignal, Signal, Style};
 use whisker_surface::{SurfaceView, WheelEvent};
+use whisker_wgpu::LayerHandle;
 
 use crate::camera::MapCamera;
 use crate::events::{EventCallback, MapEvents, SourceDataCallback};
 use crate::geo::LatLng;
 use crate::gesture::{Gestures, PointerKind, Sample, wheel};
 use crate::handle::MapRef;
-use crate::map::{MapInner, MarkerSlot};
+use crate::map::{LayerSlot, MapInner, MarkerSlot};
 use crate::query::TapCallback;
 use crate::render::MapRenderer;
 use crate::style::MapStyle;
@@ -146,7 +147,13 @@ fn bind_gestures(root: Element, map: Rc<MapInner>, moves: bool, on_tap: Option<T
                 map.set_touching(gestures.is_active());
                 tap
             };
-            if let (Some(point), Some(on_tap)) = (tap, &on_tap) {
+            let Some(point) = tap else {
+                return;
+            };
+            if map.tap_layers(point) {
+                return;
+            }
+            if let Some(on_tap) = &on_tap {
                 (on_tap.0)(map.tap_at(point));
             }
         }
@@ -220,4 +227,42 @@ pub fn marker(position: Signal<LatLng>, children: Children) -> Element {
             Fragment { { projected() } }
         }
     }
+}
+
+/// Draws `layer` inside the map, in meters around `anchor`: +X east, +Y up and -Z north.
+///
+/// The layer shares the map's depth, so extrusions drawn before it hide it and it hides those
+/// drawn after it where it is nearer. It draws beneath the style layer `before`, or above every
+/// style layer, labels included, when that is `None` or names no layer.
+///
+/// # Panics
+///
+/// Outside a [`MapView`].
+#[component]
+pub fn map_layer(
+    layer: LayerHandle,
+    anchor: Signal<LatLng>,
+    #[prop(default = None.into())] before: Signal<Option<String>>,
+) -> Element {
+    let map = use_context::<MapContext>()
+        .unwrap_or_else(|| panic!("MapLayer must be placed inside a MapView"))
+        .map;
+    let slot = Rc::new(LayerSlot {
+        layer: layer.clone(),
+        anchor: Cell::new(anchor.try_get_untracked().unwrap_or(LatLng::new(0.0, 0.0))),
+        before: RefCell::new(before.try_get_untracked().flatten()),
+        target: Cell::new(None),
+    });
+    map.add_layer(slot.clone());
+    {
+        let slot = slot.clone();
+        let map = map.clone();
+        effect(move || {
+            slot.anchor.set(anchor.get());
+            *slot.before.borrow_mut() = before.get();
+            map.request_frame();
+        });
+    }
+    on_cleanup(move || map.remove_layer(&slot));
+    render! { Fragment {} }
 }

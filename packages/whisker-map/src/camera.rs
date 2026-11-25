@@ -8,11 +8,17 @@ use crate::geo::{
 };
 use crate::style::MapProjection;
 
+const EARTH_CIRCUMFERENCE: f64 = 40_075_016.686;
+
 /// MapLibre's vertical field of view.
 const FOV_Y: f64 = 0.643_501_108_793_284_4;
 
 /// The steepest tilt the camera takes, in degrees.
 pub const MAX_PITCH: f32 = 85.0;
+/// Pitch past which distant tiles come from lower zooms.
+const LOD_PITCH: f32 = 60.0;
+/// Tiles of the full zoom around the center before lower zooms take over.
+const LOD_RADIUS: f64 = 3.0;
 pub const MAX_ZOOM: f64 = 24.0;
 /// The lowest zoom of the globe, where the world is 128 logical pixels across; flat Mercator
 /// stops at 0.
@@ -62,8 +68,11 @@ pub(crate) struct View {
     pub height: f64,
     pub world_size: f64,
     pub center: DVec2,
-    pub camera_to_center: f64,
     pub proj: DMat4,
+    /// World pixels to the camera's view space, and view space to clip space; `proj` is their
+    /// product.
+    pub eye: DMat4,
+    pub perspective: DMat4,
     pub inverse: DMat4,
     pub projection: MapProjection,
     /// How far the map has turned into a globe, from 0 for flat Mercator to 1.
@@ -72,6 +81,8 @@ pub(crate) struct View {
     /// Takes unit vectors from the Earth's center, in Earth-fixed axes, to clip space.
     pub globe_matrix: DMat4,
     pub globe_inverse: DMat4,
+    /// Earth-fixed unit vectors to world pixels.
+    pub globe_world: DMat4,
     /// The unit direction from the Earth's center to the camera.
     pub camera_dir: DVec3,
     /// The dot product with `camera_dir` below which the globe is past the horizon.
@@ -106,14 +117,20 @@ impl View {
         let bearing = f64::from(camera.bearing).to_radians();
         let camera_to_center = 0.5 / (FOV_Y / 2.0).tan() * height;
 
-        // The far plane reaches the top of the screen where it meets the ground.
+        // As in MapLibre, the far plane reaches the ground at the top of the screen or, once that
+        // is past the horizon, at 85% of the way to it.
         let ground_angle = std::f64::consts::FRAC_PI_2 + pitch;
-        let top_half = (FOV_Y / 2.0).sin() * camera_to_center
-            / (std::f64::consts::PI - ground_angle - FOV_Y / 2.0)
-                .clamp(0.01, std::f64::consts::PI - 0.01)
-                .sin();
-        let furthest = (std::f64::consts::FRAC_PI_2 - pitch).cos() * top_half + camera_to_center;
-        let far = (furthest * 1.01).min(camera_to_center * 200.0);
+        let ground_ahead = |angle: f64| {
+            angle.sin() * camera_to_center
+                / (std::f64::consts::PI - ground_angle - angle)
+                    .clamp(0.01, std::f64::consts::PI - 0.01)
+                    .sin()
+        };
+        let horizon = (std::f64::consts::FRAC_PI_2 - pitch).tan() * camera_to_center * 0.85;
+        let top_half =
+            ground_ahead(FOV_Y / 2.0).min(ground_ahead((horizon / camera_to_center).atan()));
+        let far =
+            ((std::f64::consts::FRAC_PI_2 - pitch).cos() * top_half + camera_to_center) * 1.01;
         let near = height / 50.0;
 
         let eye = DMat4::from_scale(DVec3::new(1.0, -1.0, 1.0))
@@ -121,7 +138,8 @@ impl View {
             * DMat4::from_rotation_x(pitch)
             * DMat4::from_rotation_z(-bearing)
             * DMat4::from_translation(DVec3::new(-center.x, -center.y, 0.0));
-        let proj = DMat4::perspective_rh(FOV_Y, width / height, near, far) * eye;
+        let perspective = DMat4::perspective_rh(FOV_Y, width / height, near, far);
+        let proj = perspective * eye;
 
         let globe = match projection {
             MapProjection::Mercator => 0.0,
@@ -157,14 +175,16 @@ impl View {
             height,
             world_size,
             center,
-            camera_to_center,
             proj,
+            eye,
+            perspective,
             inverse: proj.inverse(),
             projection,
             globe,
             globe_radius,
             globe_matrix,
             globe_inverse: globe_matrix.inverse(),
+            globe_world: to_world,
             camera_dir: eye_unit / distance,
             horizon: 1.0 / distance,
         }
@@ -200,10 +220,44 @@ impl View {
         self.world_to_screen(DVec3::new(x, y, 0.0))
     }
 
+    /// Takes a layer's local space, meters with +X east, +Y up and -Z north on the ground at
+    /// `anchor`, to the camera's view space; `None` while `anchor` is past the globe's horizon.
+    pub fn layer_view(&self, anchor: LatLng) -> Option<DMat4> {
+        let (mx, my) = mercator(anchor);
+        let up = globe_unit(mx, my);
+        if self.globe > 0.0 && up.dot(self.camera_dir) < self.horizon {
+            return None;
+        }
+        let meters = self.world_size / (EARTH_CIRCUMFERENCE * anchor.lat.to_radians().cos());
+        let flat =
+            DMat4::from_translation(DVec3::new(mx * self.world_size, my * self.world_size, 0.0))
+                * DMat4::from_cols(
+                    DVec4::new(meters, 0.0, 0.0, 0.0),
+                    DVec4::new(0.0, 0.0, meters, 0.0),
+                    DVec4::new(0.0, meters, 0.0, 0.0),
+                    DVec4::W,
+                );
+        if self.globe <= 0.0 {
+            return Some(self.eye * flat);
+        }
+        let east = DVec3::new(-up.y, up.x, 0.0).normalize_or(DVec3::Y);
+        let north = up.cross(east);
+        let unit = 2.0 * std::f64::consts::PI / EARTH_CIRCUMFERENCE;
+        let round = self.globe_world
+            * DMat4::from_cols(
+                (east * unit).extend(0.0),
+                (up * unit).extend(0.0),
+                (-north * unit).extend(0.0),
+                up.extend(1.0),
+            );
+        let blend = |a: DMat4, b: DMat4| a * (1.0 - self.globe) + b * self.globe;
+        Some(self.eye * blend(flat, round))
+    }
+
     /// World pixels per meter at the center's latitude.
     pub fn pixels_per_meter(&self) -> f64 {
         let lat = self.camera.center.lat.to_radians();
-        self.world_size / (40_075_016.686 * lat.cos())
+        self.world_size / (EARTH_CIRCUMFERENCE * lat.cos())
     }
 
     /// The screen point of a world point, or `None` behind the camera or past the horizon.
@@ -343,7 +397,8 @@ impl View {
 
     /// The tiles at `z` that cover the screen, nearest the center first.
     ///
-    /// With a tilt, tiles far from the camera come from lower zooms, down to `min_z`.
+    /// Tilted past 60°, tiles more than a few tiles from the center come from lower zooms, down to
+    /// `min_z`, as in MapLibre.
     pub fn covering_tiles(&self, z: u8, min_z: u8, max_tiles: usize) -> Vec<PlacedTile> {
         let outline = self.ground_outline();
         if outline.len() < 3 {
@@ -363,8 +418,7 @@ impl View {
         let x0 = min.x.floor() as i64;
         let x1 = max.x.floor() as i64;
         let polygon: Vec<DVec2> = convex_hull(outline.iter().map(|p| *p * scale).collect());
-        let camera_tile = self.camera_ground_position() * scale;
-        let pitched = self.camera.pitch > 5.0;
+        let lod = self.camera.pitch > LOD_PITCH;
 
         let mut tiles = Vec::new();
         for y in y0..=y1 {
@@ -374,12 +428,8 @@ impl View {
                     continue;
                 }
                 let middle = lo + DVec2::splat(0.5);
-                let tile_z = if pitched {
-                    // Each halving of the distance from the camera earns one more zoom level.
-                    let distance = (middle - camera_tile).length() / tiles_at(z) * self.world_size;
-                    let near = self.camera_to_center.max(1.0);
-                    let drop = (distance / near).log2().max(0.0).floor() as u8;
-                    z.saturating_sub(drop).max(min_z)
+                let tile_z = if lod {
+                    lod_zoom(x, y, z, min_z, center_tile)
                 } else {
                     z
                 };
@@ -505,14 +555,22 @@ impl View {
             })
         })
     }
+}
 
-    /// The point on the ground below the camera, in world pixels.
-    pub fn camera_ground_position(&self) -> DVec2 {
-        let pitch = f64::from(self.camera.pitch).to_radians();
-        let bearing = f64::from(self.camera.bearing).to_radians();
-        let back = pitch.sin() * self.camera_to_center;
-        self.center - DVec2::new(bearing.sin(), -bearing.cos()) * back
+/// MapLibre's quadtree split: the zoom the tile at `x`, `y` of `z` is drawn from, where each level
+/// up is used once its tile lies farther from `center` (in tiles of `z`) than the level below needs.
+fn lod_zoom(x: i64, y: i64, z: u8, min_z: u8, center: DVec2) -> u8 {
+    for level in 0..z {
+        let span = 1i64 << (z - level);
+        let lo = DVec2::new(x.div_euclid(span) as f64, y.div_euclid(span) as f64) * span as f64;
+        let hi = lo + DVec2::splat(span as f64);
+        let longest = (center.clamp(lo, hi) - center).abs().max_element();
+        let split_within = LOD_RADIUS + span as f64 - 2.0;
+        if level >= min_z && longest > split_within {
+            return level;
+        }
     }
+    z
 }
 
 fn convex_hull(mut points: Vec<DVec2>) -> Vec<DVec2> {
@@ -683,6 +741,40 @@ mod tests {
     }
 
     #[test]
+    fn tilted_past_60_degrees_lower_zooms_start_three_tiles_from_the_center() {
+        let center = DVec2::new(100.5, 100.5);
+        assert_eq!(lod_zoom(100, 100, 14, 0, center), 14);
+        assert_eq!(lod_zoom(103, 100, 14, 0, center), 14);
+        assert_eq!(lod_zoom(105, 100, 14, 0, center), 13);
+        assert_eq!(lod_zoom(120, 100, 14, 0, center), 11);
+        assert_eq!(lod_zoom(120, 100, 14, 13, center), 13);
+        let level = View::new(camera(16.0, 0.0, 60.0), 800.0, 600.0);
+        assert!(
+            level
+                .covering_tiles(16, 0, 400)
+                .iter()
+                .all(|t| t.id.z == 16)
+        );
+    }
+
+    #[test]
+    fn the_far_plane_stops_short_of_the_horizon() {
+        let view = View::new(camera(16.8, 0.0, 85.0), 1024.0, 722.0);
+        let farthest = view
+            .ground_outline()
+            .iter()
+            .map(|p| view.center.y - p.y)
+            .fold(0.0, f64::max);
+        let pitch = 85f64.to_radians();
+        let camera_to_center = 0.5 / (FOV_Y / 2.0).tan() * view.height;
+        let horizon = (std::f64::consts::FRAC_PI_2 - pitch).tan() * camera_to_center * 0.85;
+        let to_horizon =
+            ((horizon / camera_to_center).atan() + pitch).tan() * camera_to_center * pitch.cos()
+                - camera_to_center * pitch.sin();
+        assert!(farthest < to_horizon * 1.02, "{farthest} vs {to_horizon}");
+    }
+
+    #[test]
     fn covers_the_screen() {
         let view = View::new(camera(2.0, 0.0, 0.0), 1024.0, 1024.0);
         let tiles = view.covering_tiles(2, 0, 64);
@@ -691,5 +783,81 @@ mod tests {
         let tiles = pitched.covering_tiles(14, 0, 200);
         assert!(tiles.iter().any(|t| t.id.z < 14));
         assert!(tiles.iter().any(|t| t.id.z == 14));
+    }
+
+    /// Where `local`, in the layer space around `anchor`, lands on screen.
+    fn layer_point(view: &View, anchor: LatLng, local: DVec3) -> DVec2 {
+        let clip = view.perspective * view.layer_view(anchor).unwrap() * local.extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        DVec2::new(
+            (ndc.x + 1.0) / 2.0 * view.width,
+            (1.0 - ndc.y) / 2.0 * view.height,
+        )
+    }
+
+    /// `place` moved `east` and `north` meters, on a sphere.
+    fn offset(place: LatLng, east: f64, north: f64) -> LatLng {
+        let degrees = 360.0 / EARTH_CIRCUMFERENCE;
+        LatLng::new(
+            place.lat + north * degrees,
+            place.lng + east * degrees / place.lat.to_radians().cos(),
+        )
+    }
+
+    #[test]
+    fn layer_space_is_meters_east_up_and_south_of_the_anchor() {
+        let view = View::new(camera(16.0, 30.0, 50.0), 800.0, 600.0);
+        let anchor = offset(view.camera.center, 120.0, -80.0);
+        for (local, east, north) in [
+            (DVec3::ZERO, 0.0, 0.0),
+            (DVec3::new(100.0, 0.0, 0.0), 100.0, 0.0),
+            (DVec3::new(0.0, 0.0, -100.0), 0.0, 100.0),
+            (DVec3::new(-60.0, 0.0, 40.0), -60.0, -40.0),
+        ] {
+            let drawn = layer_point(&view, anchor, local);
+            let expected = view.project(offset(anchor, east, north)).unwrap();
+            assert!(
+                drawn.distance(expected) < 0.05,
+                "{local}: {drawn} vs {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn layer_space_winds_like_a_scene_and_scales_evenly() {
+        let view = View::new(camera(17.0, -40.0, 60.0), 800.0, 600.0);
+        let local = view.layer_view(view.camera.center).unwrap();
+        assert!(local.determinant() > 0.0);
+        let lengths =
+            [local.x_axis, local.y_axis, local.z_axis].map(|axis| axis.truncate().length());
+        assert!(
+            (lengths[0] - lengths[1]).abs() < lengths[0] * 1e-9,
+            "{lengths:?}"
+        );
+        assert!(
+            (lengths[0] - lengths[2]).abs() < lengths[0] * 1e-9,
+            "{lengths:?}"
+        );
+    }
+
+    #[test]
+    fn on_the_globe_layer_space_sits_on_the_tangent_plane_and_hides_past_the_horizon() {
+        let view = View::projected(camera(3.0, 20.0, 0.0), 800.0, 600.0, MapProjection::Globe);
+        assert_eq!(view.globe, 1.0);
+        let anchor = offset(view.camera.center, 300_000.0, 200_000.0);
+        for (local, east, north) in [
+            (DVec3::ZERO, 0.0, 0.0),
+            (DVec3::new(2_000.0, 0.0, 0.0), 2_000.0, 0.0),
+            (DVec3::new(0.0, 0.0, -2_000.0), 0.0, 2_000.0),
+        ] {
+            let drawn = layer_point(&view, anchor, local);
+            let expected = view.project(offset(anchor, east, north)).unwrap();
+            assert!(
+                drawn.distance(expected) < 0.01,
+                "{local}: {drawn} vs {expected}"
+            );
+        }
+        let far_side = LatLng::new(-view.camera.center.lat, view.camera.center.lng - 180.0);
+        assert!(view.layer_view(far_side).is_none());
     }
 }

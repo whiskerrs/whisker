@@ -241,3 +241,27 @@ fn use_frame_runs_until_unmount() {
     scene.inner().run_frame_callbacks(&frame);
     assert_eq!(calls.get(), 2);
 }
+
+#[test]
+fn scene_content_mounts_nodes_without_a_view() {
+    let scene = Scene::new();
+    let shown = scene.clone();
+    mounted(
+        move || {
+            render! {
+                SceneContent(scene: shown) {
+                    Group(position: Vec3::X) {
+                        Mesh(geometry: cube(), material: red())
+                    }
+                }
+            }
+        },
+        |_| {
+            let top = scene.root().children();
+            assert_eq!(top.len(), 1);
+            assert_eq!(top[0].transform().translation, Vec3::X);
+            assert!(top[0].children()[0].mesh().is_some());
+        },
+    );
+    assert!(scene.root().children().is_empty());
+}

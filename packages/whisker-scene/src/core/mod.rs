@@ -15,6 +15,7 @@ use std::rc::{Rc, Weak};
 use glam::{Mat3, Quat, Vec2, Vec3, Vec4};
 use whisker::css::Color;
 use whisker_surface::{FrameInfo, Surface, WeakSurface};
+use whisker_wgpu::{LayerHandle, LayerHost};
 
 pub use environment::Environment;
 pub use geometry::Geometry;
@@ -45,7 +46,7 @@ pub(crate) struct SceneInner {
     environment_background: Cell<bool>,
     post_processing: RefCell<PostProcessing>,
     active_camera: RefCell<Option<Node>>,
-    surfaces: RefCell<Vec<WeakSurface>>,
+    viewers: RefCell<Vec<Viewer>>,
     frame_callbacks: RefCell<Vec<(u64, FrameCallback)>>,
     next_callback: Cell<u64>,
 }
@@ -76,7 +77,7 @@ impl Scene {
             environment_background: Cell::new(false),
             post_processing: RefCell::new(PostProcessing::default()),
             active_camera: RefCell::new(None),
-            surfaces: RefCell::new(Vec::new()),
+            viewers: RefCell::new(Vec::new()),
             frame_callbacks: RefCell::new(Vec::new()),
             next_callback: Cell::new(0),
         });
@@ -160,8 +161,31 @@ impl Scene {
         if !self.inner.frame_callbacks.borrow().is_empty() {
             surface.set_continuous(true);
         }
-        self.inner.surfaces.borrow_mut().push(surface.downgrade());
+        self.inner
+            .viewers
+            .borrow_mut()
+            .push(Viewer::Surface(surface.downgrade()));
         surface
+    }
+
+    /// Draws this scene inside another renderer's pass, in the host's space; camera nodes are
+    /// ignored.
+    ///
+    /// Each call makes a separate layer, so keep the handle rather than calling this per frame.
+    pub fn layer(&self) -> LayerHandle {
+        LayerHandle::new(crate::render::SceneLayer::new(self.clone()))
+    }
+
+    /// Lets a layer's host draw the frames this scene asks for.
+    pub(crate) fn add_layer_host(&self, host: &Rc<LayerHost>) {
+        if !self.inner.frame_callbacks.borrow().is_empty() {
+            host.set_continuous(true);
+        }
+        self.inner
+            .viewers
+            .borrow_mut()
+            .push(Viewer::Layer(Rc::downgrade(host)));
+        host.request_frame();
     }
 
     /// Calls `callback` at the start of every frame until the returned handle is dropped.
@@ -209,22 +233,49 @@ impl Drop for FrameSubscription {
     }
 }
 
+/// What draws a scene: its own surface, or a host it is a layer of.
+enum Viewer {
+    Surface(WeakSurface),
+    Layer(Weak<LayerHost>),
+}
+
+enum Live {
+    Surface(Surface),
+    Layer(Rc<LayerHost>),
+}
+
+impl Viewer {
+    fn upgrade(&self) -> Option<Live> {
+        match self {
+            Viewer::Surface(surface) => surface.upgrade().map(Live::Surface),
+            Viewer::Layer(host) => host.upgrade().map(Live::Layer),
+        }
+    }
+}
+
 impl SceneInner {
-    fn surfaces(&self) -> Vec<Surface> {
-        let mut surfaces = self.surfaces.borrow_mut();
-        surfaces.retain(|surface| surface.upgrade().is_some());
-        surfaces.iter().filter_map(WeakSurface::upgrade).collect()
+    fn viewers(&self) -> Vec<Live> {
+        let mut viewers = self.viewers.borrow_mut();
+        let live: Vec<Live> = viewers.iter().filter_map(Viewer::upgrade).collect();
+        viewers.retain(|viewer| viewer.upgrade().is_some());
+        live
     }
 
     pub(crate) fn request_frame(&self) {
-        for surface in self.surfaces() {
-            surface.request_frame();
+        for viewer in self.viewers() {
+            match viewer {
+                Live::Surface(surface) => surface.request_frame(),
+                Live::Layer(host) => host.request_frame(),
+            }
         }
     }
 
     fn set_continuous(&self, continuous: bool) {
-        for surface in self.surfaces() {
-            surface.set_continuous(continuous);
+        for viewer in self.viewers() {
+            match viewer {
+                Live::Surface(surface) => surface.set_continuous(continuous),
+                Live::Layer(host) => host.set_continuous(continuous),
+            }
         }
     }
 

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use glam::{DMat4, Mat4};
 use whisker_surface::{FrameInfo, SurfaceSize};
-use whisker_wgpu::{Gpu, Renderer, wgpu};
+use whisker_wgpu::{Gpu, LayerTarget, Renderer, wgpu};
 
 use crate::camera::View;
 use crate::geo::{PlacedTile, globe_cells};
@@ -350,10 +350,7 @@ impl Shared {
             | Program::LinePattern
             | Program::LineGradient
             | Program::Circle
-            | Program::Raster
-            | Program::Extrusion
-            | Program::ExtrusionPattern
-            | Program::ExtrusionDepth => {
+            | Program::Raster => {
                 let face = stencil_face(wgpu::CompareFunction::Equal, wgpu::StencilOperation::Keep);
                 wgpu::StencilState {
                     front: face,
@@ -362,6 +359,7 @@ impl Shared {
                     write_mask: 0,
                 }
             }
+            // Extrusions rise past their tile's ground on screen, so the tile mask would cut them.
             _ => wgpu::StencilState::default(),
         };
         let depth = matches!(
@@ -647,6 +645,8 @@ pub(crate) enum Step {
         program: Program,
         uniform: u32,
     },
+    /// The app layer at this index of the frame's layers.
+    Layer(usize),
 }
 
 #[derive(Clone)]
@@ -708,6 +708,29 @@ fn draw_buffer(
         }],
     });
     (buffer, bind_group)
+}
+
+/// The app layers, in drawing order, that draw beneath the style layer `id`.
+fn layers_before<'a>(
+    befores: &'a [Option<String>],
+    id: &'a str,
+) -> impl Iterator<Item = usize> + 'a {
+    befores
+        .iter()
+        .enumerate()
+        .filter(move |(_, before)| before.as_deref() == Some(id))
+        .map(|(index, _)| index)
+}
+
+/// The app layers no style layer placed, which draw above them all.
+fn unplaced_layers(steps: &[Step], count: usize) -> Vec<usize> {
+    let mut placed = vec![false; count];
+    for step in steps {
+        if let Step::Layer(index) = step {
+            placed[*index] = true;
+        }
+    }
+    (0..count).filter(|index| !placed[*index]).collect()
 }
 
 fn mat(m: DMat4) -> [[f32; 4]; 4] {
@@ -868,6 +891,7 @@ impl MapRenderer {
         view: &View,
         style: &StyleState,
         tiles_by_source: &TileSet,
+        befores: &[Option<String>],
     ) -> FrameRecorder {
         let mut rec = FrameRecorder {
             uniforms: Vec::new(),
@@ -894,6 +918,8 @@ impl MapRenderer {
             .retain(|(kept, _)| style.layers.iter().any(|layer| Arc::ptr_eq(layer, kept)));
         let mut masked: Option<&str> = None;
         for (index, layer) in style.layers.iter().enumerate() {
+            rec.steps
+                .extend(layers_before(befores, &layer.id).map(Step::Layer));
             if !layer.shown_at(zoom) {
                 continue;
             }
@@ -1262,12 +1288,32 @@ impl Renderer for MapRenderer {
         let style = map.style();
         let shared = self.shared.clone();
 
+        let layers = map.layers();
+        let mut targets = Vec::with_capacity(layers.len());
+        for slot in &layers {
+            let target = view.layer_view(slot.anchor.get()).map(|local| LayerTarget {
+                view: mat(local),
+                projection: mat(view.perspective),
+                frame,
+                color_format: self.format,
+                depth_format: DEPTH_FORMAT,
+                samples: self.samples,
+                size: (self.size.width.max(1), self.size.height.max(1)),
+                scale: self.size.scale,
+            });
+            slot.target.set(target);
+            targets.push(target);
+        }
+        let befores: Vec<Option<String>> = layers
+            .iter()
+            .map(|slot| slot.before.borrow().clone())
+            .collect();
         let mut rec = match &style {
             Some(style) => {
                 let tiles = Self::collect_tiles(gpu, &shared, &map, &view, style);
                 self.labels
                     .prepare(gpu, &shared, &map, &view, style, &tiles);
-                let rec = self.record(gpu, &view, style, &tiles);
+                let rec = self.record(gpu, &view, style, &tiles, &befores);
                 map.publish_frame(tiles, std::mem::take(&mut self.labels.placed));
                 rec
             }
@@ -1279,6 +1325,8 @@ impl Renderer for MapRenderer {
         if let Some(style) = &style {
             self.labels.record_overlay(&mut rec, style);
         }
+        let unplaced = unplaced_layers(&rec.steps, layers.len());
+        rec.steps.extend(unplaced.into_iter().map(Step::Layer));
         let (light, light_color) = style
             .as_ref()
             .map(|style| light_uniform(style, &view))
@@ -1336,6 +1384,11 @@ impl Renderer for MapRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("whisker-map"),
             });
+        for (slot, target) in layers.iter().zip(&targets) {
+            if let Some(target) = target {
+                slot.layer.borrow_mut().prepare(gpu, &mut encoder, target);
+            }
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("whisker-map"),
@@ -1371,16 +1424,31 @@ impl Renderer for MapRenderer {
             let mut current: Option<Program> = None;
             let stride = self.draw_stride;
             let offset = |uniform: u32| (u64::from(uniform) * stride) as u32;
-            let mut set_program = |pass: &mut wgpu::RenderPass, program: Program| {
-                if current != Some(program) {
-                    pass.set_pipeline(&shared.pipeline(gpu, program, format, samples));
-                    current = Some(program);
-                }
-            };
+            let set_program =
+                |pass: &mut wgpu::RenderPass, current: &mut Option<Program>, program: Program| {
+                    if *current != Some(program) {
+                        pass.set_pipeline(&shared.pipeline(gpu, program, format, samples));
+                        *current = Some(program);
+                    }
+                };
+            let (width, height) = (self.size.width.max(1), self.size.height.max(1));
             for step in &rec.steps {
                 match step {
+                    Step::Layer(index) => {
+                        let (Some(slot), Some(Some(target))) =
+                            (layers.get(*index), targets.get(*index))
+                        else {
+                            continue;
+                        };
+                        slot.layer.borrow_mut().draw(gpu, &mut pass, target);
+                        current = None;
+                        pass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+                        pass.set_scissor_rect(0, 0, width, height);
+                        pass.set_bind_group(0, &self.frame_bind_group, &[]);
+                        pass.set_bind_group(2, &shared.empty_texture, &[]);
+                    }
                     Step::ClearMask => {
-                        set_program(&mut pass, Program::ClearMask);
+                        set_program(&mut pass, &mut current, Program::ClearMask);
                         pass.set_stencil_reference(0);
                         pass.set_bind_group(1, &self.draw_bind_group, &[0]);
                         pass.draw(0..3, 0..1);
@@ -1390,13 +1458,13 @@ impl Renderer for MapRenderer {
                         stencil,
                         cells,
                     } => {
-                        set_program(&mut pass, Program::Mask);
+                        set_program(&mut pass, &mut current, Program::Mask);
                         pass.set_stencil_reference(*stencil);
                         pass.set_bind_group(1, &self.draw_bind_group, &[offset(*uniform)]);
                         shared.draw_grid(&mut pass, *cells);
                     }
                     Step::Screen { program, uniform } => {
-                        set_program(&mut pass, *program);
+                        set_program(&mut pass, &mut current, *program);
                         pass.set_bind_group(1, &self.draw_bind_group, &[offset(*uniform)]);
                         pass.draw(0..3, 0..1);
                     }
@@ -1407,7 +1475,7 @@ impl Renderer for MapRenderer {
                         mesh,
                         texture,
                     } => {
-                        set_program(&mut pass, *program);
+                        set_program(&mut pass, &mut current, *program);
                         pass.set_stencil_reference(*stencil);
                         pass.set_bind_group(1, &self.draw_bind_group, &[offset(*uniform)]);
                         match texture {
@@ -1460,3 +1528,6 @@ impl Renderer for MapRenderer {
         map.end_frame(&view);
     }
 }
+
+#[cfg(test)]
+mod tests;

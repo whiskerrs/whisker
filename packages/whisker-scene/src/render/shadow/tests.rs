@@ -11,8 +11,8 @@ fn eye_at(position: Vec3) -> Eye {
             fov_y: 1.0,
             near: 0.1,
             far: 100.0,
-        },
-        aspect: 1.5,
+        }
+        .to_matrix(1.5),
     }
 }
 
@@ -71,4 +71,30 @@ fn point_faces_each_see_their_own_axis() {
         assert!(clip.x.abs() < 1e-4 && clip.y.abs() < 1e-4, "{clip}");
         assert!((0.0..1.0).contains(&clip.z), "{clip}");
     }
+}
+
+#[test]
+fn shadows_reach_past_the_far_plane_only_when_not_held_within_it() {
+    use crate::core::{Light, Node, Shadow};
+    use whisker::css::Color;
+    let root = Node::new();
+    let sun = Node::new();
+    sun.set_light(Some(Light::Directional {
+        color: Color::rgb(255, 255, 255),
+        intensity: 1.0,
+        shadow: Some(Shadow {
+            distance: 500.0,
+            cascades: 2,
+            ..Default::default()
+        }),
+    }));
+    root.add_child(&sun);
+    let collected = crate::render::collect(&root, Vec3::ZERO);
+    let reach = |within_far| {
+        let plan = plan(&collected, eye_at(Vec3::ZERO), within_far, 4096);
+        let cascades = plan.directional[0].as_ref().unwrap();
+        cascades.splits[cascades.count - 1]
+    };
+    assert!((reach(true) - 100.0).abs() < 0.1, "{}", reach(true));
+    assert!((reach(false) - 500.0).abs() < 0.1, "{}", reach(false));
 }

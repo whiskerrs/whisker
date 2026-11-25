@@ -147,6 +147,7 @@ pub(super) struct PipelineKey {
     /// Draws with a mirroring transform, whose triangles wind the other way.
     pub(super) mirrored: bool,
     pub(super) masked: bool,
+    pub(super) depth: wgpu::TextureFormat,
 }
 
 /// The texture slots of the shader's material bind group, in binding order.
@@ -554,6 +555,7 @@ impl Shared {
             mirrored,
             shader,
             masked,
+            depth,
         } = key;
         let custom = self.custom_shaders.borrow();
         let module = custom
@@ -593,7 +595,7 @@ impl Shared {
                             ..Default::default()
                         },
                         depth_stencil: Some(wgpu::DepthStencilState {
-                            format: DEPTH_FORMAT,
+                            format: depth,
                             depth_write_enabled: Some(!blend),
                             depth_compare: Some(wgpu::CompareFunction::Less),
                             stencil: Default::default(),

@@ -23,7 +23,8 @@ mod render;
 
 pub use components::{
     AmbientLight, DirectionalLight, Group, HemisphereLight, Mesh, ModelView, OrthographicCamera,
-    PerspectiveCamera, PointLight, SceneAnchor, SceneView, SpotLight, use_frame, use_scene,
+    PerspectiveCamera, PointLight, SceneAnchor, SceneContent, SceneView, SpotLight, use_frame,
+    use_scene,
 };
 pub use core::{
     AlphaMode, AmbientOcclusion, Bloom, CustomMaterial, DepthOfField, Environment, Fog, Geometry,
