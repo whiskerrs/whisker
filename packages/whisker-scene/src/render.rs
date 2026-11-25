@@ -13,7 +13,9 @@ use std::time::Duration;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use whisker::css::Color;
 use whisker_surface::{FrameInfo, SurfaceSize};
-use whisker_wgpu::{Gpu, Renderer, wgpu};
+use whisker_wgpu::{Gpu, Layer, LayerHost, LayerTarget, Renderer, wgpu};
+
+use crate::raycast::{dispatch_tap, ray_through};
 
 pub(crate) use collect::{Collected, Draw, camera_for, collect, within_distance};
 pub(crate) use pipeline::{material_source, translucent};
@@ -279,38 +281,18 @@ impl Renderer for SceneRenderer {
         let inner = scene.inner();
         inner.run_frame_callbacks(&frame);
         let (camera_world, projection) = camera_for(&scene);
-        let mut collected = collect(inner.root(), camera_world.transform_point3(Vec3::ZERO));
-        for draw in &collected.draws {
-            if let Some(deform) = &draw.deform {
-                deform.update(&draw.geometry);
-            }
-        }
         let aspect = self.size.0 as f32 / self.size.1 as f32;
         let eye = Eye {
             world: camera_world,
-            projection,
-            aspect,
+            projection: projection.to_matrix(aspect),
         };
-        let view = camera_world.inverse();
-        let view_proj = projection.to_matrix(aspect) * view;
-        if let Some(on_draw) = &self.on_draw {
-            on_draw(
-                view_proj,
-                Vec2::new(self.size.0 as f32, self.size.1 as f32) / self.scale,
-            );
-        }
-        let frustum = Frustum::new(view_proj);
-        collected
-            .point
-            .retain(|light| frustum.intersects_sphere(light.position, light.range));
-        collected.point.truncate(MAX_POINT);
-        let plan = shadow::plan(
-            &collected,
-            eye,
-            gpu.device.limits().max_texture_dimension_2d,
-        );
+        let FramePlan {
+            collected,
+            plan,
+            order,
+            view_proj,
+        } = self.plan_frame(gpu, inner, eye, true);
         let environment = inner.environment();
-        self.prepare_frame_bindings(gpu, &plan, environment.as_ref().map(|(e, _)| e));
         let sky = environment.is_some() && inner.environment_background();
         let settings = inner.post_processing();
         if !settings.active() {
@@ -327,7 +309,6 @@ impl Renderer for SceneRenderer {
                     .get(|post| post.size() == size, || PostTargets::new(gpu, size)),
             );
         }
-        let order = draw_order(&collected.draws, view, &frustum);
         let transmits = order
             .iter()
             .any(|ordered| transmissive(&collected.draws[ordered.index].material));
@@ -344,10 +325,7 @@ impl Renderer for SceneRenderer {
                 || TransmissionTarget::new(gpu, &self.shared, size),
             ));
         }
-        let started = *self.started.get_or_insert(frame.timestamp);
-        self.time = frame.timestamp.saturating_sub(started).as_secs_f32();
-        self.write_frame_uniform(gpu, &collected, &plan, view_proj, eye, inner);
-        self.write_draw_uniforms(gpu, &collected.draws);
+        self.write_frame(gpu, frame, inner, &collected, &plan, view_proj, eye);
 
         let clear = self.clear_color(inner.background());
         let backdrop = Backdrop {
@@ -437,19 +415,92 @@ impl Renderer for SceneRenderer {
                         view_proj,
                     );
                 }
-                let projection = projection.to_matrix(aspect);
                 self.encode_post(
                     gpu,
                     &mut encoder,
                     target,
                     &settings,
-                    projection,
+                    eye.projection,
                     inner.tone_mapping(),
                 );
             }
         }
         gpu.queue.submit([encoder.finish()]);
         self.materials.sweep();
+    }
+}
+
+/// What a frame draws and how, shared by surface frames and layer frames.
+struct FramePlan {
+    collected: Collected,
+    plan: ShadowPlan,
+    order: Vec<Ordered>,
+    view_proj: Mat4,
+}
+
+impl SceneRenderer {
+    /// Collects the scene as seen from `eye`, plans its shadows and binds what they need.
+    ///
+    /// `reach_within_far` keeps shadows inside the eye's far plane, which a host's far plane may
+    /// hug the ground too tightly for.
+    fn plan_frame(
+        &mut self,
+        gpu: &Gpu,
+        inner: &SceneInner,
+        eye: Eye,
+        reach_within_far: bool,
+    ) -> FramePlan {
+        let view = eye.world.inverse();
+        let view_proj = eye.projection * view;
+        let mut collected = collect(inner.root(), eye.world.transform_point3(Vec3::ZERO));
+        for draw in &collected.draws {
+            if let Some(deform) = &draw.deform {
+                deform.update(&draw.geometry);
+            }
+        }
+        if let Some(on_draw) = &self.on_draw {
+            on_draw(
+                view_proj,
+                Vec2::new(self.size.0 as f32, self.size.1 as f32) / self.scale,
+            );
+        }
+        let frustum = Frustum::new(view_proj);
+        collected
+            .point
+            .retain(|light| frustum.intersects_sphere(light.position, light.range));
+        collected.point.truncate(MAX_POINT);
+        let plan = shadow::plan(
+            &collected,
+            eye,
+            reach_within_far,
+            gpu.device.limits().max_texture_dimension_2d,
+        );
+        let environment = inner.environment();
+        self.prepare_frame_bindings(gpu, &plan, environment.as_ref().map(|(e, _)| e));
+        let order = draw_order(&collected.draws, view, &frustum);
+        FramePlan {
+            collected,
+            plan,
+            order,
+            view_proj,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_frame(
+        &mut self,
+        gpu: &Gpu,
+        frame: FrameInfo,
+        inner: &SceneInner,
+        collected: &Collected,
+        plan: &ShadowPlan,
+        view_proj: Mat4,
+        eye: Eye,
+    ) {
+        let started = *self.started.get_or_insert(frame.timestamp);
+        self.time = frame.timestamp.saturating_sub(started).as_secs_f32();
+        self.write_frame_uniform(gpu, collected, plan, view_proj, eye, inner);
+        self.write_draw_uniforms(gpu, &collected.draws);
     }
 }
 
@@ -692,12 +743,27 @@ impl SceneRenderer {
             pass.set_pipeline(&shared.sky_pipeline(gpu, format, samples));
             pass.draw(0..3, 0..1);
         }
+        self.draw_ordered(gpu, &mut pass, format, DEPTH_FORMAT, samples, draws, order);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_ordered(
+        &mut self,
+        gpu: &Gpu,
+        pass: &mut wgpu::RenderPass<'_>,
+        format: wgpu::TextureFormat,
+        depth: wgpu::TextureFormat,
+        samples: u32,
+        draws: &[Draw],
+        order: &[Ordered],
+    ) {
+        let shared = self.shared.clone();
         for ordered in order {
             let draw = &draws[ordered.index];
             let Draw {
                 model, material, ..
             } = draw;
-            let Some((count, instances)) = bind_mesh(gpu, &shared, &mut pass, draw) else {
+            let Some((count, instances)) = bind_mesh(gpu, &shared, pass, draw) else {
                 continue;
             };
             pass.set_pipeline(&shared.pipeline(
@@ -710,6 +776,7 @@ impl SceneRenderer {
                     mirrored: model.determinant() < 0.0,
                     shader: shared.shader_key(gpu, material),
                     masked: masked(material),
+                    depth,
                 },
             ));
             let offset = (ordered.index as u64 * self.draw_stride) as u32;
@@ -838,3 +905,142 @@ fn frame_bind_group(
 
 #[cfg(test)]
 mod tests;
+
+/// A layer frame between `prepare_layer` and `draw_layer`.
+pub(crate) struct LayerFrame {
+    draws: Vec<Draw>,
+    order: Vec<Ordered>,
+    format: wgpu::TextureFormat,
+    depth: wgpu::TextureFormat,
+    samples: u32,
+}
+
+impl SceneRenderer {
+    /// Draws shadow maps and writes uniforms for a frame seen through a host's camera.
+    pub(crate) fn prepare_layer(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &LayerTarget,
+    ) -> LayerFrame {
+        let scene = self.scene.clone();
+        let inner = scene.inner();
+        inner.run_frame_callbacks(&target.frame);
+        self.size = (target.size.0.max(1), target.size.1.max(1));
+        self.scale = if target.scale > 0.0 {
+            target.scale
+        } else {
+            1.0
+        };
+        let view = Mat4::from_cols_array_2d(&target.view);
+        // The host's view may carry one uniform scale; dividing it out keeps the eye rigid.
+        let scale = view.determinant().abs().cbrt();
+        let rigid = Mat4::from_scale(Vec3::splat(1.0 / scale)) * view;
+        let eye = Eye {
+            world: rigid.inverse(),
+            projection: Mat4::from_cols_array_2d(&target.projection)
+                * Mat4::from_scale(Vec3::splat(scale)),
+        };
+        let FramePlan {
+            collected,
+            plan,
+            order,
+            view_proj,
+        } = self.plan_frame(gpu, inner, eye, false);
+        self.post = None;
+        self.transmission = None;
+        self.write_frame(gpu, target.frame, inner, &collected, &plan, view_proj, eye);
+        self.encode_shadows(gpu, encoder, &collected.draws, &plan);
+        LayerFrame {
+            draws: collected.draws,
+            order,
+            format: target.color_format,
+            depth: target.depth_format,
+            samples: target.samples,
+        }
+    }
+
+    pub(crate) fn draw_layer(
+        &mut self,
+        gpu: &Gpu,
+        pass: &mut wgpu::RenderPass<'_>,
+        frame: &LayerFrame,
+    ) {
+        pass.set_bind_group(0, &self.frame_bind_group, &[0]);
+        pass.set_bind_group(3, &self.shared.no_transmission, &[]);
+        self.draw_ordered(
+            gpu,
+            pass,
+            frame.format,
+            frame.depth,
+            frame.samples,
+            &frame.draws,
+            &frame.order,
+        );
+        self.materials.sweep();
+    }
+}
+
+/// A scene drawn as a layer of another renderer.
+pub(crate) struct SceneLayer {
+    scene: Scene,
+    renderer: Option<SceneRenderer>,
+    frame: Option<LayerFrame>,
+    host: Option<Rc<LayerHost>>,
+}
+
+impl SceneLayer {
+    pub(crate) fn new(scene: Scene) -> SceneLayer {
+        SceneLayer {
+            scene,
+            renderer: None,
+            frame: None,
+            host: None,
+        }
+    }
+}
+
+impl Layer for SceneLayer {
+    fn attach(&mut self, host: LayerHost) {
+        let host = Rc::new(host);
+        self.scene.add_layer_host(&host);
+        self.host = Some(host);
+    }
+
+    fn prepare(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, target: &LayerTarget) {
+        if self
+            .renderer
+            .as_ref()
+            .is_none_or(|renderer| renderer.format != target.color_format)
+        {
+            self.renderer = Some(SceneRenderer::new(
+                gpu,
+                target.color_format,
+                self.scene.clone(),
+            ));
+        }
+        if let Some(renderer) = &mut self.renderer {
+            self.frame = Some(renderer.prepare_layer(gpu, encoder, target));
+        }
+    }
+
+    fn draw(&mut self, gpu: &Gpu, pass: &mut wgpu::RenderPass<'_>, _target: &LayerTarget) {
+        if let (Some(renderer), Some(frame)) = (&mut self.renderer, self.frame.take()) {
+            renderer.draw_layer(gpu, pass, &frame);
+        }
+    }
+
+    fn tap(&mut self, point: [f32; 2], target: &LayerTarget) -> bool {
+        let view = Mat4::from_cols_array_2d(&target.view);
+        let view_proj = Mat4::from_cols_array_2d(&target.projection) * view;
+        let size = Vec2::new(target.size.0 as f32, target.size.1 as f32) / target.scale.max(1e-6);
+        let Some(ray) = ray_through(view_proj, Vec2::from(point), size) else {
+            return false;
+        };
+        let eye = view.inverse().transform_point3(Vec3::ZERO);
+        self.scene
+            .raycast_from(ray, eye)
+            .first()
+            .is_some_and(dispatch_tap)
+    }
+}

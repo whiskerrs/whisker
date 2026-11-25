@@ -5,7 +5,8 @@ that a `whisker-scene` model can stand on a `whisker-map` street, hidden by
 the buildings in front of it and under the labels above it, without either
 crate depending on the other.
 
-> **Status.** Step 1 (the `whisker-wgpu` contract) is implemented.
+> **Status.** Steps 1 (the `whisker-wgpu` contract) and 2 (`whisker-scene` as a
+> layer) are implemented.
 
 ---
 
@@ -243,7 +244,7 @@ pub fn scene_content(scene: Scene, children: Children) -> Element;
 
 `SceneContent` provides the same context `SceneView` does, so every scene
 component (`Mesh`, `ModelView`, lights, `Group`, `on_tap`) works unchanged
-inside it. A scene may be both shown in a `SceneView` and drawn as a layer.
+inside it, except `SceneAnchor`, which has no view to place UI over. A scene may be both shown in a `SceneView` and drawn as a layer.
 
 ### What changes inside
 

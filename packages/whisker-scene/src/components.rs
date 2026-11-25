@@ -21,7 +21,7 @@ use crate::core::{
     PostProcessing, Projection, Scene, Shadow, TapHandler, ToneMapping, Transform, rotation_toward,
 };
 use crate::model::{AnimationOptions, AnimationPlayer, Model};
-use crate::raycast::{SceneHit, project};
+use crate::raycast::{SceneHit, dispatch_tap, project};
 
 #[derive(Clone)]
 struct SceneContext {
@@ -33,14 +33,15 @@ struct SceneContext {
 
 fn scene_context(component: &str) -> SceneContext {
     use_context::<SceneContext>()
-        .unwrap_or_else(|| panic!("{component} must be placed inside a SceneView"))
+        .unwrap_or_else(|| panic!("{component} must be placed inside a SceneView or SceneContent"))
 }
 
-/// The scene of the nearest enclosing [`SceneView`].
+/// The scene of the nearest enclosing [`SceneView`] or [`SceneContent`].
 ///
 /// # Panics
 ///
-/// Outside a `SceneView`, or when called from an event handler instead of while rendering.
+/// Outside a `SceneView` or `SceneContent`, or when called from an event handler instead of while
+/// rendering.
 pub fn use_scene() -> Scene {
     scene_context("use_scene").scene
 }
@@ -51,7 +52,8 @@ pub fn use_scene() -> Scene {
 ///
 /// # Panics
 ///
-/// Outside a `SceneView`, or when called from an event handler instead of while rendering.
+/// Outside a `SceneView` or `SceneContent`, or when called from an event handler instead of while
+/// rendering.
 pub fn use_frame(callback: impl FnMut(&FrameInfo) + 'static) {
     let subscription = scene_context("use_frame").scene.on_frame(callback);
     on_cleanup(move || drop(subscription));
@@ -132,15 +134,8 @@ pub fn scene_view(
         let hit = picked
             .ray_from_view(point, size)
             .and_then(|ray| picked.raycast(ray).into_iter().next());
-        if let Some(hit) = &hit {
-            let mut node = Some(hit.node.clone());
-            while let Some(current) = node {
-                if let Some(handler) = current.on_tap() {
-                    handler(hit.clone());
-                    return;
-                }
-                node = current.parent();
-            }
+        if hit.as_ref().is_some_and(dispatch_tap) {
+            return;
         }
         if let Some(on_tap) = on_tap {
             on_tap.run(hit);
@@ -171,6 +166,21 @@ pub fn scene_view(
             Fragment { { projected() } }
         }
     }
+}
+
+/// Declares `scene`'s nodes from the components among `children` without showing it, for a scene
+/// drawn as a layer of another renderer through [`Scene::layer`].
+///
+/// Scene components work in it as in a [`SceneView`], except [`SceneAnchor`], which shows nothing.
+#[component]
+pub fn scene_content(scene: Scene, children: Children) -> Element {
+    provide_context(SceneContext {
+        parent: scene.root(),
+        scene: scene.clone(),
+        view: signal(None),
+    });
+    let projected = children.clone();
+    render! { Fragment { { projected() } } }
 }
 
 /// Places ordinary UI over the point `position` of the enclosing [`SceneView`], such as a label

@@ -54,19 +54,11 @@ impl Scene {
             return None;
         }
         let (camera, projection) = crate::render::camera_for(self);
-        let view_proj = projection.to_matrix(size.x / size.y) * camera.inverse();
-        let inverse = view_proj.inverse();
-        let ndc = Vec2::new(point.x / size.x * 2.0 - 1.0, 1.0 - point.y / size.y * 2.0);
-        let unproject = |depth: f32| {
-            let p = inverse * Vec4::new(ndc.x, ndc.y, depth, 1.0);
-            p.truncate() / p.w
-        };
-        let (near, far) = (unproject(0.0), unproject(1.0));
-        let direction = (far - near).try_normalize()?;
-        Some(Ray {
-            origin: near,
-            direction,
-        })
+        ray_through(
+            projection.to_matrix(size.x / size.y) * camera.inverse(),
+            point,
+            size,
+        )
     }
 
     /// Where `world` appears in a view `size` wide and high, measured from its top-left corner in
@@ -88,10 +80,15 @@ impl Scene {
 
     /// Every visible mesh the ray meets, nearest first.
     pub fn raycast(&self, ray: Ray) -> Vec<SceneHit> {
-        let mut hits = Vec::new();
         let eye = crate::render::camera_for(self)
             .0
             .transform_point3(Vec3::ZERO);
+        self.raycast_from(ray, eye)
+    }
+
+    /// Every visible mesh the ray meets, nearest first, hiding nodes by their distance from `eye`.
+    pub(crate) fn raycast_from(&self, ray: Ray, eye: Vec3) -> Vec<SceneHit> {
+        let mut hits = Vec::new();
         visit(&self.root(), Mat4::IDENTITY, eye, &ray, &mut hits);
         hits.sort_by(|a, b| a.distance.total_cmp(&b.distance));
         // A ray through an edge or corner meets every triangle sharing it.
@@ -100,6 +97,38 @@ impl Scene {
         });
         hits
     }
+}
+
+/// Calls the `on_tap` of the hit node or its nearest ancestor that has one; returns whether one did.
+pub(crate) fn dispatch_tap(hit: &SceneHit) -> bool {
+    let mut node = Some(hit.node.clone());
+    while let Some(current) = node {
+        if let Some(handler) = current.on_tap() {
+            handler(hit.clone());
+            return true;
+        }
+        node = current.parent();
+    }
+    false
+}
+
+/// The ray through `point` of a view `size` wide and high whose clip space `view_proj` maps to.
+pub(crate) fn ray_through(view_proj: Mat4, point: Vec2, size: Vec2) -> Option<Ray> {
+    if size.x <= 0.0 || size.y <= 0.0 {
+        return None;
+    }
+    let inverse = view_proj.inverse();
+    let ndc = Vec2::new(point.x / size.x * 2.0 - 1.0, 1.0 - point.y / size.y * 2.0);
+    let unproject = |depth: f32| {
+        let p = inverse * Vec4::new(ndc.x, ndc.y, depth, 1.0);
+        p.truncate() / p.w
+    };
+    let (near, far) = (unproject(0.0), unproject(1.0));
+    let direction = (far - near).try_normalize()?;
+    Some(Ray {
+        origin: near,
+        direction,
+    })
 }
 
 pub(crate) fn project(view_proj: Mat4, world: Vec3, size: Vec2) -> Option<Vec2> {

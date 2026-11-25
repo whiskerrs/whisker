@@ -10,7 +10,7 @@ use super::pipeline::alpha_tested;
 use super::resources::bind_mesh;
 use super::visibility::{Frustum, visible, world_sphere};
 use super::{Draw, MAX_DIRECTIONAL, MAX_POINT, SceneRenderer};
-use crate::core::{Projection, Shadow};
+use crate::core::Shadow;
 
 /// Layers of the one shadow map array, spent as directional cascades and point-light faces.
 pub(super) const MAX_SHADOW_LAYERS: usize = 16;
@@ -59,12 +59,16 @@ pub(super) struct ShadowPlan {
 #[derive(Clone, Copy)]
 pub(super) struct Eye {
     pub(super) world: Mat4,
-    pub(super) projection: Projection,
-    pub(super) aspect: f32,
+    pub(super) projection: Mat4,
 }
 
 /// Lights past the layer budget, or past the shader's light limits, cast no shadow.
-pub(super) fn plan(collected: &Collected, eye: Eye, max_size: u32) -> ShadowPlan {
+pub(super) fn plan(
+    collected: &Collected,
+    eye: Eye,
+    reach_within_far: bool,
+    max_size: u32,
+) -> ShadowPlan {
     let directional = &collected.directional[..collected.directional.len().min(MAX_DIRECTIONAL)];
     let point = &collected.point[..collected.point.len().min(MAX_POINT)];
     let size = directional
@@ -93,7 +97,11 @@ pub(super) fn plan(collected: &Collected, eye: Eye, max_size: u32) -> ShadowPlan
                 return None;
             }
             let (near, far) = depth_range(eye.projection);
-            let reach = shadow.distance.clamp(near * 2.0, far);
+            let reach = if reach_within_far {
+                shadow.distance.clamp(near * 2.0, far)
+            } else {
+                shadow.distance.max(near * 2.0)
+            };
             let splits = splits(near, reach, count);
             let mut texel = [0.0; MAX_CASCADES];
             let first = plan.layers.len();
@@ -140,12 +148,19 @@ pub(super) fn plan(collected: &Collected, eye: Eye, max_size: u32) -> ShadowPlan
     plan
 }
 
-fn depth_range(projection: Projection) -> (f32, f32) {
-    match projection {
-        Projection::Perspective { near, far, .. } | Projection::Orthographic { near, far, .. } => {
-            (near.max(1e-4), far.max(near + 1e-3))
-        }
-    }
+fn depth_range(projection: Mat4) -> (f32, f32) {
+    let inverse = projection.inverse();
+    let depth = |z: f32| -inverse.project_point3(Vec3::new(0.0, 0.0, z)).z;
+    let (near, far) = (depth(0.0), depth(1.0));
+    let near = near.max(1e-4);
+    (
+        near,
+        if far.is_finite() {
+            far.max(near + 1e-3)
+        } else {
+            near * 1e4
+        },
+    )
 }
 
 /// The view depth each of `count` cascades reaches, blending logarithmic and even spacing.
@@ -162,21 +177,15 @@ pub(super) fn splits(near: f32, far: f32, count: usize) -> [f32; MAX_CASCADES] {
 
 /// The corners, in view space, of the slice of the view between depths `near` and `far`.
 fn slice_corners(eye: Eye, near: f32, far: f32) -> [Vec3; 8] {
-    let half = |depth: f32| match eye.projection {
-        Projection::Perspective { fov_y, .. } => {
-            let y = depth * (fov_y / 2.0).tan();
-            (y * eye.aspect, y)
-        }
-        Projection::Orthographic { height, .. } => (height / 2.0 * eye.aspect, height / 2.0),
-    };
+    let inverse = eye.projection.inverse();
     let mut corners = [Vec3::ZERO; 8];
     for (slice, depth) in [near, far].into_iter().enumerate() {
-        let (x, y) = half(depth);
+        let z = eye.projection.project_point3(Vec3::new(0.0, 0.0, -depth)).z;
         for (corner, (sx, sy)) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
             .into_iter()
             .enumerate()
         {
-            corners[slice * 4 + corner] = Vec3::new(sx * x, sy * y, -depth);
+            corners[slice * 4 + corner] = inverse.project_point3(Vec3::new(sx, sy, z));
         }
     }
     corners
