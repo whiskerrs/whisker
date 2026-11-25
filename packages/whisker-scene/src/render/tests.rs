@@ -101,6 +101,29 @@ fn render(gpu: &Gpu, scene: Scene) -> Vec<[u8; 4]> {
 
 /// Renders `scene` into a `format` target, as one first frame.
 fn render_into(gpu: &Gpu, scene: Scene, format: wgpu::TextureFormat) -> Vec<[u8; 4]> {
+    let mut renderer = sized_renderer(gpu, scene, format);
+    draw_frame(gpu, &mut renderer, format)
+}
+
+fn sized_renderer(gpu: &Gpu, scene: Scene, format: wgpu::TextureFormat) -> SceneRenderer {
+    let mut renderer = SceneRenderer::new(gpu, format, scene);
+    renderer.resize(
+        gpu,
+        SurfaceSize {
+            width: SIZE,
+            height: SIZE,
+            scale: 1.0,
+        },
+    );
+    renderer
+}
+
+/// Renders one frame of `renderer` into a fresh `format` target and reads it back.
+fn draw_frame(
+    gpu: &Gpu,
+    renderer: &mut SceneRenderer,
+    format: wgpu::TextureFormat,
+) -> Vec<[u8; 4]> {
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -115,15 +138,6 @@ fn render_into(gpu: &Gpu, scene: Scene, format: wgpu::TextureFormat) -> Vec<[u8;
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    let mut renderer = SceneRenderer::new(gpu, format, scene);
-    renderer.resize(
-        gpu,
-        SurfaceSize {
-            width: SIZE,
-            height: SIZE,
-            scale: 1.0,
-        },
-    );
     renderer.render(
         gpu,
         &texture.create_view(&Default::default()),
@@ -348,6 +362,31 @@ fn a_shadowing_sun_darkens_the_floor_behind_a_mesh() {
         let pixels = render(gpu, scene);
         let shadowed = floor_pixel(&pixels, view_proj, -1.5, 0.0);
         let lit = floor_pixel(&pixels, view_proj, 1.5, 0.0);
+        assert!(shadowed[0] < 20, "shadowed {shadowed:?}");
+        assert!(lit[0] > 200, "lit {lit:?}");
+    });
+}
+
+#[test]
+fn views_share_their_frame_targets_without_mixing_frames() {
+    with_gpu(|gpu| {
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let (shaded, _, _, view_proj) = shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::Y * 1.5);
+        shaded.root().add_child(&sun(Some(SUN_SHADOW)));
+        let (clear, _, _, _) = shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::X * 4.0);
+        clear.root().add_child(&sun(Some(SUN_SHADOW)));
+        let mut first = sized_renderer(gpu, shaded, format);
+        let mut second = sized_renderer(gpu, clear, format);
+        draw_frame(gpu, &mut first, format);
+        let clear_pixels = draw_frame(gpu, &mut second, format);
+        let shaded_pixels = draw_frame(gpu, &mut first, format);
+        assert!(Rc::ptr_eq(&first.shadow_maps, &second.shadow_maps));
+        assert!(Rc::ptr_eq(
+            first.attachments.as_ref().unwrap(),
+            second.attachments.as_ref().unwrap()
+        ));
+        let shadowed = floor_pixel(&shaded_pixels, view_proj, -1.5, 0.0);
+        let lit = floor_pixel(&clear_pixels, view_proj, -1.5, 0.0);
         assert!(shadowed[0] < 20, "shadowed {shadowed:?}");
         assert!(lit[0] > 200, "lit {lit:?}");
     });
@@ -707,6 +746,48 @@ fn flat_regions_pass_through_the_post_chain_unchanged() {
         );
         assert_eq!(pixel(&pixels, SIZE / 2, SIZE / 2), [255, 0, 0, 255]);
         assert_eq!(pixel(&pixels, 0, 0), [0, 0, 255, 255]);
+    });
+}
+
+#[test]
+fn views_with_different_post_chains_share_targets_without_mixing_frames() {
+    with_gpu(|gpu| {
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let bloom = || {
+            post_stage(
+                0.5,
+                PostProcessing {
+                    bloom: Some(Bloom {
+                        threshold: 0.5,
+                        intensity: 1.0,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+        };
+        let fxaa = || {
+            post_stage(
+                1.0,
+                PostProcessing {
+                    fxaa: true,
+                    ..Default::default()
+                },
+            )
+        };
+        let bloom_alone = render(gpu, bloom());
+        let fxaa_alone = render(gpu, fxaa());
+        let mut first = sized_renderer(gpu, bloom(), format);
+        let mut second = sized_renderer(gpu, fxaa(), format);
+        draw_frame(gpu, &mut first, format);
+        let fxaa_shared = draw_frame(gpu, &mut second, format);
+        let bloom_shared = draw_frame(gpu, &mut first, format);
+        assert!(Rc::ptr_eq(
+            first.post.as_ref().unwrap(),
+            second.post.as_ref().unwrap()
+        ));
+        assert!(bloom_shared == bloom_alone);
+        assert!(fxaa_shared == fxaa_alone);
     });
 }
 

@@ -63,15 +63,15 @@ pub(crate) struct SceneRenderer {
     staging: Vec<u8>,
     size: (u32, u32),
     scale: f32,
-    attachments: Option<Attachments>,
+    attachments: Option<Rc<Attachments>>,
     materials: MaterialCache,
-    shadow_maps: ShadowMaps,
+    shadow_maps: Rc<ShadowMaps>,
     shadow_view_buffer: wgpu::Buffer,
     shadow_view_bind_group: wgpu::BindGroup,
     shadow_view_stride: u64,
     bound_environment: Option<Environment>,
-    post: Option<PostTargets>,
-    transmission: Option<TransmissionTarget>,
+    post: Option<Rc<PostTargets>>,
+    transmission: Option<Rc<TransmissionTarget>>,
     time: f32,
     started: Option<Duration>,
     /// Point and spot lights, one row of four texels each.
@@ -102,7 +102,9 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let shadow_maps = ShadowMaps::new(gpu, 1, 1);
+        let shadow_maps = shared
+            .shadow_maps
+            .get(|maps| maps.size == 1, || ShadowMaps::new(gpu, 1, 1));
         let light_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("whisker-scene lights"),
             size: wgpu::Extent3d {
@@ -193,7 +195,10 @@ impl SceneRenderer {
             return;
         }
         if !maps_fit {
-            self.shadow_maps = ShadowMaps::new(gpu, plan.size, plan.layers.len());
+            self.shadow_maps = self.shared.shadow_maps.get(
+                |maps| maps.fits(plan),
+                || ShadowMaps::new(gpu, plan.size, plan.layers.len()),
+            );
         }
         self.bound_environment = environment.cloned();
         let cube = match environment {
@@ -224,33 +229,40 @@ impl SceneRenderer {
         {
             self.attachments = None;
         }
-        let (width, height) = self.size;
+        let size = self.size;
+        let (width, height) = size;
+        let shared = self.shared.clone();
         let attachments = self.attachments.get_or_insert_with(|| {
-            let texture = |label, format| {
-                gpu.device
-                    .create_texture(&wgpu::TextureDescriptor {
-                        label: Some(label),
-                        size: wgpu::Extent3d {
-                            width,
-                            height,
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: samples,
-                        dimension: wgpu::TextureDimension::D2,
+            shared.attachments.get(
+                |a| a.size == size && a.format == format && a.samples == samples,
+                || {
+                    let texture = |label, format| {
+                        gpu.device
+                            .create_texture(&wgpu::TextureDescriptor {
+                                label: Some(label),
+                                size: wgpu::Extent3d {
+                                    width,
+                                    height,
+                                    depth_or_array_layers: 1,
+                                },
+                                mip_level_count: 1,
+                                sample_count: samples,
+                                dimension: wgpu::TextureDimension::D2,
+                                format,
+                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                view_formats: &[],
+                            })
+                            .create_view(&Default::default())
+                    };
+                    Attachments {
+                        size,
                         format,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                        view_formats: &[],
-                    })
-                    .create_view(&Default::default())
-            };
-            Attachments {
-                size: (width, height),
-                format,
-                samples,
-                depth: texture("whisker-scene depth", DEPTH_FORMAT),
-                msaa: (samples > 1).then(|| texture("whisker-scene msaa", format)),
-            }
+                        samples,
+                        depth: texture("whisker-scene depth", DEPTH_FORMAT),
+                        msaa: (samples > 1).then(|| texture("whisker-scene msaa", format)),
+                    }
+                },
+            )
         });
         (attachments.depth.clone(), attachments.msaa.clone())
     }
@@ -308,7 +320,12 @@ impl Renderer for SceneRenderer {
             .as_ref()
             .is_none_or(|post| post.size() != self.size)
         {
-            self.post = Some(PostTargets::new(gpu, self.size));
+            let size = self.size;
+            self.post = Some(
+                self.shared
+                    .post_targets
+                    .get(|post| post.size() == size, || PostTargets::new(gpu, size)),
+            );
         }
         let order = draw_order(&collected.draws, view, &frustum);
         let transmits = order
@@ -321,7 +338,11 @@ impl Renderer for SceneRenderer {
             .as_ref()
             .is_none_or(|target| target.size != self.size)
         {
-            self.transmission = Some(TransmissionTarget::new(gpu, &self.shared, self.size));
+            let size = self.size;
+            self.transmission = Some(self.shared.transmission_targets.get(
+                |target| target.size == size,
+                || TransmissionTarget::new(gpu, &self.shared, size),
+            ));
         }
         let started = *self.started.get_or_insert(frame.timestamp);
         self.time = frame.timestamp.saturating_sub(started).as_secs_f32();
