@@ -548,9 +548,10 @@ pub(crate) fn vector_content(
         {
             continue;
         }
-        // A tile is drawn up to a zoom past its own, without limit at the source's last zoom.
+        // As in MapLibre, a tile carries a layer from the whole zoom its minimum falls in, and at the
+        // source's last zoom without limit.
         let overzoomed = id.z >= max_zoom;
-        if (!overzoomed && zoom + 1.0 < layer.min_zoom) || zoom >= layer.max_zoom {
+        if (!overzoomed && zoom < layer.min_zoom.floor()) || zoom >= layer.max_zoom {
             continue;
         }
         let Some((source_index, source_layer)) = decoded.iter().enumerate().find(|(_, l)| {
@@ -618,3 +619,6 @@ fn decode_dem(image: &image::RgbaImage, terrarium: bool) -> Dem {
     }
     Dem { size, heights }
 }
+
+#[cfg(test)]
+mod tests;

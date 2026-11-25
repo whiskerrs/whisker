@@ -869,7 +869,12 @@ impl MapRenderer {
         for (id, source) in &style.sources {
             source.begin_frame();
             let z = source.ideal_zoom(zoom);
-            let min_z = source.source.borrow().min_zoom;
+            let min_z = source
+                .source
+                .borrow()
+                .min_zoom
+                .max(extrusion_floor(&style.layers, id, zoom))
+                .min(z);
             let wanted = if view.globe > 0.0 {
                 view.covering_tiles_globe(z, 400)
             } else {
@@ -1529,6 +1534,21 @@ impl Renderer for MapRenderer {
         gpu.queue.submit([encoder.finish()]);
         map.end_frame(&view);
     }
+}
+
+/// The lowest tile zoom a pitched view may fall back to for `source`: tiles below a shown
+/// extrusion's minimum zoom carry no heights, so distant buildings would go flat.
+pub(crate) fn extrusion_floor(layers: &[Arc<Layer>], source: &str, zoom: f64) -> u8 {
+    layers
+        .iter()
+        .filter(|layer| {
+            layer.kind == LayerKind::FillExtrusion
+                && layer.source.as_deref() == Some(source)
+                && layer.shown_at(zoom)
+        })
+        .map(|layer| layer.min_zoom.floor().clamp(0.0, f64::from(u8::MAX)) as u8)
+        .max()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
