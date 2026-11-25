@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use glam::Mat4;
 use whisker_wgpu::{Gpu, wgpu};
 
+use super::pipeline::alpha_tested;
 use super::resources::{GpuTexture, bind_mesh, texture};
 use super::shadow::{MAX_SHADOW_LAYERS, SHADOW_FORMAT};
 use super::visibility::Ordered;
@@ -309,13 +310,18 @@ impl SceneRenderer {
             }),
             ..Default::default()
         });
-        pass.set_pipeline(shared.depth_pipeline(gpu));
         pass.set_bind_group(0, &self.shadow_view_bind_group, &[slot as u32]);
+        let mut bound = None;
         for ordered in order.iter().filter(|ordered| !ordered.blended) {
             let draw = &draws[ordered.index];
             let Some((count, instances)) = bind_mesh(gpu, &shared, &mut pass, draw) else {
                 continue;
             };
+            let tested = alpha_tested(&draw.material);
+            if bound != Some(tested) {
+                pass.set_pipeline(shared.depth_pipeline(gpu, tested));
+                bound = Some(tested);
+            }
             let offset = (ordered.index as u64 * self.draw_stride) as u32;
             pass.set_bind_group(1, &self.draw_bind_group, &[offset]);
             pass.set_bind_group(

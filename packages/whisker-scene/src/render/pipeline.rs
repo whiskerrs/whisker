@@ -98,8 +98,9 @@ pub(super) struct Shared {
     sky_pipelines: RefCell<HashMap<(wgpu::TextureFormat, u32), wgpu::RenderPipeline>>,
     shadow_pipeline_layout: wgpu::PipelineLayout,
     shadow_shader: wgpu::ShaderModule,
-    shadow_pipeline: OnceCell<wgpu::RenderPipeline>,
-    depth_pipeline: OnceCell<wgpu::RenderPipeline>,
+    /// Depth-only pipelines by whether they run the alpha-testing fragment stage.
+    shadow_pipelines: [OnceCell<wgpu::RenderPipeline>; 2],
+    depth_pipelines: [OnceCell<wgpu::RenderPipeline>; 2],
     post: OnceCell<PostShared>,
     pub(super) shadow_maps: Pool<ShadowMaps>,
     pub(super) attachments: Pool<Attachments>,
@@ -145,6 +146,7 @@ pub(super) struct PipelineKey {
     pub(super) shader: usize,
     /// Draws with a mirroring transform, whose triangles wind the other way.
     pub(super) mirrored: bool,
+    pub(super) masked: bool,
 }
 
 /// The texture slots of the shader's material bind group, in binding order.
@@ -375,8 +377,8 @@ impl Shared {
             sky_pipelines: RefCell::new(HashMap::new()),
             shadow_pipeline_layout,
             shadow_shader,
-            shadow_pipeline: OnceCell::new(),
-            depth_pipeline: OnceCell::new(),
+            shadow_pipelines: Default::default(),
+            depth_pipelines: Default::default(),
             post: OnceCell::new(),
             no_transmission,
             transmission_layout,
@@ -489,20 +491,21 @@ impl Shared {
     }
 
     /// Renders casters' depth from a light, culling no faces so open and inside-out meshes cast too.
-    pub(super) fn shadow_pipeline(&self, gpu: &Gpu) -> &wgpu::RenderPipeline {
+    pub(super) fn shadow_pipeline(&self, gpu: &Gpu, alpha_tested: bool) -> &wgpu::RenderPipeline {
         let bias = wgpu::DepthBiasState {
             constant: 2,
             slope_scale: 2.0,
             clamp: 0.0,
         };
-        self.shadow_pipeline
-            .get_or_init(|| self.depth_only(gpu, "whisker-scene shadow", bias))
+        self.shadow_pipelines[usize::from(alpha_tested)]
+            .get_or_init(|| self.depth_only(gpu, "whisker-scene shadow", bias, alpha_tested))
     }
 
     /// Renders the camera's depth for post-processing, unbiased so grazing walls stay in place.
-    pub(super) fn depth_pipeline(&self, gpu: &Gpu) -> &wgpu::RenderPipeline {
-        self.depth_pipeline
-            .get_or_init(|| self.depth_only(gpu, "whisker-scene depth", Default::default()))
+    pub(super) fn depth_pipeline(&self, gpu: &Gpu, alpha_tested: bool) -> &wgpu::RenderPipeline {
+        self.depth_pipelines[usize::from(alpha_tested)].get_or_init(|| {
+            self.depth_only(gpu, "whisker-scene depth", Default::default(), alpha_tested)
+        })
     }
 
     fn depth_only(
@@ -510,6 +513,7 @@ impl Shared {
         gpu: &Gpu,
         label: &str,
         bias: wgpu::DepthBiasState,
+        alpha_tested: bool,
     ) -> wgpu::RenderPipeline {
         gpu.device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -521,7 +525,7 @@ impl Shared {
                     compilation_options: Default::default(),
                     buffers: &[Some(vertex_layout()), Some(instance_layout())],
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: alpha_tested.then(|| wgpu::FragmentState {
                     module: &self.shadow_shader,
                     entry_point: Some("fs"),
                     compilation_options: Default::default(),
@@ -549,6 +553,7 @@ impl Shared {
             double_sided,
             mirrored,
             shader,
+            masked,
         } = key;
         let custom = self.custom_shaders.borrow();
         let module = custom
@@ -570,7 +575,7 @@ impl Shared {
                         },
                         fragment: Some(wgpu::FragmentState {
                             module,
-                            entry_point: Some("fs"),
+                            entry_point: Some(if masked { "fs_masked" } else { "fs" }),
                             compilation_options: Default::default(),
                             targets: &[Some(wgpu::ColorTargetState {
                                 format,
@@ -754,6 +759,20 @@ pub(crate) fn translucent(material: &Material) -> bool {
 /// Whether `material` shows the opaque scene through itself.
 pub(super) fn transmissive(material: &Material) -> bool {
     matches!(material, Material::Standard(standard) if standard.transmission > 0.0)
+}
+
+/// Whether `material` discards fragments below its mask cutoff.
+pub(super) fn masked(material: &Material) -> bool {
+    match material {
+        Material::Standard(standard) => matches!(standard.alpha_mode, AlphaMode::Mask(_)),
+        Material::Custom(custom) => matches!(custom.alpha_mode, AlphaMode::Mask(_)),
+        Material::Unlit { .. } => false,
+    }
+}
+
+/// Whether `material` can leave holes in a depth-only pass, which needs its fragment stage.
+pub(super) fn alpha_tested(material: &Material) -> bool {
+    masked(material) || translucent(material)
 }
 
 pub(super) fn double_sided(material: &Material) -> bool {

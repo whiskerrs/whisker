@@ -25,7 +25,7 @@ use crate::core::{
 use collect::radiance;
 use pipeline::{
     DirectionalUniform, DrawUniform, FrameUniform, PipelineKey, PointUniform, Shared, double_sided,
-    draw_buffer, draw_uniform, shared, transmissive,
+    draw_buffer, draw_uniform, masked, shared, transmissive,
 };
 use post::PostTargets;
 use resources::{MaterialCache, bind_mesh, environment_cube};
@@ -709,6 +709,7 @@ impl SceneRenderer {
                     double_sided: double_sided(material),
                     mirrored: model.determinant() < 0.0,
                     shader: shared.shader_key(gpu, material),
+                    masked: masked(material),
                 },
             ));
             let offset = (ordered.index as u64 * self.draw_stride) as u32;
