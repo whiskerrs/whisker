@@ -1013,6 +1013,10 @@ impl Layer for SceneLayer {
         self.host = Some(host);
     }
 
+    fn detach(&mut self) {
+        self.host = None;
+    }
+
     fn prepare(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, target: &LayerTarget) {
         if self
             .renderer

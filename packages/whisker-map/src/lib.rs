@@ -39,7 +39,7 @@ mod work;
 mod worker;
 
 pub use camera::{MAX_PITCH, MAX_ZOOM, MIN_ZOOM, MapCamera};
-pub use components::{MapView, Marker};
+pub use components::{MapLayer, MapView, Marker};
 pub use events::{EventCallback, MapSourceData, SourceDataCallback};
 pub use geo::LatLng;
 pub use handle::MapRef;

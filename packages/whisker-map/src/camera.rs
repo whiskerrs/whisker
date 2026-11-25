@@ -8,6 +8,8 @@ use crate::geo::{
 };
 use crate::style::MapProjection;
 
+const EARTH_CIRCUMFERENCE: f64 = 40_075_016.686;
+
 /// MapLibre's vertical field of view.
 const FOV_Y: f64 = 0.643_501_108_793_284_4;
 
@@ -64,6 +66,10 @@ pub(crate) struct View {
     pub center: DVec2,
     pub camera_to_center: f64,
     pub proj: DMat4,
+    /// World pixels to the camera's view space, and view space to clip space; `proj` is their
+    /// product.
+    pub eye: DMat4,
+    pub perspective: DMat4,
     pub inverse: DMat4,
     pub projection: MapProjection,
     /// How far the map has turned into a globe, from 0 for flat Mercator to 1.
@@ -72,6 +78,8 @@ pub(crate) struct View {
     /// Takes unit vectors from the Earth's center, in Earth-fixed axes, to clip space.
     pub globe_matrix: DMat4,
     pub globe_inverse: DMat4,
+    /// Earth-fixed unit vectors to world pixels.
+    pub globe_world: DMat4,
     /// The unit direction from the Earth's center to the camera.
     pub camera_dir: DVec3,
     /// The dot product with `camera_dir` below which the globe is past the horizon.
@@ -121,7 +129,8 @@ impl View {
             * DMat4::from_rotation_x(pitch)
             * DMat4::from_rotation_z(-bearing)
             * DMat4::from_translation(DVec3::new(-center.x, -center.y, 0.0));
-        let proj = DMat4::perspective_rh(FOV_Y, width / height, near, far) * eye;
+        let perspective = DMat4::perspective_rh(FOV_Y, width / height, near, far);
+        let proj = perspective * eye;
 
         let globe = match projection {
             MapProjection::Mercator => 0.0,
@@ -159,12 +168,15 @@ impl View {
             center,
             camera_to_center,
             proj,
+            eye,
+            perspective,
             inverse: proj.inverse(),
             projection,
             globe,
             globe_radius,
             globe_matrix,
             globe_inverse: globe_matrix.inverse(),
+            globe_world: to_world,
             camera_dir: eye_unit / distance,
             horizon: 1.0 / distance,
         }
@@ -200,10 +212,44 @@ impl View {
         self.world_to_screen(DVec3::new(x, y, 0.0))
     }
 
+    /// Takes a layer's local space, meters with +X east, +Y up and -Z north on the ground at
+    /// `anchor`, to the camera's view space; `None` while `anchor` is past the globe's horizon.
+    pub fn layer_view(&self, anchor: LatLng) -> Option<DMat4> {
+        let (mx, my) = mercator(anchor);
+        let up = globe_unit(mx, my);
+        if self.globe > 0.0 && up.dot(self.camera_dir) < self.horizon {
+            return None;
+        }
+        let meters = self.world_size / (EARTH_CIRCUMFERENCE * anchor.lat.to_radians().cos());
+        let flat =
+            DMat4::from_translation(DVec3::new(mx * self.world_size, my * self.world_size, 0.0))
+                * DMat4::from_cols(
+                    DVec4::new(meters, 0.0, 0.0, 0.0),
+                    DVec4::new(0.0, 0.0, meters, 0.0),
+                    DVec4::new(0.0, meters, 0.0, 0.0),
+                    DVec4::W,
+                );
+        if self.globe <= 0.0 {
+            return Some(self.eye * flat);
+        }
+        let east = DVec3::new(-up.y, up.x, 0.0).normalize_or(DVec3::Y);
+        let north = up.cross(east);
+        let unit = 2.0 * std::f64::consts::PI / EARTH_CIRCUMFERENCE;
+        let round = self.globe_world
+            * DMat4::from_cols(
+                (east * unit).extend(0.0),
+                (up * unit).extend(0.0),
+                (-north * unit).extend(0.0),
+                up.extend(1.0),
+            );
+        let blend = |a: DMat4, b: DMat4| a * (1.0 - self.globe) + b * self.globe;
+        Some(self.eye * blend(flat, round))
+    }
+
     /// World pixels per meter at the center's latitude.
     pub fn pixels_per_meter(&self) -> f64 {
         let lat = self.camera.center.lat.to_radians();
-        self.world_size / (40_075_016.686 * lat.cos())
+        self.world_size / (EARTH_CIRCUMFERENCE * lat.cos())
     }
 
     /// The screen point of a world point, or `None` behind the camera or past the horizon.
@@ -691,5 +737,81 @@ mod tests {
         let tiles = pitched.covering_tiles(14, 0, 200);
         assert!(tiles.iter().any(|t| t.id.z < 14));
         assert!(tiles.iter().any(|t| t.id.z == 14));
+    }
+
+    /// Where `local`, in the layer space around `anchor`, lands on screen.
+    fn layer_point(view: &View, anchor: LatLng, local: DVec3) -> DVec2 {
+        let clip = view.perspective * view.layer_view(anchor).unwrap() * local.extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        DVec2::new(
+            (ndc.x + 1.0) / 2.0 * view.width,
+            (1.0 - ndc.y) / 2.0 * view.height,
+        )
+    }
+
+    /// `place` moved `east` and `north` meters, on a sphere.
+    fn offset(place: LatLng, east: f64, north: f64) -> LatLng {
+        let degrees = 360.0 / EARTH_CIRCUMFERENCE;
+        LatLng::new(
+            place.lat + north * degrees,
+            place.lng + east * degrees / place.lat.to_radians().cos(),
+        )
+    }
+
+    #[test]
+    fn layer_space_is_meters_east_up_and_south_of_the_anchor() {
+        let view = View::new(camera(16.0, 30.0, 50.0), 800.0, 600.0);
+        let anchor = offset(view.camera.center, 120.0, -80.0);
+        for (local, east, north) in [
+            (DVec3::ZERO, 0.0, 0.0),
+            (DVec3::new(100.0, 0.0, 0.0), 100.0, 0.0),
+            (DVec3::new(0.0, 0.0, -100.0), 0.0, 100.0),
+            (DVec3::new(-60.0, 0.0, 40.0), -60.0, -40.0),
+        ] {
+            let drawn = layer_point(&view, anchor, local);
+            let expected = view.project(offset(anchor, east, north)).unwrap();
+            assert!(
+                drawn.distance(expected) < 0.05,
+                "{local}: {drawn} vs {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn layer_space_winds_like_a_scene_and_scales_evenly() {
+        let view = View::new(camera(17.0, -40.0, 60.0), 800.0, 600.0);
+        let local = view.layer_view(view.camera.center).unwrap();
+        assert!(local.determinant() > 0.0);
+        let lengths =
+            [local.x_axis, local.y_axis, local.z_axis].map(|axis| axis.truncate().length());
+        assert!(
+            (lengths[0] - lengths[1]).abs() < lengths[0] * 1e-9,
+            "{lengths:?}"
+        );
+        assert!(
+            (lengths[0] - lengths[2]).abs() < lengths[0] * 1e-9,
+            "{lengths:?}"
+        );
+    }
+
+    #[test]
+    fn on_the_globe_layer_space_sits_on_the_tangent_plane_and_hides_past_the_horizon() {
+        let view = View::projected(camera(3.0, 20.0, 0.0), 800.0, 600.0, MapProjection::Globe);
+        assert_eq!(view.globe, 1.0);
+        let anchor = offset(view.camera.center, 300_000.0, 200_000.0);
+        for (local, east, north) in [
+            (DVec3::ZERO, 0.0, 0.0),
+            (DVec3::new(2_000.0, 0.0, 0.0), 2_000.0, 0.0),
+            (DVec3::new(0.0, 0.0, -2_000.0), 0.0, 2_000.0),
+        ] {
+            let drawn = layer_point(&view, anchor, local);
+            let expected = view.project(offset(anchor, east, north)).unwrap();
+            assert!(
+                drawn.distance(expected) < 0.01,
+                "{local}: {drawn} vs {expected}"
+            );
+        }
+        let far_side = LatLng::new(-view.camera.center.lat, view.camera.center.lng - 180.0);
+        assert!(view.layer_view(far_side).is_none());
     }
 }

@@ -33,6 +33,8 @@ pub struct LayerTarget {
 pub trait Layer: 'static {
     /// Called once, before the first frame, with the host that draws it.
     fn attach(&mut self, _host: LayerHost) {}
+    /// Called when the host stops drawing the layer; it should drop the [`LayerHost`] it was given.
+    fn detach(&mut self) {}
     /// Before the host's pass begins: offscreen passes such as shadow maps.
     fn prepare(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, target: &LayerTarget);
     /// Inside the host's pass, depth-tested against what the host drew so far.

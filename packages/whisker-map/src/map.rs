@@ -7,7 +7,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use whisker::RwSignal;
 use whisker_surface::{FrameInfo, SurfaceSize, WeakSurface};
-use whisker_wgpu::wgpu;
+use whisker_wgpu::{LayerHandle, LayerHost, LayerTarget, wgpu};
 
 use crate::animation::{Animation, clamp_center, normalize_bearing};
 use crate::camera::{MAX_PITCH, MAX_ZOOM, MIN_ZOOM, MapCamera, View, min_zoom};
@@ -34,6 +34,14 @@ pub(crate) struct StyleState {
     pub on_change: Rc<dyn Fn()>,
 }
 
+/// A layer the map draws, where it sits, and the target of the last frame that drew it.
+pub(crate) struct LayerSlot {
+    pub layer: LayerHandle,
+    pub anchor: Cell<LatLng>,
+    pub before: RefCell<Option<String>>,
+    pub target: Cell<Option<LayerTarget>>,
+}
+
 /// A marker's place and where the last frame put it on screen.
 pub(crate) struct MarkerSlot {
     pub position: Cell<LatLng>,
@@ -49,6 +57,8 @@ pub(crate) struct MapInner {
     surface: RefCell<Option<WeakSurface>>,
     animation: RefCell<Option<Animation>>,
     markers: RefCell<Vec<Weak<MarkerSlot>>>,
+    layers: RefCell<Vec<Rc<LayerSlot>>>,
+    layer_host: RefCell<Option<LayerHost>>,
     /// The loaded style document and the URL it came from, which `add_source` and `add_layer` edit.
     document: RefCell<Option<(serde_json::Value, Option<String>)>>,
     /// Edits the app made before the style document loaded.
@@ -87,6 +97,8 @@ impl MapInner {
             surface: RefCell::new(None),
             animation: RefCell::new(None),
             markers: RefCell::new(Vec::new()),
+            layers: RefCell::new(Vec::new()),
+            layer_host: RefCell::new(None),
             document: RefCell::new(None),
             pending_edits: RefCell::new(Vec::new()),
             pending_geojson: RefCell::new(HashMap::new()),
@@ -205,6 +217,7 @@ impl MapInner {
     }
 
     pub fn set_surface(&self, surface: WeakSurface) {
+        *self.layer_host.borrow_mut() = Some(LayerHost::new(surface.clone()));
         *self.surface.borrow_mut() = Some(surface);
     }
 
@@ -318,6 +331,40 @@ impl MapInner {
         markers.push(Rc::downgrade(slot));
         drop(markers);
         self.request_frame();
+    }
+
+    /// Draws `slot` above the layers added before it, until [`MapInner::remove_layer`].
+    pub fn add_layer(&self, slot: Rc<LayerSlot>) {
+        let host = self.layer_host.borrow().as_ref().map(LayerHost::separate);
+        self.layers.borrow_mut().push(slot.clone());
+        if let Some(host) = host {
+            slot.layer.borrow_mut().attach(host);
+        }
+        self.request_frame();
+    }
+
+    pub fn remove_layer(&self, slot: &Rc<LayerSlot>) {
+        self.layers
+            .borrow_mut()
+            .retain(|kept| !Rc::ptr_eq(kept, slot));
+        slot.layer.borrow_mut().detach();
+        self.request_frame();
+    }
+
+    /// The layers in drawing order.
+    pub fn layers(&self) -> Vec<Rc<LayerSlot>> {
+        self.layers.borrow().clone()
+    }
+
+    /// Offers a tap to the layers from the top down; returns whether one took it.
+    pub fn tap_layers(&self, point: DVec2) -> bool {
+        self.layers().iter().rev().any(|slot| {
+            slot.target.get().is_some_and(|target| {
+                slot.layer
+                    .borrow_mut()
+                    .tap([point.x as f32, point.y as f32], &target)
+            })
+        })
     }
 
     /// Advances any motion and resolves the camera for the frame about to draw.
