@@ -5,8 +5,8 @@ that a `whisker-scene` model can stand on a `whisker-map` street, hidden by
 the buildings in front of it and under the labels above it, without either
 crate depending on the other.
 
-> **Status.** Steps 1 (the `whisker-wgpu` contract) and 2 (`whisker-scene` as a
-> layer) are implemented.
+> **Status.** Steps 1 to 3 are implemented: the `whisker-wgpu` contract,
+> `whisker-scene` as a layer, and `MapLayer` in `whisker-map`.
 
 ---
 
@@ -82,6 +82,8 @@ pub struct LayerTarget {
 pub trait Layer: 'static {
     /// Called once, before the first frame, with the host that draws it.
     fn attach(&mut self, _host: LayerHost) {}
+    /// Called when the host stops drawing it; the layer drops its `LayerHost`.
+    fn detach(&mut self) {}
     /// Before the host's pass begins: offscreen passes such as shadow maps.
     fn prepare(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, target: &LayerTarget);
     /// Inside the host's pass, depth-tested against what the host drew so far.
@@ -217,8 +219,10 @@ same factor tiles use.
   buildings, and one drawn before it hides the buildings behind it. Flat layers
   test with `Always`, so a flat layer drawn after a layer paints over it: the
   usual place for `before` is the first symbol layer after the extrusions.
-- After a layer draws, the map re-binds groups 0 and 2 and forgets its current
-  pipeline.
+- After a layer draws, the map re-binds groups 0 and 2, resets the viewport and
+  scissor, and forgets its current pipeline.
+- The map keeps one `LayerHost` and gives each `MapLayer` a `separate` handle;
+  unmounting a `MapLayer` calls `detach`, which withdraws its continuous request.
 
 ### Taps
 
