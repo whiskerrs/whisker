@@ -80,6 +80,9 @@ pub(crate) struct SceneRenderer {
     light_texture: wgpu::Texture,
     light_view: wgpu::TextureView,
     pub(crate) on_draw: Option<DrawHook>,
+    /// Layers keep their own shadow maps: a host prepares every layer before submitting any, so a
+    /// pooled map would be overwritten by the next layer before this one draws.
+    pooled_shadows: bool,
 }
 
 impl SceneRenderer {
@@ -182,6 +185,7 @@ impl SceneRenderer {
             light_texture,
             light_view,
             on_draw: None,
+            pooled_shadows: true,
         }
     }
 
@@ -197,10 +201,12 @@ impl SceneRenderer {
             return;
         }
         if !maps_fit {
-            self.shadow_maps = self.shared.shadow_maps.get(
-                |maps| maps.fits(plan),
-                || ShadowMaps::new(gpu, plan.size, plan.layers.len()),
-            );
+            let make = || ShadowMaps::new(gpu, plan.size, plan.layers.len());
+            self.shadow_maps = if self.pooled_shadows {
+                self.shared.shadow_maps.get(|maps| maps.fits(plan), make)
+            } else {
+                Rc::new(make())
+            };
         }
         self.bound_environment = environment.cloned();
         let cube = match environment {
@@ -1013,11 +1019,9 @@ impl Layer for SceneLayer {
             .as_ref()
             .is_none_or(|renderer| renderer.format != target.color_format)
         {
-            self.renderer = Some(SceneRenderer::new(
-                gpu,
-                target.color_format,
-                self.scene.clone(),
-            ));
+            let mut renderer = SceneRenderer::new(gpu, target.color_format, self.scene.clone());
+            renderer.pooled_shadows = false;
+            self.renderer = Some(renderer);
         }
         if let Some(renderer) = &mut self.renderer {
             self.frame = Some(renderer.prepare_layer(gpu, encoder, target));

@@ -1514,6 +1514,24 @@ fn host_frame(
     target: &LayerTarget,
     wall: f32,
 ) -> Vec<[u8; 4]> {
+    host_pass(gpu, &[layer], target, Some(wall))
+}
+
+/// Prepares every layer, then draws them in order in one pass, as the contract has hosts do.
+fn host_frames(
+    gpu: &Gpu,
+    layers: &[&whisker_wgpu::LayerHandle],
+    target: &LayerTarget,
+) -> Vec<[u8; 4]> {
+    host_pass(gpu, layers, target, None)
+}
+
+fn host_pass(
+    gpu: &Gpu,
+    layers: &[&whisker_wgpu::LayerHandle],
+    target: &LayerTarget,
+    wall: Option<f32>,
+) -> Vec<[u8; 4]> {
     let texture = |format, usage| {
         gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -1540,14 +1558,15 @@ fn host_frame(
                 format!(
                     "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{
                         let x = f32(i & 1u); let y = f32((i >> 1u) & 1u);
-                        return vec4(x - 1.0, y * 2.0 - 1.0, {wall:?}, 1.0);
+                        return vec4(x - 1.0, y * 2.0 - 1.0, {:?}, 1.0);
                     }}
-                    @fragment fn fs() -> @location(0) vec4<f32> {{ return vec4(0.0, 0.0, 1.0, 1.0); }}"
+                    @fragment fn fs() -> @location(0) vec4<f32> {{ return vec4(0.0, 0.0, 1.0, 1.0); }}",
+                    wall.unwrap_or(0.5)
                 )
                 .into(),
             ),
         });
-    let wall = gpu
+    let wall_pipeline = gpu
         .device
         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
@@ -1580,7 +1599,9 @@ fn host_frame(
             cache: None,
         });
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    layer.borrow_mut().prepare(gpu, &mut encoder, target);
+    for layer in layers {
+        layer.borrow_mut().prepare(gpu, &mut encoder, target);
+    }
     {
         let color_view = color.create_view(&Default::default());
         let depth_view = depth.create_view(&Default::default());
@@ -1608,9 +1629,13 @@ fn host_frame(
             }),
             ..Default::default()
         });
-        pass.set_pipeline(&wall);
-        pass.draw(0..4, 0..1);
-        layer.borrow_mut().draw(gpu, &mut pass, target);
+        if wall.is_some() {
+            pass.set_pipeline(&wall_pipeline);
+            pass.draw(0..4, 0..1);
+        }
+        for layer in layers {
+            layer.borrow_mut().draw(gpu, &mut pass, target);
+        }
     }
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -1729,4 +1754,72 @@ fn a_layer_tap_reaches_the_hit_node_and_reports_whether_one_took_it() {
     assert!(!tapped.get());
     assert!(layer.borrow_mut().tap(center, &target));
     assert!(tapped.get());
+}
+
+/// A white ground 4 wide centered at `x`, lit by a sun slanting toward -X, with a cube one unit
+/// above `caster` when given.
+fn shadowed_ground(x: f32, caster: Option<f32>) -> Scene {
+    let scene = Scene::new();
+    scene.set_ambient_light(Color::rgb(255, 255, 255), 0.1);
+    let add = |geometry: Geometry, at: Vec3| {
+        let node = Node::new();
+        node.set_mesh(Some((
+            geometry,
+            Material::Standard(StandardMaterial {
+                base_color: Color::rgb(255, 255, 255),
+                roughness: 1.0,
+                ..Default::default()
+            }),
+        )));
+        node.set_transform(Transform::from_translation(at));
+        scene.root().add_child(&node);
+    };
+    add(Geometry::plane(Vec2::splat(4.0)), Vec3::new(x, 0.0, 0.0));
+    if let Some(caster) = caster {
+        add(
+            Geometry::cuboid(Vec3::splat(0.5)),
+            Vec3::new(caster, 1.0, 0.0),
+        );
+    }
+    let sun = Node::new();
+    sun.set_light(Some(Light::Directional {
+        color: Color::rgb(255, 255, 255),
+        intensity: 0.5,
+        shadow: Some(Shadow {
+            map_size: 1024,
+            cascades: 1,
+            distance: 50.0,
+            ..Default::default()
+        }),
+    }));
+    sun.set_transform(Transform::looking_at(
+        Vec3::ZERO,
+        Vec3::new(-1.0, -1.0, 0.0),
+        Vec3::Y,
+    ));
+    scene.root().add_child(&sun);
+    scene
+}
+
+#[test]
+fn layers_drawn_in_one_pass_each_keep_their_own_shadows() {
+    with_gpu(|gpu| {
+        let left = shadowed_ground(-2.0, Some(-1.0)).layer();
+        let right = shadowed_ground(2.0, None).layer();
+        let mut target = layer_target(Mat4::look_at_rh(
+            Vec3::new(0.0, 10.0, 0.0),
+            Vec3::ZERO,
+            Vec3::NEG_Z,
+        ));
+        // A far plane just past the ground, as a map's is when looking straight down.
+        target.projection = Mat4::perspective_rh(1.0, 1.0, 0.1, 10.5).to_cols_array_2d();
+        let pixels = host_frames(gpu, &[&left, &right], &target);
+        let column = |x: f32| ((x / (10.0 * 0.5f32.tan()) + 1.0) / 2.0 * SIZE as f32) as u32;
+        let shadowed = pixel(&pixels, column(-2.0), SIZE / 2);
+        let lit = pixel(&pixels, column(-3.6), SIZE / 2);
+        assert!(
+            u32::from(shadowed[0]) + 60 < u32::from(lit[0]),
+            "shadowed {shadowed:?}, lit {lit:?}"
+        );
+    });
 }
