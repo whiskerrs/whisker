@@ -31,6 +31,8 @@ pub struct Orbit {
     /// The x a tour has reached and the x it ends at.
     tour: RwSignal<Option<(f32, f32)>>,
     bounds: RwSignal<Vec2>,
+    /// Whether the per-frame clock runs; the scene redraws only on change while it sleeps.
+    pub awake: RwSignal<bool>,
 }
 
 impl Orbit {
@@ -44,6 +46,7 @@ impl Orbit {
             drift: signal(Vec2::ZERO),
             tour: signal(None),
             bounds: signal(Vec2::new(80.0, 60.0)),
+            awake: signal(true),
         }
     }
 
@@ -59,6 +62,13 @@ impl Orbit {
 
     pub fn set_town_length(self, length: f32) {
         self.bounds.set(Vec2::new(length / 2.0 + 30.0, 60.0));
+    }
+
+    /// Whether a fly-to, tour or drift is still moving the camera.
+    pub fn moving(self) -> bool {
+        self.goal.get_untracked().is_some()
+            || self.tour.get_untracked().is_some()
+            || self.drift.get_untracked().length() > 0.01
     }
 
     fn stop(self) {
@@ -78,6 +88,7 @@ impl Orbit {
     pub fn fling(self, velocity: Vec2) {
         let world = self.drag_to_world(velocity);
         self.drift.set(Vec2::new(world.x, world.z));
+        self.awake.set(true);
     }
 
     fn drag_to_world(self, delta: Vec2) -> Vec3 {
@@ -120,6 +131,7 @@ impl Orbit {
             pitch,
             yaw: None,
         }));
+        self.awake.set(true);
     }
 
     pub fn overview(self) {
@@ -131,12 +143,14 @@ impl Orbit {
             pitch: 0.5,
             yaw: Some(0.32),
         }));
+        self.awake.set(true);
     }
 
     pub fn start_tour(self, from: f32, to: f32) {
         self.goal.set(None);
         self.drift.set(Vec2::ZERO);
         self.tour.set(Some((from, to)));
+        self.awake.set(true);
     }
 
     /// Advances fly-tos, tours and drift by `delta` seconds.
@@ -266,6 +280,14 @@ impl Pointers {
 pub struct Keyboard {
     pub held: Vec<String>,
     pub wheel: f32,
+    /// Set when the clock stops, so the next key or scroll posts a wake-up.
+    pub asleep: bool,
+}
+
+impl Keyboard {
+    pub fn idle(&self) -> bool {
+        self.held.is_empty() && self.wheel == 0.0
+    }
 }
 
 thread_local! {
@@ -310,17 +332,29 @@ pub fn apply_keyboard(orbit: Orbit, delta: f32) {
 
 /// Feeds the page's wheel and key events into [`KEYBOARD`] and keeps right-drags from opening the context menu.
 #[cfg(target_arch = "wasm32")]
-pub fn listen_to_page() {
+pub fn listen_to_page(orbit: Orbit) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
     let Some(window) = web_sys::window() else {
         return;
     };
-    let wheel = Closure::<dyn FnMut(web_sys::WheelEvent)>::new(|event: web_sys::WheelEvent| {
-        event.prevent_default();
-        let scale = if event.delta_mode() == 1 { 16.0 } else { 1.0 };
-        KEYBOARD.with_borrow_mut(|k| k.wheel += event.delta_y() as f32 * scale);
-    });
+    let dispatcher = whisker::runtime_dispatcher();
+    // Page listeners run outside the runtime, so they post the wake-up instead of setting the signal.
+    let wake = move || {
+        if let Some(dispatcher) = &dispatcher
+            && KEYBOARD.with_borrow_mut(|k| std::mem::take(&mut k.asleep))
+        {
+            dispatcher.post(move || orbit.awake.set(true));
+        }
+    };
+    let woken = wake.clone();
+    let wheel =
+        Closure::<dyn FnMut(web_sys::WheelEvent)>::new(move |event: web_sys::WheelEvent| {
+            event.prevent_default();
+            let scale = if event.delta_mode() == 1 { 16.0 } else { 1.0 };
+            KEYBOARD.with_borrow_mut(|k| k.wheel += event.delta_y() as f32 * scale);
+            woken();
+        });
     let options = web_sys::AddEventListenerOptions::new();
     options.set_passive(false);
     let _ = window.add_event_listener_with_callback_and_add_event_listener_options(
@@ -346,6 +380,7 @@ pub fn listen_to_page() {
                     k.held.push(key);
                 }
             });
+            wake();
         });
     let up = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(|event: web_sys::KeyboardEvent| {
         let key = event.key();
@@ -368,4 +403,4 @@ pub fn listen_to_page() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn listen_to_page() {}
+pub fn listen_to_page(_orbit: Orbit) {}

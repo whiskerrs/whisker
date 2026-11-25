@@ -25,7 +25,7 @@ use whisker_input::{AutoCapitalize, Input};
 use whisker_safe_area::safe_area_insets;
 use whisker_scene::math::{Vec2, Vec3};
 use whisker_scene::{
-    Bloom, DirectionalLight, Environment, Fog, HemisphereLight, PerspectiveCamera, PostProcessing,
+    DirectionalLight, Environment, Fog, HemisphereLight, PerspectiveCamera, PostProcessing,
     SceneHit, SceneView, Shadow, ToneMapping, use_frame,
 };
 
@@ -158,6 +158,13 @@ fn clock(rise: Rise, orbit: Orbit) -> Element {
         rise.tick(frame.timestamp.as_secs_f32());
         camera::apply_keyboard(orbit, delta);
         orbit.step(delta);
+        let idle = camera::KEYBOARD.with_borrow_mut(|k| {
+            k.asleep = k.idle() && !orbit.moving();
+            k.asleep
+        });
+        if idle {
+            orbit.awake.set(false);
+        }
     });
     render! { Fragment {} }
 }
@@ -283,7 +290,7 @@ pub fn app() -> Element {
     let rise = Rise::new();
     let orbit = Orbit::new();
     orbit.set_town_length(city::length(year.with_untracked(Year::weeks)));
-    camera::listen_to_page();
+    camera::listen_to_page(orbit);
 
     let fetched = resource(move || {
         let user = request.get();
@@ -430,7 +437,7 @@ pub fn app() -> Element {
                     environment: Some(Environment::gradient(Color::hex(0x9db4cf), haze, Color::hex(0x4d5a35))),
                     environment_intensity: 0.8,
                     post_processing: PostProcessing {
-                        bloom: Some(Bloom::default()),
+                        bloom: None,
                         ambient_occlusion: None,
                         fxaa: true,
                         ..PostProcessing::default()
@@ -441,18 +448,18 @@ pub fn app() -> Element {
                         }
                     },
                 ) {
-                    Clock(rise: rise, orbit: orbit)
                     PerspectiveCamera(fov_y: fov_y, position: eye, look_at: look_at, near: 0.3, far: 900.0)
                     DirectionalLight(
                         color: Color::hex(0xffdcb0),
                         intensity: 2.1,
                         direction: Vec3::new(-0.5, -0.8, -0.45),
-                        shadow: Some(Shadow { map_size: 2048, cascades: 3, distance: 140.0, ..Shadow::default() }),
+                        shadow: Some(Shadow { map_size: 2048, cascades: 2, distance: 110.0, ..Shadow::default() }),
                     )
                     HemisphereLight(sky_color: Color::hex(0xb7c6dc), ground_color: Color::hex(0x5d5236), intensity: 0.35)
                     Countryside()
                     Street(year: year, rise: rise, selected: selected)
                     Landmarks(year: year, selected: selected)
+                    Show(when: move || orbit.awake.get() || rise.running.get()) { Clock(rise: rise, orbit: orbit) }
                 }
             }
     };

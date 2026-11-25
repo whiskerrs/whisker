@@ -349,9 +349,10 @@ pub fn paddies() -> ([Vec<Mat4>; 2], Vec<Mat4>) {
     (fields, bunds)
 }
 
-/// Cedars over the wooded hills, as instance transforms for a model one unit across.
-pub fn cedars() -> Vec<Mat4> {
-    let mut transforms = Vec::new();
+/// Cedars over the wooded hills, as instance transforms for a model one unit across, split
+/// into the ones near town, which get the detailed model, and the rest.
+pub fn cedars() -> (Vec<Mat4>, Vec<Mat4>) {
+    let (mut near, mut far) = (Vec::new(), Vec::new());
     for i in 0..22_000 {
         let x = (hash(i, 1, 21) * 2.0 - 1.0) * EXTENT_X;
         let z = FAR_Z * 0.62 + hash(i, 2, 21) * (NEAR_Z - FAR_Z * 0.62);
@@ -361,13 +362,43 @@ pub fn cedars() -> Vec<Mat4> {
         }
         let size = 2.0 + hash(i, 3, 21) * 1.6;
         let yaw = hash(i, 5, 21) * TAU;
-        transforms.push(Mat4::from_scale_rotation_translation(
+        let transform = Mat4::from_scale_rotation_translation(
             Vec3::new(size * 0.9, size * 1.3, size * 0.9),
             Quat::from_rotation_y(yaw),
             Vec3::new(x, height(x, z) - 0.15, z),
-        ));
+        );
+        if x.abs() < 80.0 && z > -60.0 {
+            near.push(transform);
+        } else {
+            far.push(transform);
+        }
     }
-    transforms
+    (near, far)
+}
+
+/// A flat-shaded cedar of two stacked cones, about two units tall, for woods seen from afar.
+pub fn distant_cedar() -> Geometry {
+    const SIDES: u32 = 7;
+    let (mut positions, mut normals, mut indices) = (Vec::new(), Vec::new(), Vec::new());
+    for (radius, bottom, top) in [(0.46, 0.25, 1.4), (0.32, 0.95, 1.95)] {
+        let apex = Vec3::new(0.0, top, 0.0);
+        for side in 0..SIDES {
+            let corner = |k: u32| {
+                let angle = k as f32 / SIDES as f32 * TAU;
+                Vec3::new(angle.cos() * radius, bottom, angle.sin() * radius)
+            };
+            let triangle = [corner(side), apex, corner(side + 1)];
+            let normal = (triangle[1] - triangle[0])
+                .cross(triangle[2] - triangle[0])
+                .normalize();
+            for p in triangle {
+                indices.push(positions.len() as u32);
+                positions.push(p);
+                normals.push(normal);
+            }
+        }
+    }
+    Geometry::from_vertices(positions, normals, None, indices)
 }
 
 /// Willows along the riverbanks outside the town.

@@ -36,17 +36,21 @@ impl Rise {
     pub fn new() -> Rise {
         Rise {
             now: signal(0.0),
-            born: signal(0.0),
+            born: signal(f32::NAN),
             running: signal(true),
         }
     }
 
+    /// Replays the rise from the clock's next tick.
     pub fn restart(self) {
-        self.born.set(self.now.get_untracked());
+        self.born.set(f32::NAN);
         self.running.set(true);
     }
 
     pub fn tick(self, now: f32) {
+        if self.born.get_untracked().is_nan() {
+            self.born.set(now);
+        }
         self.now.set(now);
         if self.running.get_untracked()
             && now - self.born.get_untracked() > RISE_SPREAD + RISE_TIME + 0.2
@@ -59,6 +63,9 @@ impl Rise {
     fn grown(self, fraction: f32) -> f32 {
         if !self.running.get() {
             return 1.0;
+        }
+        if self.born.get().is_nan() {
+            return 0.0;
         }
         let t = ((self.now.get() - self.born.get() - fraction * RISE_SPREAD) / RISE_TIME)
             .clamp(0.0, 1.0);
@@ -399,7 +406,8 @@ pub fn countryside() -> Element {
     let ([young, ripe], bunds) = land::paddies();
     let (snow, rock) = land::peak();
     let (river, river_at) = land::river();
-    let cedars = instanced(&scenery.cedar, land::cedars());
+    let (near_cedars, far_cedars) = land::cedars();
+    let cedars = instanced(&scenery.cedar, near_cedars);
     let willows = instanced(&scenery.willow, land::willows());
     let bridges = instanced(&scenery.bridge, land::bridges());
     render! {
@@ -409,7 +417,8 @@ pub fn countryside() -> Element {
             Mesh(geometry: Geometry::plane(Vec2::ONE), material: textured(0x6f8f3c, 2.2), instances: Some(Instances::new(young)), cast_shadow: false)
             Mesh(geometry: Geometry::plane(Vec2::ONE), material: textured(0xa59a4a, 2.2), instances: Some(Instances::new(ripe)), cast_shadow: false)
             Mesh(geometry: Geometry::cuboid(Vec3::ONE), material: textured(0x7a6a4c, 1.0), instances: Some(Instances::new(bunds)), cast_shadow: false)
-            Mesh(geometry: scenery.cedar.geometry.clone(), material: scenery.cedar.material.clone(), instances: cedars, visible_distance: Some(0.0..260.0))
+            Mesh(geometry: scenery.cedar.geometry.clone(), material: scenery.cedar.material.clone(), instances: cedars)
+            Mesh(geometry: land::distant_cedar(), material: matte(Color::hex(0x2c4a2e), 0.9), instances: Some(Instances::new(far_cedars)), cast_shadow: false)
             Mesh(geometry: scenery.willow.geometry.clone(), material: scenery.willow.material.clone(), instances: willows)
             Mesh(geometry: scenery.bridge.geometry.clone(), material: scenery.bridge.material.clone(), instances: bridges)
             Mesh(geometry: rock, material: matte(Color::hex(0x6b7486), 0.95), cast_shadow: false, receive_shadow: false)
