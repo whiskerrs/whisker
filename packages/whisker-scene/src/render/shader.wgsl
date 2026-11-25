@@ -453,6 +453,20 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return shade_surface(in, front);
+}
+
+// Kept apart from `fs` because a shader that can discard loses early depth testing in Safari's WebGPU.
+@fragment
+fn fs_masked(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let color = shade_surface(in, front);
+    if color.a < draw.alpha.y {
+        discard;
+    }
+    return vec4(color.rgb, 1.0);
+}
+
+fn shade_surface(in: VertexOut, front: bool) -> vec4<f32> {
     var geometric = normalize(in.normal);
     var t = in.tangent.xyz - geometric * dot(geometric, in.tangent.xyz);
     var b = cross(geometric, t) * in.tangent.w;
@@ -466,11 +480,6 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     let base = s.base_color;
     var alpha = base.a;
     if draw.alpha.x < 0.5 || s.transmission > 0.0 {
-        alpha = 1.0;
-    } else if draw.alpha.x < 1.5 {
-        if base.a < draw.alpha.y {
-            discard;
-        }
         alpha = 1.0;
     }
     var color = base.rgb;

@@ -6,6 +6,7 @@ use glam::{Mat4, Vec3};
 use whisker_wgpu::{Gpu, wgpu};
 
 use super::collect::{Collected, Cone};
+use super::pipeline::alpha_tested;
 use super::resources::bind_mesh;
 use super::visibility::{Frustum, visible, world_sphere};
 use super::{Draw, MAX_DIRECTIONAL, MAX_POINT, SceneRenderer};
@@ -332,7 +333,6 @@ impl SceneRenderer {
         gpu.queue
             .write_buffer(&self.shadow_view_buffer, 0, &self.staging);
         let shared = self.shared.clone();
-        let pipeline = shared.shadow_pipeline(gpu);
         for (layer, matrix) in plan.layers.iter().enumerate() {
             let frustum = Frustum::new(*matrix);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -348,8 +348,8 @@ impl SceneRenderer {
                 }),
                 ..Default::default()
             });
-            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.shadow_view_bind_group, &[(layer * stride) as u32]);
+            let mut bound = None;
             for (index, draw) in draws.iter().enumerate() {
                 if !draw.cast_shadow || !visible(draw, &frustum) {
                     continue;
@@ -357,6 +357,11 @@ impl SceneRenderer {
                 let Some((count, instances)) = bind_mesh(gpu, &shared, &mut pass, draw) else {
                     continue;
                 };
+                let tested = alpha_tested(&draw.material);
+                if bound != Some(tested) {
+                    pass.set_pipeline(shared.shadow_pipeline(gpu, tested));
+                    bound = Some(tested);
+                }
                 let offset = (index as u64 * self.draw_stride) as u32;
                 pass.set_bind_group(1, &self.draw_bind_group, &[offset]);
                 pass.set_bind_group(

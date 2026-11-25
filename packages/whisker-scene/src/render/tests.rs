@@ -8,8 +8,8 @@ use whisker_wgpu::{Gpu, Renderer, wgpu};
 use super::pipeline::SHARED;
 use super::*;
 use crate::core::{
-    AmbientOcclusion, Bloom, CustomMaterial, DepthOfField, Environment, Fog, Geometry, Instances,
-    Light, Material, MaterialShader, Node, PostProcessing, Projection, Scene, Shadow,
+    AlphaMode, AmbientOcclusion, Bloom, CustomMaterial, DepthOfField, Environment, Fog, Geometry,
+    Instances, Light, Material, MaterialShader, Node, PostProcessing, Projection, Scene, Shadow,
     StandardMaterial, Texture, ToneMapping, Transform,
 };
 
@@ -180,6 +180,55 @@ fn draws_an_unlit_mesh_over_the_background() {
         let pixels = render(gpu, scene);
         assert_eq!(pixel(&pixels, SIZE / 2, SIZE / 2), [255, 0, 0, 255]);
         assert_eq!(pixel(&pixels, 0, 0), [0, 0, 255, 255]);
+    });
+}
+
+#[test]
+fn masked_surfaces_cut_out_below_their_cutoff_and_stay_opaque_above_it() {
+    with_gpu(|gpu| {
+        let center = |alpha: f32| {
+            let scene = Scene::new();
+            scene.set_background(Color::rgb(0, 0, 255));
+            let mesh = Node::new();
+            mesh.set_mesh(Some((
+                Geometry::cuboid(Vec3::splat(1.0)),
+                Material::Standard(StandardMaterial {
+                    base_color: Color::rgba(255, 0, 0, alpha),
+                    emissive: Color::rgb(255, 0, 0),
+                    alpha_mode: AlphaMode::Mask(0.5),
+                    ..Default::default()
+                }),
+            )));
+            scene.root().add_child(&mesh);
+            pixel(&render(gpu, scene), SIZE / 2, SIZE / 2)
+        };
+        assert_eq!(center(0.25), [0, 0, 255, 255]);
+        let kept = center(0.8);
+        assert!(kept[0] > 200 && kept[2] < 40, "{kept:?}");
+    });
+}
+
+#[test]
+fn masked_casters_cast_only_where_they_are_solid() {
+    with_gpu(|gpu| {
+        let floor_behind = |alpha: f32| {
+            let (scene, _, caster, view_proj) =
+                shadow_stage(Vec3::new(0.0, 6.0, 0.0), 1.2, Vec3::Y * 1.5);
+            caster.set_mesh(Some((
+                Geometry::cuboid(Vec3::ONE),
+                Material::Standard(StandardMaterial {
+                    base_color: Color::rgba(255, 255, 255, alpha),
+                    alpha_mode: AlphaMode::Mask(0.5),
+                    ..Default::default()
+                }),
+            )));
+            scene.root().add_child(&sun(Some(SUN_SHADOW)));
+            floor_pixel(&render(gpu, scene), view_proj, -1.5, 0.0)
+        };
+        let solid = floor_behind(1.0);
+        let cut = floor_behind(0.25);
+        assert!(solid[0] < 20, "solid {solid:?}");
+        assert!(cut[0] > 200, "cut {cut:?}");
     });
 }
 
