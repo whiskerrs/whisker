@@ -1,10 +1,8 @@
 //! Taffy's layout algorithms with retained, bounded intrinsic-size reuse.
 
 use crate::{IntrinsicResult, LayoutSize, MeasuredInlineChild, MeasurementState};
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::rc::Rc;
 use whisker_protocol::MeasurementKey;
 
 use taffy::{
@@ -53,11 +51,11 @@ impl NodeState {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct LayoutState {
-    nodes: HashMap<NodeId, NodeState>,
-    paragraphs: HashSet<NodeId>,
-    model_nodes: HashMap<NodeId, whisker_protocol::NodeId>,
-    transient: HashSet<NodeId>,
-    suppressed: HashSet<NodeId>,
+    nodes: FxHashMap<NodeId, NodeState>,
+    paragraphs: FxHashSet<NodeId>,
+    model_nodes: FxHashMap<NodeId, whisker_protocol::NodeId>,
+    transient: FxHashSet<NodeId>,
+    suppressed: FxHashSet<NodeId>,
     blocked: u64,
     provisional: u64,
 }

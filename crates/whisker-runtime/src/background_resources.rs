@@ -1,5 +1,6 @@
 //! Runtime-owned lowering from semantic background URLs to Host resources.
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{HashMap, HashSet};
 
 use whisker_engine::lower_color;
@@ -61,9 +62,9 @@ struct ResourceEntry {
     resource: ResourceId,
     generation: u64,
     phase: ResourcePhase,
-    desired_users: HashSet<NodeId>,
-    projected_users: HashSet<NodeId>,
-    accepted_users: HashSet<NodeId>,
+    desired_users: FxHashSet<NodeId>,
+    projected_users: FxHashSet<NodeId>,
+    accepted_users: FxHashSet<NodeId>,
     retirement_pending: bool,
 }
 
@@ -95,11 +96,11 @@ pub(super) struct BackgroundProjection {
 pub(super) struct BackgroundResourceManager {
     next_resource_id: u64,
     resources_by_key: HashMap<ResourceKey, ResourceId>,
-    entries: HashMap<ResourceId, ResourceEntry>,
-    owned_ids: HashSet<ResourceId>,
-    node_images: HashMap<NodeId, Vec<DesiredImage>>,
-    node_layer_styles: HashMap<NodeId, Vec<ComputedBackgroundLayerStyle>>,
-    dirty_nodes: HashSet<NodeId>,
+    entries: FxHashMap<ResourceId, ResourceEntry>,
+    owned_ids: FxHashSet<ResourceId>,
+    node_images: FxHashMap<NodeId, Vec<DesiredImage>>,
+    node_layer_styles: FxHashMap<NodeId, Vec<ComputedBackgroundLayerStyle>>,
+    dirty_nodes: FxHashSet<NodeId>,
 }
 
 impl Default for BackgroundResourceManager {
@@ -107,11 +108,11 @@ impl Default for BackgroundResourceManager {
         Self {
             next_resource_id: 1,
             resources_by_key: HashMap::new(),
-            entries: HashMap::new(),
-            owned_ids: HashSet::new(),
-            node_images: HashMap::new(),
-            node_layer_styles: HashMap::new(),
-            dirty_nodes: HashSet::new(),
+            entries: FxHashMap::default(),
+            owned_ids: FxHashSet::default(),
+            node_images: FxHashMap::default(),
+            node_layer_styles: FxHashMap::default(),
+            dirty_nodes: FxHashSet::default(),
         }
     }
 }
@@ -126,7 +127,7 @@ impl BackgroundResourceManager {
         node: NodeId,
         images: &[ComputedBackgroundImage],
         layer_styles: &[ComputedBackgroundLayerStyle],
-        externally_used: &HashSet<ResourceId>,
+        externally_used: &FxHashSet<ResourceId>,
     ) -> Result<ReconcileResult, BackgroundResourceError> {
         let desired = images
             .iter()
@@ -281,7 +282,7 @@ impl BackgroundResourceManager {
         &mut self,
         node: NodeId,
         key: ResourceKey,
-        externally_used: &HashSet<ResourceId>,
+        externally_used: &FxHashSet<ResourceId>,
     ) -> Result<Vec<ResourceCommand>, BackgroundResourceError> {
         if let Some(resource) = self.resources_by_key.get(&key).copied() {
             let entry = self
@@ -304,9 +305,9 @@ impl BackgroundResourceManager {
                 resource,
                 generation,
                 phase: ResourcePhase::Pending,
-                desired_users: HashSet::from([node]),
-                projected_users: HashSet::new(),
-                accepted_users: HashSet::new(),
+                desired_users: FxHashSet::from_iter([node]),
+                projected_users: FxHashSet::default(),
+                accepted_users: FxHashSet::default(),
                 retirement_pending: false,
             },
         );
@@ -320,7 +321,7 @@ impl BackgroundResourceManager {
 
     fn allocate_id(
         &mut self,
-        externally_used: &HashSet<ResourceId>,
+        externally_used: &FxHashSet<ResourceId>,
     ) -> Result<ResourceId, BackgroundResourceError> {
         while self.next_resource_id != 0 {
             let raw = self.next_resource_id;
@@ -597,7 +598,7 @@ mod tests {
                 node(1),
                 &[url("https://example.test/a.png")],
                 &[ComputedBackgroundLayerStyle::default()],
-                &HashSet::new(),
+                &FxHashSet::default(),
             )
             .unwrap();
         assert_eq!(first.commands.len(), 1);
@@ -609,7 +610,7 @@ mod tests {
                 node(2),
                 &[url("https://example.test/a.png")],
                 &[ComputedBackgroundLayerStyle::default()],
-                &HashSet::new(),
+                &FxHashSet::default(),
             )
             .unwrap();
         assert!(second.commands.is_empty());
@@ -634,7 +635,7 @@ mod tests {
                 node(1),
                 &[url("same")],
                 &[ComputedBackgroundLayerStyle::default()],
-                &HashSet::new(),
+                &FxHashSet::default(),
             )
             .unwrap();
         let (resource, generation) = load(&acquired.commands[0]);
@@ -652,7 +653,7 @@ mod tests {
                 node(1),
                 &[],
                 &[ComputedBackgroundLayerStyle::default()],
-                &HashSet::new(),
+                &FxHashSet::default(),
             )
             .unwrap();
         assert!(removed.commands.is_empty());
@@ -661,7 +662,7 @@ mod tests {
                 node(1),
                 &[url("same")],
                 &[ComputedBackgroundLayerStyle::default()],
-                &HashSet::new(),
+                &FxHashSet::default(),
             )
             .unwrap();
         assert!(reacquired.commands.is_empty());
@@ -677,7 +678,7 @@ mod tests {
                 node(1),
                 &[url("same")],
                 &[ComputedBackgroundLayerStyle::default()],
-                &HashSet::new(),
+                &FxHashSet::default(),
             )
             .unwrap();
         let (first, _) = load(&acquired.commands[0]);
@@ -686,7 +687,7 @@ mod tests {
                 node(1),
                 &[],
                 &[ComputedBackgroundLayerStyle::default()],
-                &HashSet::new(),
+                &FxHashSet::default(),
             )
             .unwrap();
         assert_eq!(
@@ -701,7 +702,7 @@ mod tests {
                 node(1),
                 &[url("same")],
                 &[ComputedBackgroundLayerStyle::default()],
-                &HashSet::new(),
+                &FxHashSet::default(),
             )
             .unwrap();
         let (second, generation) = load(&reacquired.commands[0]);

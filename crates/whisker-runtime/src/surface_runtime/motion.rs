@@ -299,12 +299,12 @@ pub(super) struct ActiveTransition<Value> {
 
 #[derive(Clone)]
 pub(super) struct ActiveColorTransitions(
-    pub(super) HashMap<StyleProperty, ActiveTransition<RgbaColor>>,
+    pub(super) FxHashMap<StyleProperty, ActiveTransition<RgbaColor>>,
 );
 
 #[derive(Clone)]
 pub(super) struct ActivePropertyTransitions(
-    pub(super) HashMap<StyleProperty, ActiveTransition<AnimatedPropertyValue>>,
+    pub(super) FxHashMap<StyleProperty, ActiveTransition<AnimatedPropertyValue>>,
 );
 
 #[derive(Clone, Debug, PartialEq)]
@@ -341,7 +341,7 @@ pub(super) struct ActiveKeyframeAnimation {
     pub(super) tracks: Vec<KeyframePropertyTrack>,
     pub(super) current_time_ms: f64,
     pub(super) last_timestamp_ms: Option<f64>,
-    pub(super) current: HashMap<StyleProperty, AnimatedPropertyValue>,
+    pub(super) current: FxHashMap<StyleProperty, AnimatedPropertyValue>,
     pub(super) finished: bool,
     pub(super) sampled_progress: Option<f32>,
     pub(super) start_emitted: bool,
@@ -419,12 +419,12 @@ pub(super) struct MotionSnapshot {
     pub(super) element: Element,
     pub(super) resolved: ResolvedNodeStyle,
     pub(super) initialized: bool,
-    pub(super) layout_targets: HashMap<StyleProperty, AnimatedPropertyValue>,
-    pub(super) layout_current: HashMap<StyleProperty, AnimatedPropertyValue>,
+    pub(super) layout_targets: FxHashMap<StyleProperty, AnimatedPropertyValue>,
+    pub(super) layout_current: FxHashMap<StyleProperty, AnimatedPropertyValue>,
     pub(super) opacity_target: f32,
     pub(super) opacity_current: f32,
     pub(super) box_paint: BoxPaint,
-    pub(super) current_colors: HashMap<StyleProperty, RgbaColor>,
+    pub(super) current_colors: FxHashMap<StyleProperty, RgbaColor>,
     pub(super) transform_target: ComputedTransformStyle,
     pub(super) transform_current: ComputedTransformStyle,
     pub(super) text_color_target: Option<RgbaColor>,
@@ -1037,7 +1037,7 @@ pub(super) fn set_animated_layout_property(
 
 pub(super) fn layout_animation_values(
     resolved: &ResolvedNodeStyle,
-) -> HashMap<StyleProperty, AnimatedPropertyValue> {
+) -> FxHashMap<StyleProperty, AnimatedPropertyValue> {
     LAYOUT_ANIMATED_PROPERTIES
         .into_iter()
         .chain([StyleProperty::FlexGrow, StyleProperty::TransformOrigin])
@@ -1136,7 +1136,7 @@ impl BindingState {
     }
 
     pub(super) fn reapply_active_transitions(
-        elements: &HashMap<Element, BoundElement>,
+        elements: &FxHashMap<Element, BoundElement>,
         surface: &mut SurfaceEngine,
     ) -> Result<(), RuntimeBindingError> {
         Self::apply_keyframe_animation_values(elements, surface)?;
@@ -1172,14 +1172,14 @@ impl BindingState {
     }
 
     pub(super) fn reapply_active_text_colors(
-        elements: &HashMap<Element, BoundElement>,
+        elements: &FxHashMap<Element, BoundElement>,
         surface: &mut SurfaceEngine,
     ) -> Result<(), RuntimeBindingError> {
         Self::apply_text_color_updates(Self::active_text_color_updates(elements), surface)
     }
 
     pub(super) fn active_text_color_updates(
-        elements: &HashMap<Element, BoundElement>,
+        elements: &FxHashMap<Element, BoundElement>,
     ) -> Vec<(Element, NodeId, RgbaColor)> {
         elements
             .iter()
@@ -1217,7 +1217,7 @@ impl BindingState {
 
     pub(super) fn active_text_color(
         element: Element,
-        elements: &HashMap<Element, BoundElement>,
+        elements: &FxHashMap<Element, BoundElement>,
     ) -> Option<RgbaColor> {
         let mut current = Some(element);
         while let Some(candidate) = current {
@@ -1248,7 +1248,7 @@ impl BindingState {
     }
 
     pub(super) fn active_transform_updates(
-        elements: &HashMap<Element, BoundElement>,
+        elements: &FxHashMap<Element, BoundElement>,
         surface: &SurfaceEngine,
     ) -> Vec<(NodeId, ComputedTransformStyle)> {
         elements
@@ -1397,7 +1397,7 @@ impl BindingState {
                 tracks,
                 current_time_ms: 0.0,
                 last_timestamp_ms: None,
-                current: HashMap::new(),
+                current: FxHashMap::default(),
                 finished: false,
                 sampled_progress: None,
                 start_emitted: false,
@@ -1469,7 +1469,7 @@ impl BindingState {
     }
 
     pub(super) fn apply_keyframe_animation_values(
-        elements: &HashMap<Element, BoundElement>,
+        elements: &FxHashMap<Element, BoundElement>,
         surface: &mut SurfaceEngine,
     ) -> Result<(), RuntimeBindingError> {
         for (element, entry) in elements {
@@ -1549,8 +1549,8 @@ impl BindingState {
     pub(super) fn configure_layout_transitions(
         &mut self,
         element: Element,
-        previous_targets: &HashMap<StyleProperty, AnimatedPropertyValue>,
-        previous_current: &HashMap<StyleProperty, AnimatedPropertyValue>,
+        previous_targets: &FxHashMap<StyleProperty, AnimatedPropertyValue>,
+        previous_current: &FxHashMap<StyleProperty, AnimatedPropertyValue>,
         was_initialized: bool,
     ) -> Result<(), RuntimeBindingError> {
         let (targets, transitions) = {
@@ -1607,7 +1607,7 @@ impl BindingState {
             }
             entry
                 .layout_transitions
-                .get_or_insert_with(|| Box::new(ActivePropertyTransitions(HashMap::new())))
+                .get_or_insert_with(|| Box::new(ActivePropertyTransitions(FxHashMap::default())))
                 .0
                 .insert(
                     property,
@@ -1715,7 +1715,7 @@ impl BindingState {
         &mut self,
         element: Element,
         previous: &BoxPaint,
-        previous_current: &HashMap<StyleProperty, RgbaColor>,
+        previous_current: &FxHashMap<StyleProperty, RgbaColor>,
         was_initialized: bool,
     ) -> Result<(), RuntimeBindingError> {
         let (node, target, transitions) = {
@@ -1778,7 +1778,7 @@ impl BindingState {
             };
             entry
                 .color_transitions
-                .get_or_insert_with(|| Box::new(ActiveColorTransitions(HashMap::new())))
+                .get_or_insert_with(|| Box::new(ActiveColorTransitions(FxHashMap::default())))
                 .0
                 .insert(
                     property,

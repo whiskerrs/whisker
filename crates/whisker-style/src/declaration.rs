@@ -121,10 +121,12 @@ impl SpecifiedStyle {
     /// Iterates over the last declaration for each property in final-write
     /// order.
     pub fn resolved(&self) -> Vec<&StyleDeclaration> {
-        let mut seen = HashSet::new();
-        let mut resolved = Vec::new();
+        let mut resolved: Vec<&StyleDeclaration> = Vec::new();
         for declaration in self.declarations.iter().rev() {
-            if seen.insert(declaration.property) {
+            if !resolved
+                .iter()
+                .any(|later| later.property == declaration.property)
+            {
                 resolved.push(declaration);
             }
         }

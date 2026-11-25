@@ -12,6 +12,7 @@ categories.workspace = true
 description = "Host-independent retained scene and frame production for Whisker."
 
 [dependencies]
+rustc-hash.workspace = true
 whisker-layout = { workspace = true }
 whisker-protocol = { workspace = true }
 whisker-style = { workspace = true }
