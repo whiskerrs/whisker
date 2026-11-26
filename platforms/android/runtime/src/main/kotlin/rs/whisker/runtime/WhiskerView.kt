@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Choreographer
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import androidx.core.view.ViewCompat
@@ -40,6 +41,9 @@ import rs.whisker.runtime.scene.HostSceneOperation
 
 private const val HOST_APPLY_ACCEPTED = MobileAbi.APPLY_ACCEPTED
 private const val HOST_APPLY_REJECTED = MobileAbi.APPLY_REJECTED
+
+/** Logical pixels one mouse wheel notch moves. */
+private const val WHEEL_STEP = 48f
 
 private class ScrollOffsetBatch(val nodes: LongArray, val offsets: FloatArray)
 
@@ -333,9 +337,35 @@ class WhiskerView(context: Context) :
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_SCROLL && dispatchWheel(event)) return true
         val childConsumed = super.dispatchGenericMotionEvent(event)
         val runtimeConsumed = dispatchPointerInput(event)
         return childConsumed || runtimeConsumed
+    }
+
+    /** Returns whether a catching listener took the wheel, which keeps it from native scroll views. */
+    private fun dispatchWheel(event: MotionEvent): Boolean {
+        val handle = nativeHandle
+        if (handle == 0L) return false
+        val deltaX = event.getAxisValue(MotionEvent.AXIS_HSCROLL) * WHEEL_STEP
+        val deltaY = -event.getAxisValue(MotionEvent.AXIS_VSCROLL) * WHEEL_STEP
+        if (deltaX == 0f && deltaY == 0f) return false
+        val ctrlKey = (event.metaState and KeyEvent.META_CTRL_ON) != 0
+        val scroller = if (ctrlKey) null else scene.wheelScroller(this, event.rawX, event.rawY, deltaX, deltaY)
+        val density = resources.displayMetrics.density
+        val scrollBatch = takeScrollOffsets()
+        return nativeDispatchWheel(
+            handle,
+            event.eventTime.toDouble(),
+            event.x / density,
+            event.y / density,
+            deltaX.toDouble(),
+            deltaY.toDouble(),
+            ctrlKey,
+            scroller ?: 0L,
+            scrollBatch?.nodes ?: emptyScrollNodes,
+            scrollBatch?.offsets ?: emptyScrollOffsets,
+        )
     }
 
     private fun dispatchPointerInput(event: MotionEvent): Boolean {
@@ -765,6 +795,18 @@ class WhiskerView(context: Context) :
         y: Float,
         buttons: Int,
         changedButton: Int,
+        scrollNodes: LongArray,
+        scrollOffsets: FloatArray,
+    ): Boolean
+    private external fun nativeDispatchWheel(
+        handle: Long,
+        timestampMs: Double,
+        x: Float,
+        y: Float,
+        deltaX: Double,
+        deltaY: Double,
+        ctrlKey: Boolean,
+        scroller: Long,
         scrollNodes: LongArray,
         scrollOffsets: FloatArray,
     ): Boolean

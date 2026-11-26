@@ -297,6 +297,16 @@ public class WhiskerScrollContainerView(context: Context) : FrameLayout(context)
         horizontalScroller.setOnScrollChangeListener { _, _, _, _, _ -> emitScroll() }
     }
 
+    /** Whether native scrolling can still move by a wheel delta, positive to the right and down. */
+    public fun canScrollByWheel(deltaX: Float, deltaY: Float): Boolean {
+        if (!userScrollEnabled) return false
+        val amount = if (horizontal) deltaX else deltaY
+        if (amount == 0f) return false
+        val direction = if (amount > 0f) 1 else -1
+        return if (horizontal) horizontalScroller.canScrollHorizontally(direction)
+        else verticalScroller.canScrollVertically(direction)
+    }
+
     override fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?) {
         eventSink = sink
     }
