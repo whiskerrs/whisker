@@ -1,6 +1,6 @@
 [package]
 name = "whisker-surface"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -34,7 +34,7 @@ linux = { manifest = "linux/Cargo.toml" }
 windows = { sources = "windows" }
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.19.2" }
+whisker = { path = "../../crates/whisker", version = "0.19.3" }
 serde = { workspace = true, features = ["derive"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
