@@ -134,6 +134,16 @@ public final class WhiskerScrollContainerView: NSScrollView, WhiskerEventSource 
 
     public var documentSize: CGSize { whiskerContentView.frame.size }
 
+    /** Whether native scrolling can still move by a wheel delta, positive to the right and down. */
+    public func canScroll(byWheelDelta delta: CGPoint) -> Bool {
+        guard isScrollEnabled else { return false }
+        let visible = contentView.bounds.size
+        let (amount, offset, limit) = horizontal
+            ? (delta.x, contentOffset.x, documentSize.width - visible.width)
+            : (delta.y, contentOffset.y, documentSize.height - visible.height)
+        return (amount > 0 && offset < limit - 1) || (amount < 0 && offset > 0)
+    }
+
     public func scrollToLogicalOffset(_ offset: Double, smooth: Bool) {
         let logical = CGFloat(offset)
         // The document view is resized on the next layout pass; an offset

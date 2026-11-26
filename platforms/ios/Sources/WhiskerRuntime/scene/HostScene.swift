@@ -27,6 +27,19 @@ final class HostScene {
         DispatchQueue.main.async(execute: event)
     }
 
+    /// The scene node presented by `view` or its nearest ancestor below the root.
+    func nodeID(containing view: WhiskerPlatformView) -> UInt64? {
+        var current: WhiskerPlatformView? = view
+        while let candidate = current, candidate !== root {
+            if let node = candidate as? WhiskerNodeView,
+               let id = nodes.first(where: { $0.value === node })?.key {
+                return id
+            }
+            current = candidate.superview
+        }
+        return nil
+    }
+
     init(
         root: WhiskerPlatformView,
         resources: HostResourceStore,

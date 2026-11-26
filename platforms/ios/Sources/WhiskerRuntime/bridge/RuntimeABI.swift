@@ -82,6 +82,25 @@ func whiskerViewDispatchPointer(
     )
 }
 
+func whiskerViewDispatchWheel(
+    _ handle: UnsafeMutableRawPointer?,
+    _ timestampMs: Double,
+    _ x: Float,
+    _ y: Float,
+    _ deltaX: Double,
+    _ deltaY: Double,
+    _ ctrlKey: Bool,
+    _ scroller: UInt64,
+    _ scrollNodes: UnsafePointer<UInt64>?,
+    _ scrollOffsets: UnsafePointer<Float>?,
+    _ scrollCount: Int
+) -> Bool {
+    whisker_view_dispatch_wheel(
+        handle, timestampMs, x, y, deltaX, deltaY, ctrlKey, scroller,
+        scrollNodes, scrollOffsets, scrollCount
+    )
+}
+
 struct WhiskerPointerDispatch: Equatable {
     let timestampMs: Double
     let event: UInt32
@@ -115,6 +134,40 @@ func makeWhiskerPointerDispatch(
 }
 
 @discardableResult
+/// Returns whether a catching listener took the wheel, which tells the Host to skip native scrolling.
+func dispatchWhiskerWheel(
+    handle: UnsafeMutableRawPointer,
+    timestampMs: Double,
+    position: CGPoint,
+    delta: CGPoint,
+    ctrlKey: Bool,
+    scroller: UInt64,
+    scrollOffsets: [UInt64: CGPoint]
+) -> Bool {
+    let nodes = Array(scrollOffsets.keys)
+    let values = nodes.flatMap { node -> [Float] in
+        let offset = scrollOffsets[node] ?? .zero
+        return [Float(offset.x), Float(offset.y)]
+    }
+    return nodes.withUnsafeBufferPointer { nodeBuffer in
+        values.withUnsafeBufferPointer { valueBuffer in
+            whiskerViewDispatchWheel(
+                handle,
+                timestampMs,
+                Float(position.x),
+                Float(position.y),
+                Double(delta.x),
+                Double(delta.y),
+                ctrlKey,
+                scroller,
+                nodeBuffer.baseAddress,
+                valueBuffer.baseAddress,
+                nodes.count
+            )
+        }
+    }
+}
+
 func dispatchWhiskerPointer(
     handle: UnsafeMutableRawPointer,
     input: WhiskerPointerDispatch,

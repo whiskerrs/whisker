@@ -649,6 +649,19 @@ unsafe extern "C" {
         scroll_offsets: *const f32,
         scroll_count: usize,
     ) -> bool;
+    pub fn whisker_view_dispatch_wheel(
+        handle: *mut c_void,
+        timestamp_ms: f64,
+        x: f32,
+        y: f32,
+        delta_x: f64,
+        delta_y: f64,
+        ctrl_key: bool,
+        scroller: u64,
+        scroll_nodes: *const u64,
+        scroll_offsets: *const f32,
+        scroll_count: usize,
+    ) -> bool;
     pub fn whisker_view_dispatch_module_event(
         handle: *mut c_void,
         module: *const u8,

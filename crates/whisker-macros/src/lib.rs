@@ -297,6 +297,38 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos", target_os = "windows"))]
         #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_dispatch_wheel(
+            handle: *mut ::std::ffi::c_void,
+            timestamp_ms: f64,
+            x: f32,
+            y: f32,
+            delta_x: f64,
+            delta_y: f64,
+            ctrl_key: bool,
+            scroller: u64,
+            scroll_nodes: *const u64,
+            scroll_offsets: *const f32,
+            scroll_count: usize,
+        ) -> bool {
+            unsafe {
+                ::whisker::__driver_runtime::dispatch_wheel(
+                    handle,
+                    timestamp_ms,
+                    x,
+                    y,
+                    delta_x,
+                    delta_y,
+                    ctrl_key,
+                    scroller,
+                    scroll_nodes,
+                    scroll_offsets,
+                    scroll_count,
+                )
+            }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos", target_os = "windows"))]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_dispatch_pointer(
             handle: *mut ::std::ffi::c_void,
             timestamp_ms: f64,

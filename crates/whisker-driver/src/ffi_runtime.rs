@@ -480,35 +480,11 @@ pub unsafe fn dispatch_pointer(
     ) else {
         return false;
     };
-    if scroll_count != 0 && (scroll_nodes.is_null() || scroll_offsets.is_null()) {
-        return false;
-    }
-    let Some(offset_count) = scroll_count.checked_mul(2) else {
+    let Some(presentation) =
+        (unsafe { scroll_presentation(scroll_nodes, scroll_offsets, scroll_count) })
+    else {
         return false;
     };
-    let (nodes, offsets) = if scroll_count == 0 {
-        (&[][..], &[][..])
-    } else {
-        (
-            unsafe { std::slice::from_raw_parts(scroll_nodes, scroll_count) },
-            unsafe { std::slice::from_raw_parts(scroll_offsets, offset_count) },
-        )
-    };
-    let mut presentation = Vec::with_capacity(scroll_count);
-    for (index, raw_node) in nodes.iter().copied().enumerate() {
-        let Some(node) = NodeId::new(raw_node) else {
-            return false;
-        };
-        presentation.push(
-            whisker_engine::whisker_protocol::HostPresentationUpdate::ScrollOffset {
-                node,
-                offset: InputPoint {
-                    x: offsets[index * 2],
-                    y: offsets[index * 2 + 1],
-                },
-            },
-        );
-    }
     let modules = std::rc::Rc::clone(&mobile.modules);
     with_module_host(&modules, || {
         mobile
@@ -520,6 +496,107 @@ pub unsafe fn dispatch_pointer(
         eprintln!("Whisker mobile pointer input failed: {error}");
         false
     })
+}
+
+/// Dispatches one Host-normalized wheel at a surface position, with deltas in logical pixels
+/// positive to the right and down, and returns whether a catching listener took it. `scroller` is
+/// the node of the innermost native scroll container under the pointer that can still scroll by
+/// the delta, or 0.
+///
+/// # Safety
+/// `handle` must identify a live mobile runtime for the duration of this call, and the scroll
+/// arrays must hold `scroll_count` nodes and twice as many offsets.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn dispatch_wheel(
+    handle: *mut c_void,
+    timestamp_ms: f64,
+    x: f32,
+    y: f32,
+    delta_x: f64,
+    delta_y: f64,
+    ctrl_key: bool,
+    scroller: u64,
+    scroll_nodes: *const u64,
+    scroll_offsets: *const f32,
+    scroll_count: usize,
+) -> bool {
+    let Some(mobile) = (unsafe { handle.cast::<MobileRuntime>().as_ref() }) else {
+        return false;
+    };
+    let Some(presentation) =
+        (unsafe { scroll_presentation(scroll_nodes, scroll_offsets, scroll_count) })
+    else {
+        return false;
+    };
+    let mut detail = vec![
+        ("deltaX", WhiskerValue::Float(delta_x)),
+        ("deltaY", WhiskerValue::Float(delta_y)),
+        ("ctrlKey", WhiskerValue::Bool(ctrl_key)),
+    ];
+    if scroller != 0 {
+        detail.push(("scroller", WhiskerValue::Int(scroller as i64)));
+    }
+    let event = InputEvent {
+        presentation_revision: None,
+        surface: SurfaceId::new(1).unwrap(),
+        timestamp_ms,
+        kind: InputEventKind::Wheel,
+        pointer: Some(PointerInput {
+            id: PointerId::new(1).unwrap(),
+            kind: PointerKind::Mouse,
+            position: InputPoint { x, y },
+            buttons: 0,
+            changed_button: -1,
+        }),
+        target: None,
+        detail: WhiskerValue::map(detail),
+    };
+    let modules = std::rc::Rc::clone(&mobile.modules);
+    with_module_host(&modules, || {
+        mobile
+            .runtime
+            .dispatch_input_with_presentation(&event, &presentation)
+    })
+    .map(|value| value.caught)
+    .unwrap_or_else(|error| {
+        eprintln!("Whisker mobile wheel input failed: {error}");
+        false
+    })
+}
+
+/// # Safety
+/// The arrays must hold `scroll_count` nodes and twice as many offsets.
+unsafe fn scroll_presentation(
+    scroll_nodes: *const u64,
+    scroll_offsets: *const f32,
+    scroll_count: usize,
+) -> Option<Vec<whisker_engine::whisker_protocol::HostPresentationUpdate>> {
+    if scroll_count == 0 {
+        return Some(Vec::new());
+    }
+    if scroll_nodes.is_null() || scroll_offsets.is_null() {
+        return None;
+    }
+    // SAFETY: the caller guarantees both arrays' lengths, and neither pointer is null.
+    let nodes = unsafe { std::slice::from_raw_parts(scroll_nodes, scroll_count) };
+    // SAFETY: as above, with two offsets per node.
+    let offsets =
+        unsafe { std::slice::from_raw_parts(scroll_offsets, scroll_count.checked_mul(2)?) };
+    nodes
+        .iter()
+        .enumerate()
+        .map(|(index, raw_node)| {
+            Some(
+                whisker_engine::whisker_protocol::HostPresentationUpdate::ScrollOffset {
+                    node: NodeId::new(*raw_node)?,
+                    offset: InputPoint {
+                        x: offsets[index * 2],
+                        y: offsets[index * 2 + 1],
+                    },
+                },
+            )
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
