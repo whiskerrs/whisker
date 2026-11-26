@@ -710,6 +710,7 @@ fn label(size: f32, weight: u16, color: Color) -> Css {
         .color(color)
 }
 
+#[component]
 fn avatar(app: App, models: StoredValue<Vec<Model>>, id: usize) -> Element {
     let Some(look) = app
         .with_crowd(|c| c.walkers.get(id).map(|w| w.look))
@@ -783,7 +784,8 @@ enum Pose {
 }
 
 /// A person's face in a round bubble pointing at where they stand.
-fn bubble(app: App, id: usize) -> Element {
+#[component]
+fn person_marker(app: App, id: usize) -> Element {
     let Some(look) = app
         .with_crowd(|c| c.walkers.get(id).map(|w| w.look))
         .flatten()
@@ -804,7 +806,7 @@ fn bubble(app: App, id: usize) -> Element {
         .unwrap_or(Pose::Walking)
     });
     render! {
-        Marker(position: position) { { face_bubble(look, id, pose) } }
+        Marker(position: position) { FaceBubble(look: look, id: id, pose: pose) }
     }
 }
 
@@ -830,6 +832,7 @@ fn loop_forever(keyframes: Keyframes, millis: f32, delay: f32) -> Animation {
         .direction(AnimationDirection::Alternate)
 }
 
+#[component]
 fn face_bubble(look: usize, id: usize, pose: ReadSignal<Pose>) -> Element {
     let rgb = LOOKS[look].color;
     let color = Color::hex(rgb);
@@ -1000,7 +1003,8 @@ fn face_bubble(look: usize, id: usize, pose: ReadSignal<Pose>) -> Element {
 
 /// The selected person's name, floating over their head.
 /// A cluster as two of its faces in a candy capsule, with how many are in it.
-fn huddle(app: App, h: ReadSignal<Huddle>) -> Element {
+#[component]
+fn huddle_marker(app: App, h: ReadSignal<Huddle>) -> Element {
     let position = computed(move || {
         app.tick.get();
         h.with(|h| app.middle_of(&h.members))
@@ -1014,11 +1018,12 @@ fn huddle(app: App, h: ReadSignal<Huddle>) -> Element {
     let count = computed(move || h.with(|h| h.count.to_string()));
     let phase = (h.with_untracked(|h| h.faces.0) * 7 % 13) as f32 * 130.0;
     render! {
-        Marker(position: position) { { huddle_bubble(looks, count, phase) } }
+        Marker(position: position) { HuddleCapsule(looks: looks, count: count, phase: phase) }
     }
 }
 
-fn huddle_bubble(
+#[component]
+fn huddle_capsule(
     looks: ReadSignal<(usize, Option<usize>)>,
     count: ReadSignal<String>,
     phase: f32,
@@ -1186,6 +1191,7 @@ fn huddle_bubble(
     }
 }
 
+#[component]
 fn name_tag(app: App) -> Element {
     let place = computed(move || {
         app.tick.get();
@@ -1220,6 +1226,7 @@ fn name_tag(app: App) -> Element {
 }
 
 /// The selected person's card.
+#[component]
 fn card(app: App) -> Element {
     let info = computed(move || {
         app.pulse.get();
@@ -1325,6 +1332,7 @@ fn card(app: App) -> Element {
     }
 }
 
+#[component]
 fn chips(app: App) -> Element {
     let row = Css::new()
         .display_flex()
@@ -1378,7 +1386,8 @@ fn chips(app: App) -> Element {
 }
 
 /// The map in one style, with the 3D people inside it.
-fn map(app: App, night: bool, scene: Scene) -> Element {
+#[component]
+fn city_map(app: App, night: bool, scene: Scene) -> Element {
     let map_ref = MapRef::new();
     add_layers(map_ref, night);
     app.map.with(|m| m.set(Some(map_ref)));
@@ -1408,14 +1417,14 @@ fn map(app: App, night: bool, scene: Scene) -> Element {
             ForEach(
                 each: move || app.bubbles(),
                 key: |id: &usize| *id,
-                children: move |id: ReadSignal<usize>| bubble(app, id.get_untracked()),
+                children: move |id: ReadSignal<usize>| render! { PersonMarker(app: app, id: id.get_untracked()) },
             )
             ForEach(
                 each: move || app.huddles(),
                 key: |h: &Huddle| h.faces.0,
-                children: move |h: ReadSignal<Huddle>| huddle(app, h),
+                children: move |h: ReadSignal<Huddle>| render! { HuddleMarker(app: app, h: h) },
             )
-            Show(when: move || app.selected.get().is_some()) { { name_tag(app) } }
+            Show(when: move || app.selected.get().is_some()) { NameTag(app: app) }
         }
     }
 }
@@ -1517,15 +1526,15 @@ pub fn app() -> Element {
     let (day_scene, night_scene) = (scene.clone(), scene.clone());
     render! {
         View(style: page) {
-            Show(when: move || !app.night.get()) { { map(app, false, day_scene.clone()) } }
-            Show(when: move || app.night.get()) { { map(app, true, night_scene.clone()) } }
+            Show(when: move || !app.night.get()) { CityMap(app: app, night: false, scene: day_scene.clone()) }
+            Show(when: move || app.night.get()) { CityMap(app: app, night: true, scene: night_scene.clone()) }
             SceneContent(scene: scene.clone()) {
                 HemisphereLight(sky_color: Color::hex(0xfff6e8), ground_color: Color::hex(0x8f86c9), intensity: 1.4)
                 DirectionalLight(color: Color::hex(0xffffff), intensity: 2.2, direction: Vec3::new(-0.4, -1.0, -0.5))
                 ForEach(
                     each: move || app.avatars(),
                     key: |id: &usize| *id,
-                    children: move |id: ReadSignal<usize>| avatar(app, models, id.get_untracked()),
+                    children: move |id: ReadSignal<usize>| render! { Avatar(app: app, models: models, id: id.get_untracked()) },
                 )
             }
             View(style: computed(top)) {
@@ -1542,8 +1551,8 @@ pub fn app() -> Element {
                 }
             }
             View(style: computed(bottom)) {
-                Show(when: move || app.selected.get().is_some()) { { card(app) } }
-                { chips(app) }
+                Show(when: move || app.selected.get().is_some()) { Card(app: app) }
+                Chips(app: app)
             }
         }
     }
