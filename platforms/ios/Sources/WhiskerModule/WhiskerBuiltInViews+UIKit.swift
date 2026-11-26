@@ -181,6 +181,13 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
         scrollToLogicalOffset(Double(current) + offset, smooth: smooth)
     }
 
+    /** Whether native scrolling can still move by a wheel delta, positive to the right and down. */
+    public func canScroll(byWheelDelta delta: CGPoint) -> Bool {
+        guard isScrollEnabled else { return false }
+        let (amount, offset) = horizontal ? (delta.x, contentOffset.x) : (delta.y, contentOffset.y)
+        return (amount > 0 && offset < maximumLogicalOffset - 1) || (amount < 0 && offset > 0)
+    }
+
     public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         pendingLogicalOffset = nil
         scrollSequenceStart = contentOffset
