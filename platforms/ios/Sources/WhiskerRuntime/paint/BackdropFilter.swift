@@ -8,12 +8,15 @@ import UIKit
 /// system material and larger radii saturate there.
 final class HostBackdropBlurView: UIVisualEffectView {
     private var animator: UIViewPropertyAnimator?
-    private let shapeMask = CAShapeLayer()
+    private let shapeMask = HostActionlessShapeLayer()
+    private var blurRadius: CGFloat = 0
 
     init() {
         super.init(effect: nil)
         isUserInteractionEnabled = false
         isHidden = true
+        clipsToBounds = true
+        shapeMask.fillColor = UIColor.white.cgColor
     }
 
     required init?(coder: NSCoder) { nil }
@@ -23,6 +26,9 @@ final class HostBackdropBlurView: UIVisualEffectView {
     }
 
     func setBlurRadius(_ radius: CGFloat) {
+        let radius = min(max(radius, 0), 30)
+        guard radius != blurRadius else { return }
+        blurRadius = radius
         animator?.stopAnimation(true)
         animator = nil
         effect = nil
@@ -38,15 +44,24 @@ final class HostBackdropBlurView: UIVisualEffectView {
         }
         next.startAnimation()
         next.pauseAnimation()
-        next.fractionComplete = min(radius / 30, 1)
+        next.fractionComplete = radius / 30
         animator = next
     }
 
     func setShape(_ path: CGPath, in bounds: CGRect) {
-        shapeMask.frame = bounds
-        shapeMask.path = path
-        shapeMask.fillColor = UIColor.white.cgColor
-        layer.mask = shapeMask
+        var rect = CGRect.zero
+        if path.isRect(&rect), rect == bounds {
+            // The view already clips to its bounds. A shape mask here adds a
+            // compositing pass to a rectangular, often full-screen blur.
+            if layer.mask != nil {
+                layer.mask = nil
+                shapeMask.path = nil
+            }
+            return
+        }
+        if shapeMask.frame != bounds { shapeMask.frame = bounds }
+        if shapeMask.path != path { shapeMask.path = path }
+        if layer.mask == nil { layer.mask = shapeMask }
     }
 }
 #endif

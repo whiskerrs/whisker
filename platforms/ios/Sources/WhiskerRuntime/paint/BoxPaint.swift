@@ -23,7 +23,7 @@ struct HostBoxPaint {
     }
 }
 
-struct HostBoxShadow {
+struct HostBoxShadow: Equatable {
     let offset: CGSize
     let blurRadius: CGFloat
     let spreadRadius: CGFloat
@@ -62,6 +62,7 @@ final class HostBoxPainter {
     private var borderColors = [WhiskerPlatformColor](repeating: .clear, count: 4)
     private var borderStyles = [UInt32](repeating: 0, count: 4)
     private var cornerRadii = [CGSize](repeating: .zero, count: 4)
+    private var cachedBorderBoxPath: (bounds: CGRect, radii: [CGSize], path: CGPath)?
     /// Advances whenever the painted result can differ, so a view redraws only then.
     private(set) var revision: UInt64 = 0
 
@@ -305,7 +306,17 @@ final class HostBoxPainter {
     }
 
     func borderBoxPath(in bounds: CGRect) -> CGPath {
-        roundedPath(in: bounds, radii: cornerRadii).cgPath
+        // Layout, shadow and blur updates ask for the same outline repeatedly.
+        if let cached = cachedBorderBoxPath, cached.bounds == bounds, cached.radii == cornerRadii {
+            return cached.path
+        }
+        let path = if cornerRadii.allSatisfy({ $0 == .zero }) {
+            CGPath(rect: bounds, transform: nil)
+        } else {
+            roundedPath(in: bounds, radii: cornerRadii).cgPath
+        }
+        cachedBorderBoxPath = (bounds, cornerRadii, path)
+        return path
     }
 
     /// Returns the rounded content-box path, or nil when every content corner is square.
