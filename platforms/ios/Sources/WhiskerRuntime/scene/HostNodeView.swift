@@ -7,6 +7,15 @@ private final class OverflowMaskLayer: CAShapeLayer {
     override func action(forKey event: String) -> CAAction? { nil }
 }
 
+/// A shape layer whose property changes apply immediately.
+///
+/// Layers outside a view's backing layer start an implicit 0.25 s animation for
+/// every property change. Shadows and masks follow the node's geometry, so those
+/// animations lag behind and keep Core Animation compositing after each update.
+final class HostActionlessShapeLayer: CAShapeLayer {
+    override func action(forKey event: String) -> CAAction? { nil }
+}
+
 private final class HostPaintLayer: CALayer {
     // A layer outside a view animates every property change unless told otherwise.
     override func action(forKey event: String) -> CAAction? { nil }
@@ -36,7 +45,7 @@ final class WhiskerNodeView: UIView {
     private var overflowMaskScrollOrigin = CGPoint.zero
     private var overflowMaskCompositionBounds = CGRect.zero
     private var ancestorScrollObservations: [NSKeyValueObservation] = []
-    private let clipPathMask = CAShapeLayer()
+    private let clipPathMask = HostActionlessShapeLayer()
     private let contentClipMask = OverflowMaskLayer()
     private var clipPath: HostClipPath?
     private var boxShadows: [HostBoxShadow] = []
@@ -290,14 +299,17 @@ final class WhiskerNodeView: UIView {
     }
 
     func setBoxShadows(_ shadows: [HostBoxShadow]) {
+        // Visual effects reach the host as one bundle, so an unrelated change
+        // resends the same shadows; rebuilding them would re-render every shadow.
+        guard shadows != boxShadows else { return }
         while boxShadowLayers.count > shadows.count {
             boxShadowLayers.removeLast().removeFromSuperlayer()
             boxShadowMaskLayers.removeLast()
         }
         while boxShadowLayers.count < shadows.count {
-            let shadowLayer = CAShapeLayer()
+            let shadowLayer = HostActionlessShapeLayer()
             boxShadowLayers.append(shadowLayer)
-            boxShadowMaskLayers.append(CAShapeLayer())
+            boxShadowMaskLayers.append(HostActionlessShapeLayer())
         }
         boxShadows = shadows
         boxShadowLayers.forEach { $0.removeFromSuperlayer() }

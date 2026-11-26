@@ -61,18 +61,25 @@ public final class WhiskerSvgView: WhiskerUI<WhiskerSvgDrawingView> {
 @objc(WhiskerSvgDrawingView)
 public final class WhiskerSvgDrawingView: UIView {
 
+    // Props are re-sent with unchanged values; re-rasterizing then costs a full CPU redraw for nothing.
     var displayListBytes: Data? {
-        didSet { setNeedsDisplay() }
+        didSet { if displayListBytes != oldValue { setNeedsDisplay() } }
     }
 
     /// `.label` puts an unstyled `<Svg>` on the system's primary text colour.
     var tintColorOverride: SvgColor = defaultTint {
-        didSet { setNeedsDisplay() }
+        didSet { if !tintColorOverride.isEqual(oldValue) { setNeedsDisplay() } }
     }
+
+    /// The size the current raster was laid out at.
+    private var rasterSize: CGSize?
 
     public override func layoutSubviews() {
         super.layoutSubviews()
         // A display:none branch is first laid out at zero size, so the raster must redraw at real bounds (#306).
+        // Layout passes that keep the size (an ancestor moving or re-laying out) reuse the raster.
+        guard rasterSize != bounds.size else { return }
+        rasterSize = bounds.size
         setNeedsDisplay()
     }
 
