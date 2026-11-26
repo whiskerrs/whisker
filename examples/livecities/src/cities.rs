@@ -50,7 +50,7 @@ pub struct Look {
     pub color: u32,
 }
 
-pub const LOOKS: [Look; 4] = [
+pub static LOOKS: [Look; 4] = [
     Look {
         model: include_bytes!("../assets/models/mina.glb"),
         face: "mina.png",
