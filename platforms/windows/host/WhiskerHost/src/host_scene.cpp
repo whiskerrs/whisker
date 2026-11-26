@@ -823,6 +823,17 @@ int32_t HostScene::CursorAt(float x, float y) const {
 }
 
 bool HostScene::ScrollAt(float x, float y, float dx, float dy) {
+  auto id = ScrollerAt(x, y, dx, dy);
+  if (!id) return false;
+  auto const& scroll = *nodes_.at(*id).scroll;
+  size_t axis = scroll.horizontal ? 0 : 1;
+  std::array<float, 2> delta{dx, dy};
+  auto offset = scroll.offset;
+  offset[axis] += delta[axis] == 0 ? delta[1 - axis] : delta[axis];
+  return ScrollTo(*id, offset);
+}
+
+std::optional<uint64_t> HostScene::ScrollerAt(float x, float y, float dx, float dy) const {
   auto hit = HitTest(roots_, x, y);
   for (auto id = hit; id && *id != kRoot;) {
     auto const& node = nodes_.at(*id);
@@ -830,13 +841,12 @@ bool HostScene::ScrollAt(float x, float y, float dx, float dy) {
       size_t axis = node.scroll->horizontal ? 0 : 1;
       std::array<float, 2> delta{dx, dy};
       float amount = delta[axis] == 0 ? delta[1 - axis] : delta[axis];
-      auto offset = node.scroll->offset;
-      offset[axis] += amount;
-      if (ScrollTo(*id, offset)) return true;
+      float current = node.scroll->offset[axis];
+      if (std::clamp(current + amount, 0.0f, MaxScrollOffset(node)[axis]) != current) return *id;
     }
     id = node.parent;
   }
-  return false;
+  return std::nullopt;
 }
 
 void HostScene::CreateView(uint64_t id, const ViewDefinition& definition) {

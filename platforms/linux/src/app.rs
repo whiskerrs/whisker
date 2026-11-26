@@ -10,7 +10,7 @@ use whisker::runtime::module::RustModuleRuntime;
 use whisker::{Element, ElementRegistry, RuntimeInstance, SurfaceRuntime};
 use whisker_engine::LayoutOptions;
 use whisker_protocol::{
-    CapabilityEntry, CapabilitySupport, InputEvent, InputEventKind, InputPoint, PointerId,
+    CapabilityEntry, CapabilitySupport, InputEvent, InputEventKind, InputPoint, NodeId, PointerId,
     PointerInput, PointerKind, ProtocolVersion, RenderCapabilities, RenderCapability, SurfaceId,
     WhiskerValue,
 };
@@ -336,8 +336,56 @@ impl LinuxApplication {
             .map_err(|error| LinuxError(format!("dispatch GTK pointer input: {error}")))
     }
 
-    /// Scrolls the innermost enabled ScrollView under `point` that can still move.
+    /// Dispatches a wheel with deltas in logical pixels and returns whether a catching listener took
+    /// it, in which case the Host must not scroll.
+    fn dispatch_wheel(
+        &mut self,
+        point: InputPoint,
+        delta: [f32; 2],
+        ctrl_key: bool,
+        timestamp_ms: f64,
+    ) -> Result<bool, LinuxError> {
+        let mut detail = vec![
+            ("deltaX", WhiskerValue::Float(f64::from(delta[0]))),
+            ("deltaY", WhiskerValue::Float(f64::from(delta[1]))),
+            ("ctrlKey", WhiskerValue::Bool(ctrl_key)),
+        ];
+        if !ctrl_key && let Some((scroller, _)) = self.scroller_at(point, delta) {
+            detail.push(("scroller", WhiskerValue::Int(scroller.get() as i64)));
+        }
+        let presentation = self.feedback.borrow_mut().take_presentation_updates();
+        let event = InputEvent {
+            presentation_revision: None,
+            surface: self.runtime.surface().surface(),
+            timestamp_ms,
+            kind: InputEventKind::Wheel,
+            pointer: Some(PointerInput {
+                id: PointerId::new(1).expect("non-zero"),
+                kind: PointerKind::Mouse,
+                position: point,
+                buttons: 0,
+                changed_button: -1,
+            }),
+            target: None,
+            detail: WhiskerValue::map(detail),
+        };
+        self.modules
+            .with_host(|| {
+                self.runtime
+                    .dispatch_input_with_presentation(&event, &presentation)
+            })
+            .map(|dispatch| dispatch.caught)
+            .map_err(|error| LinuxError(format!("dispatch GTK wheel input: {error}")))
+    }
+
     fn scroll_at(&mut self, point: InputPoint, delta: [f32; 2]) -> bool {
+        self.scroller_at(point, delta)
+            .is_some_and(|(id, offset)| self.frames.scroll_to(id, offset))
+    }
+
+    /// The innermost enabled ScrollView under `point` that can still move by `delta`, and the offset
+    /// it would move to.
+    fn scroller_at(&self, point: InputPoint, delta: [f32; 2]) -> Option<(NodeId, [f32; 2])> {
         let mut node = self
             .surface
             .hit_test(point.x, point.y)
@@ -362,12 +410,12 @@ impl LinuxApplication {
                 if target != scroll.offset[axis] {
                     let mut offset = scroll.offset;
                     offset[axis] = target;
-                    return self.frames.scroll_to(id, offset);
+                    return Some((id, offset));
                 }
             }
             node = self.frames.parent(id);
         }
-        false
+        None
     }
 }
 
@@ -522,7 +570,18 @@ fn install_input(surface: &NodeWidget) {
             .current_event()
             .and_then(|event| surface_point(&target, &event))
             .unwrap_or_else(|| last_pointer.get());
-        let moved = with_application(|host| Ok(host.scroll_at(point, delta))).unwrap_or(false);
+        let ctrl_key = controller
+            .current_event_state()
+            .contains(gdk::ModifierType::CONTROL_MASK);
+        let timestamp_ms = f64::from(controller.current_event_time());
+        let moved = with_application(|host| {
+            Ok(host.dispatch_wheel(point, delta, ctrl_key, timestamp_ms)?
+                || host.scroll_at(point, delta))
+        })
+        .unwrap_or_else(|error| {
+            eprintln!("whisker: {error}");
+            false
+        });
         if moved {
             request_frame();
             glib::Propagation::Stop

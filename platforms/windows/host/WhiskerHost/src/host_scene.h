@@ -53,6 +53,8 @@ class HostScene {
   int32_t CursorAt(float x, float y) const;
   // Scrolls the innermost enabled ScrollView under the point that can still move.
   bool ScrollAt(float x, float y, float dx, float dy);
+  // The innermost enabled ScrollView under the point that can still move by the delta.
+  std::optional<uint64_t> ScrollerAt(float x, float y, float dx, float dy) const;
   std::vector<ScrollEvent> TakeScrollEvents();
   std::vector<ViewEvent> TakeViewEvents();
   // Paints module views invalidated outside a frame.
