@@ -1,6 +1,6 @@
 [package]
 name = "whisker-map"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,10 +12,10 @@ categories.workspace = true
 description = "A vector map engine for Whisker that draws MapLibre styles with wgpu."
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.19.2" }
-whisker-style = { path = "../../crates/whisker-style", version = "0.19.2" }
-whisker-surface = { path = "../whisker-surface", version = "0.1.1" }
-whisker-wgpu = { path = "../whisker-wgpu", version = "0.1.1" }
+whisker = { path = "../../crates/whisker", version = "0.19.3" }
+whisker-style = { path = "../../crates/whisker-style", version = "0.19.3" }
+whisker-surface = { path = "../whisker-surface", version = "0.1.2" }
+whisker-wgpu = { path = "../whisker-wgpu", version = "0.1.2" }
 glam = "0.30"
 bytemuck = { version = "1.25", features = ["derive"] }
 serde_json = "1"

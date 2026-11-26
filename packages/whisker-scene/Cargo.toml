@@ -1,6 +1,6 @@
 [package]
 name = "whisker-scene"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,9 +12,9 @@ categories.workspace = true
 description = "A 3D scene graph for Whisker, written as components and drawn with wgpu."
 
 [dependencies]
-whisker = { path = "../../crates/whisker", version = "0.19.2" }
-whisker-surface = { path = "../whisker-surface", version = "0.1.1" }
-whisker-wgpu = { path = "../whisker-wgpu", version = "0.1.1" }
+whisker = { path = "../../crates/whisker", version = "0.19.3" }
+whisker-surface = { path = "../whisker-surface", version = "0.1.2" }
+whisker-wgpu = { path = "../whisker-wgpu", version = "0.1.2" }
 glam = "0.30"
 bytemuck = { version = "1.25", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "hdr"] }
