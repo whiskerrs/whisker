@@ -181,8 +181,6 @@ public final class SurfaceModule: Module {
                 Prop("surface") { (view: WhiskerSurfaceView, value: WhiskerValue) in
                     view.view().setSurface(value.asString ?? "")
                 }
-                Prop("wheel") { (_: WhiskerSurfaceView, _: WhiskerValue) in }
-                Events("wheel")
             }
         }
     }

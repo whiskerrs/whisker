@@ -6173,13 +6173,11 @@ dependencies = [
 name = "whisker-map-example"
 version = "0.1.0"
 dependencies = [
- "glam",
  "serde_json",
  "whisker",
  "whisker-cng",
  "whisker-map",
  "whisker-safe-area",
- "whisker-scene",
 ]
 
 [[package]]

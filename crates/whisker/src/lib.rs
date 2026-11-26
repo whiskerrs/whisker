@@ -128,7 +128,7 @@ pub mod event {
         AnimationEvent, BindType, CustomEvent, Event, LayoutCompleteDetail, LayoutCompleteEvent,
         Point, ScrollDetail, ScrollEvent, ScrollStateChangeDetail, ScrollStateChangeEvent,
         SelectionChangeEvent, SelectionDetail, Size, SnapDetail, SnapEvent, Target,
-        TextLayoutDetail, TextLayoutEvent, TextLineInfo, Touch, TouchEvent,
+        TextLayoutDetail, TextLayoutEvent, TextLineInfo, Touch, TouchEvent, WheelEvent,
     };
 }
 

@@ -9,10 +9,7 @@ use std::time::Duration;
 use whisker_surface::{NativeSurface, SurfaceSize, host};
 use whisker_web::wasm_bindgen::closure::Closure;
 use whisker_web::wasm_bindgen::{JsCast, JsValue};
-use whisker_web::{
-    ModuleDefinition, WebEventEmitter, WebNativeEvent, WebViewDefinition, WhiskerModule,
-    WhiskerValue,
-};
+use whisker_web::{ModuleDefinition, WebViewDefinition, WhiskerModule, WhiskerValue};
 
 struct State {
     canvas: web_sys::HtmlCanvasElement,
@@ -21,15 +18,13 @@ struct State {
     reported: Option<SurfaceSize>,
     frame_request: Option<i32>,
     callback: Option<Closure<dyn FnMut(f64)>>,
-    wheel: Option<Closure<dyn FnMut(web_sys::WheelEvent)>>,
-    wheel_enabled: bool,
 }
 
 /// Calls Rust only from `requestAnimationFrame`, never from a prop setter inside Whisker's commit.
 struct SurfaceCanvas(Rc<RefCell<State>>);
 
 impl SurfaceCanvas {
-    fn new(document: &web_sys::Document, emitter: WebEventEmitter) -> Result<Self, JsValue> {
+    fn new(document: &web_sys::Document) -> Result<Self, JsValue> {
         let canvas: web_sys::HtmlCanvasElement =
             document.create_element("canvas")?.unchecked_into();
         canvas.set_attribute("style", "display:block;width:100%;height:100%")?;
@@ -40,49 +35,7 @@ impl SurfaceCanvas {
             reported: None,
             frame_request: None,
             callback: None,
-            wheel: None,
-            wheel_enabled: false,
         }));
-        let weak = Rc::downgrade(&state);
-        let wheel =
-            Closure::<dyn FnMut(web_sys::WheelEvent)>::new(move |event: web_sys::WheelEvent| {
-                let Some(state) = weak.upgrade() else { return };
-                let height = {
-                    let state = state.borrow();
-                    if !state.wheel_enabled {
-                        return;
-                    }
-                    state.canvas.client_height()
-                };
-                event.prevent_default();
-                let unit = match event.delta_mode() {
-                    web_sys::WheelEvent::DOM_DELTA_LINE => 40.0,
-                    web_sys::WheelEvent::DOM_DELTA_PAGE => f64::from(height),
-                    _ => 1.0,
-                };
-                emitter.emit(WebNativeEvent {
-                    event: "wheel".into(),
-                    detail: WhiskerValue::map([
-                        ("x", WhiskerValue::Float(f64::from(event.offset_x()))),
-                        ("y", WhiskerValue::Float(f64::from(event.offset_y()))),
-                        ("delta_x", WhiskerValue::Float(event.delta_x() * unit)),
-                        ("delta_y", WhiskerValue::Float(event.delta_y() * unit)),
-                        ("ctrl_key", WhiskerValue::Bool(event.ctrl_key())),
-                    ]),
-                });
-            });
-        let options = web_sys::AddEventListenerOptions::new();
-        // A passive listener cannot stop the page from scrolling or zooming.
-        options.set_passive(false);
-        state
-            .borrow()
-            .canvas
-            .add_event_listener_with_callback_and_add_event_listener_options(
-                "wheel",
-                wheel.as_ref().unchecked_ref(),
-                &options,
-            )?;
-        state.borrow_mut().wheel = Some(wheel);
         let weak = Rc::downgrade(&state);
         let callback = Closure::<dyn FnMut(f64)>::new(move |time: f64| tick(&weak, time));
         state.borrow_mut().callback = Some(callback);
@@ -182,21 +135,8 @@ impl WhiskerModule for SurfaceModule {
             .view(
                 WebViewDefinition::new(
                     "whisker-surface:Surface",
-                    |document, emitter| SurfaceCanvas::new(document, emitter.clone()),
+                    |document, _| SurfaceCanvas::new(document),
                     |view| view.0.borrow().canvas.clone().into(),
-                )
-                .event("wheel")
-                .prop(
-                    "wheel",
-                    |view, value| {
-                        view.0.borrow_mut().wheel_enabled =
-                            matches!(value, WhiskerValue::Bool(true));
-                        Ok(())
-                    },
-                    |view| {
-                        view.0.borrow_mut().wheel_enabled = false;
-                        Ok(())
-                    },
                 )
                 .prop(
                     "surface",

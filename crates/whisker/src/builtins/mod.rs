@@ -1,7 +1,7 @@
 use crate::ElementTag;
 use whisker_runtime::event::{
-    AnimationEvent, ScrollEvent, SelectionChangeEvent, TextLayoutEvent, TouchEvent, bind_typed,
-    bind_unit,
+    AnimationEvent, ScrollEvent, SelectionChangeEvent, TextLayoutEvent, TouchEvent, WheelEvent,
+    bind_typed, bind_unit,
 };
 use whisker_runtime::reactive::{Signal, effect};
 use whisker_runtime::view::{
@@ -171,6 +171,30 @@ pub trait ElementBuilder: Sized {
     /// `click`, capture phase — **stops** propagation.
     fn on_capture_click_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
         bind_typed(self.__element(), "click", BindType::CaptureCatch, f);
+        self
+    }
+
+    /// `wheel` — a mouse wheel or trackpad scroll over the element. A catching listener on the
+    /// path keeps the Host from scrolling the page or a native scroll view for it; a native
+    /// scroll view under the pointer that can still scroll that way takes the wheel first, so
+    /// its ancestors do not see it.
+    fn on_wheel<F: Fn(WheelEvent) + 'static>(self, f: F) -> Self {
+        bind_typed(self.__element(), "wheel", BindType::Bind, f);
+        self
+    }
+    /// `wheel`, bubble phase — **stops** propagation here.
+    fn on_wheel_catch<F: Fn(WheelEvent) + 'static>(self, f: F) -> Self {
+        bind_typed(self.__element(), "wheel", BindType::Catch, f);
+        self
+    }
+    /// `wheel`, capture phase — doesn't stop.
+    fn on_capture_wheel<F: Fn(WheelEvent) + 'static>(self, f: F) -> Self {
+        bind_typed(self.__element(), "wheel", BindType::CaptureBind, f);
+        self
+    }
+    /// `wheel`, capture phase — **stops** propagation.
+    fn on_capture_wheel_catch<F: Fn(WheelEvent) + 'static>(self, f: F) -> Self {
+        bind_typed(self.__element(), "wheel", BindType::CaptureCatch, f);
         self
     }
 

@@ -14,6 +14,7 @@ use whisker::css::{
     ColorStop, CssString, Gradient, ImageRef, LengthPercentage, NamedColor, Percentage, Position,
     RadialShape, Transition, TransitionPropertyKind,
 };
+use whisker::event::WheelEvent;
 use whisker::prelude::*;
 use whisker::{
     RuntimeBindingError, RuntimeDriveError, RuntimeInstance, RuntimeLifecycle, SurfaceRuntime,
@@ -2590,4 +2591,238 @@ fn viewport_signal_follows_host_resizes() {
             (100.0, 200.0, 3.0)
         ]
     );
+}
+
+fn wheel(
+    surface: &SurfaceRuntime,
+    timestamp_ms: f64,
+    x: f32,
+    y: f32,
+    scroller: Option<u64>,
+) -> InputEvent {
+    let mut detail = vec![
+        ("deltaX", WhiskerValue::Float(0.0)),
+        ("deltaY", WhiskerValue::Float(-40.0)),
+        ("ctrlKey", WhiskerValue::Bool(false)),
+    ];
+    if let Some(node) = scroller {
+        detail.push(("scroller", WhiskerValue::Int(node as i64)));
+    }
+    InputEvent {
+        presentation_revision: None,
+        surface: surface.surface(),
+        timestamp_ms,
+        kind: InputEventKind::Wheel,
+        pointer: Some(PointerInput {
+            id: PointerId::new(1).unwrap(),
+            kind: PointerKind::Mouse,
+            position: InputPoint { x, y },
+            buttons: 0,
+            changed_button: -1,
+        }),
+        target: None,
+        detail: WhiskerValue::map(detail),
+    }
+}
+
+fn mount_and_lay_out(
+    runtime: &mut RuntimeInstance,
+    surface: &SurfaceRuntime,
+    app: fn() -> Element,
+) {
+    runtime.mount(app).unwrap();
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+}
+
+thread_local! {
+    static WHEELS: RefCell<Vec<(&'static str, f64, Option<f64>)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn wheel_log(name: &'static str) -> impl Fn(WheelEvent) {
+    move |event: WheelEvent| {
+        WHEELS.with(|log| {
+            log.borrow_mut()
+                .push((name, event.delta_y, event.offset.map(|offset| offset.x)))
+        });
+    }
+}
+
+fn take_wheels() -> Vec<&'static str> {
+    WHEELS.with(|log| {
+        log.borrow_mut()
+            .drain(..)
+            .map(|(name, _, _)| name)
+            .collect()
+    })
+}
+
+#[test]
+fn wheel_bubbles_from_the_element_under_the_pointer_and_a_catch_marks_it_caught() {
+    let surface = surface(70);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    take_wheels();
+    mount_and_lay_out(&mut runtime, &surface, || {
+        render! {
+            View(style: css!(width: px(200), height: px(100)), on_wheel_catch: wheel_log("root")) {
+                View(style: css!(margin_left: px(20), width: px(50), height: px(50)), on_wheel: wheel_log("child"))
+            }
+        }
+    });
+
+    let dispatch = runtime
+        .dispatch_input(&wheel(&surface, 2.0, 30.0, 10.0, None))
+        .unwrap();
+
+    assert!(dispatch.caught);
+    let log = WHEELS.with(|log| log.borrow().clone());
+    assert_eq!(
+        log,
+        [("child", -40.0, Some(10.0)), ("root", -40.0, Some(30.0))]
+    );
+    take_wheels();
+    let dispatch = runtime
+        .dispatch_input(&wheel(&surface, 500.0, 150.0, 80.0, None))
+        .unwrap();
+    assert!(dispatch.caught);
+    assert_eq!(take_wheels(), ["root"]);
+}
+
+#[test]
+fn wheel_without_a_catching_listener_is_left_to_the_host() {
+    let surface = surface(71);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    take_wheels();
+    mount_and_lay_out(&mut runtime, &surface, || {
+        render! {
+            View(style: css!(width: px(200), height: px(100)), on_wheel: wheel_log("root"))
+        }
+    });
+
+    let dispatch = runtime
+        .dispatch_input(&wheel(&surface, 2.0, 30.0, 10.0, None))
+        .unwrap();
+
+    assert!(dispatch.consumed);
+    assert!(!dispatch.caught);
+    assert_eq!(take_wheels(), ["root"]);
+}
+
+#[test]
+fn a_wheel_gesture_stays_with_its_first_element_until_it_pauses() {
+    let surface = surface(72);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    take_wheels();
+    mount_and_lay_out(&mut runtime, &surface, || {
+        render! {
+            View(style: css!(width: px(200), height: px(100), flex_direction: FlexDirection::Row)) {
+                View(style: css!(width: px(100), height: px(100)), on_wheel_catch: wheel_log("left"))
+                View(style: css!(width: px(100), height: px(100)), on_wheel_catch: wheel_log("right"))
+            }
+        }
+    });
+
+    for (time, x) in [(2.0, 50.0), (60.0, 150.0), (200.0, 150.0), (500.0, 150.0)] {
+        runtime
+            .dispatch_input(&wheel(&surface, time, x, 50.0, None))
+            .unwrap();
+    }
+
+    assert_eq!(take_wheels(), ["left", "left", "left", "right"]);
+}
+
+#[test]
+fn a_native_scroll_container_that_takes_the_wheel_hides_it_from_its_ancestors() {
+    let surface = surface(73);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    take_wheels();
+    mount_and_lay_out(&mut runtime, &surface, || {
+        render! {
+            View(style: css!(width: px(200), height: px(100)), on_wheel_catch: wheel_log("map")) {
+                View(style: css!(width: px(80), height: px(80)), on_wheel: wheel_log("list")) {
+                    View(style: css!(width: px(40), height: px(40)), on_wheel: wheel_log("item"))
+                }
+            }
+        }
+    });
+    let list = runtime
+        .dispatch_input(&wheel(&surface, 2.0, 60.0, 60.0, None))
+        .unwrap()
+        .target
+        .unwrap()
+        .get();
+    take_wheels();
+
+    let dispatch = runtime
+        .dispatch_input(&wheel(&surface, 1000.0, 10.0, 10.0, Some(list)))
+        .unwrap();
+    assert!(!dispatch.caught);
+    assert_eq!(take_wheels(), ["item", "list"]);
+
+    let drifted = runtime
+        .dispatch_input(&wheel(&surface, 1050.0, 150.0, 50.0, None))
+        .unwrap();
+    assert!(!drifted.caught);
+    assert!(take_wheels().is_empty());
+
+    runtime
+        .dispatch_input(&wheel(&surface, 1500.0, 150.0, 50.0, None))
+        .unwrap();
+    assert_eq!(take_wheels(), ["map"]);
+}
+
+#[test]
+fn a_wheel_during_a_press_leaves_the_tap_alone() {
+    let surface = surface(74);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    thread_local! {
+        static TAPS: Cell<u32> = const { Cell::new(0) };
+    }
+    mount_and_lay_out(&mut runtime, &surface, || {
+        render! {
+            View(
+                style: css!(width: px(200), height: px(100)),
+                on_tap: |_| TAPS.with(|taps| taps.set(taps.get() + 1)),
+                on_wheel_catch: |_| {},
+            )
+        }
+    });
+    let press = |timestamp_ms, kind, buttons| InputEvent {
+        presentation_revision: None,
+        surface: surface.surface(),
+        timestamp_ms,
+        kind,
+        pointer: Some(PointerInput {
+            id: PointerId::new(1).unwrap(),
+            kind: PointerKind::Mouse,
+            position: InputPoint { x: 10.0, y: 10.0 },
+            buttons,
+            changed_button: 0,
+        }),
+        target: None,
+        detail: WhiskerValue::Null,
+    };
+
+    runtime
+        .dispatch_input(&press(2.0, InputEventKind::PointerDown, 1))
+        .unwrap();
+    runtime
+        .dispatch_input(&wheel(&surface, 10.0, 10.0, 10.0, None))
+        .unwrap();
+    runtime
+        .dispatch_input(&press(30.0, InputEventKind::PointerUp, 0))
+        .unwrap();
+
+    assert_eq!(TAPS.with(Cell::get), 1);
 }
