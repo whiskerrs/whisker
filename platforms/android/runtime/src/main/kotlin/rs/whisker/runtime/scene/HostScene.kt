@@ -113,6 +113,33 @@ internal class HostScene(
 
     fun currentRevision(): Long = revision
 
+    /** The node of the innermost ScrollView at a screen point that can still move by a wheel delta. */
+    fun wheelScroller(root: View, screenX: Float, screenY: Float, deltaX: Float, deltaY: Float): Long? {
+        var view: View? = deepestViewAt(root, screenX.toInt(), screenY.toInt())
+        while (view != null && view !== root) {
+            if (view is WhiskerScrollContainerView && view.canScrollByWheel(deltaX, deltaY)) {
+                var owner: View? = view
+                while (owner != null && owner !is HostNode) owner = owner.parent as? View
+                return nodes.entries.firstOrNull { it.value === owner }?.key
+            }
+            view = view.parent as? View
+        }
+        return null
+    }
+
+    private fun deepestViewAt(view: View, x: Int, y: Int): View? {
+        val bounds = android.graphics.Rect()
+        if (view.visibility != View.VISIBLE || !view.getGlobalVisibleRect(bounds) || !bounds.contains(x, y)) {
+            return null
+        }
+        if (view is ViewGroup) {
+            for (index in view.childCount - 1 downTo 0) {
+                deepestViewAt(view.getChildAt(index), x, y)?.let { return it }
+            }
+        }
+        return view
+    }
+
     fun stage(operation: HostSceneOperation): Boolean {
         stagedOperations += operation
         return true

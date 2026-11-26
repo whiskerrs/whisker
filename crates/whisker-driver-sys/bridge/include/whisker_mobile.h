@@ -823,6 +823,18 @@ extern bool whisker_view_dispatch_pointer(void *handle,
                                           const float *scroll_offsets,
                                           size_t scroll_count);
 
+extern bool whisker_view_dispatch_wheel(void *handle,
+                                        double timestamp_ms,
+                                        float x,
+                                        float y,
+                                        double delta_x,
+                                        double delta_y,
+                                        bool ctrl_key,
+                                        uint64_t scroller,
+                                        const uint64_t *scroll_nodes,
+                                        const float *scroll_offsets,
+                                        size_t scroll_count);
+
 extern bool whisker_view_dispatch_module_event(void *handle,
                                                const uint8_t *module,
                                                size_t module_len,

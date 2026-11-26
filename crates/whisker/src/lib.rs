@@ -128,7 +128,7 @@ pub mod event {
         AnimationEvent, BindType, CustomEvent, Event, LayoutCompleteDetail, LayoutCompleteEvent,
         Point, ScrollDetail, ScrollEvent, ScrollStateChangeDetail, ScrollStateChangeEvent,
         SelectionChangeEvent, SelectionDetail, Size, SnapDetail, SnapEvent, Target,
-        TextLayoutDetail, TextLayoutEvent, TextLineInfo, Touch, TouchEvent,
+        TextLayoutDetail, TextLayoutEvent, TextLineInfo, Touch, TouchEvent, WheelEvent,
     };
 }
 
@@ -362,7 +362,7 @@ pub mod __main_runtime {
 pub mod __driver_runtime {
     pub use whisker_driver::ffi_runtime::{
         create, destroy, dispatch_event, dispatch_module_event, dispatch_pointer,
-        dispatch_resource_event, pause, resume, tick,
+        dispatch_resource_event, dispatch_wheel, pause, resume, tick,
     };
 }
 

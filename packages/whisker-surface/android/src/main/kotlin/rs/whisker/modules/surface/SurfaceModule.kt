@@ -120,8 +120,6 @@ class SurfaceModule : Module() {
             Prop("surface") { view: WhiskerSurface, value ->
                 view.view().setSurface(value.asString() ?: "")
             }
-            Prop("wheel") { _: WhiskerSurface, _ -> }
-            Events("wheel")
         }
     }
 }

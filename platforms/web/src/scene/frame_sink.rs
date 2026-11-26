@@ -153,6 +153,26 @@ impl DomFrameSink {
         self.pending_events.borrow_mut().drain(..).collect()
     }
 
+    /// The scene node `element` presents, or the nearest one above it.
+    pub(crate) fn node_presenting(&self, element: &web_sys::Element) -> Option<NodeId> {
+        let mut current = Some(element.clone());
+        while let Some(element) = current {
+            if let Some(node) = self
+                .nodes
+                .iter()
+                .find(|(_, presented)| presented.is_same_node(Some(&element)))
+                .map(|(node, _)| *node)
+            {
+                return Some(node);
+            }
+            if element.is_same_node(Some(&self.root)) {
+                return None;
+            }
+            current = element.parent_element();
+        }
+        None
+    }
+
     pub(crate) fn take_presentation_updates(
         &self,
     ) -> Vec<whisker_protocol::HostPresentationUpdate> {

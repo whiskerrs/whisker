@@ -203,71 +203,18 @@ fn prop_value(id: u64, wakes: u64) -> String {
     format!("{id}:{wakes}")
 }
 
-/// A mouse wheel or trackpad scroll over a [`SurfaceView`].
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-#[non_exhaustive]
-pub struct WheelEvent {
-    #[serde(default)]
-    pub detail: WheelDetail,
-}
-
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-#[non_exhaustive]
-pub struct WheelDetail {
-    /// The pointer's position in the element, in logical pixels.
-    #[serde(default)]
-    pub x: f64,
-    #[serde(default)]
-    pub y: f64,
-    /// The scroll distance in logical pixels, positive to the right and down.
-    #[serde(default)]
-    pub delta_x: f64,
-    #[serde(default)]
-    pub delta_y: f64,
-    /// Set for a trackpad pinch, which browsers report as a wheel with Control held.
-    #[serde(default)]
-    pub ctrl_key: bool,
-}
-
-/// A handler for [`WheelEvent`]s that a closure converts into.
-#[derive(Clone)]
-pub struct WheelCallback(Rc<dyn Fn(WheelEvent)>);
-
-impl<F: Fn(WheelEvent) + 'static> From<F> for WheelCallback {
-    fn from(f: F) -> Self {
-        WheelCallback(Rc::new(f))
-    }
-}
-
 /// Shows a [`Surface`] in the element's box.
-///
-/// With `on_wheel` set, wheel events over the element go to it instead of scrolling the page; only
-/// the Web Host reports them.
 #[whisker::component]
-pub fn surface_view(surface: Surface, style: Style, on_wheel: Option<WheelCallback>) -> Element {
-    let prop = surface.inner.prop;
-    let on_wheel = on_wheel.clone();
+pub fn surface_view(surface: Surface, style: Style) -> Element {
     SurfaceElement::builder()
-        .surface(prop)
-        .wheel(on_wheel.is_some())
+        .surface(surface.inner.prop)
         .style(style.clone())
-        .on_wheel(move |event: WheelEvent| {
-            if let Some(callback) = &on_wheel {
-                (callback.0)(event);
-            }
-        })
         .build()
 }
 
 #[doc(hidden)]
 #[whisker::module_element(name = "whisker-surface:Surface", measurement = None)]
-pub fn surface_element(
-    surface: Signal<String>,
-    wheel: Signal<bool>,
-    style: Style,
-    on_wheel: WheelEvent,
-) {
-}
+pub fn surface_element(surface: Signal<String>, style: Style) {}
 
 #[doc(hidden)]
 pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {

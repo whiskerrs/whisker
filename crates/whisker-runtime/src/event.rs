@@ -7,6 +7,8 @@
 //!     `touchmove` / `touchend` / `touchcancel` / `click`. Adds the
 //!     primary-touch [`Point`] `detail` plus `touches` /
 //!     `changedTouches` arrays.
+//!   - [`WheelEvent`] — `wheel`. The pointer's [`Point`] `detail` plus
+//!     the scroll deltas.
 //!   - [`AnimationEvent`] — `animationstart` / `animationend` / … /
 //!     `transitionend`. Adds the animation `detail`.
 //!   - [`CustomEvent`] — component state-change events (`scroll`,
@@ -322,6 +324,45 @@ pub struct TouchEvent {
     /// Touch points whose state changed in this event.
     #[serde(default)]
     pub changed_touches: Vec<Touch>,
+}
+
+/// Mouse wheel or trackpad scroll over an element.
+///
+/// Shaped like [`TouchEvent`]: `detail` is the pointer's surface-coordinate position and
+/// `offset` / `size` are relative to the `currentTarget`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct WheelEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(default)]
+    pub current_target: Target,
+    /// Position of the pointer in surface coordinates.
+    #[serde(default)]
+    pub detail: Point,
+    /// Position of the pointer relative to the `currentTarget` element's border box.
+    #[serde(default)]
+    pub offset: Option<Point>,
+    /// Border-box size of the `currentTarget` element.
+    #[serde(default)]
+    pub size: Option<Size>,
+    /// `"mouse"`, `"touch"`, `"pen"`, or `"unknown"`.
+    #[serde(default)]
+    pub pointer_type: String,
+    /// Scroll distance in logical pixels, positive to the right.
+    #[serde(default)]
+    pub delta_x: f64,
+    /// Scroll distance in logical pixels, positive downward.
+    #[serde(default)]
+    pub delta_y: f64,
+    /// Set for a trackpad pinch, which hosts report as a wheel with Control held.
+    #[serde(default)]
+    pub ctrl_key: bool,
 }
 
 /// Keyframe / transition animation lifecycle event emitted by the Rust-owned

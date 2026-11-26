@@ -48,6 +48,12 @@ pub enum InputEventKind {
     Tap,
     /// Host-recognized long-press gesture.
     LongPress,
+    /// Mouse wheel or trackpad scroll at the pointer's position.
+    ///
+    /// `detail` carries `deltaX` and `deltaY` in logical pixels, `ctrlKey` for a trackpad pinch,
+    /// and `scroller`, the node id of the innermost native scroll container under the pointer
+    /// that can still scroll that way, when there is one.
+    Wheel,
     /// Element-provider event negotiated by name.
     Named(String),
 }
@@ -67,6 +73,7 @@ impl InputEventKind {
             Self::Click => "click",
             Self::Tap => "tap",
             Self::LongPress => "longpress",
+            Self::Wheel => "wheel",
             Self::Named(name) => name,
         }
     }
@@ -184,6 +191,10 @@ mod tests {
         assert_eq!(InputEventKind::Click.name(None), "click");
         assert_eq!(InputEventKind::Tap.name(None), "tap");
         assert_eq!(InputEventKind::LongPress.name(None), "longpress");
+        assert_eq!(
+            InputEventKind::Wheel.name(Some(PointerKind::Mouse)),
+            "wheel"
+        );
         assert_eq!(InputEventKind::Named("ready".into()).name(None), "ready");
     }
 

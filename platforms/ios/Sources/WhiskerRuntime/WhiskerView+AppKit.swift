@@ -12,6 +12,7 @@ public final class WhiskerView: NSView {
     private var moduleEventSinkEpoch: UInt64 = 0
     private let pendingModuleEvents = PendingModuleEvents()
     private var mouseMonitor: Any?
+    private var wheelMonitor: Any?
     private var mouseTrackingArea: NSTrackingArea?
     private var mouseCaptured = false
     private var dirtyScrollOffsets: [UInt64: CGPoint] = [:]
@@ -235,8 +236,8 @@ public final class WhiskerView: NSView {
         }
     }
 
-    /// Observes window mouse events without consuming them, so native controls
-    /// and scroll views below the root still receive and handle every event.
+    /// Observes window mouse events without consuming them, so native controls and scroll views
+    /// below the root still receive them; only a wheel a catching listener took is consumed.
     private func installMouseMonitor() {
         guard mouseMonitor == nil else { return }
         let mask: NSEvent.EventTypeMask = [
@@ -249,11 +250,17 @@ public final class WhiskerView: NSView {
             self?.observeMouse(event)
             return event
         }
+        wheelMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify]) {
+            [weak self] event in
+            self?.observeWheel(event) == true ? nil : event
+        }
     }
 
     private func removeMouseMonitor() {
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         mouseMonitor = nil
+        if let wheelMonitor { NSEvent.removeMonitor(wheelMonitor) }
+        wheelMonitor = nil
         mouseCaptured = false
     }
 
@@ -300,6 +307,47 @@ public final class WhiskerView: NSView {
             input: input,
             scrollOffsets: takeScrollOffsets()
         )
+    }
+
+    /// Returns whether a catching listener took the wheel; a trackpad pinch arrives as a wheel with
+    /// Control held, as browsers report it.
+    private func observeWheel(_ event: NSEvent) -> Bool {
+        guard event.window === window, let handle = runtimeHandle else { return false }
+        let location = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(location) else { return false }
+        let pinch = event.type == .magnify
+        let delta: CGPoint
+        if pinch {
+            delta = CGPoint(x: 0, y: -event.magnification * 100)
+        } else {
+            let unit: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 40
+            delta = CGPoint(x: -event.scrollingDeltaX * unit, y: -event.scrollingDeltaY * unit)
+        }
+        let ctrlKey = pinch || event.modifierFlags.contains(.control)
+        let position = logicalPointerPosition(location, viewport: logicalBounds)
+        guard position.x.isFinite, position.y.isFinite else { return false }
+        return dispatchWhiskerWheel(
+            handle: handle,
+            timestampMs: event.timestamp * 1_000,
+            position: position,
+            delta: delta,
+            ctrlKey: ctrlKey,
+            scroller: ctrlKey ? 0 : wheelScroller(at: event.locationInWindow, delta: delta) ?? 0,
+            scrollOffsets: takeScrollOffsets()
+        )
+    }
+
+    private func wheelScroller(at windowPoint: NSPoint, delta: CGPoint) -> UInt64? {
+        guard let superview else { return nil }
+        var current = hitTest(superview.convert(windowPoint, from: nil))
+        while let view = current, view !== self {
+            if let scroll = view as? WhiskerScrollContainerView,
+               scroll.canScroll(byWheelDelta: delta) {
+                return scene.nodeID(containing: scroll)
+            }
+            current = view.superview
+        }
+        return nil
     }
 
     /// AppKit numbers buttons left, right, middle; the shared pointer model uses left, middle, right.

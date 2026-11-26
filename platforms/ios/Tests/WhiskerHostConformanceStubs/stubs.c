@@ -72,6 +72,31 @@ bool whisker_view_dispatch_event(void *handle,
   return false;
 }
 
+bool whisker_view_dispatch_wheel(void *handle,
+                                 double timestamp_ms,
+                                 float x,
+                                 float y,
+                                 double delta_x,
+                                 double delta_y,
+                                 bool ctrl_key,
+                                 uint64_t scroller,
+                                 const uint64_t *scroll_nodes,
+                                 const float *scroll_offsets,
+                                 size_t scroll_count) {
+  (void)handle;
+  (void)timestamp_ms;
+  (void)x;
+  (void)y;
+  (void)delta_x;
+  (void)delta_y;
+  (void)ctrl_key;
+  (void)scroller;
+  (void)scroll_nodes;
+  (void)scroll_offsets;
+  (void)scroll_count;
+  return false;
+}
+
 bool whisker_view_dispatch_pointer(void *handle,
                                    double timestamp_ms,
                                    uint32_t event,

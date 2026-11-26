@@ -18,6 +18,7 @@
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.System.h>
 
 #include "capabilities.h"
 #include "graphics.h"
@@ -141,8 +142,13 @@ struct WhiskerView::Impl {
       float delta = -properties.MouseWheelDelta() / 120.0f * kWheelStep;
       bool horizontal = properties.IsHorizontalMouseWheel();
       auto position = point.Position();
-      if (scene->ScrollAt(static_cast<float>(position.X), static_cast<float>(position.Y),
-                          horizontal ? -delta : 0, horizontal ? 0 : delta)) {
+      float x = static_cast<float>(position.X);
+      float y = static_cast<float>(position.Y);
+      float dx = horizontal ? -delta : 0;
+      float dy = horizontal ? 0 : delta;
+      auto control = winrt::Windows::System::VirtualKeyModifiers::Control;
+      bool ctrl = (e.KeyModifiers() & control) == control;
+      if (Wheel(x, y, dx, dy, ctrl) || scene->ScrollAt(x, y, dx, dy)) {
         frame_requested = true;
         e.Handled(true);
       }
@@ -223,6 +229,21 @@ struct WhiskerView::Impl {
     whisker_view_dispatch_pointer(handle, Now(), event, id, kind, x, y, buttons, changed,
                                   nodes.data(), offsets.data(), nodes.size());
     e.Handled(true);
+  }
+
+  // Returns whether a catching listener took the wheel, which leaves native scrolling alone.
+  bool Wheel(float x, float y, float dx, float dy, bool ctrl) {
+    if (!handle) return false;
+    auto scroller = ctrl ? std::nullopt : scene->ScrollerAt(x, y, dx, dy);
+    std::vector<uint64_t> nodes;
+    std::vector<float> offsets;
+    for (auto const& [node, offset] : scene->TakeScrollOffsets()) {
+      nodes.push_back(node);
+      offsets.push_back(offset[0]);
+      offsets.push_back(offset[1]);
+    }
+    return whisker_view_dispatch_wheel(handle, Now(), x, y, dx, dy, ctrl, scroller.value_or(0),
+                                       nodes.data(), offsets.data(), nodes.size());
   }
 
   void UpdateCursor(float x, float y) {

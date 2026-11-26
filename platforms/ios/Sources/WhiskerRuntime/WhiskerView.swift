@@ -20,6 +20,11 @@ public final class WhiskerView: UIView {
     }()
     private var touchIdentities = HostTouchIdentityMap()
     private var nativeScrollArbiter = HostNativeScrollArbiter()
+    private var wheelTranslation = CGPoint.zero
+    private var pinchScale: CGFloat = 1
+    private var heldScrollers = [UIScrollView]()
+    private var pendingScrollerRelease: DispatchWorkItem?
+    private let wheelRecognizerDelegate = SimultaneousGestureDelegate()
     private var dirtyScrollOffsets: [UInt64: CGPoint] = [:]
     private let modules = HostModuleDispatcher()
     let preparedParagraphs = PreparedParagraphs()
@@ -56,6 +61,7 @@ public final class WhiskerView: UIView {
         autoresizingMask = [.flexibleWidth, .flexibleHeight]
         isMultipleTouchEnabled = true
         addGestureRecognizer(pointerInputRecognizer)
+        if #available(iOS 13.4, *) { installWheelRecognizers() }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(applicationDidBecomeActive),
@@ -271,6 +277,118 @@ public final class WhiskerView: UIView {
         return result
     }
 
+    /// Trackpad and mouse scrolling arrive as pan and pinch gestures that carry no touches.
+    @available(iOS 13.4, *)
+    private func installWheelRecognizers() {
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(wheelPanned))
+        pan.allowedScrollTypesMask = .all
+        pan.allowedTouchTypes = []
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(trackpadPinched))
+        pinch.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        for recognizer in [pan, pinch] as [UIGestureRecognizer] {
+            recognizer.cancelsTouchesInView = false
+            recognizer.delegate = wheelRecognizerDelegate
+            addGestureRecognizer(recognizer)
+        }
+    }
+
+    @available(iOS 13.4, *)
+    @objc private func wheelPanned(_ recognizer: UIPanGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            wheelTranslation = .zero
+        case .changed, .ended:
+            break
+        default:
+            releaseScrollersAfterLatch()
+            return
+        }
+        let translation = recognizer.translation(in: self)
+        let delta = CGPoint(x: wheelTranslation.x - translation.x, y: wheelTranslation.y - translation.y)
+        wheelTranslation = translation
+        let location = recognizer.location(in: self)
+        if delta != .zero {
+            let caught = dispatchWheel(
+                at: location,
+                delta: delta,
+                ctrlKey: recognizer.modifierFlags.contains(.control)
+            )
+            if caught { holdScrollers(at: location) } else { releaseScrollers() }
+        }
+        if recognizer.state == .ended { releaseScrollersAfterLatch() }
+    }
+
+    /// A trackpad pinch arrives as a wheel with Control held, as browsers report it.
+    @objc private func trackpadPinched(_ recognizer: UIPinchGestureRecognizer) {
+        if recognizer.state == .began { pinchScale = 1 }
+        guard [.began, .changed, .ended].contains(recognizer.state), recognizer.scale > 0 else { return }
+        let magnification = recognizer.scale / pinchScale - 1
+        pinchScale = recognizer.scale
+        guard magnification != 0 else { return }
+        _ = dispatchWheel(
+            at: recognizer.location(in: self),
+            delta: CGPoint(x: 0, y: -magnification * 100),
+            ctrlKey: true
+        )
+    }
+
+    /// Returns whether a catching listener took the wheel.
+    private func dispatchWheel(at location: CGPoint, delta: CGPoint, ctrlKey: Bool) -> Bool {
+        guard let handle = runtimeHandle else { return false }
+        let position = logicalPointerPosition(location, viewport: logicalBounds)
+        guard position.x.isFinite, position.y.isFinite else { return false }
+        return dispatchWhiskerWheel(
+            handle: handle,
+            timestampMs: ProcessInfo.processInfo.systemUptime * 1_000,
+            position: position,
+            delta: delta,
+            ctrlKey: ctrlKey,
+            scroller: ctrlKey ? 0 : wheelScroller(at: location, delta: delta) ?? 0,
+            scrollOffsets: takeScrollOffsets()
+        )
+    }
+
+    private func wheelScroller(at location: CGPoint, delta: CGPoint) -> UInt64? {
+        var current = hitTest(location, with: nil)
+        while let view = current, view !== self {
+            if let scroll = view as? WhiskerScrollContainerView, scroll.canScroll(byWheelDelta: delta) {
+                return scene.nodeID(containing: scroll)
+            }
+            current = view.superview
+        }
+        return nil
+    }
+
+    /// Keeps the scroll views under a caught wheel from panning by it.
+    private func holdScrollers(at location: CGPoint) {
+        pendingScrollerRelease?.cancel()
+        pendingScrollerRelease = nil
+        var current = hitTest(location, with: nil)
+        while let view = current, view !== self {
+            if let scroll = view as? UIScrollView, scroll.panGestureRecognizer.isEnabled {
+                scroll.panGestureRecognizer.isEnabled = false
+                heldScrollers.append(scroll)
+            }
+            current = view.superview
+        }
+    }
+
+    /// A mouse wheel arrives as one short pan per notch, so the hold outlasts each pan by the runtime's wheel latch.
+    private func releaseScrollersAfterLatch() {
+        guard !heldScrollers.isEmpty else { return }
+        pendingScrollerRelease?.cancel()
+        let release = DispatchWorkItem { [weak self] in self?.releaseScrollers() }
+        pendingScrollerRelease = release
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: release)
+    }
+
+    private func releaseScrollers() {
+        pendingScrollerRelease?.cancel()
+        pendingScrollerRelease = nil
+        for scroll in heldScrollers { scroll.panGestureRecognizer.isEnabled = true }
+        heldScrollers.removeAll()
+    }
+
     private func unmount() {
         moduleEventSinkEpoch &+= 1
         WhiskerModuleEventCenter.installEventSink(owner: self, nil)
@@ -288,6 +406,7 @@ public final class WhiskerView: UIView {
         pendingModuleEvents.clear()
         touchIdentities.clear()
         nativeScrollArbiter.clear()
+        releaseScrollers()
         dirtyScrollOffsets.removeAll(keepingCapacity: false)
         if let token = hostToken {
             Unmanaged<WhiskerView>.fromOpaque(token).release()
@@ -431,6 +550,15 @@ public final class WhiskerView: UIView {
             }
             if dispatched { requestFrame() }
         }
+    }
+}
+
+private final class SimultaneousGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
     }
 }
 #endif

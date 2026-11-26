@@ -13,7 +13,8 @@ use whisker_protocol::{
 use whisker_style::StyleEnvironment;
 
 use crate::input::{
-    WebPointerEvent, WebPointerPhase, dispatch_pointer, pointer_kind, stable_pointer_id,
+    WebPointerEvent, WebPointerPhase, WebWheelEvent, dispatch_pointer, dispatch_wheel,
+    pointer_kind, stable_pointer_id, wheel_scroller,
 };
 use crate::measure::text::DomMeasurementProvider;
 use crate::scene::frame_sink::DomFrameSink;
@@ -87,7 +88,8 @@ pub fn run_with_application_hash(
         let application = slot
             .as_ref()
             .ok_or_else(|| WebError("Web application is not mounted".into()))?;
-        install_pointer_listeners(&application.root)
+        install_pointer_listeners(&application.root)?;
+        install_wheel_listener(&application.root)
     });
     if let Err(error) = pointer_listeners {
         APPLICATION.with(|slot| *slot.borrow_mut() = None);
@@ -461,6 +463,75 @@ fn install_pointer_listeners(root: &web_sys::Element) -> Result<(), WebError> {
             .map_err(|error| js_error("register pointer listener", error))?;
         listener.forget();
     }
+    Ok(())
+}
+
+fn install_wheel_listener(root: &web_sys::Element) -> Result<(), WebError> {
+    let event_root = root.clone();
+    let listener =
+        Closure::<dyn FnMut(web_sys::WheelEvent)>::new(move |event: web_sys::WheelEvent| {
+            let bounds = event_root.get_bounding_client_rect();
+            let scale = match event.delta_mode() {
+                web_sys::WheelEvent::DOM_DELTA_LINE => 40.0,
+                web_sys::WheelEvent::DOM_DELTA_PAGE => bounds.height(),
+                _ => 1.0,
+            };
+            let (delta_x, delta_y) = (event.delta_x() * scale, event.delta_y() * scale);
+            let target = event
+                .composed_path()
+                .get(0)
+                .dyn_into::<web_sys::Element>()
+                .ok();
+            let scroller = if event.ctrl_key() {
+                None
+            } else {
+                wheel_scroller(target, delta_x, delta_y)
+            };
+            let result = APPLICATION.with(|slot| {
+                let slot = slot.borrow();
+                let application = slot
+                    .as_ref()
+                    .ok_or_else(|| WebError("Web application is not mounted".into()))?;
+                let input = WebWheelEvent {
+                    timestamp_ms: event.time_stamp(),
+                    client_position: InputPoint {
+                        x: event.client_x() as f32,
+                        y: event.client_y() as f32,
+                    },
+                    delta_x,
+                    delta_y,
+                    ctrl_key: event.ctrl_key(),
+                    scroller: scroller
+                        .and_then(|element| application.frames.node_presenting(&element)),
+                };
+                application.modules.with_host(|| {
+                    let presentation = application.frames.take_presentation_updates();
+                    dispatch_wheel(
+                        &application.runtime,
+                        InputPoint {
+                            x: bounds.left() as f32,
+                            y: bounds.top() as f32,
+                        },
+                        input,
+                        &presentation,
+                    )
+                })
+            });
+            match result {
+                Ok(dispatch) if dispatch.caught => event.prevent_default(),
+                Ok(_) => {}
+                Err(error) => web_sys::console::error_1(&error.to_string().into()),
+            }
+        });
+    let options = web_sys::AddEventListenerOptions::new();
+    options.set_passive(false);
+    root.add_event_listener_with_callback_and_add_event_listener_options(
+        "wheel",
+        listener.as_ref().unchecked_ref(),
+        &options,
+    )
+    .map_err(|error| js_error("register wheel listener", error))?;
+    listener.forget();
     Ok(())
 }
 

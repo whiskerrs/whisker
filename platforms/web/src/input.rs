@@ -1,8 +1,10 @@
-//! Browser pointer normalization and runtime dispatch.
+//! Browser pointer and wheel normalization and runtime dispatch.
 
-use whisker::RuntimeInstance;
+use wasm_bindgen::JsCast;
+use whisker::{InputDispatch, RuntimeInstance};
 use whisker_protocol::{
-    InputEvent, InputEventKind, InputPoint, PointerId, PointerInput, PointerKind, WhiskerValue,
+    InputEvent, InputEventKind, InputPoint, NodeId, PointerId, PointerInput, PointerKind,
+    WhiskerValue,
 };
 
 use crate::WebError;
@@ -85,4 +87,100 @@ pub(crate) fn pointer_kind(pointer_type: &str) -> PointerKind {
         "pen" => PointerKind::Pen,
         _ => PointerKind::Unknown,
     }
+}
+
+/// Browser wheel fields, with the deltas already in logical pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct WebWheelEvent {
+    pub(crate) timestamp_ms: f64,
+    pub(crate) client_position: InputPoint,
+    pub(crate) delta_x: f64,
+    pub(crate) delta_y: f64,
+    pub(crate) ctrl_key: bool,
+    /// The innermost native scroll container under the pointer that can still scroll this way.
+    pub(crate) scroller: Option<NodeId>,
+}
+
+/// Dispatches one root-relative browser wheel through the runtime, which reports whether a
+/// catching listener took it.
+pub(crate) fn dispatch_wheel(
+    runtime: &RuntimeInstance,
+    root_origin: InputPoint,
+    input: WebWheelEvent,
+    presentation: &[whisker_protocol::HostPresentationUpdate],
+) -> Result<InputDispatch, WebError> {
+    let mut detail = vec![
+        ("deltaX", WhiskerValue::Float(input.delta_x)),
+        ("deltaY", WhiskerValue::Float(input.delta_y)),
+        ("ctrlKey", WhiskerValue::Bool(input.ctrl_key)),
+    ];
+    if let Some(scroller) = input.scroller {
+        detail.push(("scroller", WhiskerValue::Int(scroller.get() as i64)));
+    }
+    let event = InputEvent {
+        presentation_revision: None,
+        surface: runtime.surface().surface(),
+        timestamp_ms: input.timestamp_ms,
+        kind: InputEventKind::Wheel,
+        pointer: Some(PointerInput {
+            id: PointerId::new(1).expect("non-zero"),
+            kind: PointerKind::Mouse,
+            position: InputPoint {
+                x: input.client_position.x - root_origin.x,
+                y: input.client_position.y - root_origin.y,
+            },
+            buttons: 0,
+            changed_button: -1,
+        }),
+        target: None,
+        detail: WhiskerValue::map(detail),
+    };
+    runtime
+        .dispatch_input_with_presentation(&event, presentation)
+        .map_err(|error| WebError(format!("dispatch Web wheel input: {error}")))
+}
+
+/// The innermost element from `target` up through the surface whose native scrolling can still
+/// move by the delta.
+pub(crate) fn wheel_scroller(
+    target: Option<web_sys::Element>,
+    delta_x: f64,
+    delta_y: f64,
+) -> Option<web_sys::Element> {
+    let window = web_sys::window()?;
+    let mut current = target;
+    while let Some(element) = current {
+        if let (Some(html), Ok(Some(style))) = (
+            element.dyn_ref::<web_sys::HtmlElement>(),
+            window.get_computed_style(&element),
+        ) {
+            let scrolls = |axis: &str| {
+                style
+                    .get_property_value(axis)
+                    .is_ok_and(|value| value == "auto" || value == "scroll")
+            };
+            let room = |delta: f64, position: i32, client: i32, total: i32| {
+                (delta > 0.0 && position + client < total - 1) || (delta < 0.0 && position > 0)
+            };
+            if (scrolls("overflow-y")
+                && room(
+                    delta_y,
+                    html.scroll_top(),
+                    html.client_height(),
+                    html.scroll_height(),
+                ))
+                || (scrolls("overflow-x")
+                    && room(
+                        delta_x,
+                        html.scroll_left(),
+                        html.client_width(),
+                        html.scroll_width(),
+                    ))
+            {
+                return Some(element);
+            }
+        }
+        current = element.parent_element();
+    }
+    None
 }

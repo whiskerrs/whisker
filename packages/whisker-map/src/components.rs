@@ -5,13 +5,13 @@ use std::rc::Rc;
 
 use glam::DVec2;
 use whisker::css::{Overflow, PositionKind, Transform, TransformFn};
-use whisker::event::{BindType, TouchEvent};
+use whisker::event::{BindType, TouchEvent, WheelEvent};
 use whisker::prelude::*;
 use whisker::runtime::event::bind_typed;
 use whisker::runtime::view::Element;
 use whisker::runtime::view::renderer::{release_pointer_capture, set_pointer_capture};
 use whisker::{Children, RwSignal, Signal, Style};
-use whisker_surface::{SurfaceView, WheelEvent};
+use whisker_surface::SurfaceView;
 use whisker_wgpu::LayerHandle;
 
 use crate::camera::MapCamera;
@@ -76,20 +76,10 @@ pub fn map_view(
         .overflow(Overflow::Hidden)
         .into();
     let projected = children.clone();
-    let surface_view = if gestures {
-        let map = map.clone();
-        let on_wheel = move |event: WheelEvent| {
-            let d = event.detail;
-            wheel(&map, DVec2::new(d.x, d.y), d.delta_y, d.ctrl_key);
-        };
-        render! { SurfaceView(surface: surface, style: fill, on_wheel: on_wheel) }
-    } else {
-        render! { SurfaceView(surface: surface, style: fill) }
-    };
     let root = render! {
         View(style: style.clone()) {
             View(style: stage) {
-                { surface_view }
+                SurfaceView(surface: surface, style: fill)
                 Fragment { { projected() } }
             }
         }
@@ -101,6 +91,19 @@ pub fn map_view(
 }
 
 fn bind_gestures(root: Element, map: Rc<MapInner>, moves: bool, on_tap: Option<TapCallback>) {
+    if moves {
+        let map = map.clone();
+        bind_typed(root, "wheel", BindType::Catch, move |event: WheelEvent| {
+            if let Some(offset) = event.offset {
+                wheel(
+                    &map,
+                    DVec2::new(offset.x, offset.y),
+                    event.delta_y,
+                    event.ctrl_key,
+                );
+            }
+        });
+    }
     let gestures = Rc::new(RefCell::new(Gestures::new(moves)));
     let handler = move |phase: Phase| {
         let map = map.clone();

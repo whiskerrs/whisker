@@ -230,6 +230,9 @@ pub struct InputDispatch {
     pub listener_count: usize,
     /// Whether a re-entrant Host callback was queued for the event boundary.
     pub queued: bool,
+    /// Whether a catching listener stopped the event, which tells the Host to skip its default
+    /// handling, such as scrolling the page for a wheel.
+    pub caught: bool,
 }
 
 /// Resource-channel command or completion rejected before Host/runtime state
@@ -433,6 +436,7 @@ impl SurfaceRuntime {
                 mutation_batch: None,
                 list_layout_requested: false,
                 active_pointers: Vec::new(),
+                wheel_latch: None,
                 base_resolutions: HashMap::new(),
                 initial_inherited: RefCell::new(None),
                 #[cfg(test)]
@@ -679,7 +683,7 @@ impl SurfaceRuntime {
         event: &InputEvent,
         presentation: &[HostPresentationUpdate],
     ) -> Result<InputDispatch, RuntimeInputError> {
-        let (target, firings, body) = {
+        let (target, firings, body, caught) = {
             let mut state = self.state.borrow_mut();
             state
                 .take_binding_error()
@@ -716,138 +720,140 @@ impl SurfaceRuntime {
                 }
             }
             let root = state.root.ok_or(RuntimeInputError::MissingRoot)?;
-            let captured = event
-                .pointer
-                .and_then(|pointer| state.surface.pointer_capture_target(pointer.id));
-            // A Host that ended the previous sequence without an up or a cancel must not have
-            // its capture claim the next contact with the same id.
-            let captured = match (&event.kind, captured, event.pointer) {
-                (whisker_protocol::InputEventKind::PointerDown, Some(stale), Some(pointer)) => {
-                    state
-                        .surface
-                        .release_pointer_capture(stale, pointer.id)
-                        .map_err(RuntimeBindingError::from)
-                        .map_err(RuntimeInputError::Binding)?;
-                    None
+            if event.kind == whisker_protocol::InputEventKind::Wheel {
+                match state.plan_wheel(root, event)? {
+                    Some(planned) => planned,
+                    None => return Ok(InputDispatch::default()),
                 }
-                _ => captured,
-            };
-            let target = if let Some(captured) = captured {
-                if let (
-                    whisker_protocol::InputEventKind::PointerUp
-                    | whisker_protocol::InputEventKind::PointerCancel,
-                    Some(pointer),
-                ) = (&event.kind, event.pointer)
-                {
-                    state
-                        .surface
-                        .release_pointer_capture(captured, pointer.id)
-                        .map_err(RuntimeBindingError::from)
-                        .map_err(RuntimeInputError::Binding)?;
-                }
-                Some(captured)
-            } else if let Some(target) = event.target {
-                if state.surface.node(target).is_none() {
-                    // A Host may have queued this event while the preceding
-                    // frame removed its target. Treat that normal race as an
-                    // unhandled event rather than poisoning the surface.
-                    return Ok(InputDispatch::default());
-                }
-                Some(target)
-            } else if let Some(pointer) = event.pointer {
-                state
-                    .surface
-                    .hit_test(root, pointer.position)
-                    .map_err(RuntimeBindingError::from)
-                    .map_err(RuntimeInputError::Binding)?
             } else {
-                None
-            };
-            let Some(target) = target else {
-                return Ok(InputDispatch::default());
-            };
-            if matches!(&event.kind, whisker_protocol::InputEventKind::Named(name) if name == "textqueryresult")
-            {
-                let consumed = state.text_queries.borrow_mut().complete(
-                    target,
-                    state.surface.node(target),
-                    &event.detail,
-                );
-                return Ok(InputDispatch {
-                    target: Some(target),
-                    consumed,
-                    ..InputDispatch::default()
-                });
-            }
-            if matches!(&event.kind, whisker_protocol::InputEventKind::Named(name) if name == "selectionchange")
-            {
-                if let Some(text) = state
-                    .surface
-                    .node(target)
-                    .and_then(|node| node.text())
-                    .filter(|text| text.paragraph.is_some())
+                let captured = event
+                    .pointer
+                    .and_then(|pointer| state.surface.pointer_capture_target(pointer.id));
+                // A Host that ended the previous sequence without an up or a cancel must not have
+                // its capture claim the next contact with the same id.
+                let captured = match (&event.kind, captured, event.pointer) {
+                    (whisker_protocol::InputEventKind::PointerDown, Some(stale), Some(pointer)) => {
+                        state
+                            .surface
+                            .release_pointer_capture(stale, pointer.id)
+                            .map_err(RuntimeBindingError::from)
+                            .map_err(RuntimeInputError::Binding)?;
+                        None
+                    }
+                    _ => captured,
+                };
+                let target = if let Some(captured) = captured {
+                    if let (
+                        whisker_protocol::InputEventKind::PointerUp
+                        | whisker_protocol::InputEventKind::PointerCancel,
+                        Some(pointer),
+                    ) = (&event.kind, event.pointer)
+                    {
+                        state
+                            .surface
+                            .release_pointer_capture(captured, pointer.id)
+                            .map_err(RuntimeBindingError::from)
+                            .map_err(RuntimeInputError::Binding)?;
+                    }
+                    Some(captured)
+                } else if let Some(target) = event.target {
+                    if state.surface.node(target).is_none() {
+                        // A Host may have queued this event while the preceding
+                        // frame removed its target. Treat that normal race as an
+                        // unhandled event rather than poisoning the surface.
+                        return Ok(InputDispatch::default());
+                    }
+                    Some(target)
+                } else if let Some(pointer) = event.pointer {
+                    state
+                        .surface
+                        .hit_test(root, pointer.position)
+                        .map_err(RuntimeBindingError::from)
+                        .map_err(RuntimeInputError::Binding)?
+                } else {
+                    None
+                };
+                let Some(target) = target else {
+                    return Ok(InputDispatch::default());
+                };
+                if matches!(&event.kind, whisker_protocol::InputEventKind::Named(name) if name == "textqueryresult")
                 {
-                    let revision_matches = match &event.detail {
+                    let consumed = state.text_queries.borrow_mut().complete(
+                        target,
+                        state.surface.node(target),
+                        &event.detail,
+                    );
+                    return Ok(InputDispatch {
+                        target: Some(target),
+                        consumed,
+                        ..InputDispatch::default()
+                    });
+                }
+                if matches!(&event.kind, whisker_protocol::InputEventKind::Named(name) if name == "selectionchange")
+                {
+                    if let Some(text) = state
+                        .surface
+                        .node(target)
+                        .and_then(|node| node.text())
+                        .filter(|text| text.paragraph.is_some())
+                    {
+                        let revision_matches = match &event.detail {
                         WhiskerValue::Map(fields) => fields.get("revision").is_none_or(|revision| matches!(revision, WhiskerValue::Int(id) if u64::try_from(*id).ok() == text.prepared_content.map(|id| id.get()))),
                         _ => false,
                     };
-                    if !revision_matches || !state.paragraph_input_is_current(target) {
-                        return Ok(InputDispatch::default());
+                        if !revision_matches || !state.paragraph_input_is_current(target) {
+                            return Ok(InputDispatch::default());
+                        }
                     }
                 }
+                if event.pointer.is_some()
+                    && !state.paragraph_input_is_current_at(target, event.presentation_revision)
+                {
+                    return Ok(InputDispatch::default());
+                }
+                let activation = matches!(&event.kind, whisker_protocol::InputEventKind::Named(name) if name == "textactivate");
+                let action = if activation {
+                    state.paragraph_action(target, &event.detail)
+                } else {
+                    None
+                };
+                if activation && action.is_none() {
+                    return Ok(InputDispatch::default());
+                }
+                let event_name = if activation {
+                    "tap"
+                } else {
+                    event.kind.name(event.pointer.map(|pointer| pointer.kind))
+                };
+                let physical = state
+                    .node_elements
+                    .get(&target)
+                    .copied()
+                    .ok_or(RuntimeInputError::UnknownTarget { node: target })?;
+                let inline = event
+                    .pointer
+                    .and_then(|pointer| {
+                        state.surface.scene().text_span_at(target, pointer.position)
+                    })
+                    .and_then(|span| u32::try_from(span.get() - 1).ok())
+                    .map(Element::from_raw);
+                let logical = action.or(inline).unwrap_or(physical);
+                if !state.elements.contains_key(&logical) {
+                    return Ok(InputDispatch::default());
+                }
+                let (planned, caught) =
+                    state.plan_element_event_within(root, target, logical, event_name, None)?;
+                (
+                    target,
+                    state.firings(planned, event.pointer.map(|pointer| pointer.position)),
+                    input_body(
+                        event,
+                        &state.active_pointers,
+                        state.element_target_value(logical),
+                    ),
+                    caught,
+                )
             }
-            if event.pointer.is_some()
-                && !state.paragraph_input_is_current_at(target, event.presentation_revision)
-            {
-                return Ok(InputDispatch::default());
-            }
-            let activation = matches!(&event.kind, whisker_protocol::InputEventKind::Named(name) if name == "textactivate");
-            let action = if activation {
-                state.paragraph_action(target, &event.detail)
-            } else {
-                None
-            };
-            if activation && action.is_none() {
-                return Ok(InputDispatch::default());
-            }
-            let event_name = if activation {
-                "tap"
-            } else {
-                event.kind.name(event.pointer.map(|pointer| pointer.kind))
-            };
-            let physical = state
-                .node_elements
-                .get(&target)
-                .copied()
-                .ok_or(RuntimeInputError::UnknownTarget { node: target })?;
-            let inline = event
-                .pointer
-                .and_then(|pointer| state.surface.scene().text_span_at(target, pointer.position))
-                .and_then(|span| u32::try_from(span.get() - 1).ok())
-                .map(Element::from_raw);
-            let logical = action.or(inline).unwrap_or(physical);
-            if !state.elements.contains_key(&logical) {
-                return Ok(InputDispatch::default());
-            }
-            let firings = state
-                .plan_element_event(root, target, logical, event_name)?
-                .into_iter()
-                .map(|(current_target, callback)| {
-                    let local = event.pointer.and_then(|pointer| {
-                        state.element_local_point(current_target, pointer.position)
-                    });
-                    (callback, state.element_target_value(current_target), local)
-                })
-                .collect::<Vec<_>>();
-            (
-                target,
-                firings,
-                input_body(
-                    event,
-                    &state.active_pointers,
-                    state.element_target_value(logical),
-                ),
-            )
         };
 
         let listener_count = firings.len();
@@ -859,6 +865,7 @@ impl SurfaceRuntime {
             consumed: listener_count > 0,
             listener_count,
             queued: false,
+            caught,
         })
     }
 
@@ -1337,6 +1344,29 @@ struct RuntimeListener {
 }
 
 type PlannedListener = (Element, Rc<dyn Fn(WhiskerValue) + 'static>);
+type Firing = (
+    Rc<dyn Fn(WhiskerValue) + 'static>,
+    WhiskerValue,
+    Option<(InputPoint, LayoutRect)>,
+);
+type PlannedInput = (NodeId, Vec<Firing>, WhiskerValue, bool);
+
+/// How long, in milliseconds, a pause between wheel events may last within one gesture.
+const WHEEL_LATCH_MS: f64 = 150.0;
+
+/// Where the wheel gesture going on is delivered.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Latched {
+    Node(NodeId),
+    /// A native scroll container took it, so the rest of the gesture reaches no listener.
+    Native,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WheelLatch {
+    to: Latched,
+    at_ms: f64,
+}
 type FrameAppliedCallback = Box<dyn FnOnce(u64)>;
 
 struct BindingState {
@@ -1371,6 +1401,7 @@ struct BindingState {
     // Down order is what `touches` exposes, so a hash map would reshuffle
     // fingers between the events of one gesture.
     active_pointers: Vec<PointerInput>,
+    wheel_latch: Option<WheelLatch>,
     base_resolutions: HashMap<ElementTypeId, (StyleEnvironment, ResolvedNodeStyle)>,
     initial_inherited: RefCell<Option<(StyleEnvironment, InheritedStyle)>>,
     #[cfg(test)]
@@ -1890,6 +1921,20 @@ impl BindingState {
         element: Element,
         event_name: &str,
     ) -> Result<Vec<PlannedListener>, RuntimeInputError> {
+        self.plan_element_event_within(root, target, element, event_name, None)
+            .map(|(firings, _)| firings)
+    }
+
+    /// Plans the capture and bubble listeners for `event_name` from `element` up to `boundary`, or
+    /// to the root, and whether a catching listener stopped it.
+    fn plan_element_event_within(
+        &self,
+        root: NodeId,
+        target: NodeId,
+        element: Element,
+        event_name: &str,
+        boundary: Option<Element>,
+    ) -> Result<(Vec<PlannedListener>, bool), RuntimeInputError> {
         let mut chain = Vec::new();
         let mut current = Some(element);
         while let Some(element) = current {
@@ -1903,6 +1948,9 @@ impl BindingState {
         if chain.last() != self.node_elements.get(&root) {
             return Err(RuntimeInputError::TargetOutsideRoot { target, root });
         }
+        if let Some(index) = boundary.and_then(|b| chain.iter().position(|e| *e == b)) {
+            chain.truncate(index + 1);
+        }
         let listeners_for = |element: Element| {
             self.elements
                 .get(&element)
@@ -1912,6 +1960,7 @@ impl BindingState {
         };
         let mut firings = Vec::new();
         let mut capture_caught = false;
+        let mut caught = false;
         for node in chain.iter().rev().copied() {
             let mut stop = false;
             for listener in listeners_for(node) {
@@ -1931,7 +1980,9 @@ impl BindingState {
                 break;
             }
         }
-        if !capture_caught {
+        if capture_caught {
+            caught = true;
+        } else {
             for node in chain {
                 let mut stop = false;
                 for listener in listeners_for(node) {
@@ -1939,6 +1990,7 @@ impl BindingState {
                         BindType::Catch => {
                             firings.push((node, Rc::clone(&listener.callback)));
                             stop = true;
+                            caught = true;
                         }
                         BindType::Bind => {
                             firings.push((node, Rc::clone(&listener.callback)));
@@ -1951,7 +2003,83 @@ impl BindingState {
                 }
             }
         }
-        Ok(firings)
+        Ok((firings, caught))
+    }
+
+    fn firings(&self, planned: Vec<PlannedListener>, position: Option<InputPoint>) -> Vec<Firing> {
+        planned
+            .into_iter()
+            .map(|(current_target, callback)| {
+                let local = position.and_then(|p| self.element_local_point(current_target, p));
+                (callback, self.element_target_value(current_target), local)
+            })
+            .collect()
+    }
+
+    /// Routes a wheel to the element it is latched to while one gesture goes on, or else to the
+    /// element under the pointer, stopping below the native scroll container that takes it.
+    fn plan_wheel(
+        &mut self,
+        root: NodeId,
+        event: &InputEvent,
+    ) -> Result<Option<PlannedInput>, RuntimeInputError> {
+        let Some(pointer) = event.pointer else {
+            return Ok(None);
+        };
+        let latched = self
+            .wheel_latch
+            .filter(|latch| (0.0..=WHEEL_LATCH_MS).contains(&(event.timestamp_ms - latch.at_ms)));
+        let scroller = match &event.detail {
+            WhiskerValue::Map(fields) => match fields.get("scroller") {
+                Some(WhiskerValue::Int(id)) => u64::try_from(*id).ok().and_then(NodeId::new),
+                _ => None,
+            },
+            _ => None,
+        };
+        let (target, boundary) = match latched.map(|latch| latch.to) {
+            Some(Latched::Native) => {
+                self.wheel_latch = Some(WheelLatch {
+                    to: Latched::Native,
+                    at_ms: event.timestamp_ms,
+                });
+                return Ok(None);
+            }
+            Some(Latched::Node(node)) if self.surface.node(node).is_some() => (node, None),
+            _ => {
+                let Some(target) = self
+                    .surface
+                    .hit_test(root, pointer.position)
+                    .map_err(RuntimeBindingError::from)
+                    .map_err(RuntimeInputError::Binding)?
+                else {
+                    self.wheel_latch = None;
+                    return Ok(None);
+                };
+                (
+                    target,
+                    scroller.and_then(|node| self.node_elements.get(&node).copied()),
+                )
+            }
+        };
+        let element = self
+            .node_elements
+            .get(&target)
+            .copied()
+            .ok_or(RuntimeInputError::UnknownTarget { node: target })?;
+        let (planned, caught) =
+            self.plan_element_event_within(root, target, element, "wheel", boundary)?;
+        let to = match latched.map(|latch| latch.to) {
+            Some(to) => to,
+            None if !caught && boundary.is_some() => Latched::Native,
+            None => Latched::Node(target),
+        };
+        self.wheel_latch = Some(WheelLatch {
+            to,
+            at_ms: event.timestamp_ms,
+        });
+        let firings = self.firings(planned, Some(pointer.position));
+        let body = input_body(event, &[], self.element_target_value(element));
+        Ok(Some((target, firings, body, caught)))
     }
 
     fn element(&self, element: Element) -> Result<&BoundElement, RuntimeBindingError> {

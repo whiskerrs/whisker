@@ -85,7 +85,30 @@ pub(super) fn input_body(
         ("currentTarget", target),
         ("detail", detail),
     ];
-    if let Some(pointer) = event.pointer {
+    if event.kind == whisker_engine::whisker_protocol::InputEventKind::Wheel {
+        let field = |name: &str| match &event.detail {
+            WhiskerValue::Map(fields) => fields.get(name).cloned(),
+            _ => None,
+        };
+        entries.extend([
+            (
+                "pointerType",
+                WhiskerValue::String(pointer_kind.unwrap_or("unknown").to_owned()),
+            ),
+            (
+                "deltaX",
+                field("deltaX").unwrap_or(WhiskerValue::Float(0.0)),
+            ),
+            (
+                "deltaY",
+                field("deltaY").unwrap_or(WhiskerValue::Float(0.0)),
+            ),
+            (
+                "ctrlKey",
+                field("ctrlKey").unwrap_or(WhiskerValue::Bool(false)),
+            ),
+        ]);
+    } else if let Some(pointer) = event.pointer {
         let touch = touch_value(&pointer);
         let mut active_touches = active_pointers.iter().map(touch_value).collect::<Vec<_>>();
         let ended = matches!(

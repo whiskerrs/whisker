@@ -1307,6 +1307,21 @@ JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchPoi
     return consumed?JNI_TRUE:JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchWheel(JNIEnv* env,jobject self,jlong handle,jdouble timestamp,jfloat x,jfloat y,jdouble delta_x,jdouble delta_y,jboolean ctrl_key,jlong scroller,jlongArray scroll_nodes,jfloatArray scroll_offsets){
+    (void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;
+    if(!view||!view->runtime||scroller<0||!scroll_nodes||!scroll_offsets)return JNI_FALSE;
+    jsize scroll_count=(*env)->GetArrayLength(env,scroll_nodes);
+    if(scroll_count<0||(*env)->GetArrayLength(env,scroll_offsets)!=scroll_count*2)return JNI_FALSE;
+    jlong* nodes=scroll_count?(*env)->GetLongArrayElements(env,scroll_nodes,NULL):NULL;
+    jfloat* offsets=scroll_count?(*env)->GetFloatArrayElements(env,scroll_offsets,NULL):NULL;
+    if(scroll_count&&(!nodes||!offsets)){if(nodes)(*env)->ReleaseLongArrayElements(env,scroll_nodes,nodes,JNI_ABORT);if(offsets)(*env)->ReleaseFloatArrayElements(env,scroll_offsets,offsets,JNI_ABORT);return JNI_FALSE;}
+    bool caught=whisker_view_dispatch_wheel(view->runtime,timestamp,x,y,delta_x,delta_y,ctrl_key==JNI_TRUE,(uint64_t)scroller,
+        (const uint64_t*)nodes,(const float*)offsets,(size_t)scroll_count);
+    if(nodes)(*env)->ReleaseLongArrayElements(env,scroll_nodes,nodes,JNI_ABORT);
+    if(offsets)(*env)->ReleaseFloatArrayElements(env,scroll_offsets,offsets,JNI_ABORT);
+    return caught?JNI_TRUE:JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL Java_rs_whisker_runtime_WhiskerView_nativeResolveModule(JNIEnv* env,jobject self,jlong callback_ptr,jlong data_ptr,jobject payload){
     (void)self;WhiskerMobileModuleResultCallback callback=(void*)(uintptr_t)callback_ptr;if(!callback)return;WhiskerValueRaw raw=object_to_raw(env,payload);callback((void*)(uintptr_t)data_ptr,&raw);release_raw(&raw);
 }

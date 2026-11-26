@@ -872,6 +872,7 @@ fn merge_input_dispatch(dispatch: &mut InputDispatch, synthesized: InputDispatch
     dispatch.consumed |= synthesized.consumed;
     dispatch.listener_count += synthesized.listener_count;
     dispatch.queued |= synthesized.queued;
+    dispatch.caught |= synthesized.caught;
 }
 
 #[derive(Default)]
