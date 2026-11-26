@@ -11,6 +11,7 @@ mod people;
 use std::cell::{Cell, RefCell};
 use std::time::Duration;
 
+use whisker::css::shorthand::padding_margin::MarginValue;
 use whisker::css::{
     AlignItems, Animation, AnimationDirection, AnimationFillMode, AnimationIterationCount,
     EasingFunction, FlexDirection, FontWeight, JustifyContent, Keyframes, Overflow, Position,
@@ -1289,6 +1290,7 @@ fn card(app: App) -> Element {
             Color::hex(0xf1edff)
         })
         .height(px(38))
+        .flex_shrink(0.0)
         .margin_left(px(8))
         .padding_left(px(14))
         .padding_right(px(14));
@@ -1337,8 +1339,16 @@ fn chips(app: App) -> Element {
     let row = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Row)
-        .justify_content(JustifyContent::Center)
-        .overflow(Overflow::Visible);
+        .min_width(percent(100))
+        .padding_top(px(4))
+        .padding_bottom(px(14));
+    // Unlike `justify-content: center`, auto margins never push the first chip past the scroll start.
+    let group = Css::new()
+        .display_flex()
+        .flex_direction(FlexDirection::Row)
+        .flex_shrink(0.0)
+        .margin_left(MarginValue::Auto)
+        .margin_right(MarginValue::Auto);
     let chip = move |index: Option<usize>| {
         let active = match index {
             Some(i) => app.city.get() == Some(i) && !app.intro.get(),
@@ -1346,6 +1356,7 @@ fn chips(app: App) -> Element {
         };
         let accent = index.map_or(ink::ink(), |i| Color::hex(CITIES[i].accent));
         pill(if active { accent } else { ink::white() })
+            .flex_shrink(0.0)
             .margin_left(px(4))
             .margin_right(px(4))
             .padding_left(px(14))
@@ -1366,21 +1377,25 @@ fn chips(app: App) -> Element {
         }
     };
     render! {
-        View(style: row) {
-            View(
-                style: computed(move || chip(None)),
-                on_tap: move |_| {
-                    app.intro.set(true);
-                    app.globe();
-                },
-            ) {
-                Text(style: computed(move || text(None)), value: "Globe")
+        ScrollView(axis: ScrollAxis::Horizontal, style: Css::new().height(px(60)).flex_shrink(0.0)) {
+            View(style: row) {
+                View(style: group) {
+                    View(
+                        style: computed(move || chip(None)),
+                        on_tap: move |_| {
+                            app.intro.set(true);
+                            app.globe();
+                        },
+                    ) {
+                        Text(style: computed(move || text(None)), value: "Globe")
+                    }
+                    { city_chip(0) }
+                    { city_chip(1) }
+                    { city_chip(2) }
+                    { city_chip(3) }
+                    { city_chip(4) }
+                }
             }
-            { city_chip(0) }
-            { city_chip(1) }
-            { city_chip(2) }
-            { city_chip(3) }
-            { city_chip(4) }
         }
     }
 }
@@ -1493,7 +1508,7 @@ pub fn app() -> Element {
             .position(PositionKind::Absolute)
             .left(px(12))
             .right(px(12))
-            .bottom(px(insets.get().bottom as f32 + 16.0))
+            .bottom(px(insets.get().bottom as f32 + 2.0))
             .display_flex()
             .flex_direction(FlexDirection::Column)
     };
@@ -1522,6 +1537,36 @@ pub fn app() -> Element {
         .padding_left(px(0))
         .padding_right(px(0))
         .justify_content(JustifyContent::Center);
+    // Drawn rather than typed, since no iOS font has a glyph for ☾.
+    let moon = || {
+        Css::new()
+            .position(PositionKind::Relative)
+            .width(px(18))
+            .height(px(18))
+            .border_radius(px(9))
+            .background_color(ink::ink())
+    };
+    let moon_cut = || {
+        Css::new()
+            .position(PositionKind::Absolute)
+            .left(px(6))
+            .top(px(-3))
+            .width(px(16))
+            .height(px(16))
+            .border_radius(px(8))
+            .background_color(ink::white())
+    };
+    let sun = || {
+        ring(
+            Css::new()
+                .width(px(18))
+                .height(px(18))
+                .border_radius(px(9))
+                .background_color(Color::hex(0xffb300)),
+            4.0,
+            Color::hex(0xffe08a),
+        )
+    };
     let _keep = frames;
     let (day_scene, night_scene) = (scene.clone(), scene.clone());
     render! {
@@ -1544,10 +1589,10 @@ pub fn app() -> Element {
                     Text(style: label(14.0, 800, ink::ink()), value: status)
                 }
                 View(style: round, on_tap: move |_| app.night.set(!app.night.get_untracked())) {
-                    Text(
-                        style: label(18.0, 800, ink::ink()),
-                        value: computed(move || if app.night.get() { "☀" } else { "☾" }.to_string()),
-                    )
+                    Show(when: move || app.night.get()) { View(style: sun()) }
+                    Show(when: move || !app.night.get()) {
+                        View(style: moon()) { View(style: moon_cut()) }
+                    }
                 }
             }
             View(style: computed(bottom)) {
