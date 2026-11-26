@@ -264,12 +264,13 @@ pub(crate) fn build(
                 };
                 for part in &feature.geometry {
                     for p in part {
-                        circle(
-                            &mut mesh,
-                            [p[0] as f32 * scale, p[1] as f32 * scale],
-                            rgba,
-                            r,
-                        );
+                        let at = [p[0] as f32 * scale, p[1] as f32 * scale];
+                        // Circles are drawn unclipped, so a point in a neighbour's buffer is left
+                        // for the tile it belongs to.
+                        if !(0.0..EXTENT).contains(&at[0]) || !(0.0..EXTENT).contains(&at[1]) {
+                            continue;
+                        }
+                        circle(&mut mesh, at, rgba, r);
                     }
                 }
             }

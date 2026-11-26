@@ -1,0 +1,29 @@
+[package]
+name = "whisker-livecities"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Live Cities: simulated people walking real streets, drawn in 3D inside whisker-map."
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "whisker-config"
+path = "whisker.rs"
+required-features = ["whisker-config"]
+test = false
+bench = false
+
+[features]
+whisker-config = ["whisker-cng/generate"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-cng = { path = "../../crates/whisker-cng", default-features = false }
+whisker-map = { path = "../../packages/whisker-map" }
+whisker-scene = { path = "../../packages/whisker-scene" }
+whisker-safe-area = { path = "../../packages/whisker-safe-area" }
+whisker-image = { path = "../../packages/whisker-image" }
+whisker-asset = { path = "../../packages/whisker-asset" }
+serde_json = { workspace = true }

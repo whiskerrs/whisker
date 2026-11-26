@@ -1,6 +1,6 @@
 //! Symbol layers: text and icons placed in screen space each frame.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use super::{
     DrawUniform, FrameRecorder, GpuMesh, MeshRef, Program, Shared, Step, TextureRef, TileSet,
 };
 use crate::camera::View;
-use crate::geo::PlacedTile;
+use crate::geo::{PlacedTile, TileId};
 use crate::map::{MapInner, StyleState};
 use crate::sprite::SpriteImage;
 use crate::style::color::Rgba;
@@ -313,6 +313,8 @@ pub(crate) struct PlacedLabel {
 struct Fade {
     opacity: f32,
     seen: u64,
+    /// Where the label stands, in world units of 0 to 1 per wrap.
+    at: DVec2,
 }
 
 pub(crate) struct LabelRenderer {
@@ -322,7 +324,8 @@ pub(crate) struct LabelRenderer {
     textures: Vec<wgpu::BindGroup>,
     /// Per style layer: the mesh, texture, and texture size of each draw, icons first.
     draws: HashMap<usize, Vec<(usize, usize, [f32; 2])>>,
-    fades: HashMap<u64, Fade>,
+    /// Per label identity, so a label keeps its fade when another zoom's tile replaces its own.
+    fades: HashMap<u64, Vec<Fade>>,
     frame: u64,
     last: Option<Instant>,
     pub placed: Vec<PlacedLabel>,
@@ -403,6 +406,8 @@ impl LabelRenderer {
             atlas: self.atlas.as_mut().expect("atlas"),
             grid: &mut grid,
             fades: &mut self.fades,
+            claimed: HashSet::new(),
+            claimed_zooms: Vec::new(),
             frame: self.frame,
             dt,
             animating: &mut animating,
@@ -421,7 +426,16 @@ impl LabelRenderer {
             };
             let props = LayerProps::new(layer, &ctx);
             let mut batches: HashMap<usize, Batch> = HashMap::new();
-            for (tile_placed, tile) in source_tiles.iter().filter(|(p, _)| p.id.z == *ideal) {
+            // Tiles standing in for ones still loading carry their labels, nearest zoom first, each
+            // leaving out what a tile placed before it already covers.
+            let mut ordered: Vec<&(PlacedTile, Rc<LoadedTile>)> = source_tiles.iter().collect();
+            ordered.sort_by_key(|(p, _)| {
+                let z = i32::from(p.id.z) - i32::from(*ideal);
+                (z < 0, z.abs())
+            });
+            placer.claimed.clear();
+            placer.claimed_zooms.clear();
+            for (tile_placed, tile) in ordered {
                 let TileContent::Vector { symbols, .. } = &tile.content else {
                     continue;
                 };
@@ -438,6 +452,10 @@ impl LabelRenderer {
                         });
                     }
                 }
+                placer.claimed.insert(*tile_placed);
+                if !placer.claimed_zooms.contains(&tile_placed.id.z) {
+                    placer.claimed_zooms.push(tile_placed.id.z);
+                }
             }
             let mut batches: Vec<(usize, Batch)> = batches
                 .into_iter()
@@ -448,7 +466,10 @@ impl LabelRenderer {
             layer_batches.push((index, batches));
         }
         let frame = self.frame;
-        self.fades.retain(|_, fade| fade.seen == frame);
+        self.fades.retain(|_, fades| {
+            fades.retain(|fade| fade.seen == frame);
+            !fades.is_empty()
+        });
         for (index, batches) in layer_batches {
             let mut draws = Vec::new();
             for (texture, batch) in batches {
@@ -505,7 +526,10 @@ struct Placer<'a> {
     style: &'a StyleState,
     atlas: &'a mut GlyphAtlas,
     grid: &'a mut CollisionGrid,
-    fades: &'a mut HashMap<u64, Fade>,
+    fades: &'a mut HashMap<u64, Vec<Fade>>,
+    /// The tiles whose labels this layer has placed so far.
+    claimed: HashSet<PlacedTile>,
+    claimed_zooms: Vec<u8>,
     frame: u64,
     dt: f32,
     animating: &'a mut bool,
@@ -534,6 +558,40 @@ fn union(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
 }
 
 impl Placer<'_> {
+    fn claimed_by_another_zoom(&self, z: u8, at: DVec2) -> bool {
+        self.claimed_zooms
+            .iter()
+            .filter(|&&c| c != z)
+            .any(|&c| self.claimed.contains(&tile_at(c, at)))
+    }
+
+    /// Steps the fade of the label `key` at `at`, matched within a quarter tile of the current
+    /// zoom, and returns its opacity.
+    fn fade_in(&mut self, key: u64, at: DVec2) -> f32 {
+        let reach = 0.25 / 2f64.powf(self.view.zoom().floor());
+        let frame = self.frame;
+        let fades = self.fades.entry(key).or_default();
+        let index = fades
+            .iter()
+            .position(|f| f.seen != frame && f.at.distance(at) < reach)
+            .unwrap_or_else(|| {
+                fades.push(Fade {
+                    opacity: 0.0,
+                    seen: 0,
+                    at,
+                });
+                fades.len() - 1
+            });
+        let fade = &mut fades[index];
+        fade.at = at;
+        fade.opacity = (fade.opacity + self.dt / FADE_SECONDS).min(1.0);
+        fade.seen = frame;
+        if fade.opacity < 1.0 {
+            *self.animating = true;
+        }
+        fade.opacity
+    }
+
     /// Places each of the symbol's anchors that fits, returning the bounds of those placed.
     fn place(
         &mut self,
@@ -610,7 +668,11 @@ impl Placer<'_> {
             {
                 continue;
             }
-            let key = label_key(symbol, tile, anchor.point);
+            let at = world_point(tile, anchor.point);
+            if self.claimed_by_another_zoom(tile.id.z, at) {
+                continue;
+            }
+            let key = label_key(symbol);
             let line_screen = if symbol.along_line {
                 symbol.line.as_ref().and_then(|line| {
                     line.iter()
@@ -769,16 +831,7 @@ impl Placer<'_> {
                 self.grid.insert(b);
             }
 
-            let fade = self.fades.entry(key).or_insert(Fade {
-                opacity: 0.0,
-                seen: 0,
-            });
-            fade.opacity = (fade.opacity + self.dt / FADE_SECONDS).min(1.0);
-            fade.seen = self.frame;
-            if fade.opacity < 1.0 {
-                *self.animating = true;
-            }
-            let opacity = fade.opacity;
+            let opacity = self.fade_in(key, at);
 
             let mut bounds: Option<[f32; 4]> = None;
             if place_icon && let Some((corners, uv, image)) = icon_quad {
@@ -942,24 +995,55 @@ fn walk(line: &[DVec2], segment: usize, anchor: DVec2, distance: f64) -> Option<
     }
 }
 
-fn label_key(symbol: &SymbolFeature, tile: PlacedTile, point: [f32; 2]) -> u64 {
+fn label_key(symbol: &SymbolFeature) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     symbol.layer.hash(&mut hasher);
     symbol.text.hash(&mut hasher);
     symbol.icon.hash(&mut hasher);
-    let n = f64::from(1u32 << tile.id.z);
-    let x =
-        (f64::from(tile.id.x) + f64::from(tile.wrap) * n + f64::from(point[0]) / f64::from(EXTENT))
-            / n;
-    let y = (f64::from(tile.id.y) + f64::from(point[1]) / f64::from(EXTENT)) / n;
-    ((x * 1e6).round() as i64).hash(&mut hasher);
-    ((y * 1e6).round() as i64).hash(&mut hasher);
     hasher.finish()
+}
+
+/// The tile of zoom `z` that holds the world point `at`.
+fn tile_at(z: u8, at: DVec2) -> PlacedTile {
+    let n = 1i64 << z;
+    let (x, y) = (
+        (at.x * n as f64).floor() as i64,
+        (at.y * n as f64).floor() as i64,
+    );
+    PlacedTile {
+        id: TileId {
+            z,
+            x: x.rem_euclid(n) as u32,
+            y: y.clamp(0, n - 1) as u32,
+        },
+        wrap: x.div_euclid(n) as i32,
+    }
+}
+
+fn world_point(tile: PlacedTile, point: [f32; 2]) -> DVec2 {
+    let n = f64::from(1u32 << tile.id.z);
+    DVec2::new(
+        (f64::from(tile.id.x) + f64::from(tile.wrap) * n + f64::from(point[0]) / f64::from(EXTENT))
+            / n,
+        (f64::from(tile.id.y) + f64::from(point[1]) / f64::from(EXTENT)) / n,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_label_point_finds_the_tile_of_another_zoom_that_holds_it() {
+        let child = PlacedTile {
+            id: TileId { z: 3, x: 7, y: 2 },
+            wrap: -1,
+        };
+        let at = world_point(child, [100.0, 4000.0]);
+        assert_eq!(tile_at(3, at), child);
+        let parent = tile_at(2, at);
+        assert_eq!((parent.id.x, parent.id.y, parent.wrap), (3, 1, -1));
+    }
 
     #[test]
     fn walks_along_a_polyline() {

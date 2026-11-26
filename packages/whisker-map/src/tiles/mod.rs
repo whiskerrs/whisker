@@ -92,6 +92,11 @@ pub(crate) struct LoadedTile {
 struct Entry {
     state: TileState,
     used: u64,
+    /// The data set the content was made from; an older one is drawn until its remake loads.
+    generation: u64,
+    reloading: bool,
+    /// The content this entry held before its remake, until the remake is on the GPU.
+    previous: Option<Rc<LoadedTile>>,
 }
 
 type TileFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Option<TileContent>>>>;
@@ -115,6 +120,7 @@ pub(crate) struct TileSource {
     failed: Cell<bool>,
     /// Counts each tile that finishes loading and each new data set.
     pub data_version: Cell<u64>,
+    generation: Cell<u64>,
     geojson: RefCell<Option<crate::work::GeoJson>>,
     on_change: Rc<dyn Fn()>,
     loader: RefCell<Option<Loader>>,
@@ -151,6 +157,7 @@ impl TileSource {
             ready: Cell::new(ready),
             failed: Cell::new(failed),
             data_version: Cell::new(0),
+            generation: Cell::new(0),
             geojson: RefCell::new(None),
             on_change,
             loader: RefCell::new(None),
@@ -199,7 +206,7 @@ impl TileSource {
     /// Cuts this source's tiles from `index`, replacing any tiles made from earlier data.
     pub fn set_geojson(self: &Rc<Self>, index: crate::work::GeoJson) {
         let weak = Rc::downgrade(self);
-        self.tiles.borrow_mut().clear();
+        self.generation.set(self.generation.get() + 1);
         *self.geojson.borrow_mut() = Some(index.clone());
         self.data_version.set(self.data_version.get() + 1);
         self.set_loader(Rc::new(move |id| {
@@ -353,16 +360,25 @@ impl TileSource {
         id: TileId,
         ready: &mut dyn FnMut(&LoadedTile) -> bool,
     ) -> Option<Rc<LoadedTile>> {
-        let tile = {
+        let (tile, previous) = {
             let mut tiles = self.tiles.borrow_mut();
             let entry = tiles.get_mut(&id)?;
             entry.used = self.frame.get();
-            match &entry.state {
-                TileState::Loaded(tile) => tile.clone(),
-                _ => return None,
-            }
+            let tile = match &entry.state {
+                TileState::Loaded(tile) => Some(tile.clone()),
+                _ => None,
+            };
+            (tile, entry.previous.clone())
         };
-        ready(&tile).then_some(tile)
+        if let Some(tile) = tile.filter(|tile| ready(tile)) {
+            if previous.is_some()
+                && let Some(entry) = self.tiles.borrow_mut().get_mut(&id)
+            {
+                entry.previous = None;
+            }
+            return Some(tile);
+        }
+        previous.filter(|tile| ready(tile))
     }
 
     fn request(self: &Rc<Self>, id: TileId) {
@@ -370,25 +386,37 @@ impl TileSource {
             let mut tiles = self.tiles.borrow_mut();
             if let Some(entry) = tiles.get_mut(&id) {
                 entry.used = self.frame.get();
-                return;
+                if entry.generation == self.generation.get()
+                    || entry.reloading
+                    || matches!(entry.state, TileState::Loading)
+                    || self.in_flight.get() >= MAX_IN_FLIGHT
+                {
+                    return;
+                }
+                entry.reloading = true;
+            } else {
+                if self.in_flight.get() >= MAX_IN_FLIGHT {
+                    return;
+                }
+                tiles.insert(
+                    id,
+                    Entry {
+                        state: TileState::Loading,
+                        used: self.frame.get(),
+                        generation: self.generation.get(),
+                        reloading: false,
+                        previous: None,
+                    },
+                );
             }
-            if self.in_flight.get() >= MAX_IN_FLIGHT {
-                return;
-            }
-            tiles.insert(
-                id,
-                Entry {
-                    state: TileState::Loading,
-                    used: self.frame.get(),
-                },
-            );
         }
+        let generation = self.generation.get();
         self.in_flight.set(self.in_flight.get() + 1);
         let weak = Rc::downgrade(self);
         let future = self.load(id);
         whisker::spawn_local(async move {
             let content = future.await;
-            finish(&weak, id, content);
+            finish(&weak, id, generation, content);
         });
     }
 
@@ -438,7 +466,7 @@ impl TileSource {
     }
 }
 
-fn finish(weak: &Weak<TileSource>, id: TileId, content: Option<TileContent>) {
+fn finish(weak: &Weak<TileSource>, id: TileId, generation: u64, content: Option<TileContent>) {
     let Some(source) = weak.upgrade() else { return };
     source
         .in_flight
@@ -452,7 +480,14 @@ fn finish(weak: &Weak<TileSource>, id: TileId, content: Option<TileContent>) {
         None => TileState::Empty,
     };
     if let Some(entry) = source.tiles.borrow_mut().get_mut(&id) {
-        entry.state = state;
+        let fresh = matches!(state, TileState::Loaded(_));
+        let old = std::mem::replace(&mut entry.state, state);
+        entry.previous = match old {
+            TileState::Loaded(old) if fresh => Some(old),
+            _ => None,
+        };
+        entry.generation = generation;
+        entry.reloading = false;
     }
     source.data_version.set(source.data_version.get() + 1);
     (source.on_change)();

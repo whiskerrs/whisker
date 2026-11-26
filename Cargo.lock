@@ -6104,6 +6104,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-livecities"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "whisker",
+ "whisker-asset",
+ "whisker-cng",
+ "whisker-image",
+ "whisker-map",
+ "whisker-safe-area",
+ "whisker-scene",
+]
+
+[[package]]
 name = "whisker-local-store"
 version = "0.14.8"
 dependencies = [
