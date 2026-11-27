@@ -48,6 +48,7 @@ pub mod new_module;
 pub mod platforms;
 pub mod run;
 pub mod rustc_shim;
+mod shutdown;
 pub mod store;
 pub mod submit;
 mod trace;
@@ -152,6 +153,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Ok(c) => c,
         Err(e) => e.exit(),
     };
+    shutdown::install()?;
     // `--verbose` and `WHISKER_VERBOSE=1` are the same switch. Setting
     // the env var means any subprocess we spawn (dev-server, shim
     // binaries) sees the same mode without further plumbing.
