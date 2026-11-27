@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Plugin surface for Whisker CNG — Plugin trait, IR types, JSON envelope, and the subprocess runner 3rd-party plugin binaries use."
+readme = "../../README.md"
 
 [dependencies]
 # Plugin trait's `Config` associated type round-trips through JSON

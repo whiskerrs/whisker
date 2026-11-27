@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Rust desktop Host implementation for whisker-local-store."
+readme = "../../../README.md"
 
 [dependencies]
 serde_json = { workspace = true }

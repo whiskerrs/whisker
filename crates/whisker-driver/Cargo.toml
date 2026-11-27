@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Safe FFI Host adapter for Whisker's retained Rust runtime."
+readme = "../../README.md"
 
 [lib]
 crate-type = ["staticlib", "rlib"]

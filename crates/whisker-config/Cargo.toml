@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Config types used in whisker.rs to declare app metadata."
+readme = "../../README.md"
 
 [dependencies]
 serde = { workspace = true }

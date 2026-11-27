@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Whisker module mirroring Expo's expo-web-browser: openBrowserAsync (SFSafariViewController / Custom Tabs) and openAuthSessionAsync (ASWebAuthenticationSession / Custom Tabs + deep link) for in-app OAuth flows."
+readme = "../../README.md"
 
 include = [
     "Cargo.toml",

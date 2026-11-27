@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Retained, renderer-independent layout engine for Whisker."
+readme = "../../README.md"
 
 [dependencies]
 taffy = { version = "0.13", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "block_layout", "float_layout", "content_size"] }

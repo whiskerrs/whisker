@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Procedural macros for Whisker's app, component, module-element, and builder-composition APIs."
+readme = "../../README.md"
 
 [lib]
 proc-macro = true

@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Draw into Whisker surfaces with wgpu, sharing one device across the app."
+readme = "../../README.md"
 
 [dependencies]
 whisker-surface = { path = "../whisker-surface", version = "0.1.1" }

@@ -22,6 +22,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories = ["development-tools::build-utils"]
 description = "Whisker build orchestration: cargo cross-compile + gradle / xcodebuild + xcframework wrap."
+readme = "../../README.md"
 
 [dependencies]
 anyhow = { workspace = true }

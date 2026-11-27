@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories = ["development-tools"]
 description = "Whisker credential store — age-encrypted signing credentials committed to the app repo."
+readme = "../../README.md"
 
 [dependencies]
 # X25519 file encryption (the `age` format). Chosen over a

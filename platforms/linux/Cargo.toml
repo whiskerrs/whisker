@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Native GTK4 Linux Host for Whisker."
+readme = "../../README.md"
 
 [features]
 # Shared Host conformance fixtures run only through `cargo xtask host-conformance linux`.

@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories = ["development-tools"]
 description = "rustfmt drop-in that additionally formats Whisker's `render!` / `css!` macro bodies. Respects rustfmt.toml only — no whisker-specific config."
+readme = "../../README.md"
 
 [dependencies]
 anyhow = { workspace = true }

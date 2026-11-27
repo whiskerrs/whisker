@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Rust desktop Host implementation for whisker-web-browser."
+readme = "../../../README.md"
 
 [dependencies]
 open = "5"

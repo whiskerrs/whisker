@@ -10,5 +10,6 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Typed inline style model and resolution semantics for Whisker."
+readme = "../../README.md"
 
 [dependencies]

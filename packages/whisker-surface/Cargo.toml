@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Native GPU render targets for Whisker elements, independent of any graphics API."
+readme = "../../README.md"
 
 include = [
     "Cargo.toml",

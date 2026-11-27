@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Host-independent Whisker runtime: reactivity, retained elements, layout, and frames."
+readme = "../../README.md"
 
 [dependencies]
 # Generational slot map for reactive node / owner storage. Generational

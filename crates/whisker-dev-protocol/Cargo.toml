@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Authenticated wire protocol shared by the `whisker run` dev server and the on-device dev runtime."
+readme = "../../README.md"
 
 [dependencies]
 hmac = { version = "=0.12.1" }

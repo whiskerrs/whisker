@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Linux Host implementation for whisker-input."
+readme = "../../../README.md"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 whisker = { path = "../../../crates/whisker", version = "0.19.0" }

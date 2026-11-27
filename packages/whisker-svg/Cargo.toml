@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Whisker SVG widget with native Android, iOS, Web, and Desktop host renderers."
+readme = "../../README.md"
 
 # Explicit include — mirrors whisker-image / whisker-safe-area:
 # `cargo publish` ships the Kotlin + Swift platform sources next to

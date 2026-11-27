@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Host-independent scene frame model and validator for Whisker."
+readme = "../../README.md"
 
 [dependencies]
 whisker-value = { workspace = true }

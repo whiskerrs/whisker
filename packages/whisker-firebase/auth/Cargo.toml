@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Firebase Authentication for Whisker"
+readme = "../../../README.md"
 include = ["Cargo.toml", "src/**", "Package.swift", "build.gradle.kts", "android/**/*.kt", "ios/**/*.swift"]
 
 [lib]

@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Procedural macros for whisker-asset: asset!/asset_str!/asset_bytes! compile-time-validated asset references"
+readme = "../../README.md"
 
 [lib]
 proc-macro = true
