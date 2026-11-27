@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Web Host implementation for whisker-svg."
+readme = "../../../README.md"
 
 [dependencies]
 base64 = { workspace = true }

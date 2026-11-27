@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories = ["development-tools", "command-line-utilities"]
 description = "Whisker CLI: `whisker` and `cargo-whisker` (hybrid) — scaffold, doctor, and dev-loop Whisker apps."
+readme = "../../README.md"
 
 [[bin]]
 name = "whisker"

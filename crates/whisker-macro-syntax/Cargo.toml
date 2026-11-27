@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Shared builder-composition AST for Whisker's macros and formatter."
+readme = "../../README.md"
 
 # NOTE: this is a plain library crate, NOT a proc-macro crate. It holds
 # only the `syn::parse::Parse` side of the DSLs so a non-proc-macro

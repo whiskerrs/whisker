@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Host-independent retained scene and frame production for Whisker."
+readme = "../../README.md"
 
 [dependencies]
 whisker-layout = { workspace = true }

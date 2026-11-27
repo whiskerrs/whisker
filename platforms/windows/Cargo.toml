@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Native WinUI 3 Windows Host for Whisker."
+readme = "../../README.md"
 # Exposes the Whisker.WindowsHost headers to C++ module builds as DEP_WHISKER_WINDOWS_INCLUDE.
 links = "whisker-windows"
 exclude = ["host"]

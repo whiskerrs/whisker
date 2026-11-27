@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "WebView component for Whisker — a native web view (WKWebView on iOS, android.webkit.WebView on Android) with reactive url / inline html, a single JS-bridge channel (window.whisker.postMessage ↔ on_message / post_message / evaluate_javascript), declarative origin-whitelist navigation control, load / error / progress events, and an imperative reload / back / forward / evaluate handle."
+readme = "../../README.md"
 
 # Explicit `include` list — mirrors `whisker-input`. A `cargo publish`
 # ships the Kotlin + Swift platform sources alongside `src/lib.rs`,

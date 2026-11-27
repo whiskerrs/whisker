@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Web Host implementation for whisker-surface."
+readme = "../../../README.md"
 
 [dependencies]
 whisker-surface = { path = "..", version = "0.1.1" }

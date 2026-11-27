@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Browser DOM Host for Whisker applications."
+readme = "../../README.md"
 
 [features]
 default = []

@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Network image component for Whisker — fetches HTTP(S) URLs and renders into a native image view (Kingfisher on iOS, Coil on Android) with built-in memory + disk caching."
+readme = "../../README.md"
 
 # Explicit `include` list — mirrors `whisker-video`. A `cargo publish`
 # ships the Kotlin + Swift platform sources alongside `src/lib.rs`,

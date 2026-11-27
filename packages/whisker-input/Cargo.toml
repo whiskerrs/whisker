@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Cross-platform text-input element for Whisker with two-way binding, native IME integration, and an imperative focus / blur / clear / value handle."
+readme = "../../README.md"
 
 # Explicit `include` list — mirrors `whisker-image`. A `cargo publish`
 # ships the Kotlin, Swift, and Rust Host sources alongside `src/lib.rs`,

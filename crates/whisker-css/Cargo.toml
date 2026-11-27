@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Type-safe CSS builder for Whisker's supported styling surface."
+readme = "../../README.md"
 
 [dependencies]
 whisker-macros = { workspace = true }

@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "A 3D scene graph for Whisker, written as components and drawn with wgpu."
+readme = "../../README.md"
 
 [dependencies]
 whisker = { path = "../../crates/whisker", version = "0.19.2" }

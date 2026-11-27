@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories = ["development-tools"]
 description = "Whisker store submission — App Store Connect and Google Play API clients for `whisker submit`."
+readme = "../../README.md"
 
 [dependencies]
 anyhow = { workspace = true }

@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "A vector map engine for Whisker that draws MapLibre styles with wgpu."
+readme = "../../README.md"
 
 [dependencies]
 whisker = { path = "../../crates/whisker", version = "0.19.2" }

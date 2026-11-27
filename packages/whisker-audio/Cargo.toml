@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Whisker audio playback for Android, iOS, and Web, with imperative controls and reactive playback status."
+readme = "../../README.md"
 
 # Phase K — explicit `include` list so a `cargo publish` of this
 # crate ships the Kotlin + Swift platform sources alongside

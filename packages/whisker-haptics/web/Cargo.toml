@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Web Host implementation for whisker-haptics."
+readme = "../../../README.md"
 
 [dependencies]
 js-sys = "0.3"
