@@ -7,7 +7,6 @@ use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use whisker_surface::{NativeSurface, SurfaceSize, host};
-use whisker_web::wasm_bindgen::closure::Closure;
 use whisker_web::wasm_bindgen::{JsCast, JsValue};
 use whisker_web::{ModuleDefinition, WebViewDefinition, WhiskerModule, WhiskerValue};
 
@@ -16,11 +15,11 @@ struct State {
     surface: Option<u64>,
     attached: Option<u64>,
     reported: Option<SurfaceSize>,
-    frame_request: Option<i32>,
-    callback: Option<Closure<dyn FnMut(f64)>>,
+    frame_requested: bool,
+    this: Weak<RefCell<State>>,
 }
 
-/// Calls Rust only from `requestAnimationFrame`, never from a prop setter inside Whisker's commit.
+/// Calls Rust only from a View frame, never from a prop setter inside Whisker's commit.
 struct SurfaceCanvas(Rc<RefCell<State>>);
 
 impl SurfaceCanvas {
@@ -28,17 +27,16 @@ impl SurfaceCanvas {
         let canvas: web_sys::HtmlCanvasElement =
             document.create_element("canvas")?.unchecked_into();
         canvas.set_attribute("style", "display:block;width:100%;height:100%")?;
-        let state = Rc::new(RefCell::new(State {
-            canvas,
-            surface: None,
-            attached: None,
-            reported: None,
-            frame_request: None,
-            callback: None,
-        }));
-        let weak = Rc::downgrade(&state);
-        let callback = Closure::<dyn FnMut(f64)>::new(move |time: f64| tick(&weak, time));
-        state.borrow_mut().callback = Some(callback);
+        let state = Rc::new_cyclic(|this| {
+            RefCell::new(State {
+                canvas,
+                surface: None,
+                attached: None,
+                reported: None,
+                frame_requested: false,
+                this: this.clone(),
+            })
+        });
         Ok(Self(state))
     }
 
@@ -59,11 +57,6 @@ impl SurfaceCanvas {
 impl Drop for SurfaceCanvas {
     fn drop(&mut self) {
         let mut state = self.0.borrow_mut();
-        // The browser throws when a pending frame calls a dropped closure.
-        if let (Some(request), Some(window)) = (state.frame_request.take(), web_sys::window()) {
-            let _ = window.cancel_animation_frame(request);
-        }
-        state.callback = None;
         if let Some(attached) = state.attached.take() {
             host::detach(attached);
         }
@@ -71,22 +64,19 @@ impl Drop for SurfaceCanvas {
 }
 
 fn schedule(state: &mut State) {
-    if state.frame_request.is_some() {
+    if state.frame_requested {
         return;
     }
-    let (Some(window), Some(callback)) = (web_sys::window(), &state.callback) else {
-        return;
-    };
-    state.frame_request = window
-        .request_animation_frame(callback.as_ref().unchecked_ref())
-        .ok();
+    state.frame_requested = true;
+    let weak = state.this.clone();
+    whisker_web::request_view_frame(move |time| tick(&weak, time));
 }
 
 fn tick(weak: &Weak<RefCell<State>>, time: f64) {
     let Some(state) = weak.upgrade() else { return };
     let (id, size, attach, resize) = {
         let mut state = state.borrow_mut();
-        state.frame_request = None;
+        state.frame_requested = false;
         let Some(id) = state.surface else { return };
         if !state.canvas.is_connected() {
             return;

@@ -2,7 +2,6 @@ package rs.whisker.modules.surface
 
 import android.content.Context
 import android.graphics.SurfaceTexture
-import android.view.Choreographer
 import android.view.Surface
 import android.view.TextureView
 import rs.whisker.runtime.Module
@@ -11,15 +10,14 @@ import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.WhiskerUI
 
-/** Calls Rust only from Choreographer, never from a prop setter that runs inside Whisker's commit. */
-class WhiskerSurfaceView(context: Context) :
-    TextureView(context), TextureView.SurfaceTextureListener, Choreographer.FrameCallback {
+/** Calls Rust only from [WhiskerSurface.onFrame], never from a prop setter that runs inside Whisker's commit. */
+class WhiskerSurfaceView(context: Context) : TextureView(context), TextureView.SurfaceTextureListener {
     private var surfaceId = 0L
     private var attachedId = 0L
     private var surface: Surface? = null
     private var reportedWidth = 0
     private var reportedHeight = 0
-    private var scheduled = false
+    internal var requestFrame: () -> Unit = {}
 
     init {
         surfaceTextureListener = this
@@ -31,16 +29,16 @@ class WhiskerSurfaceView(context: Context) :
             detach()
             surfaceId = id
         }
-        schedule()
+        requestFrame()
     }
 
     override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
         surface = Surface(texture)
-        schedule()
+        requestFrame()
     }
 
     override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
-        schedule()
+        requestFrame()
     }
 
     override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
@@ -54,33 +52,15 @@ class WhiskerSurfaceView(context: Context) :
 
     override fun onWindowVisibilityChanged(visibility: Int) {
         super.onWindowVisibilityChanged(visibility)
-        if (visibility == VISIBLE) {
-            schedule()
-        } else if (scheduled) {
-            Choreographer.getInstance().removeFrameCallback(this)
-            scheduled = false
-        }
+        if (visibility == VISIBLE) requestFrame()
     }
 
-    override fun onDetachedFromWindow() {
-        if (scheduled) {
-            Choreographer.getInstance().removeFrameCallback(this)
-            scheduled = false
-        }
-        super.onDetachedFromWindow()
-    }
-
-    private fun schedule() {
-        if (scheduled || windowVisibility != VISIBLE) return
-        scheduled = true
-        Choreographer.getInstance().postFrameCallback(this)
-    }
-
-    override fun doFrame(frameTimeNanos: Long) {
-        scheduled = false
-        val target = surface ?: return
+    /** Returns whether the surface wants another frame. */
+    internal fun frame(frameTimeNanos: Long): Boolean {
+        if (windowVisibility != VISIBLE) return false
+        val target = surface ?: return false
         val id = surfaceId
-        if (id == 0L || width == 0 || height == 0) return
+        if (id == 0L || width == 0 || height == 0) return false
         val scale = resources.displayMetrics.density
         if (attachedId != id) {
             nativeAttach(id, target, width, height, scale)
@@ -92,7 +72,7 @@ class WhiskerSurfaceView(context: Context) :
             reportedWidth = width
             reportedHeight = height
         }
-        if (nativeFrame(id, frameTimeNanos)) schedule()
+        return nativeFrame(id, frameTimeNanos)
     }
 
     private fun detach() {
@@ -109,7 +89,15 @@ class WhiskerSurfaceView(context: Context) :
 }
 
 class WhiskerSurface(context: WhiskerContext) : WhiskerUI<WhiskerSurfaceView>(context) {
+    init {
+        view().requestFrame = ::requestFrame
+    }
+
     override fun createView(context: Context): WhiskerSurfaceView = WhiskerSurfaceView(context)
+
+    override fun onFrame(frameTimeNanos: Long) {
+        if (view().frame(frameTimeNanos)) requestFrame()
+    }
 }
 
 @WhiskerModule

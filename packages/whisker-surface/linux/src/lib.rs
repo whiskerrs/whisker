@@ -7,7 +7,7 @@
 
 use std::cell::RefCell;
 use std::os::fd::AsRawFd;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use whisker::platform_module::WhiskerValue;
@@ -19,10 +19,10 @@ struct State {
     surface: Option<u64>,
     attached: Option<u64>,
     reported: Option<SurfaceSize>,
-    ticking: Option<gtk::TickCallbackId>,
+    frame_requested: bool,
 }
 
-/// Calls Rust only from the frame clock, never from a prop setter inside Whisker's commit.
+/// Calls Rust only from a View frame, never from a prop setter inside Whisker's commit.
 struct SurfaceWidget {
     picture: gtk::Picture,
     state: Rc<RefCell<State>>,
@@ -119,7 +119,7 @@ impl SurfaceWidget {
             surface: None,
             attached: None,
             reported: None,
-            ticking: None,
+            frame_requested: false,
         }));
         let resize_state = Rc::downgrade(&state);
         picture.connect_realize(move |picture| {
@@ -149,9 +149,6 @@ impl SurfaceWidget {
 impl Drop for SurfaceWidget {
     fn drop(&mut self) {
         let mut state = self.state.borrow_mut();
-        if let Some(ticking) = state.ticking.take() {
-            ticking.remove();
-        }
         if let Some(attached) = state.attached.take() {
             host::detach(attached);
         }
@@ -159,25 +156,23 @@ impl Drop for SurfaceWidget {
 }
 
 fn schedule(picture: &gtk::Picture, state: &Rc<RefCell<State>>) {
-    if state.borrow().ticking.is_some() {
+    if std::mem::replace(&mut state.borrow_mut().frame_requested, true) {
         return;
     }
-    let weak = Rc::downgrade(state);
-    let id = picture.add_tick_callback(move |picture, clock| {
-        let Some(state) = weak.upgrade() else {
-            return glib::ControlFlow::Break;
+    let picture = picture.downgrade();
+    let state: Weak<RefCell<State>> = Rc::downgrade(state);
+    whisker_linux::request_view_frame(move |timestamp_ms| {
+        let (Some(picture), Some(state)) = (picture.upgrade(), state.upgrade()) else {
+            return;
         };
-        if tick(picture, &state, clock.frame_time()) {
-            glib::ControlFlow::Continue
-        } else {
-            state.borrow_mut().ticking = None;
-            glib::ControlFlow::Break
+        state.borrow_mut().frame_requested = false;
+        if tick(&picture, &state, timestamp_ms) {
+            schedule(&picture, &state);
         }
     });
-    state.borrow_mut().ticking = Some(id);
 }
 
-fn tick(picture: &gtk::Picture, state: &Rc<RefCell<State>>, frame_time_us: i64) -> bool {
+fn tick(picture: &gtk::Picture, state: &Rc<RefCell<State>>, timestamp_ms: f64) -> bool {
     let (id, size, attach, resize) = {
         let mut state = state.borrow_mut();
         let Some(id) = state.surface else {
@@ -209,7 +204,7 @@ fn tick(picture: &gtk::Picture, state: &Rc<RefCell<State>>, frame_time_us: i64) 
         host::resize(id, size);
     }
     // A resize settles after one more allocation, so keep ticking until the size holds.
-    host::frame(id, Duration::from_micros(frame_time_us.max(0) as u64)) || resize || attach
+    host::frame(id, Duration::from_secs_f64(timestamp_ms.max(0.0) / 1000.0)) || resize || attach
 }
 
 fn string(value: &WhiskerValue) -> &str {

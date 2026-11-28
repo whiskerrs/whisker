@@ -185,12 +185,13 @@ struct WhiskerView::Impl {
     for (auto const& event : std::exchange(resource_events, {})) {
       whisker_view_dispatch_resource_event(handle, &event);
     }
+    // View frames run first so what they publish, such as map marker positions, lands in this tick.
+    scene->RunViewFrames(Now() / 1000.0);
     if (frame_requested) {
       frame_requested = false;
       whisker_view_tick(handle, Now(), width, height, scale);
       scene->DrawViews();
     }
-    scene->RunViewFrames(Now() / 1000.0);
   }
 
   void Pointer(xaml::Input::PointerRoutedEventArgs const& e, uint32_t event) {

@@ -1,6 +1,7 @@
 package rs.whisker.runtime
 
 import android.content.Context
+import android.view.Choreographer
 import android.view.View
 import android.view.ViewGroup
 
@@ -12,11 +13,21 @@ public interface WhiskerEventSource {
     public fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?)
 }
 
+/** Implemented by the View that owns a Whisker runtime; runs requested View frames before its tick. */
+public interface WhiskerFrameHost {
+    public fun requestViewFrame(view: WhiskerUI<*>)
+}
+
 /** Lightweight native-element base class with no renderer SDK dependency. */
 public abstract class WhiskerUI<V : View>(context: Context) :
     WhiskerContainerView(context), WhiskerEventSource {
     private val nativeView: V = createView(context)
     private var eventSink: ((String, WhiskerValue) -> Unit)? = null
+    private var frameRequested = false
+    private val fallbackFrame = Choreographer.FrameCallback { frameTimeNanos ->
+        frameRequested = false
+        onFrame(frameTimeNanos)
+    }
 
     init {
         addView(
@@ -38,6 +49,45 @@ public abstract class WhiskerUI<V : View>(context: Context) :
 
     public fun emitWhiskerEvent(name: String, detail: WhiskerValue = WhiskerValue.Null) {
         eventSink?.invoke(name, detail)
+    }
+
+    /** Calls [onFrame] once on the next display frame, before Whisker applies that frame's updates. */
+    public fun requestFrame() {
+        if (frameRequested) return
+        frameRequested = true
+        if (isAttachedToWindow) forwardFrameRequest()
+    }
+
+    /** Runs outside Whisker's commit, so it may call into Rust; what it publishes lands in this frame. */
+    public open fun onFrame(frameTimeNanos: Long) {}
+
+    /** Called by [WhiskerFrameHost] when the requested frame runs. */
+    public fun runWhiskerFrame(frameTimeNanos: Long) {
+        if (!frameRequested || !isAttachedToWindow) return
+        frameRequested = false
+        onFrame(frameTimeNanos)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (frameRequested) forwardFrameRequest()
+    }
+
+    override fun onDetachedFromWindow() {
+        Choreographer.getInstance().removeFrameCallback(fallbackFrame)
+        super.onDetachedFromWindow()
+    }
+
+    private fun forwardFrameRequest() {
+        var ancestor = parent
+        while (ancestor != null) {
+            if (ancestor is WhiskerFrameHost) {
+                ancestor.requestViewFrame(this)
+                return
+            }
+            ancestor = ancestor.parent
+        }
+        Choreographer.getInstance().postFrameCallback(fallbackFrame)
     }
 }
 
