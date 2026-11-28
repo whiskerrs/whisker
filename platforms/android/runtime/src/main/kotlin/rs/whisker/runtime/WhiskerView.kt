@@ -51,6 +51,7 @@ private class ScrollOffsetBatch(val nodes: LongArray, val offsets: FloatArray)
 class WhiskerView(context: Context) :
     WhiskerContainerView(context),
     Choreographer.FrameCallback,
+    WhiskerFrameHost,
     WhiskerRuntimeOwner {
     override val runtimeContext: Context
         get() = context
@@ -67,6 +68,8 @@ class WhiskerView(context: Context) :
     }
     private var frameScheduled = false
     private var windowVisible = true
+    private var viewFrames = LinkedHashSet<WhiskerUI<*>>()
+    private var runningViewFrames = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val elements = WhiskerElementRegistry.newBindings()
     private val measurements = HostMeasurementProvider(context, elements)
@@ -310,6 +313,7 @@ class WhiskerView(context: Context) :
         mainHandler.removeCallbacks(continuousEventFlush)
         mainHandler.removeCallbacks(moduleEventFlush)
         scene.clear()
+        viewFrames.clear()
         pendingContinuousEvents.clear()
         pendingModuleEvents.clear()
         WhiskerAppContext.popRuntimeOwner(this)
@@ -426,6 +430,8 @@ class WhiskerView(context: Context) :
             post { requestFrameFromNative() }
             return
         }
+        // The tick that follows the View frames picks up anything they wake.
+        if (runningViewFrames) return
         if (!frameScheduled) {
             frameScheduled = true
             choreographer.postFrameCallback(this)
@@ -439,6 +445,7 @@ class WhiskerView(context: Context) :
             mountWhenSized()
             return
         }
+        runViewFrames(frameTimeNanos)
         // Queued module events (such as the first safe-area insets) must land before this frame lays out.
         moduleEventFlush.run()
         val density = resources.displayMetrics.density
@@ -450,7 +457,24 @@ class WhiskerView(context: Context) :
             density,
         )
         measurements.endFrame()
-        if (!idle) requestFrameFromNative()
+        if (!idle || viewFrames.isNotEmpty()) requestFrameFromNative()
+    }
+
+    override fun requestViewFrame(view: WhiskerUI<*>) {
+        viewFrames.add(view)
+        requestFrameFromNative()
+    }
+
+    private fun runViewFrames(frameTimeNanos: Long) {
+        if (viewFrames.isEmpty()) return
+        val due = viewFrames
+        viewFrames = LinkedHashSet()
+        runningViewFrames = true
+        try {
+            due.forEach { it.runWhiskerFrame(frameTimeNanos) }
+        } finally {
+            runningViewFrames = false
+        }
     }
 
     fun beginBootstrapFromNative() = bootstrap.begin()

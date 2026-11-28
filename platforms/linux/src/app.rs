@@ -21,9 +21,13 @@ use crate::scene::{GtkFrameSink, SharedScrollFeedback, max_scroll_offset};
 use crate::text::PangoMeasurementProvider;
 use crate::{LinuxAppConfig, LinuxError, LinuxModuleDefinition};
 
+type ViewFrame = Box<dyn FnOnce(f64)>;
+
 thread_local! {
     static APPLICATION: RefCell<Option<LinuxApplication>> = const { RefCell::new(None) };
     static FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
+    static VIEW_FRAMES: RefCell<Vec<ViewFrame>> = const { RefCell::new(Vec::new()) };
+    static RUNNING_VIEW_FRAMES: Cell<bool> = const { Cell::new(false) };
     // Separate from APPLICATION so wakes raised during a frame can still schedule one.
     static SURFACE: RefCell<Option<NodeWidget>> = const { RefCell::new(None) };
 }
@@ -419,7 +423,32 @@ impl LinuxApplication {
     }
 }
 
+/// Calls `callback` with the frame clock time in milliseconds on the next frame, before Whisker
+/// applies that frame's updates, so what it publishes lands in the same frame.
+///
+/// It runs outside Whisker's commit, so it may update the runtime.
+pub fn request_view_frame(callback: impl FnOnce(f64) + 'static) {
+    VIEW_FRAMES.with_borrow_mut(|frames| frames.push(Box::new(callback)));
+    request_frame();
+}
+
+fn run_view_frames(timestamp_ms: f64) {
+    let due = VIEW_FRAMES.with_borrow_mut(std::mem::take);
+    if due.is_empty() {
+        return;
+    }
+    RUNNING_VIEW_FRAMES.set(true);
+    for callback in due {
+        callback(timestamp_ms);
+    }
+    RUNNING_VIEW_FRAMES.set(false);
+}
+
 pub(crate) fn request_frame() {
+    // The tick that follows the View frames picks up anything they wake.
+    if RUNNING_VIEW_FRAMES.get() {
+        return;
+    }
     if FRAME_SCHEDULED.replace(true) {
         return;
     }
@@ -431,10 +460,14 @@ pub(crate) fn request_frame() {
     surface.add_tick_callback(|_, clock| {
         FRAME_SCHEDULED.set(false);
         let timestamp_ms = clock.frame_time() as f64 / 1000.0;
+        run_view_frames(timestamp_ms);
         match with_application(|host| host.drive_frame(timestamp_ms)) {
             Ok(true) => request_frame(),
             Ok(false) => {}
             Err(error) => eprintln!("whisker: {error}"),
+        }
+        if VIEW_FRAMES.with_borrow(|frames| !frames.is_empty()) {
+            request_frame();
         }
         glib::ControlFlow::Break
     });

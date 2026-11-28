@@ -22,17 +22,25 @@ private func surfaceDetach(_ id: UInt64)
 
 private let coreAnimationLayer: UInt32 = 1
 
-/// Calls Rust only from the display link, never from a prop setter that runs inside Whisker's commit.
+/// Calls Rust only from `WhiskerSurfaceView.onFrame`, never from a prop setter that runs inside Whisker's commit.
 public final class WhiskerSurfaceLayerView: WhiskerPlatformView {
     private var surfaceID: UInt64?
     private var attachedID: UInt64?
     private var reportedSize: (UInt32, UInt32, Float)?
-    private var link: CADisplayLink?
+    var requestFrame: () -> Void = {}
 
     private var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
 
     #if canImport(UIKit)
     public override class var layerClass: AnyClass { CAMetalLayer.self }
+
+    public override init(frame: CGRect) {
+        super.init(frame: frame)
+        // Presenting inside the Core Animation transaction keeps the drawable in step with Whisker's View updates.
+        metalLayer.presentsWithTransaction = true
+    }
+
+    public required init?(coder: NSCoder) { nil }
 
     public override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -41,7 +49,7 @@ public final class WhiskerSurfaceLayerView: WhiskerPlatformView {
 
     public override func layoutSubviews() {
         super.layoutSubviews()
-        schedule()
+        requestFrame()
     }
 
     private var screenScale: CGFloat { window?.screen.scale ?? contentScaleFactor }
@@ -53,7 +61,12 @@ public final class WhiskerSurfaceLayerView: WhiskerPlatformView {
 
     public required init?(coder: NSCoder) { nil }
 
-    public override func makeBackingLayer() -> CALayer { CAMetalLayer() }
+    public override func makeBackingLayer() -> CALayer {
+        let layer = CAMetalLayer()
+        // Presenting inside the Core Animation transaction keeps the drawable in step with Whisker's View updates.
+        layer.presentsWithTransaction = true
+        return layer
+    }
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -62,12 +75,12 @@ public final class WhiskerSurfaceLayerView: WhiskerPlatformView {
 
     public override func layout() {
         super.layout()
-        schedule()
+        requestFrame()
     }
 
     public override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        schedule()
+        requestFrame()
     }
 
     private var screenScale: CGFloat { window?.backingScaleFactor ?? 1 }
@@ -79,42 +92,24 @@ public final class WhiskerSurfaceLayerView: WhiskerPlatformView {
             detach()
             surfaceID = id
         }
-        schedule()
+        requestFrame()
     }
 
     private func windowChanged() {
-        link?.invalidate()
-        link = nil
         guard window != nil else {
             detach()
             return
         }
-        #if canImport(UIKit)
-        let link = CADisplayLink(target: WeakTarget(self), selector: #selector(WeakTarget.tick(_:)))
-        #else
-        let link = displayLink(target: WeakTarget(self), selector: #selector(WeakTarget.tick(_:)))
-        #endif
-        link.add(to: .main, forMode: .common)
-        self.link = link
-        schedule()
+        requestFrame()
     }
 
-    private func schedule() {
-        link?.isPaused = false
-    }
-
-    fileprivate func tick(_ link: CADisplayLink) {
-        guard let id = surfaceID else {
-            link.isPaused = true
-            return
-        }
+    /// Returns whether the surface wants another frame.
+    func frame(_ timestamp: CFTimeInterval) -> Bool {
+        guard let id = surfaceID, window != nil else { return false }
         let scale = screenScale
         let width = UInt32(max(0, (bounds.width * scale).rounded()))
         let height = UInt32(max(0, (bounds.height * scale).rounded()))
-        guard width > 0, height > 0 else {
-            link.isPaused = true
-            return
-        }
+        guard width > 0, height > 0 else { return false }
         let size = (width, height, Float(scale))
         if attachedID != id {
             metalLayer.contentsScale = scale
@@ -129,7 +124,7 @@ public final class WhiskerSurfaceLayerView: WhiskerPlatformView {
             surfaceResize(id, width, height, Float(scale))
             reportedSize = size
         }
-        link.isPaused = !surfaceFrame(id, link.timestamp)
+        return surfaceFrame(id, timestamp)
     }
 
     private func detach() {
@@ -141,34 +136,27 @@ public final class WhiskerSurfaceLayerView: WhiskerPlatformView {
     }
 
     deinit {
-        link?.invalidate()
         if let id = attachedID {
             surfaceDetach(id)
         }
     }
 }
 
-/// CADisplayLink retains its target, so the view would never deinit without this indirection.
-private final class WeakTarget: NSObject {
-    weak var view: WhiskerSurfaceLayerView?
-
-    init(_ view: WhiskerSurfaceLayerView) {
-        self.view = view
-    }
-
-    @objc func tick(_ link: CADisplayLink) {
-        guard let view else {
-            link.invalidate()
-            return
-        }
-        view.tick(link)
-    }
-}
-
 @objc(WhiskerSurfaceView)
 public final class WhiskerSurfaceView: WhiskerUI<WhiskerSurfaceLayerView> {
+    public required init(frame: CGRect) {
+        super.init(frame: frame)
+        view().requestFrame = { [weak self] in self?.requestFrame() }
+    }
+
+    public required init?(coder: NSCoder) { nil }
+
     @objc public override func createView() -> WhiskerSurfaceLayerView {
         WhiskerSurfaceLayerView(frame: .zero)
+    }
+
+    public override func onFrame(timestamp: CFTimeInterval) {
+        if view().frame(timestamp) { requestFrame() }
     }
 }
 

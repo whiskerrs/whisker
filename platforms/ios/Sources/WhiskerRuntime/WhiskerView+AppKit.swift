@@ -3,8 +3,10 @@ import AppKit
 import WhiskerModule
 
 /** The single macOS View that owns a Whisker runtime and its native scene. */
-public final class WhiskerView: NSView {
+public final class WhiskerView: NSView, WhiskerFrameHost {
     private var displayLink: CADisplayLink?
+    private var viewFrames: [WhiskerFrameClient] = []
+    private var runningViewFrames = false
     private var hostToken: UnsafeMutableRawPointer?
     private var runtimeHandle: UnsafeMutableRawPointer?
     private var runtimePaused = false
@@ -378,6 +380,7 @@ public final class WhiskerView: NSView {
         // Avoid initializing the lazy scene from `deinit` for a View that was
         // never mounted; its initializer captures `weak self`.
         if ownedRuntime { scene.clear() }
+        viewFrames.removeAll()
         pendingModuleEvents.clear()
         dirtyScrollOffsets.removeAll(keepingCapacity: false)
         if let token = hostToken {
@@ -388,6 +391,8 @@ public final class WhiskerView: NSView {
 
     func requestFrame() {
         guard runtimeHandle != nil, !runtimePaused, isWindowVisible, window != nil else { return }
+        // The tick that follows the View frames picks up anything they wake.
+        guard !runningViewFrames else { return }
         if displayLink == nil {
             let link = displayLink(target: self, selector: #selector(driveFrame(_:)))
             link.add(to: .main, forMode: .common)
@@ -401,8 +406,23 @@ public final class WhiskerView: NSView {
             link.isPaused = true
             return
         }
+        runViewFrames(link.timestamp)
         let idle = driveRuntimeFrame(timestampMs: link.timestamp * 1_000)
-        link.isPaused = idle
+        link.isPaused = idle && viewFrames.isEmpty
+    }
+
+    public func requestViewFrame(_ view: WhiskerFrameClient) {
+        if !viewFrames.contains(where: { $0 === view }) { viewFrames.append(view) }
+        requestFrame()
+    }
+
+    private func runViewFrames(_ timestamp: CFTimeInterval) {
+        guard !viewFrames.isEmpty else { return }
+        let due = viewFrames
+        viewFrames = []
+        runningViewFrames = true
+        defer { runningViewFrames = false }
+        for view in due { view.runWhiskerFrame(timestamp) }
     }
 
     @discardableResult

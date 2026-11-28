@@ -24,13 +24,18 @@ use crate::{
     BuiltInElementModule, WebAppConfig, WebError, WebModuleDefinition, js_error, set_style,
 };
 
+type ViewFrame = Box<dyn FnOnce(f64)>;
+
 thread_local! {
     static APPLICATION: RefCell<Option<WebApplication>> = const { RefCell::new(None) };
     static FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
     static RETRYING_FAILED_FRAME: Cell<bool> = const { Cell::new(false) };
     static URGENT_FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
+    static VIEW_FRAMES: RefCell<Vec<ViewFrame>> = const { RefCell::new(Vec::new()) };
+    static RUNNING_VIEW_FRAMES: Cell<bool> = const { Cell::new(false) };
     static FRAME_CALLBACK: Closure<dyn FnMut(f64)> = Closure::new(|timestamp_ms| {
         FRAME_SCHEDULED.with(|scheduled| scheduled.set(false));
+        run_view_frames(timestamp_ms);
         let result = APPLICATION.with(|slot| {
             let mut slot = slot.borrow_mut();
             slot.as_mut()
@@ -38,6 +43,9 @@ thread_local! {
                 .drive_frame(timestamp_ms)
         });
         finish_frame(result);
+        if VIEW_FRAMES.with_borrow(|frames| !frames.is_empty()) {
+            request_frame();
+        }
     });
     #[cfg(feature = "hot-reload")]
     static MOUNTED_APPLICATION_HASH: Cell<u64> = const { Cell::new(0) };
@@ -535,7 +543,32 @@ fn install_wheel_listener(root: &web_sys::Element) -> Result<(), WebError> {
     Ok(())
 }
 
+/// Calls `callback` with the `requestAnimationFrame` timestamp on the next frame, before Whisker
+/// applies that frame's updates, so what it publishes lands in the same frame.
+///
+/// It runs outside Whisker's commit, so it may update the runtime.
+pub fn request_view_frame(callback: impl FnOnce(f64) + 'static) {
+    VIEW_FRAMES.with_borrow_mut(|frames| frames.push(Box::new(callback)));
+    request_frame();
+}
+
+fn run_view_frames(timestamp_ms: f64) {
+    let due = VIEW_FRAMES.with_borrow_mut(std::mem::take);
+    if due.is_empty() {
+        return;
+    }
+    RUNNING_VIEW_FRAMES.set(true);
+    for callback in due {
+        callback(timestamp_ms);
+    }
+    RUNNING_VIEW_FRAMES.set(false);
+}
+
 pub(crate) fn request_frame() {
+    // The tick that follows the View frames picks up anything they wake.
+    if RUNNING_VIEW_FRAMES.get() {
+        return;
+    }
     FRAME_SCHEDULED.with(|scheduled| {
         if scheduled.replace(true) {
             return;

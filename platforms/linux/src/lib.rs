@@ -11,6 +11,7 @@ use std::fmt;
 
 use whisker::{Element, ElementModuleDefinition};
 
+pub use app::request_view_frame;
 pub use gtk4;
 pub use module::{LinuxEventEmitter, LinuxModuleDefinition, LinuxView, LinuxViewDefinition};
 

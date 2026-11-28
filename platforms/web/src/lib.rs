@@ -36,7 +36,8 @@ mod scene;
 #[cfg(feature = "hot-reload")]
 pub use application::apply_hot_patch;
 pub use application::{
-    handle_resource_command, register_resource_url, run, run_with_application_hash,
+    handle_resource_command, register_resource_url, request_view_frame, run,
+    run_with_application_hash,
 };
 pub use dom::WebError;
 pub(crate) use dom::{js_error, px, set_style};
